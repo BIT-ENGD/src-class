@@ -1,0 +1,392 @@
+
+/// Original author of this code is [Nathan Ringo](https://github.com/remexre)
+/// Source: https://github.com/acmumn/mentoring/blob/master/web-client/src/view/markdown.rs
+
+use pulldown_cmark::{Alignment, Event, Parser, Tag, OPTION_ENABLE_TABLES};
+use yew::html::Html;
+use yew::html::Component;
+use yew::virtual_dom::{VNode, VTag, VText};
+
+/// Renders a string of Markdown to HTML with the default options (footnotes
+/// disabled, tables enabled).
+pub fn render_markdown<COMP>(src: &str) -> Html<COMP>
+where
+    COMP: Component,
+{
+    let mut elems = vec![];
+    let mut spine = vec![];
+
+    macro_rules! add_child {
+        ($child:expr) => {{
+            let l = spine.len();
+            assert_ne!(l, 0);
+            spine[l-1].add_child($child);
+        }}
+    }
+
+    for ev in Parser::new_ext(src, OPTION_ENABLE_TABLES) {
+        match ev {
+            Event::Start(tag) => {
+                spine.push(make_tag(tag));
+            }
+            Event::End(tag) => {
+                // TODO Verify stack end.
+                let l = spine.len();
+                assert!(l >= 1);
+                let mut top = spine.pop().unwrap();
+                if let Tag::CodeBlock(_) = tag {
+                    let mut pre = VTag::new("pre");
+                    pre.add_child(top.into());
+                    top = pre;
+                } else if let Tag::Table(aligns) = tag {
+                    for r in top.childs.iter_mut() {
+                        if let &mut VNode::VTag(ref mut vtag) = r {
+                            for (i, c) in vtag.childs.iter_mut().enumerate() {
+                                if let &mut VNode::VTag(ref mut vtag) = c {
+                                    match aligns[i] {
+                                        Alignment::None => {}
+                                        Alignment::Left => vtag.add_class("text-left"),
+                                        Alignment::Center => vtag.add_class("text-center"),
+                                        Alignment::Right => vtag.add_class("text-right"),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Tag::TableHead = tag {
+                    for c in top.childs.iter_mut() {
+                        if let &mut VNode::VTag(ref mut vtag) = c {
+                            // TODO
+                            //                            vtag.tag = "th".into();
+                            vtag.add_attribute("scope", &"col");
+                        }
+                    }
+                }
+                if l == 1 {
+                    elems.push(top);
+                } else {
+                    spine[l - 2].add_child(top.into());
+                }
+            }
+            Event::Text(text) => add_child!(VText::new(text.to_string()).into()),
+            Event::SoftBreak => add_child!(VText::new("\n".to_string()).into()),
+            Event::HardBreak => add_child!(VTag::new("br").into()),
+            _ => println!("Unknown event: {:#?}", ev),
+        }
+    }
+
+    if elems.len() == 1 {
+        VNode::VTag(elems.pop().unwrap())
+    } else {
+        html! {
+            <div>{ for elems.into_iter() }</div>
+        }
+    }
+}
+
+fn make_tag<COMP>(t: Tag) -> VTag<COMP>
+where
+    COMP: Component,
+{
+    match t {
+        Tag::Paragraph => VTag::new("p"),
+        Tag::Rule => VTag::new("hr"),
+        Tag::Header(n) => {
+            assert!(n > 0);
+            assert!(n < 7);
+            VTag::new(format!("h{}", n))
+        }
+        Tag::BlockQuote => {
+            let mut el = VTag::new("blockquote");
+            el.add_class("blockquote");
+            el
+        }
+        Tag::CodeBlock(lang) => {
+            let mut el = VTag::new("code");
+            // Different color schemes may be used for different code blocks,
+            // but a different library (likely js based at the moment) would be necessary to actually provide the
+            // highlighting support by locating the language classes and applying dom transforms
+            // on their contents.
+            match lang.as_ref() {
+                "html" => el.add_class("html-language"),
+                "rust" => el.add_class("rust-language"),
+                "java" => el.add_class("java-language"),
+                "c" => el.add_class("c-language"),
+                _ => {} // Add your own language highlighting support
+            };
+            el
+        }
+        Tag::List(None) => VTag::new("ul"),
+        Tag::List(Some(1)) => VTag::new("ol"),
+        Tag::List(Some(ref start)) => {
+            let mut el = VTag::new("ol");
+            el.add_attribute("start", start);
+            el
+        }
+        Tag::Item => VTag::new("li"),
+        Tag::Table(_) => {
+            let mut el = VTag::new("table");
+            el.add_class("table");
+            el
+        }
+        Tag::TableHead => VTag::new("tr"),
+        Tag::TableRow => VTag::new("tr"),
+        Tag::TableCell => VTag::new("td"),
+        Tag::Emphasis => {
+            let mut el = VTag::new("span");
+            el.add_class("font-italic");
+            el
+        }
+        Tag::Strong => {
+            let mut el = VTag::new("span");
+            el.add_class("font-weight-bold");
+            el
+        }
+        Tag::Code => VTag::new("code"),
+        Tag::Link(ref href, ref title) => {
+            let mut el = VTag::new("a");
+            el.add_attribute("href", href);
+            if title != "" {
+                el.add_attribute("title", title);
+            }
+            el
+        }
+        Tag::Image(ref src, ref title) => {
+            let mut el = VTag::new("img");
+            el.add_attribute("src", src);
+            if title != "" {
+                el.add_attribute("title", title);
+            }
+            el
+        }
+        Tag::FootnoteDefinition(ref _footnote_id) => VTag::new("span") // Footnotes are not rendered as anything special
+    }
+}
+#[macro_use]
+extern crate serde_derive;
+#[macro_use]
+extern crate yew;
+
+extern crate pulldown_cmark;
+
+mod markdown;
+
+use yew::prelude::*;
+use yew::format::Json;
+use yew::services::{DialogService, StorageService};
+use yew::services::storage::Area;
+
+const KEY: &'static str = "yew.crm.database";
+
+#[derive(Serialize, Deserialize)]
+struct Database {
+    clients: Vec<Client>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Client {
+    first_name: String,
+    last_name: String,
+    description: String
+}
+
+impl Client {
+    fn empty() -> Self {
+        Client {
+            first_name: "".into(),
+            last_name: "".into(),
+            description: "".into()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Scene {
+    ClientsList,
+    NewClientForm(Client),
+    Settings,
+}
+
+pub struct Model {
+    storage: StorageService,
+    dialog: DialogService,
+    database: Database,
+    scene: Scene,
+}
+
+#[derive(Debug)]
+pub enum Msg {
+    SwitchTo(Scene),
+    AddNew,
+    UpdateFirstName(String),
+    UpdateLastName(String),
+    UpdateDescription(String),
+    Clear,
+}
+
+impl Component for Model {
+    type Message = Msg;
+    type Properties = ();
+
+    fn create(_: Self::Properties, _: ComponentLink<Self>) -> Self {
+        let mut storage = StorageService::new(Area::Local);
+        let Json(database) = storage.restore(KEY);
+        let database = database.unwrap_or_else(|_| Database {
+            clients: Vec::new(),
+        });
+        Model {
+            storage,
+            dialog: DialogService::new(),
+            database,
+            scene: Scene::ClientsList,
+        }
+    }
+
+    fn update(&mut self, msg: Self::Message) -> ShouldRender {
+        let mut new_scene = None;
+        match self.scene {
+            Scene::ClientsList => {
+                match msg {
+                    Msg::SwitchTo(Scene::NewClientForm(client)) => {
+                        new_scene = Some(Scene::NewClientForm(client));
+                    }
+                    Msg::SwitchTo(Scene::Settings) => {
+                        new_scene = Some(Scene::Settings);
+                    }
+                    unexpected => {
+                        panic!("Unexpected message when clients list shown: {:?}", unexpected);
+                    }
+                }
+            }
+            Scene::NewClientForm(ref mut client) => {
+                match msg {
+                    Msg::UpdateFirstName(val) => {
+                        println!("Input: {}", val);
+                        client.first_name = val;
+                    }
+                    Msg::UpdateLastName(val) => {
+                        println!("Input: {}", val);
+                        client.last_name = val;
+                    }
+                    Msg::UpdateDescription(val) => {
+                        println!("Input: {}", val);
+                        client.description = val;
+                    }
+                    Msg::AddNew => {
+                        let mut new_client = Client::empty();
+                        ::std::mem::swap(client, &mut new_client);
+                        self.database.clients.push(new_client);
+                        self.storage.store(KEY, Json(&self.database));
+                    }
+                    Msg::SwitchTo(Scene::ClientsList) => {
+                        new_scene = Some(Scene::ClientsList);
+                    }
+                    unexpected => {
+                        panic!("Unexpected message during new client editing: {:?}", unexpected);
+                    }
+                }
+            }
+            Scene::Settings => {
+                match msg {
+                    Msg::Clear => {
+                        let ok = {
+                            self.dialog.confirm("Do you really want to clear the data?")
+                        };
+                        if ok {
+                            self.database.clients.clear();
+                            self.storage.remove(KEY);
+                        }
+                    }
+                    Msg::SwitchTo(Scene::ClientsList) => {
+                        new_scene = Some(Scene::ClientsList);
+                    }
+                    unexpected => {
+                        panic!("Unexpected message for settings scene: {:?}", unexpected);
+                    }
+                }
+            }
+        }
+        if let Some(new_scene) = new_scene.take() {
+            self.scene = new_scene;
+        }
+        true
+    }
+}
+
+impl Renderable<Model> for Model {
+    fn view(&self) -> Html<Self> {
+        match self.scene {
+            Scene::ClientsList => html! {
+                <div class="crm",>
+                    <div class="clients",>
+                        { for self.database.clients.iter().map(Renderable::view) }
+                    </div>
+                    <button onclick=|_| Msg::SwitchTo(Scene::NewClientForm(Client::empty())),>{ "Add New" }</button>
+                    <button onclick=|_| Msg::SwitchTo(Scene::Settings),>{ "Settings" }</button>
+                </div>
+            },
+            Scene::NewClientForm(ref client) => html! {
+                <div class="crm",>
+                    <div class="names",>
+                        { client.view_first_name_input() }
+                        { client.view_last_name_input() }
+                        { client.view_description_textarea() }
+                    </div>
+                    <button disabled=client.first_name.is_empty() || client.last_name.is_empty(),
+                            onclick=|_| Msg::AddNew,>{ "Add New" }</button>
+                    <button onclick=|_| Msg::SwitchTo(Scene::ClientsList),>{ "Go Back" }</button>
+                </div>
+            },
+            Scene::Settings => html! {
+                <div>
+                    <button onclick=|_| Msg::Clear,>{ "Clear Database" }</button>
+                    <button onclick=|_| Msg::SwitchTo(Scene::ClientsList),>{ "Go Back" }</button>
+                </div>
+            },
+        }
+    }
+}
+
+impl Renderable<Model> for Client {
+    fn view(&self) -> Html<Model> {
+        html! {
+            <div class="client",>
+                <p>{ format!("First Name: {}", self.first_name) }</p>
+                <p>{ format!("Last Name: {}", self.last_name) }</p>
+                <p>{ "Description:"}</p>
+                {markdown::render_markdown(&self.description)}
+            </div>
+        }
+    }
+}
+
+impl Client {
+    fn view_first_name_input(&self) -> Html<Model> {
+        html! {
+            <input class="new-client firstname",
+                   placeholder="First name",
+                   value=&self.first_name,
+                   oninput=|e| Msg::UpdateFirstName(e.value),
+                   />
+        }
+    }
+
+    fn view_last_name_input(&self) -> Html<Model> {
+        html! {
+            <input class="new-client lastname",
+                   placeholder="Last name",
+                   value=&self.last_name,
+                   oninput=|e| Msg::UpdateLastName(e.value),
+                   />
+        }
+    }
+    fn view_description_textarea(&self) -> Html<Model> {
+        html! {
+            <textarea class=("new-client", "description"),
+               placeholder="Description",
+               value=&self.description,
+               oninput=|e| Msg::UpdateDescription(e.value),
+               />
+        }
+    }
+}

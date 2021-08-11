@@ -1,0 +1,1718 @@
+{-
+(c) The University of Glasgow 2006
+(c) The GRASP/AQUA Project, Glasgow University, 1992-1998
+-}
+
+{-# LANGUAGE RankNTypes, TypeFamilies #-}
+module Eta.Core.TrieMap(
+   CoreMap, emptyCoreMap, extendCoreMap, lookupCoreMap, foldCoreMap,
+   TypeMap, emptyTypeMap, extendTypeMap, lookupTypeMap, foldTypeMap,
+   CoercionMap,
+   MaybeMap,
+   ListMap,
+   TrieMap(..), insertTM, deleteTM,
+   lookupTypeMapTyCon
+ ) where
+
+import Eta.Core.CoreSyn
+import Eta.Types.Coercion
+import Eta.BasicTypes.Literal
+import Eta.BasicTypes.Name
+import Eta.Types.Type
+import Eta.Types.TypeRep
+import Eta.Types.TyCon(TyCon)
+import Eta.BasicTypes.Var
+import Eta.Utils.UniqFM
+import Eta.BasicTypes.Unique( Unique )
+import Eta.Utils.FastString(FastString)
+import Eta.Types.CoAxiom(CoAxiomRule(coaxrName))
+
+import qualified Data.Map    as Map
+import qualified Data.IntMap as IntMap
+import Eta.BasicTypes.VarEnv
+import Eta.BasicTypes.NameEnv
+import Eta.Utils.Outputable
+import Control.Monad( (>=>) )
+
+{-
+This module implements TrieMaps, which are finite mappings
+whose key is a structured value like a CoreExpr or Type.
+
+The code is very regular and boilerplate-like, but there is
+some neat handling of *binders*.  In effect they are deBruijn
+numbered on the fly.
+
+************************************************************************
+*                                                                      *
+                   The TrieMap class
+*                                                                      *
+************************************************************************
+-}
+
+type XT a = Maybe a -> Maybe a  -- How to alter a non-existent elt (Nothing)
+                                --               or an existing elt (Just)
+
+class TrieMap m where
+   type Key m :: *
+   emptyTM  :: m a
+   lookupTM :: forall b. Key m -> m b -> Maybe b
+   alterTM  :: forall b. Key m -> XT b -> m b -> m b
+   mapTM    :: (a->b) -> m a -> m b
+
+   foldTM   :: (a -> b -> b) -> m a -> b -> b
+      -- The unusual argument order here makes
+      -- it easy to compose calls to foldTM;
+      -- see for example fdE below
+
+insertTM :: TrieMap m => Key m -> a -> m a -> m a
+insertTM k v m = alterTM k (\_ -> Just v) m
+
+deleteTM :: TrieMap m => Key m -> m a -> m a
+deleteTM k m = alterTM k (\_ -> Nothing) m
+
+----------------------
+-- Recall that
+--   Control.Monad.(>=>) :: (a -> Maybe b) -> (b -> Maybe c) -> a -> Maybe c
+
+(>.>) :: (a -> b) -> (b -> c) -> a -> c
+-- Reverse function composition (do f first, then g)
+infixr 1 >.>
+(f >.> g) x = g (f x)
+infixr 1 |>, |>>
+
+(|>) :: a -> (a->b) -> b     -- Reverse application
+x |> f = f x
+
+----------------------
+(|>>) :: TrieMap m2
+      => (XT (m2 a) -> m1 (m2 a) -> m1 (m2 a))
+      -> (m2 a -> m2 a)
+      -> m1 (m2 a) -> m1 (m2 a)
+(|>>) f g = f (Just . g . deMaybe)
+
+deMaybe :: TrieMap m => Maybe (m a) -> m a
+deMaybe Nothing  = emptyTM
+deMaybe (Just m) = m
+
+{-
+************************************************************************
+*                                                                      *
+                   IntMaps
+*                                                                      *
+************************************************************************
+-}
+
+instance TrieMap IntMap.IntMap where
+  type Key IntMap.IntMap = Int
+  emptyTM = IntMap.empty
+  lookupTM k m = IntMap.lookup k m
+  alterTM = xtInt
+  foldTM k m z = IntMap.foldr k z m
+  mapTM f m = IntMap.map f m
+
+xtInt :: Int -> XT a -> IntMap.IntMap a -> IntMap.IntMap a
+xtInt k f m = IntMap.alter f k m
+
+instance Ord k => TrieMap (Map.Map k) where
+  type Key (Map.Map k) = k
+  emptyTM = Map.empty
+  lookupTM = Map.lookup
+  alterTM k f m = Map.alter f k m
+  foldTM k m z = Map.foldr k z m
+  mapTM f m = Map.map f m
+
+instance TrieMap UniqFM where
+  type Key UniqFM = Unique
+  emptyTM = emptyUFM
+  lookupTM k m = lookupUFM m k
+  alterTM k f m = alterUFM f m k
+  foldTM k m z = foldUFM k z m
+  mapTM f m = mapUFM f m
+
+{-
+************************************************************************
+*                                                                      *
+                   Lists
+*                                                                      *
+************************************************************************
+
+If              m is a map from k -> val
+then (MaybeMap m) is a map from (Maybe k) -> val
+-}
+
+data MaybeMap m a = MM { mm_nothing  :: Maybe a, mm_just :: m a }
+
+instance TrieMap m => TrieMap (MaybeMap m) where
+   type Key (MaybeMap m) = Maybe (Key m)
+   emptyTM  = MM { mm_nothing = Nothing, mm_just = emptyTM }
+   lookupTM = lkMaybe lookupTM
+   alterTM  = xtMaybe alterTM
+   foldTM   = fdMaybe
+   mapTM    = mapMb
+
+mapMb :: TrieMap m => (a->b) -> MaybeMap m a -> MaybeMap m b
+mapMb f (MM { mm_nothing = mn, mm_just = mj })
+  = MM { mm_nothing = fmap f mn, mm_just = mapTM f mj }
+
+lkMaybe :: TrieMap m => (forall b. k -> m b -> Maybe b)
+        -> Maybe k -> MaybeMap m a -> Maybe a
+lkMaybe _  Nothing  = mm_nothing
+lkMaybe lk (Just x) = mm_just >.> lk x
+
+xtMaybe :: TrieMap m => (forall b. k -> XT b -> m b -> m b)
+        -> Maybe k -> XT a -> MaybeMap m a -> MaybeMap m a
+xtMaybe _  Nothing  f m = m { mm_nothing  = f (mm_nothing m) }
+xtMaybe tr (Just x) f m = m { mm_just = mm_just m |> tr x f }
+
+fdMaybe :: TrieMap m => (a -> b -> b) -> MaybeMap m a -> b -> b
+fdMaybe k m = foldMaybe k (mm_nothing m)
+            . foldTM k (mm_just m)
+
+--------------------
+data ListMap m a
+  = LM { lm_nil  :: Maybe a
+       , lm_cons :: m (ListMap m a) }
+
+instance TrieMap m => TrieMap (ListMap m) where
+   type Key (ListMap m) = [Key m]
+   emptyTM  = LM { lm_nil = Nothing, lm_cons = emptyTM }
+   lookupTM = lkList lookupTM
+   alterTM  = xtList alterTM
+   foldTM   = fdList
+   mapTM    = mapList
+
+mapList :: TrieMap m => (a->b) -> ListMap m a -> ListMap m b
+mapList f (LM { lm_nil = mnil, lm_cons = mcons })
+  = LM { lm_nil = fmap f mnil, lm_cons = mapTM (mapTM f) mcons }
+
+lkList :: TrieMap m => (forall b. k -> m b -> Maybe b)
+        -> [k] -> ListMap m a -> Maybe a
+lkList _  []     = lm_nil
+lkList lk (x:xs) = lm_cons >.> lk x >=> lkList lk xs
+
+xtList :: TrieMap m => (forall b. k -> XT b -> m b -> m b)
+        -> [k] -> XT a -> ListMap m a -> ListMap m a
+xtList _  []     f m = m { lm_nil  = f (lm_nil m) }
+xtList tr (x:xs) f m = m { lm_cons = lm_cons m |> tr x |>> xtList tr xs f }
+
+fdList :: forall m a b. TrieMap m
+       => (a -> b -> b) -> ListMap m a -> b -> b
+fdList k m = foldMaybe k          (lm_nil m)
+           . foldTM    (fdList k) (lm_cons m)
+
+foldMaybe :: (a -> b -> b) -> Maybe a -> b -> b
+foldMaybe _ Nothing  b = b
+foldMaybe k (Just a) b = k a b
+
+{-
+************************************************************************
+*                                                                      *
+                   Basic maps
+*                                                                      *
+************************************************************************
+-}
+
+lkNamed :: NamedThing n => n -> NameEnv a -> Maybe a
+lkNamed n env = lookupNameEnv env (getName n)
+
+xtNamed :: NamedThing n => n -> XT a -> NameEnv a -> NameEnv a
+xtNamed tc f m = alterNameEnv f m (getName tc)
+
+------------------------
+type LiteralMap  a = Map.Map Literal a
+
+emptyLiteralMap :: LiteralMap a
+emptyLiteralMap = emptyTM
+
+lkLit :: Literal -> LiteralMap a -> Maybe a
+lkLit = lookupTM
+
+xtLit :: Literal -> XT a -> LiteralMap a -> LiteralMap a
+xtLit = alterTM
+
+{-
+************************************************************************
+*                                                                      *
+                   CoreMap
+*                                                                      *
+************************************************************************
+
+Note [Binders]
+~~~~~~~~~~~~~~
+ * In general we check binders as late as possible because types are
+   less likely to differ than expression structure.  That's why
+      cm_lam :: CoreMap (TypeMap a)
+   rather than
+      cm_lam :: TypeMap (CoreMap a)
+
+ * We don't need to look at the type of some binders, notalby
+     - the case binder in (Case _ b _ _)
+     - the binders in an alternative
+   because they are totally fixed by the context
+
+Note [Empty case alternatives]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+* For a key (Case e b ty (alt:alts))  we don't need to look the return type
+  'ty', because every alternative has that type.
+
+* For a key (Case e b ty []) we MUST look at the return type 'ty', because
+  otherwise (Case (error () "urk") _ Int  []) would compare equal to
+            (Case (error () "urk") _ Bool [])
+  which is utterly wrong (Trac #6097)
+
+We could compare the return type regardless, but the wildly common case
+is that it's unnecesary, so we have two fields (cm_case and cm_ecase)
+for the two possibilities.  Only cm_ecase looks at the type.
+
+See also Note [Empty case alternatives] in CoreSyn.
+-}
+
+data CoreMap a
+  = EmptyCM
+  | CM { cm_var   :: VarMap a
+       , cm_lit   :: LiteralMap a
+       , cm_co    :: CoercionMap a
+       , cm_type  :: TypeMap a
+       , cm_cast  :: CoreMap (CoercionMap a)
+       , cm_tick  :: CoreMap (TickishMap a)
+       , cm_app   :: CoreMap (CoreMap a)
+       , cm_lam   :: CoreMap (TypeMap a)    -- Note [Binders]
+       , cm_letn  :: CoreMap (CoreMap (BndrMap a))
+       , cm_letr  :: ListMap CoreMap (CoreMap (ListMap BndrMap a))
+       , cm_case  :: CoreMap (ListMap AltMap a)
+       , cm_ecase :: CoreMap (TypeMap a)    -- Note [Empty case alternatives]
+     }
+
+
+wrapEmptyCM :: CoreMap a
+wrapEmptyCM = CM { cm_var = emptyTM, cm_lit = emptyLiteralMap
+                 , cm_co = emptyTM, cm_type = emptyTM
+                 , cm_cast = emptyTM, cm_app = emptyTM
+                 , cm_lam = emptyTM, cm_letn = emptyTM
+                 , cm_letr = emptyTM, cm_case = emptyTM
+                 , cm_ecase = emptyTM, cm_tick = emptyTM }
+
+instance TrieMap CoreMap where
+   type Key CoreMap = CoreExpr
+   emptyTM  = EmptyCM
+   lookupTM = lkE emptyCME
+   alterTM  = xtE emptyCME
+   foldTM   = fdE
+   mapTM    = mapE
+
+--------------------------
+mapE :: (a->b) -> CoreMap a -> CoreMap b
+mapE _ EmptyCM = EmptyCM
+mapE f (CM { cm_var = cvar, cm_lit = clit
+           , cm_co = cco, cm_type = ctype
+           , cm_cast = ccast , cm_app = capp
+           , cm_lam = clam, cm_letn = cletn
+           , cm_letr = cletr, cm_case = ccase
+           , cm_ecase = cecase, cm_tick = ctick })
+  = CM { cm_var = mapTM f cvar, cm_lit = mapTM f clit
+       , cm_co = mapTM f cco, cm_type = mapTM f ctype
+       , cm_cast = mapTM (mapTM f) ccast, cm_app = mapTM (mapTM f) capp
+       , cm_lam = mapTM (mapTM f) clam, cm_letn = mapTM (mapTM (mapTM f)) cletn
+       , cm_letr = mapTM (mapTM (mapTM f)) cletr, cm_case = mapTM (mapTM f) ccase
+       , cm_ecase = mapTM (mapTM f) cecase, cm_tick = mapTM (mapTM f) ctick }
+
+--------------------------
+lookupCoreMap :: CoreMap a -> CoreExpr -> Maybe a
+lookupCoreMap cm e = lkE emptyCME e cm
+
+extendCoreMap :: CoreMap a -> CoreExpr -> a -> CoreMap a
+extendCoreMap m e v = xtE emptyCME e (\_ -> Just v) m
+
+foldCoreMap :: (a -> b -> b) -> b -> CoreMap a -> b
+foldCoreMap k z m = fdE k m z
+
+emptyCoreMap :: CoreMap a
+emptyCoreMap = EmptyCM
+
+instance Outputable a => Outputable (CoreMap a) where
+  ppr m = text "CoreMap elts" <+> ppr (foldCoreMap (:) [] m)
+
+-------------------------
+fdE :: (a -> b -> b) -> CoreMap a -> b -> b
+fdE _ EmptyCM = \z -> z
+fdE k m
+  = foldTM k (cm_var m)
+  . foldTM k (cm_lit m)
+  . foldTM k (cm_co m)
+  . foldTM k (cm_type m)
+  . foldTM (foldTM k) (cm_cast m)
+  . foldTM (foldTM k) (cm_tick m)
+  . foldTM (foldTM k) (cm_app m)
+  . foldTM (foldTM k) (cm_lam m)
+  . foldTM (foldTM (foldTM k)) (cm_letn m)
+  . foldTM (foldTM (foldTM k)) (cm_letr m)
+  . foldTM (foldTM k) (cm_case m)
+  . foldTM (foldTM k) (cm_ecase m)
+
+lkE :: CmEnv -> CoreExpr -> CoreMap a -> Maybe a
+-- lkE: lookup in trie for expressions
+lkE env expr cm
+  | EmptyCM <- cm = Nothing
+  | otherwise     = go expr cm
+  where
+    go (Var v)              = cm_var  >.> lkVar env v
+    go (Lit l)              = cm_lit  >.> lkLit l
+    go (Type t)             = cm_type >.> lkT env t
+    go (Coercion c)         = cm_co   >.> lkC env c
+    go (Cast e c)           = cm_cast >.> lkE env e >=> lkC env c
+    go (Tick tickish e)     = cm_tick >.> lkE env e >=> lkTickish tickish
+    go (App e1 e2)          = cm_app  >.> lkE env e2 >=> lkE env e1
+    go (Lam v e)            = cm_lam  >.> lkE (extendCME env v) e >=> lkBndr env v
+    go (Let (NonRec b r) e) = cm_letn >.> lkE env r
+                              >=> lkE (extendCME env b) e >=> lkBndr env b
+    go (Let (Rec prs) e)    = let (bndrs,rhss) = unzip prs
+                                  env1 = extendCMEs env bndrs
+                              in cm_letr
+                                 >.> lkList (lkE env1) rhss >=> lkE env1 e
+                                 >=> lkList (lkBndr env1) bndrs
+    go (Case e b ty as)     -- See Note [Empty case alternatives]
+               | null as    = cm_ecase >.> lkE env e >=> lkT env ty
+               | otherwise  = cm_case >.> lkE env e
+                              >=> lkList (lkA (extendCME env b)) as
+
+xtE :: CmEnv -> CoreExpr -> XT a -> CoreMap a -> CoreMap a
+xtE env e              f EmptyCM = xtE env e f wrapEmptyCM
+xtE env (Var v)              f m = m { cm_var  = cm_var m  |> xtVar env v f }
+xtE env (Type t)             f m = m { cm_type = cm_type m |> xtT env t f }
+xtE env (Coercion c)         f m = m { cm_co   = cm_co m   |> xtC env c f }
+xtE _   (Lit l)              f m = m { cm_lit  = cm_lit m  |> xtLit l f }
+xtE env (Cast e c)           f m = m { cm_cast = cm_cast m |> xtE env e |>>
+                                                 xtC env c f }
+xtE env (Tick t e)           f m = m { cm_tick = cm_tick m |> xtE env e |>> xtTickish t f }
+xtE env (App e1 e2)          f m = m { cm_app = cm_app m |> xtE env e2 |>> xtE env e1 f }
+xtE env (Lam v e)            f m = m { cm_lam = cm_lam m |> xtE (extendCME env v) e
+                                                 |>> xtBndr env v f }
+xtE env (Let (NonRec b r) e) f m = m { cm_letn = cm_letn m
+                                                 |> xtE (extendCME env b) e
+                                                 |>> xtE env r |>> xtBndr env b f }
+xtE env (Let (Rec prs) e)    f m = m { cm_letr = let (bndrs,rhss) = unzip prs
+                                                     env1 = extendCMEs env bndrs
+                                                 in cm_letr m
+                                                    |>  xtList (xtE env1) rhss
+                                                    |>> xtE env1 e
+                                                    |>> xtList (xtBndr env1) bndrs f }
+xtE env (Case e b ty as)     f m
+                     | null as   = m { cm_ecase = cm_ecase m |> xtE env e |>> xtT env ty f }
+                     | otherwise = m { cm_case = cm_case m |> xtE env e
+                                                 |>> let env1 = extendCME env b
+                                                     in xtList (xtA env1) as f }
+
+type TickishMap a = Map.Map (Tickish Id) a
+lkTickish :: Tickish Id -> TickishMap a -> Maybe a
+lkTickish = lookupTM
+
+xtTickish :: Tickish Id -> XT a -> TickishMap a -> TickishMap a
+xtTickish = alterTM
+
+------------------------
+data AltMap a   -- A single alternative
+  = AM { am_deflt :: CoreMap a
+       , am_data  :: NameEnv (CoreMap a)
+       , am_lit   :: LiteralMap (CoreMap a) }
+
+instance TrieMap AltMap where
+   type Key AltMap = CoreAlt
+   emptyTM  = AM { am_deflt = emptyTM
+                 , am_data = emptyNameEnv
+                 , am_lit  = emptyLiteralMap }
+   lookupTM = lkA emptyCME
+   alterTM  = xtA emptyCME
+   foldTM   = fdA
+   mapTM    = mapA
+
+mapA :: (a->b) -> AltMap a -> AltMap b
+mapA f (AM { am_deflt = adeflt, am_data = adata, am_lit = alit })
+  = AM { am_deflt = mapTM f adeflt
+       , am_data = mapNameEnv (mapTM f) adata
+       , am_lit = mapTM (mapTM f) alit }
+
+lkA :: CmEnv -> CoreAlt -> AltMap a -> Maybe a
+lkA env (DEFAULT,    _, rhs)  = am_deflt >.> lkE env rhs
+lkA env (LitAlt lit, _, rhs)  = am_lit >.> lkLit lit >=> lkE env rhs
+lkA env (DataAlt dc, bs, rhs) = am_data >.> lkNamed dc >=> lkE (extendCMEs env bs) rhs
+
+xtA :: CmEnv -> CoreAlt -> XT a -> AltMap a -> AltMap a
+xtA env (DEFAULT, _, rhs)    f m = m { am_deflt = am_deflt m |> xtE env rhs f }
+xtA env (LitAlt l, _, rhs)   f m = m { am_lit   = am_lit m   |> xtLit l |>> xtE env rhs f }
+xtA env (DataAlt d, bs, rhs) f m = m { am_data  = am_data m  |> xtNamed d
+                                                             |>> xtE (extendCMEs env bs) rhs f }
+
+fdA :: (a -> b -> b) -> AltMap a -> b -> b
+fdA k m = foldTM k (am_deflt m)
+        . foldTM (foldTM k) (am_data m)
+        . foldTM (foldTM k) (am_lit m)
+
+{-
+************************************************************************
+*                                                                      *
+                   Coercions
+*                                                                      *
+************************************************************************
+-}
+
+data CoercionMap a
+  = EmptyKM
+  | KM { km_refl   :: RoleMap (TypeMap a)
+       , km_tc_app :: RoleMap (NameEnv (ListMap CoercionMap a))
+       , km_app    :: CoercionMap (CoercionMap a)
+       , km_forall :: CoercionMap (TypeMap a)
+       , km_var    :: VarMap a
+       , km_axiom  :: NameEnv (IntMap.IntMap (ListMap CoercionMap a))
+       , km_univ   :: RoleMap (TypeMap (TypeMap a))
+       , km_sym    :: CoercionMap a
+       , km_trans  :: CoercionMap (CoercionMap a)
+       , km_nth    :: IntMap.IntMap (CoercionMap a)
+       , km_left   :: CoercionMap a
+       , km_right  :: CoercionMap a
+       , km_inst   :: CoercionMap (TypeMap a)
+       , km_sub    :: CoercionMap a
+       , km_axiom_rule :: Map.Map FastString
+                                  (ListMap TypeMap (ListMap CoercionMap a))
+       }
+
+wrapEmptyKM :: CoercionMap a
+wrapEmptyKM = KM { km_refl = emptyTM, km_tc_app = emptyTM
+                 , km_app = emptyTM, km_forall = emptyTM
+                 , km_var = emptyTM, km_axiom = emptyNameEnv
+                 , km_univ = emptyTM, km_sym = emptyTM, km_trans = emptyTM
+                 , km_nth = emptyTM, km_left = emptyTM, km_right = emptyTM
+                 , km_inst = emptyTM, km_sub = emptyTM
+                 , km_axiom_rule = emptyTM }
+
+instance TrieMap CoercionMap where
+   type Key CoercionMap = Coercion
+   emptyTM  = EmptyKM
+   lookupTM = lkC emptyCME
+   alterTM  = xtC emptyCME
+   foldTM   = fdC
+   mapTM    = mapC
+
+mapC :: (a->b) -> CoercionMap a -> CoercionMap b
+mapC _ EmptyKM = EmptyKM
+mapC f (KM { km_refl = krefl, km_tc_app = ktc
+           , km_app = kapp, km_forall = kforall
+           , km_var = kvar, km_axiom = kax
+           , km_univ   = kuniv  , km_sym = ksym, km_trans = ktrans
+           , km_nth = knth, km_left = kml, km_right = kmr
+           , km_inst = kinst, km_sub = ksub
+           , km_axiom_rule = kaxr })
+  = KM { km_refl   = mapTM (mapTM f) krefl
+       , km_tc_app = mapTM (mapNameEnv (mapTM f)) ktc
+       , km_app    = mapTM (mapTM f) kapp
+       , km_forall = mapTM (mapTM f) kforall
+       , km_var    = mapTM f kvar
+       , km_axiom  = mapNameEnv (IntMap.map (mapTM f)) kax
+       , km_univ   = mapTM (mapTM (mapTM f)) kuniv
+       , km_sym    = mapTM f ksym
+       , km_trans  = mapTM (mapTM f) ktrans
+       , km_nth    = IntMap.map (mapTM f) knth
+       , km_left   = mapTM f kml
+       , km_right  = mapTM f kmr
+       , km_inst   = mapTM (mapTM f) kinst
+       , km_sub    = mapTM f ksub
+       , km_axiom_rule = mapTM (mapTM (mapTM f)) kaxr
+       }
+
+lkC :: CmEnv -> Coercion -> CoercionMap a -> Maybe a
+lkC env co m
+  | EmptyKM <- m = Nothing
+  | otherwise    = go co m
+  where
+    go (Refl r ty)             = km_refl   >.> lookupTM r >=> lkT env ty
+    go (TyConAppCo r tc cs)    = km_tc_app >.> lookupTM r >=> lkNamed tc >=> lkList (lkC env) cs
+    go (AxiomInstCo ax ind cs) = km_axiom  >.> lkNamed ax >=> lookupTM ind >=> lkList (lkC env) cs
+    go (AppCo c1 c2)           = km_app    >.> lkC env c1 >=> lkC env c2
+    go (TransCo c1 c2)         = km_trans  >.> lkC env c1 >=> lkC env c2
+
+    -- the provenance is not used in the map
+    go (UnivCo _ r t1 t2)      = km_univ   >.> lookupTM r >=> lkT env t1 >=> lkT env t2
+    go (InstCo c t)            = km_inst   >.> lkC env c  >=> lkT env t
+    go (ForAllCo v c)          = km_forall >.> lkC (extendCME env v) c >=> lkBndr env v
+    go (CoVarCo v)             = km_var    >.> lkVar env v
+    go (SymCo c)               = km_sym    >.> lkC env c
+    go (NthCo n c)             = km_nth    >.> lookupTM n >=> lkC env c
+    go (LRCo CLeft  c)         = km_left   >.> lkC env c
+    go (LRCo CRight c)         = km_right  >.> lkC env c
+    go (SubCo c)               = km_sub    >.> lkC env c
+    go (AxiomRuleCo co ts cs)  = km_axiom_rule >.>
+                                    lookupTM (coaxrName co) >=>
+                                    lkList (lkT env) ts >=>
+                                    lkList (lkC env) cs
+
+
+xtC :: CmEnv -> Coercion -> XT a -> CoercionMap a -> CoercionMap a
+xtC env co f EmptyKM = xtC env co f wrapEmptyKM
+xtC env (Refl r ty)             f m = m { km_refl   = km_refl m   |> xtR r |>> xtT env ty f }
+xtC env (TyConAppCo r tc cs)    f m = m { km_tc_app = km_tc_app m |> xtR r |>> xtNamed tc |>> xtList (xtC env) cs f }
+xtC env (AxiomInstCo ax ind cs) f m = m { km_axiom  = km_axiom m  |> xtNamed ax |>> xtInt ind |>> xtList (xtC env) cs f }
+xtC env (AppCo c1 c2)           f m = m { km_app    = km_app m    |> xtC env c1 |>> xtC env c2 f }
+xtC env (TransCo c1 c2)         f m = m { km_trans  = km_trans m  |> xtC env c1 |>> xtC env c2 f }
+-- the provenance is not used in the map
+xtC env (UnivCo _ r t1 t2)        f m = m { km_univ   = km_univ   m |> xtR r |>> xtT env t1 |>> xtT env t2 f }
+xtC env (InstCo c t)            f m = m { km_inst   = km_inst m   |> xtC env c  |>> xtT env t  f }
+xtC env (ForAllCo v c)          f m = m { km_forall = km_forall m |> xtC (extendCME env v) c
+                                                      |>> xtBndr env v f }
+xtC env (CoVarCo v)             f m = m { km_var    = km_var m |> xtVar env  v f }
+xtC env (SymCo c)               f m = m { km_sym    = km_sym m |> xtC env    c f }
+xtC env (NthCo n c)             f m = m { km_nth    = km_nth m |> xtInt n |>> xtC env c f }
+xtC env (LRCo CLeft  c)         f m = m { km_left   = km_left  m |> xtC env c f }
+xtC env (LRCo CRight c)         f m = m { km_right  = km_right m |> xtC env c f }
+xtC env (SubCo c)               f m = m { km_sub    = km_sub m |> xtC env c f }
+xtC env (AxiomRuleCo co ts cs)  f m = m { km_axiom_rule = km_axiom_rule m
+                                                        |>  alterTM (coaxrName co)
+                                                        |>> xtList (xtT env) ts
+                                                        |>> xtList (xtC env) cs f}
+
+fdC :: (a -> b -> b) -> CoercionMap a -> b -> b
+fdC _ EmptyKM = \z -> z
+fdC k m = foldTM (foldTM k) (km_refl m)
+        . foldTM (foldTM (foldTM k)) (km_tc_app m)
+        . foldTM (foldTM k) (km_app m)
+        . foldTM (foldTM k) (km_forall m)
+        . foldTM k (km_var m)
+        . foldTM (foldTM (foldTM k)) (km_axiom m)
+        . foldTM (foldTM (foldTM k)) (km_univ   m)
+        . foldTM k (km_sym m)
+        . foldTM (foldTM k) (km_trans m)
+        . foldTM (foldTM k) (km_nth m)
+        . foldTM k          (km_left m)
+        . foldTM k          (km_right m)
+        . foldTM (foldTM k) (km_inst m)
+        . foldTM k          (km_sub m)
+        . foldTM (foldTM (foldTM k)) (km_axiom_rule m)
+
+newtype RoleMap a = RM { unRM :: (IntMap.IntMap a) }
+
+instance TrieMap RoleMap where
+  type Key RoleMap = Role
+  emptyTM = RM emptyTM
+  lookupTM = lkR
+  alterTM = xtR
+  foldTM = fdR
+  mapTM = mapR
+
+lkR :: Role -> RoleMap a -> Maybe a
+lkR Nominal          = lookupTM 1 . unRM
+lkR Representational = lookupTM 2 . unRM
+lkR Phantom          = lookupTM 3 . unRM
+
+xtR :: Role -> XT a -> RoleMap a -> RoleMap a
+xtR Nominal          f = RM . alterTM 1 f . unRM
+xtR Representational f = RM . alterTM 2 f . unRM
+xtR Phantom          f = RM . alterTM 3 f . unRM
+
+fdR :: (a -> b -> b) -> RoleMap a -> b -> b
+fdR f (RM m) = foldTM f m
+
+mapR :: (a -> b) -> RoleMap a -> RoleMap b
+mapR f = RM . mapTM f . unRM
+
+{-
+************************************************************************
+*                                                                      *
+                   Types
+*                                                                      *
+************************************************************************
+-}
+
+data TypeMap a
+  = EmptyTM
+  | TM { tm_var   :: VarMap a
+       , tm_app    :: TypeMap (TypeMap a)
+       , tm_fun    :: TypeMap (TypeMap a)
+       , tm_tc_app :: NameEnv (ListMap TypeMap a)
+       , tm_forall :: TypeMap (BndrMap a)
+       , tm_tylit  :: TyLitMap a
+       }
+
+
+instance Outputable a => Outputable (TypeMap a) where
+  ppr m = text "TypeMap elts" <+> ppr (foldTypeMap (:) [] m)
+
+foldTypeMap :: (a -> b -> b) -> b -> TypeMap a -> b
+foldTypeMap k z m = fdT k m z
+
+emptyTypeMap :: TypeMap a
+emptyTypeMap = EmptyTM
+
+lookupTypeMap :: TypeMap a -> Type -> Maybe a
+lookupTypeMap cm t = lkT emptyCME t cm
+
+-- Returns the type map entries that have keys starting with the given tycon.
+-- This only considers saturated applications (i.e. TyConApp ones).
+lookupTypeMapTyCon :: TypeMap a -> TyCon -> [a]
+lookupTypeMapTyCon EmptyTM _ = []
+lookupTypeMapTyCon TM { tm_tc_app = cs } tc =
+  case lookupUFM cs tc of
+    Nothing -> []
+    Just xs -> foldTM (:) xs []
+
+extendTypeMap :: TypeMap a -> Type -> a -> TypeMap a
+extendTypeMap m t v = xtT emptyCME t (\_ -> Just v) m
+
+wrapEmptyTypeMap :: TypeMap a
+wrapEmptyTypeMap = TM { tm_var  = emptyTM
+                      , tm_app  = EmptyTM
+                      , tm_fun  = EmptyTM
+                      , tm_tc_app = emptyNameEnv
+                      , tm_forall = EmptyTM
+                      , tm_tylit  = emptyTyLitMap }
+
+instance TrieMap TypeMap where
+   type Key TypeMap = Type
+   emptyTM  = EmptyTM
+   lookupTM = lkT emptyCME
+   alterTM  = xtT emptyCME
+   foldTM   = fdT
+   mapTM    = mapT
+
+mapT :: (a->b) -> TypeMap a -> TypeMap b
+mapT _ EmptyTM = EmptyTM
+mapT f (TM { tm_var  = tvar, tm_app = tapp, tm_fun = tfun
+           , tm_tc_app = ttcapp, tm_forall = tforall, tm_tylit = tlit })
+  = TM { tm_var    = mapTM f tvar
+       , tm_app    = mapTM (mapTM f) tapp
+       , tm_fun    = mapTM (mapTM f) tfun
+       , tm_tc_app = mapNameEnv (mapTM f) ttcapp
+       , tm_forall = mapTM (mapTM f) tforall
+       , tm_tylit  = mapTM f tlit }
+
+-----------------
+lkT :: CmEnv -> Type -> TypeMap a -> Maybe a
+lkT env ty m
+  | EmptyTM <- m = Nothing
+  | otherwise    = go ty m
+  where
+    go ty | Just ty' <- coreView ty = go ty'
+    go (TyVarTy v)       = tm_var    >.> lkVar env v
+    go (AppTy t1 t2)     = tm_app    >.> lkT env t1 >=> lkT env t2
+    go (FunTy t1 t2)     = tm_fun    >.> lkT env t1 >=> lkT env t2
+    go (TyConApp tc tys) = tm_tc_app >.> lkNamed tc >=> lkList (lkT env) tys
+    go (LitTy l)         = tm_tylit  >.> lkTyLit l
+    go (ForAllTy tv ty)  = tm_forall >.> lkT (extendCME env tv) ty >=> lkBndr env tv
+
+
+-----------------
+xtT :: CmEnv -> Type -> XT a -> TypeMap a -> TypeMap a
+xtT env ty f m
+  | EmptyTM <- m            = xtT env ty  f wrapEmptyTypeMap
+  | Just ty' <- coreView ty = xtT env ty' f m
+
+xtT env (TyVarTy v)       f  m = m { tm_var    = tm_var m |> xtVar env v f }
+xtT env (AppTy t1 t2)     f  m = m { tm_app    = tm_app m |> xtT env t1 |>> xtT env t2 f }
+xtT env (FunTy t1 t2)     f  m = m { tm_fun    = tm_fun m |> xtT env t1 |>> xtT env t2 f }
+xtT env (ForAllTy tv ty)  f  m = m { tm_forall = tm_forall m |> xtT (extendCME env tv) ty
+                                                 |>> xtBndr env tv f }
+xtT env (TyConApp tc tys) f  m = m { tm_tc_app = tm_tc_app m |> xtNamed tc
+                                                 |>> xtList (xtT env) tys f }
+xtT _   (LitTy l)         f  m = m { tm_tylit  = tm_tylit m |> xtTyLit l f }
+
+fdT :: (a -> b -> b) -> TypeMap a -> b -> b
+fdT _ EmptyTM = \z -> z
+fdT k m = foldTM k (tm_var m)
+        . foldTM (foldTM k) (tm_app m)
+        . foldTM (foldTM k) (tm_fun m)
+        . foldTM (foldTM k) (tm_tc_app m)
+        . foldTM (foldTM k) (tm_forall m)
+        . foldTyLit k (tm_tylit m)
+
+
+
+------------------------
+data TyLitMap a = TLM { tlm_number :: Map.Map Integer a
+                      , tlm_string :: Map.Map FastString a
+                      }
+
+instance TrieMap TyLitMap where
+   type Key TyLitMap = TyLit
+   emptyTM  = emptyTyLitMap
+   lookupTM = lkTyLit
+   alterTM  = xtTyLit
+   foldTM   = foldTyLit
+   mapTM    = mapTyLit
+
+emptyTyLitMap :: TyLitMap a
+emptyTyLitMap = TLM { tlm_number = Map.empty, tlm_string = Map.empty }
+
+mapTyLit :: (a->b) -> TyLitMap a -> TyLitMap b
+mapTyLit f (TLM { tlm_number = tn, tlm_string = ts })
+  = TLM { tlm_number = Map.map f tn, tlm_string = Map.map f ts }
+
+lkTyLit :: TyLit -> TyLitMap a -> Maybe a
+lkTyLit l =
+  case l of
+    NumTyLit n -> tlm_number >.> Map.lookup n
+    StrTyLit n -> tlm_string >.> Map.lookup n
+
+xtTyLit :: TyLit -> XT a -> TyLitMap a -> TyLitMap a
+xtTyLit l f m =
+  case l of
+    NumTyLit n -> m { tlm_number = tlm_number m |> Map.alter f n }
+    StrTyLit n -> m { tlm_string = tlm_string m |> Map.alter f n }
+
+foldTyLit :: (a -> b -> b) -> TyLitMap a -> b -> b
+foldTyLit l m = flip (Map.foldr l) (tlm_string m)
+              . flip (Map.foldr l) (tlm_number m)
+
+{-
+************************************************************************
+*                                                                      *
+                   Variables
+*                                                                      *
+************************************************************************
+-}
+
+type BoundVar = Int  -- Bound variables are deBruijn numbered
+type BoundVarMap a = IntMap.IntMap a
+
+data CmEnv = CME { cme_next :: BoundVar
+                 , cme_env  :: VarEnv BoundVar }
+
+emptyCME :: CmEnv
+emptyCME = CME { cme_next = 0, cme_env = emptyVarEnv }
+
+extendCME :: CmEnv -> Var -> CmEnv
+extendCME (CME { cme_next = bv, cme_env = env }) v
+  = CME { cme_next = bv+1, cme_env = extendVarEnv env v bv }
+
+extendCMEs :: CmEnv -> [Var] -> CmEnv
+extendCMEs env vs = foldl extendCME env vs
+
+lookupCME :: CmEnv -> Var -> Maybe BoundVar
+lookupCME (CME { cme_env = env }) v = lookupVarEnv env v
+
+--------- Variable binders -------------
+
+-- | A 'BndrMap' is a 'TypeMap' which allows us to distinguish between
+-- binding forms whose binders have different types.  For example,
+-- if we are doing a 'TrieMap' lookup on @\(x :: Int) -> ()@, we should
+-- not pick up an entry in the 'TrieMap' for @\(x :: Bool) -> ()@:
+-- we can disambiguate this by matching on the type (or kind, if this
+-- a binder in a type) of the binder.
+type BndrMap = TypeMap
+
+lkBndr :: CmEnv -> Var -> BndrMap a -> Maybe a
+lkBndr env v m = lkT env (varType v) m
+
+xtBndr :: CmEnv -> Var -> XT a -> BndrMap a -> BndrMap a
+xtBndr env v f = xtT env (varType v) f
+
+--------- Variable occurrence -------------
+data VarMap a = VM { vm_bvar   :: BoundVarMap a  -- Bound variable
+                   , vm_fvar   :: VarEnv a }      -- Free variable
+
+instance TrieMap VarMap where
+   type Key VarMap = Var
+   emptyTM  = VM { vm_bvar = IntMap.empty, vm_fvar = emptyVarEnv }
+   lookupTM = lkVar emptyCME
+   alterTM  = xtVar emptyCME
+   foldTM   = fdVar
+   mapTM    = mapVar
+
+mapVar :: (a->b) -> VarMap a -> VarMap b
+mapVar f (VM { vm_bvar = bv, vm_fvar = fv })
+  = VM { vm_bvar = mapTM f bv, vm_fvar = mapVarEnv f fv }
+
+lkVar :: CmEnv -> Var -> VarMap a -> Maybe a
+lkVar env v
+  | Just bv <- lookupCME env v = vm_bvar >.> lookupTM bv
+  | otherwise                  = vm_fvar >.> lkFreeVar v
+
+xtVar :: CmEnv -> Var -> XT a -> VarMap a -> VarMap a
+xtVar env v f m
+  | Just bv <- lookupCME env v = m { vm_bvar = vm_bvar m |> xtInt bv f }
+  | otherwise                  = m { vm_fvar = vm_fvar m |> xtFreeVar v f }
+
+fdVar :: (a -> b -> b) -> VarMap a -> b -> b
+fdVar k m = foldTM k (vm_bvar m)
+          . foldTM k (vm_fvar m)
+
+lkFreeVar :: Var -> VarEnv a -> Maybe a
+lkFreeVar var env = lookupVarEnv env var
+
+xtFreeVar :: Var -> XT a -> VarEnv a -> VarEnv a
+xtFreeVar v f m = alterVarEnv f m v
+{-
+(c) The University of Glasgow 2006
+(c) The GRASP/AQUA Project, Glasgow University, 1992-1998
+
+
+Desugaring list comprehensions, monad comprehensions and array comprehensions
+-}
+
+--OverlappingInstances is temporary
+{-# LANGUAGE NamedFieldPuns, CPP #-}
+
+module Eta.DeSugar.DsListComp ( dsListComp, dsPArrComp, dsMonadComp ) where
+
+import {-# SOURCE #-} Eta.DeSugar.DsExpr ( dsExpr, dsLExpr, dsLocalBinds )
+
+import Eta.HsSyn.HsSyn
+import Eta.TypeCheck.TcHsSyn
+import Eta.Core.CoreSyn
+import Eta.Core.MkCore
+
+import Eta.DeSugar.DsMonad          -- the monadery used in the desugarer
+import Eta.DeSugar.DsUtils
+
+import Eta.Main.DynFlags
+import Eta.Core.CoreUtils
+import Eta.BasicTypes.Id
+import Eta.Types.Type
+import Eta.Prelude.TysWiredIn
+import Eta.DeSugar.Match
+import Eta.Prelude.PrelNames
+import Eta.BasicTypes.SrcLoc
+import Eta.Utils.Outputable
+import Eta.Utils.FastString
+import Eta.TypeCheck.TcType
+import Eta.Utils.ListSetOps( getNth )
+import Eta.Utils.Util
+
+#include "HsVersions.h"
+
+{-
+List comprehensions may be desugared in one of two ways: ``ordinary''
+(as you would expect if you read SLPJ's book) and ``with foldr/build
+turned on'' (if you read Gill {\em et al.}'s paper on the subject).
+
+There will be at least one ``qualifier'' in the input.
+-}
+
+dsListComp :: [ExprLStmt Id]
+           -> Type              -- Type of entire list
+           -> DsM CoreExpr
+dsListComp lquals res_ty = do
+    dflags <- getDynFlags
+    let quals = map unLoc lquals
+        elt_ty = case tcTyConAppArgs res_ty of
+                   [elt_ty] -> elt_ty
+                   _ -> pprPanic "dsListComp" (ppr res_ty $$ ppr lquals)
+
+    if not (gopt Opt_EnableRewriteRules dflags) || gopt Opt_IgnoreInterfacePragmas dflags
+       -- Either rules are switched off, or we are ignoring what there are;
+       -- Either way foldr/build won't happen, so use the more efficient
+       -- Wadler-style desugaring
+       || isParallelComp quals
+       -- Foldr-style desugaring can't handle parallel list comprehensions
+        then deListComp quals (mkNilExpr elt_ty)
+        else mkBuildExpr elt_ty (\(c, _) (n, _) -> dfListComp c n quals)
+             -- Foldr/build should be enabled, so desugar
+             -- into foldrs and builds
+
+  where
+    -- We must test for ParStmt anywhere, not just at the head, because an extension
+    -- to list comprehensions would be to add brackets to specify the associativity
+    -- of qualifier lists. This is really easy to do by adding extra ParStmts into the
+    -- mix of possibly a single element in length, so we do this to leave the possibility open
+    isParallelComp = any isParallelStmt
+
+    isParallelStmt (ParStmt {}) = True
+    isParallelStmt _            = False
+
+
+-- This function lets you desugar a inner list comprehension and a list of the binders
+-- of that comprehension that we need in the outer comprehension into such an expression
+-- and the type of the elements that it outputs (tuples of binders)
+dsInnerListComp :: (ParStmtBlock Id Id) -> DsM (CoreExpr, Type)
+dsInnerListComp (ParStmtBlock stmts bndrs _)
+  = do { expr <- dsListComp (stmts ++ [noLoc $ mkLastStmt (mkBigLHsVarTupId bndrs)])
+                            (mkListTy bndrs_tuple_type)
+       ; return (expr, bndrs_tuple_type) }
+  where
+    bndrs_tuple_type = mkBigCoreVarTupTy bndrs
+
+-- This function factors out commonality between the desugaring strategies for GroupStmt.
+-- Given such a statement it gives you back an expression representing how to compute the transformed
+-- list and the tuple that you need to bind from that list in order to proceed with your desugaring
+dsTransStmt :: ExprStmt Id -> DsM (CoreExpr, LPat Id)
+dsTransStmt (TransStmt { trS_form = form, trS_stmts = stmts, trS_bndrs = binderMap
+                       , trS_by = by, trS_using = using }) = do
+    let (from_bndrs, to_bndrs) = unzip binderMap
+        from_bndrs_tys  = map idType from_bndrs
+        to_bndrs_tys    = map idType to_bndrs
+        to_bndrs_tup_ty = mkBigCoreTupTy to_bndrs_tys
+
+    -- Desugar an inner comprehension which outputs a list of tuples of the "from" binders
+    (expr, from_tup_ty) <- dsInnerListComp (ParStmtBlock stmts from_bndrs noSyntaxExpr)
+
+    -- Work out what arguments should be supplied to that expression: i.e. is an extraction
+    -- function required? If so, create that desugared function and add to arguments
+    usingExpr' <- dsLExpr using
+    usingArgs <- case by of
+                   Nothing   -> return [expr]
+                   Just by_e -> do { by_e' <- dsLExpr by_e
+                                   ; lam <- matchTuple from_bndrs by_e'
+                                   ; return [lam, expr] }
+
+    -- Create an unzip function for the appropriate arity and element types and find "map"
+    unzip_stuff <- mkUnzipBind form from_bndrs_tys
+    map_id <- dsLookupGlobalId mapName
+
+    -- Generate the expressions to build the grouped list
+    let -- First we apply the grouping function to the inner list
+        inner_list_expr = mkApps usingExpr' usingArgs
+        -- Then we map our "unzip" across it to turn the lists of tuples into tuples of lists
+        -- We make sure we instantiate the type variable "a" to be a list of "from" tuples and
+        -- the "b" to be a tuple of "to" lists!
+        -- Then finally we bind the unzip function around that expression
+        bound_unzipped_inner_list_expr
+          = case unzip_stuff of
+              Nothing -> inner_list_expr
+              Just (unzip_fn, unzip_rhs) -> Let (Rec [(unzip_fn, unzip_rhs)]) $
+                                            mkApps (Var map_id) $
+                                            [ Type (mkListTy from_tup_ty)
+                                            , Type to_bndrs_tup_ty
+                                            , Var unzip_fn
+                                            , inner_list_expr]
+
+    -- Build a pattern that ensures the consumer binds into the NEW binders,
+    -- which hold lists rather than single values
+    let pat = mkBigLHsVarPatTupId to_bndrs
+    return (bound_unzipped_inner_list_expr, pat)
+
+dsTransStmt _ = panic "dsTransStmt: Not given a TransStmt"
+
+{-
+************************************************************************
+*                                                                      *
+\subsection[DsListComp-ordinary]{Ordinary desugaring of list comprehensions}
+*                                                                      *
+************************************************************************
+
+Just as in Phil's chapter~7 in SLPJ, using the rules for
+optimally-compiled list comprehensions.  This is what Kevin followed
+as well, and I quite happily do the same.  The TQ translation scheme
+transforms a list of qualifiers (either boolean expressions or
+generators) into a single expression which implements the list
+comprehension.  Because we are generating 2nd-order polymorphic
+lambda-calculus, calls to NIL and CONS must be applied to a type
+argument, as well as their usual value arguments.
+\begin{verbatim}
+TE << [ e | qs ] >>  =  TQ << [ e | qs ] ++ Nil (typeOf e) >>
+
+(Rule C)
+TQ << [ e | ] ++ L >> = Cons (typeOf e) TE <<e>> TE <<L>>
+
+(Rule B)
+TQ << [ e | b , qs ] ++ L >> =
+    if TE << b >> then TQ << [ e | qs ] ++ L >> else TE << L >>
+
+(Rule A')
+TQ << [ e | p <- L1, qs ]  ++  L2 >> =
+  letrec
+    h = \ u1 ->
+          case u1 of
+            []        ->  TE << L2 >>
+            (u2 : u3) ->
+                  (( \ TE << p >> -> ( TQ << [e | qs]  ++  (h u3) >> )) u2)
+                    [] (h u3)
+  in
+    h ( TE << L1 >> )
+
+"h", "u1", "u2", and "u3" are new variables.
+\end{verbatim}
+
+@deListComp@ is the TQ translation scheme.  Roughly speaking, @dsExpr@
+is the TE translation scheme.  Note that we carry around the @L@ list
+already desugared.  @dsListComp@ does the top TE rule mentioned above.
+
+To the above, we add an additional rule to deal with parallel list
+comprehensions.  The translation goes roughly as follows:
+     [ e | p1 <- e11, let v1 = e12, p2 <- e13
+         | q1 <- e21, let v2 = e22, q2 <- e23]
+     =>
+     [ e | ((x1, .., xn), (y1, ..., ym)) <-
+               zip [(x1,..,xn) | p1 <- e11, let v1 = e12, p2 <- e13]
+                   [(y1,..,ym) | q1 <- e21, let v2 = e22, q2 <- e23]]
+where (x1, .., xn) are the variables bound in p1, v1, p2
+      (y1, .., ym) are the variables bound in q1, v2, q2
+
+In the translation below, the ParStmt branch translates each parallel branch
+into a sub-comprehension, and desugars each independently.  The resulting lists
+are fed to a zip function, we create a binding for all the variables bound in all
+the comprehensions, and then we hand things off the the desugarer for bindings.
+The zip function is generated here a) because it's small, and b) because then we
+don't have to deal with arbitrary limits on the number of zip functions in the
+prelude, nor which library the zip function came from.
+The introduced tuples are Boxed, but only because I couldn't get it to work
+with the Unboxed variety.
+-}
+
+deListComp :: [ExprStmt Id] -> CoreExpr -> DsM CoreExpr
+
+deListComp [] _ = panic "deListComp"
+
+deListComp (LastStmt body _ _ : quals) list
+  =     -- Figure 7.4, SLPJ, p 135, rule C above
+    ASSERT( null quals )
+    do { core_body <- dsLExpr body
+       ; return (mkConsExpr (exprType core_body) core_body list) }
+
+        -- Non-last: must be a guard
+deListComp (BodyStmt guard _ _ _ : quals) list = do  -- rule B above
+    core_guard <- dsLExpr guard
+    core_rest <- deListComp quals list
+    return (mkIfThenElse core_guard core_rest list)
+
+-- [e | let B, qs] = let B in [e | qs]
+deListComp (LetStmt binds : quals) list = do
+    core_rest <- deListComp quals list
+    dsLocalBinds binds core_rest
+
+deListComp (stmt@(TransStmt {}) : quals) list = do
+    (inner_list_expr, pat) <- dsTransStmt stmt
+    deBindComp pat inner_list_expr quals list
+
+deListComp (BindStmt pat list1 _ _ : quals) core_list2 = do -- rule A' above
+    core_list1 <- dsLExpr list1
+    deBindComp pat core_list1 quals core_list2
+
+deListComp (ParStmt stmtss_w_bndrs _ _ : quals) list
+  = do { exps_and_qual_tys <- mapM dsInnerListComp stmtss_w_bndrs
+       ; let (exps, qual_tys) = unzip exps_and_qual_tys
+
+       ; (zip_fn, zip_rhs) <- mkZipBind qual_tys
+
+        -- Deal with [e | pat <- zip l1 .. ln] in example above
+       ; deBindComp pat (Let (Rec [(zip_fn, zip_rhs)]) (mkApps (Var zip_fn) exps))
+                    quals list }
+  where
+        bndrs_s = [bs | ParStmtBlock _ bs _ <- stmtss_w_bndrs]
+
+        -- pat is the pattern ((x1,..,xn), (y1,..,ym)) in the example above
+        pat  = mkBigLHsPatTupId pats
+        pats = map mkBigLHsVarPatTupId bndrs_s
+
+deListComp (RecStmt {} : _) _ = panic "deListComp RecStmt"
+
+deListComp (ApplicativeStmt {} : _) _ =
+  panic "deListComp ApplicativeStmt"
+
+deBindComp :: OutPat Id
+           -> CoreExpr
+           -> [ExprStmt Id]
+           -> CoreExpr
+           -> DsM (Expr Id)
+deBindComp pat core_list1 quals core_list2 = do
+    let
+        u3_ty@u1_ty = exprType core_list1       -- two names, same thing
+
+        -- u1_ty is a [alpha] type, and u2_ty = alpha
+        u2_ty = hsLPatType pat
+
+        res_ty = exprType core_list2
+        h_ty   = u1_ty `mkFunTy` res_ty
+
+    [h, u1, u2, u3] <- newSysLocalsDs [h_ty, u1_ty, u2_ty, u3_ty]
+
+    -- the "fail" value ...
+    let
+        core_fail   = App (Var h) (Var u3)
+        letrec_body = App (Var h) core_list1
+
+    rest_expr <- deListComp quals core_fail
+    core_match <- matchSimply (Var u2) (StmtCtxt ListComp) pat rest_expr core_fail
+
+    let
+        rhs = Lam u1 $
+              Case (Var u1) u1 res_ty
+                   [(DataAlt nilDataCon,  [],       core_list2),
+                    (DataAlt consDataCon, [u2, u3], core_match)]
+                        -- Increasing order of tag
+
+    return (Let (Rec [(h, rhs)]) letrec_body)
+
+{-
+************************************************************************
+*                                                                      *
+\subsection[DsListComp-foldr-build]{Foldr/Build desugaring of list comprehensions}
+*                                                                      *
+************************************************************************
+
+@dfListComp@ are the rules used with foldr/build turned on:
+
+\begin{verbatim}
+TE[ e | ]            c n = c e n
+TE[ e | b , q ]      c n = if b then TE[ e | q ] c n else n
+TE[ e | p <- l , q ] c n = let
+                                f = \ x b -> case x of
+                                                  p -> TE[ e | q ] c b
+                                                  _ -> b
+                           in
+                           foldr f n l
+\end{verbatim}
+-}
+
+dfListComp :: Id -> Id      -- 'c' and 'n'
+        -> [ExprStmt Id]    -- the rest of the qual's
+        -> DsM CoreExpr
+
+dfListComp _ _ [] = panic "dfListComp"
+
+dfListComp c_id n_id (LastStmt body _ _ : quals)
+  = ASSERT( null quals )
+    do { core_body <- dsLExpr body
+       ; return (mkApps (Var c_id) [core_body, Var n_id]) }
+
+        -- Non-last: must be a guard
+dfListComp c_id n_id (BodyStmt guard _ _ _  : quals) = do
+    core_guard <- dsLExpr guard
+    core_rest <- dfListComp c_id n_id quals
+    return (mkIfThenElse core_guard core_rest (Var n_id))
+
+dfListComp c_id n_id (LetStmt binds : quals) = do
+    -- new in 1.3, local bindings
+    core_rest <- dfListComp c_id n_id quals
+    dsLocalBinds binds core_rest
+
+dfListComp c_id n_id (stmt@(TransStmt {}) : quals) = do
+    (inner_list_expr, pat) <- dsTransStmt stmt
+    -- Anyway, we bind the newly grouped list via the generic binding function
+    dfBindComp c_id n_id (pat, inner_list_expr) quals
+
+dfListComp c_id n_id (BindStmt pat list1 _ _ : quals) = do
+    -- evaluate the two lists
+    core_list1 <- dsLExpr list1
+
+    -- Do the rest of the work in the generic binding builder
+    dfBindComp c_id n_id (pat, core_list1) quals
+
+dfListComp _ _ (ParStmt {} : _) = panic "dfListComp ParStmt"
+dfListComp _ _ (RecStmt {} : _) = panic "dfListComp RecStmt"
+dfListComp _ _ (ApplicativeStmt {} : _) =
+  panic "dfListComp ApplicativeStmt"
+
+dfBindComp :: Id -> Id          -- 'c' and 'n'
+           -> (LPat Id, CoreExpr)
+           -> [ExprStmt Id]     -- the rest of the qual's
+           -> DsM CoreExpr
+dfBindComp c_id n_id (pat, core_list1) quals = do
+    -- find the required type
+    let x_ty   = hsLPatType pat
+        b_ty   = idType n_id
+
+    -- create some new local id's
+    [b, x] <- newSysLocalsDs [b_ty, x_ty]
+
+    -- build rest of the comprehesion
+    core_rest <- dfListComp c_id b quals
+
+    -- build the pattern match
+    core_expr <- matchSimply (Var x) (StmtCtxt ListComp)
+                pat core_rest (Var b)
+
+    -- now build the outermost foldr, and return
+    mkFoldrExpr x_ty b_ty (mkLams [x, b] core_expr) (Var n_id) core_list1
+
+{-
+************************************************************************
+*                                                                      *
+\subsection[DsFunGeneration]{Generation of zip/unzip functions for use in desugaring}
+*                                                                      *
+************************************************************************
+-}
+
+mkZipBind :: [Type] -> DsM (Id, CoreExpr)
+-- mkZipBind [t1, t2]
+-- = (zip, \as1:[t1] as2:[t2]
+--         -> case as1 of
+--              [] -> []
+--              (a1:as'1) -> case as2 of
+--                              [] -> []
+--                              (a2:as'2) -> (a1, a2) : zip as'1 as'2)]
+
+mkZipBind elt_tys = do
+    ass  <- mapM newSysLocalDs  elt_list_tys
+    as'  <- mapM newSysLocalDs  elt_tys
+    as's <- mapM newSysLocalDs  elt_list_tys
+
+    zip_fn <- newSysLocalDs zip_fn_ty
+
+    let inner_rhs = mkConsExpr elt_tuple_ty
+                        (mkBigCoreVarTup as')
+                        (mkVarApps (Var zip_fn) as's)
+        zip_body  = foldr mk_case inner_rhs (zip3 ass as' as's)
+
+    return (zip_fn, mkLams ass zip_body)
+  where
+    elt_list_tys      = map mkListTy elt_tys
+    elt_tuple_ty      = mkBigCoreTupTy elt_tys
+    elt_tuple_list_ty = mkListTy elt_tuple_ty
+
+    zip_fn_ty         = mkFunTys elt_list_tys elt_tuple_list_ty
+
+    mk_case (as, a', as') rest
+          = Case (Var as) as elt_tuple_list_ty
+                  [(DataAlt nilDataCon,  [],        mkNilExpr elt_tuple_ty),
+                   (DataAlt consDataCon, [a', as'], rest)]
+                        -- Increasing order of tag
+
+
+mkUnzipBind :: TransForm -> [Type] -> DsM (Maybe (Id, CoreExpr))
+-- mkUnzipBind [t1, t2]
+-- = (unzip, \ys :: [(t1, t2)] -> foldr (\ax :: (t1, t2) axs :: ([t1], [t2])
+--     -> case ax of
+--      (x1, x2) -> case axs of
+--                (xs1, xs2) -> (x1 : xs1, x2 : xs2))
+--      ([], [])
+--      ys)
+--
+-- We use foldr here in all cases, even if rules are turned off, because we may as well!
+mkUnzipBind ThenForm _
+ = return Nothing    -- No unzipping for ThenForm
+mkUnzipBind _ elt_tys
+  = do { ax  <- newSysLocalDs elt_tuple_ty
+       ; axs <- newSysLocalDs elt_list_tuple_ty
+       ; ys  <- newSysLocalDs elt_tuple_list_ty
+       ; xs  <- mapM newSysLocalDs elt_tys
+       ; xss <- mapM newSysLocalDs elt_list_tys
+
+       ; unzip_fn <- newSysLocalDs unzip_fn_ty
+
+       ; [us1, us2] <- sequence [newUniqueSupply, newUniqueSupply]
+
+       ; let nil_tuple = mkBigCoreTup (map mkNilExpr elt_tys)
+             concat_expressions = map mkConcatExpression (zip3 elt_tys (map Var xs) (map Var xss))
+             tupled_concat_expression = mkBigCoreTup concat_expressions
+
+             folder_body_inner_case = mkTupleCase us1 xss tupled_concat_expression axs (Var axs)
+             folder_body_outer_case = mkTupleCase us2 xs folder_body_inner_case ax (Var ax)
+             folder_body = mkLams [ax, axs] folder_body_outer_case
+
+       ; unzip_body <- mkFoldrExpr elt_tuple_ty elt_list_tuple_ty folder_body nil_tuple (Var ys)
+       ; return (Just (unzip_fn, mkLams [ys] unzip_body)) }
+  where
+    elt_tuple_ty       = mkBigCoreTupTy elt_tys
+    elt_tuple_list_ty  = mkListTy elt_tuple_ty
+    elt_list_tys       = map mkListTy elt_tys
+    elt_list_tuple_ty  = mkBigCoreTupTy elt_list_tys
+
+    unzip_fn_ty        = elt_tuple_list_ty `mkFunTy` elt_list_tuple_ty
+
+    mkConcatExpression (list_element_ty, head, tail) = mkConsExpr list_element_ty head tail
+
+{-
+************************************************************************
+*                                                                      *
+\subsection[DsPArrComp]{Desugaring of array comprehensions}
+*                                                                      *
+************************************************************************
+-}
+
+-- entry point for desugaring a parallel array comprehension
+--
+--   [:e | qss:] = <<[:e | qss:]>> () [:():]
+--
+dsPArrComp :: [ExprStmt Id]
+            -> DsM CoreExpr
+
+-- Special case for parallel comprehension
+dsPArrComp (ParStmt qss _ _ : quals) = dePArrParComp qss quals
+
+-- Special case for simple generators:
+--
+--  <<[:e' | p <- e, qs:]>> = <<[: e' | qs :]>> p e
+--
+-- if matching again p cannot fail, or else
+--
+--  <<[:e' | p <- e, qs:]>> =
+--    <<[:e' | qs:]>> p (filterP (\x -> case x of {p -> True; _ -> False}) e)
+--
+dsPArrComp (BindStmt p e _ _ : qs) = do
+    filterP <- dsDPHBuiltin filterPVar
+    ce <- dsLExpr e
+    let ety'ce  = parrElemType ce
+        false   = Var falseDataConId
+        true    = Var trueDataConId
+    v <- newSysLocalDs ety'ce
+    pred <- matchSimply (Var v) (StmtCtxt PArrComp) p true false
+    let gen | isIrrefutableHsPat p = ce
+            | otherwise            = mkApps (Var filterP) [Type ety'ce, mkLams [v] pred, ce]
+    dePArrComp qs p gen
+
+dsPArrComp qs = do -- no ParStmt in `qs'
+    sglP <- dsDPHBuiltin singletonPVar
+    let unitArray = mkApps (Var sglP) [Type unitTy, mkCoreTup []]
+    dePArrComp qs (noLoc $ WildPat unitTy) unitArray
+
+
+
+-- the work horse
+--
+dePArrComp :: [ExprStmt Id]
+           -> LPat Id           -- the current generator pattern
+           -> CoreExpr          -- the current generator expression
+           -> DsM CoreExpr
+
+dePArrComp [] _ _ = panic "dePArrComp"
+
+--
+--  <<[:e' | :]>> pa ea = mapP (\pa -> e') ea
+--
+dePArrComp (LastStmt e' _ _ : quals) pa cea
+  = ASSERT( null quals )
+    do { mapP <- dsDPHBuiltin mapPVar
+       ; let ty = parrElemType cea
+       ; (clam, ty'e') <- deLambda ty pa e'
+       ; return $ mkApps (Var mapP) [Type ty, Type ty'e', clam, cea] }
+--
+--  <<[:e' | b, qs:]>> pa ea = <<[:e' | qs:]>> pa (filterP (\pa -> b) ea)
+--
+dePArrComp (BodyStmt b _ _ _ : qs) pa cea = do
+    filterP <- dsDPHBuiltin filterPVar
+    let ty = parrElemType cea
+    (clam,_) <- deLambda ty pa b
+    dePArrComp qs pa (mkApps (Var filterP) [Type ty, clam, cea])
+
+--
+--  <<[:e' | p <- e, qs:]>> pa ea =
+--    let ef = \pa -> e
+--    in
+--    <<[:e' | qs:]>> (pa, p) (crossMap ea ef)
+--
+-- if matching again p cannot fail, or else
+--
+--  <<[:e' | p <- e, qs:]>> pa ea =
+--    let ef = \pa -> filterP (\x -> case x of {p -> True; _ -> False}) e
+--    in
+--    <<[:e' | qs:]>> (pa, p) (crossMapP ea ef)
+--
+dePArrComp (BindStmt p e _ _ : qs) pa cea = do
+    filterP <- dsDPHBuiltin filterPVar
+    crossMapP <- dsDPHBuiltin crossMapPVar
+    ce <- dsLExpr e
+    let ety'cea = parrElemType cea
+        ety'ce  = parrElemType ce
+        false   = Var falseDataConId
+        true    = Var trueDataConId
+    v <- newSysLocalDs ety'ce
+    pred <- matchSimply (Var v) (StmtCtxt PArrComp) p true false
+    let cef | isIrrefutableHsPat p = ce
+            | otherwise            = mkApps (Var filterP) [Type ety'ce, mkLams [v] pred, ce]
+    (clam, _) <- mkLambda ety'cea pa cef
+    let ety'cef = ety'ce                    -- filter doesn't change the element type
+        pa'     = mkLHsPatTup [pa, p]
+
+    dePArrComp qs pa' (mkApps (Var crossMapP)
+                                 [Type ety'cea, Type ety'cef, cea, clam])
+--
+--  <<[:e' | let ds, qs:]>> pa ea =
+--    <<[:e' | qs:]>> (pa, (x_1, ..., x_n))
+--                    (mapP (\v@pa -> let ds in (v, (x_1, ..., x_n))) ea)
+--  where
+--    {x_1, ..., x_n} = DV (ds)         -- Defined Variables
+--
+dePArrComp (LetStmt ds : qs) pa cea = do
+    mapP <- dsDPHBuiltin mapPVar
+    let xs     = collectLocalBinders ds
+        ty'cea = parrElemType cea
+    v <- newSysLocalDs ty'cea
+    clet <- dsLocalBinds ds (mkCoreTup (map Var xs))
+    let'v <- newSysLocalDs (exprType clet)
+    let projBody = mkCoreLet (NonRec let'v clet) $
+                   mkCoreTup [Var v, Var let'v]
+        errTy    = exprType projBody
+        errMsg   = ptext (sLit "DsListComp.dePArrComp: internal error!")
+    cerr <- mkErrorAppDs pAT_ERROR_ID errTy errMsg
+    ccase <- matchSimply (Var v) (StmtCtxt PArrComp) pa projBody cerr
+    let pa'    = mkLHsPatTup [pa, mkLHsPatTup (map nlVarPat xs)]
+        proj   = mkLams [v] ccase
+    dePArrComp qs pa' (mkApps (Var mapP)
+                                   [Type ty'cea, Type errTy, proj, cea])
+--
+-- The parser guarantees that parallel comprehensions can only appear as
+-- singleton qualifier lists, which we already special case in the caller.
+-- So, encountering one here is a bug.
+--
+dePArrComp (ParStmt {} : _) _ _ =
+  panic "DsListComp.dePArrComp: malformed comprehension AST: ParStmt"
+dePArrComp (TransStmt {} : _) _ _ = panic "DsListComp.dePArrComp: TransStmt"
+dePArrComp (RecStmt   {} : _) _ _ = panic "DsListComp.dePArrComp: RecStmt"
+dePArrComp (ApplicativeStmt   {} : _) _ _ =
+  panic "DsListComp.dePArrComp: ApplicativeStmt"
+
+--  <<[:e' | qs | qss:]>> pa ea =
+--    <<[:e' | qss:]>> (pa, (x_1, ..., x_n))
+--                     (zipP ea <<[:(x_1, ..., x_n) | qs:]>>)
+--    where
+--      {x_1, ..., x_n} = DV (qs)
+--
+dePArrParComp :: [ParStmtBlock Id Id] -> [ExprStmt Id] -> DsM CoreExpr
+dePArrParComp qss quals = do
+    (pQss, ceQss) <- deParStmt qss
+    dePArrComp quals pQss ceQss
+  where
+    deParStmt []             =
+      -- empty parallel statement lists have no source representation
+      panic "DsListComp.dePArrComp: Empty parallel list comprehension"
+    deParStmt (ParStmtBlock qs xs _:qss) = do        -- first statement
+      let res_expr = mkLHsVarTuple xs
+      cqs <- dsPArrComp (map unLoc qs ++ [mkLastStmt res_expr])
+      parStmts qss (mkLHsVarPatTup xs) cqs
+    ---
+    parStmts []             pa cea = return (pa, cea)
+    parStmts (ParStmtBlock qs xs _:qss) pa cea = do  -- subsequent statements (zip'ed)
+      zipP <- dsDPHBuiltin zipPVar
+      let pa'      = mkLHsPatTup [pa, mkLHsVarPatTup xs]
+          ty'cea   = parrElemType cea
+          res_expr = mkLHsVarTuple xs
+      cqs <- dsPArrComp (map unLoc qs ++ [mkLastStmt res_expr])
+      let ty'cqs = parrElemType cqs
+          cea'   = mkApps (Var zipP) [Type ty'cea, Type ty'cqs, cea, cqs]
+      parStmts qss pa' cea'
+
+-- generate Core corresponding to `\p -> e'
+--
+deLambda :: Type                        -- type of the argument
+          -> LPat Id                    -- argument pattern
+          -> LHsExpr Id                 -- body
+          -> DsM (CoreExpr, Type)
+deLambda ty p e =
+    mkLambda ty p =<< dsLExpr e
+
+-- generate Core for a lambda pattern match, where the body is already in Core
+--
+mkLambda :: Type                        -- type of the argument
+         -> LPat Id                     -- argument pattern
+         -> CoreExpr                    -- desugared body
+         -> DsM (CoreExpr, Type)
+mkLambda ty p ce = do
+    v <- newSysLocalDs ty
+    let errMsg = ptext (sLit "DsListComp.deLambda: internal error!")
+        ce'ty  = exprType ce
+    cerr <- mkErrorAppDs pAT_ERROR_ID ce'ty errMsg
+    res <- matchSimply (Var v) (StmtCtxt PArrComp) p ce cerr
+    return (mkLams [v] res, ce'ty)
+
+-- obtain the element type of the parallel array produced by the given Core
+-- expression
+--
+parrElemType   :: CoreExpr -> Type
+parrElemType e  =
+  case splitTyConApp_maybe (exprType e) of
+    Just (tycon, [ty]) | tycon == parrTyCon -> ty
+    _                                                     -> panic
+      "DsListComp.parrElemType: not a parallel array type"
+
+-- Translation for monad comprehensions
+
+-- Entry point for monad comprehension desugaring
+dsMonadComp :: [ExprLStmt Id] -> DsM CoreExpr
+dsMonadComp stmts = dsMcStmts stmts
+
+dsMcStmts :: [ExprLStmt Id] -> DsM CoreExpr
+dsMcStmts []                    = panic "dsMcStmts"
+dsMcStmts (L loc stmt : lstmts) = putSrcSpanDs loc (dsMcStmt stmt lstmts)
+
+---------------
+dsMcStmt :: ExprStmt Id -> [ExprLStmt Id] -> DsM CoreExpr
+
+dsMcStmt (LastStmt body _ ret_op) stmts
+  = ASSERT( null stmts )
+    do { body' <- dsLExpr body
+       ; ret_op' <- dsExpr ret_op
+       ; return (App ret_op' body') }
+
+--   [ .. | let binds, stmts ]
+dsMcStmt (LetStmt binds) stmts
+  = do { rest <- dsMcStmts stmts
+       ; dsLocalBinds binds rest }
+
+--   [ .. | a <- m, stmts ]
+dsMcStmt (BindStmt pat rhs bind_op fail_op) stmts
+  = do { rhs' <- dsLExpr rhs
+       ; dsMcBindStmt pat rhs' bind_op fail_op stmts }
+
+-- Apply `guard` to the `exp` expression
+--
+--   [ .. | exp, stmts ]
+--
+dsMcStmt (BodyStmt exp then_exp guard_exp _) stmts
+  = do { exp'       <- dsLExpr exp
+       ; guard_exp' <- dsExpr guard_exp
+       ; then_exp'  <- dsExpr then_exp
+       ; rest       <- dsMcStmts stmts
+       ; return $ mkApps then_exp' [ mkApps guard_exp' [exp']
+                                   , rest ] }
+
+-- Group statements desugar like this:
+--
+--   [| (q, then group by e using f); rest |]
+--   --->  f {qt} (\qv -> e) [| q; return qv |] >>= \ n_tup ->
+--         case unzip n_tup of qv' -> [| rest |]
+--
+-- where   variables (v1:t1, ..., vk:tk) are bound by q
+--         qv = (v1, ..., vk)
+--         qt = (t1, ..., tk)
+--         (>>=) :: m2 a -> (a -> m3 b) -> m3 b
+--         f :: forall a. (a -> t) -> m1 a -> m2 (n a)
+--         n_tup :: n qt
+--         unzip :: n qt -> (n t1, ..., n tk)    (needs Functor n)
+
+dsMcStmt (TransStmt { trS_stmts = stmts, trS_bndrs = bndrs
+                    , trS_by = by, trS_using = using
+                    , trS_ret = return_op, trS_bind = bind_op
+                    , trS_fmap = fmap_op, trS_form = form }) stmts_rest
+  = do { let (from_bndrs, to_bndrs) = unzip bndrs
+             from_bndr_tys          = map idType from_bndrs     -- Types ty
+
+       -- Desugar an inner comprehension which outputs a list of tuples of the "from" binders
+       ; expr <- dsInnerMonadComp stmts from_bndrs return_op
+
+       -- Work out what arguments should be supplied to that expression: i.e. is an extraction
+       -- function required? If so, create that desugared function and add to arguments
+       ; usingExpr' <- dsLExpr using
+       ; usingArgs <- case by of
+                        Nothing   -> return [expr]
+                        Just by_e -> do { by_e' <- dsLExpr by_e
+                                        ; lam <- matchTuple from_bndrs by_e'
+                                        ; return [lam, expr] }
+
+       -- Generate the expressions to build the grouped list
+       -- Build a pattern that ensures the consumer binds into the NEW binders,
+       -- which hold monads rather than single values
+       ; bind_op' <- dsExpr bind_op
+       ; let bind_ty  = exprType bind_op'    -- m2 (n (a,b,c)) -> (n (a,b,c) -> r1) -> r2
+             n_tup_ty = funArgTy $ funArgTy $ funResultTy bind_ty   -- n (a,b,c)
+             tup_n_ty = mkBigCoreVarTupTy to_bndrs
+
+       ; body       <- dsMcStmts stmts_rest
+       ; n_tup_var  <- newSysLocalDs n_tup_ty
+       ; tup_n_var  <- newSysLocalDs tup_n_ty
+       ; tup_n_expr <- mkMcUnzipM form fmap_op n_tup_var from_bndr_tys
+       ; us         <- newUniqueSupply
+       ; let rhs'  = mkApps usingExpr' usingArgs
+             body' = mkTupleCase us to_bndrs body tup_n_var tup_n_expr
+
+       ; return (mkApps bind_op' [rhs', Lam n_tup_var body']) }
+
+-- Parallel statements. Use `Control.Monad.Zip.mzip` to zip parallel
+-- statements, for example:
+--
+--   [ body | qs1 | qs2 | qs3 ]
+--     ->  [ body | (bndrs1, (bndrs2, bndrs3))
+--                     <- [bndrs1 | qs1] `mzip` ([bndrs2 | qs2] `mzip` [bndrs3 | qs3]) ]
+--
+-- where `mzip` has type
+--   mzip :: forall a b. m a -> m b -> m (a,b)
+-- NB: we need a polymorphic mzip because we call it several times
+
+dsMcStmt (ParStmt blocks mzip_op bind_op) stmts_rest
+ = do  { exps_w_tys  <- mapM ds_inner blocks   -- Pairs (exp :: m ty, ty)
+       ; mzip_op'    <- dsExpr mzip_op
+
+       ; let -- The pattern variables
+             pats = [ mkBigLHsVarPatTupId bs | ParStmtBlock _ bs _ <- blocks]
+             -- Pattern with tuples of variables
+             -- [v1,v2,v3]  =>  (v1, (v2, v3))
+             pat = foldr1 (\p1 p2 -> mkLHsPatTup [p1, p2]) pats
+             (rhs, _) = foldr1 (\(e1,t1) (e2,t2) ->
+                                 (mkApps mzip_op' [Type t1, Type t2, e1, e2],
+                                  mkBoxedTupleTy [t1,t2]))
+                               exps_w_tys
+
+       ; dsMcBindStmt pat rhs bind_op noSyntaxExpr stmts_rest }
+  where
+    ds_inner (ParStmtBlock stmts bndrs return_op)
+       = do { exp <- dsInnerMonadComp stmts bndrs return_op
+            ; return (exp, mkBigCoreVarTupTy bndrs) }
+
+dsMcStmt stmt _ = pprPanic "dsMcStmt: unexpected stmt" (ppr stmt)
+
+
+matchTuple :: [Id] -> CoreExpr -> DsM CoreExpr
+-- (matchTuple [a,b,c] body)
+--       returns the Core term
+--  \x. case x of (a,b,c) -> body
+matchTuple ids body
+  = do { us <- newUniqueSupply
+       ; tup_id <- newSysLocalDs (mkBigCoreVarTupTy ids)
+       ; return (Lam tup_id $ mkTupleCase us ids body tup_id (Var tup_id)) }
+
+-- general `rhs' >>= \pat -> stmts` desugaring where `rhs'` is already a
+-- desugared `CoreExpr`
+dsMcBindStmt :: LPat Id
+             -> CoreExpr        -- ^ the desugared rhs of the bind statement
+             -> SyntaxExpr Id
+             -> SyntaxExpr Id
+             -> [ExprLStmt Id]
+             -> DsM CoreExpr
+dsMcBindStmt pat rhs' bind_op fail_op stmts
+  = do  { body     <- dsMcStmts stmts
+        ; bind_op' <- dsExpr bind_op
+        ; var      <- selectSimpleMatchVarL pat
+        ; let bind_ty = exprType bind_op'       -- rhs -> (pat -> res1) -> res2
+              res1_ty = funResultTy (funArgTy (funResultTy bind_ty))
+        ; match <- matchSinglePat (Var var) (StmtCtxt DoExpr) pat
+                                  res1_ty (cantFailMatchResult body)
+        ; match_code <- handle_failure pat match fail_op
+        ; return (mkApps bind_op' [rhs', Lam var match_code]) }
+
+  where
+    -- In a monad comprehension expression, pattern-match failure just calls
+    -- the monadic `fail` rather than throwing an exception
+    handle_failure pat match fail_op
+      | matchCanFail match
+        = do { fail_op' <- dsExpr fail_op
+             ; dflags <- getDynFlags
+             ; fail_msg <- mkStringExpr (mk_fail_msg dflags pat)
+             ; extractMatchResult match (App fail_op' fail_msg) }
+      | otherwise
+        = extractMatchResult match (error "It can't fail")
+
+    mk_fail_msg :: DynFlags -> Located e -> String
+    mk_fail_msg dflags pat
+        = "Pattern match failure in monad comprehension at " ++
+          showPpr dflags (getLoc pat)
+
+-- Desugar nested monad comprehensions, for example in `then..` constructs
+--    dsInnerMonadComp quals [a,b,c] ret_op
+-- returns the desugaring of
+--       [ (a,b,c) | quals ]
+
+dsInnerMonadComp :: [ExprLStmt Id]
+                 -> [Id]        -- Return a tuple of these variables
+                 -> HsExpr Id   -- The monomorphic "return" operator
+                 -> DsM CoreExpr
+dsInnerMonadComp stmts bndrs ret_op
+  = dsMcStmts (stmts ++ [noLoc (LastStmt (mkBigLHsVarTupId bndrs) False ret_op)])
+
+-- The `unzip` function for `GroupStmt` in a monad comprehensions
+--
+--   unzip :: m (a,b,..) -> (m a,m b,..)
+--   unzip m_tuple = ( liftM selN1 m_tuple
+--                   , liftM selN2 m_tuple
+--                   , .. )
+--
+--   mkMcUnzipM fmap ys [t1, t2]
+--     = ( fmap (selN1 :: (t1, t2) -> t1) ys
+--       , fmap (selN2 :: (t1, t2) -> t2) ys )
+
+mkMcUnzipM :: TransForm
+           -> SyntaxExpr TcId   -- fmap
+           -> Id                -- Of type n (a,b,c)
+           -> [Type]            -- [a,b,c]
+           -> DsM CoreExpr      -- Of type (n a, n b, n c)
+mkMcUnzipM ThenForm _ ys _
+  = return (Var ys) -- No unzipping to do
+
+mkMcUnzipM _ fmap_op ys elt_tys
+  = do { fmap_op' <- dsExpr fmap_op
+       ; xs       <- mapM newSysLocalDs elt_tys
+       ; let tup_ty = mkBigCoreTupTy elt_tys
+       ; tup_xs   <- newSysLocalDs tup_ty
+
+       ; let mk_elt i = mkApps fmap_op'  -- fmap :: forall a b. (a -> b) -> n a -> n b
+                           [ Type tup_ty, Type (getNth elt_tys i)
+                           , mk_sel i, Var ys]
+
+             mk_sel n = Lam tup_xs $
+                        mkTupleSelector xs (getNth xs n) tup_xs (Var tup_xs)
+
+       ; return (mkBigCoreTup (map mk_elt [0..length elt_tys - 1])) }

@@ -1,0 +1,124 @@
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE LambdaCase    #-}
+{-# LANGUAGE Rank2Types    #-}
+{-# LANGUAGE TypeFamilies  #-}
+
+module Pos.Binary.Limit
+       ( Limit (..)
+       , (<+>)
+       , mlBool
+       , mlMaybe
+       , mlEither
+       , mlTuple
+       , mlTriple
+       , vectorOf
+       , vectorOfNE
+       ) where
+
+import           Universum
+
+-- | A limit on the length of something (in bytes).
+--   TODO should check for overflow in the Num instance.
+--   Although, if the limit is anywhere near maxBound :: Word32 then something
+--   is almost certainly amiss.
+newtype Limit t = Limit { getLimit :: Word32 }
+    deriving (Eq, Ord, Show, Num, Enum, Real, Integral)
+
+instance Functor Limit where
+    fmap _ (Limit x) = Limit x
+
+-- TODO: use <*> instead of <+>
+infixl 4 <+>
+(<+>) :: Limit (a -> b) -> Limit a -> Limit b
+Limit x <+> Limit y = Limit $ x + y
+
+mlBool :: Limit Bool
+mlBool = 1
+
+mlMaybe :: Limit a -> Limit (Maybe a)
+mlMaybe lim = Just <$> lim + 1
+
+mlEither :: Limit a -> Limit b -> Limit (Either a b)
+mlEither limA limB = 1 + max (Left <$> limA) (Right <$> limB)
+
+mlTuple :: Limit a -> Limit b -> Limit (a, b)
+mlTuple limA limB = (,) <$> limA <+> limB
+
+mlTriple :: Limit a -> Limit b -> Limit c -> Limit (a, b, c)
+mlTriple limA limB limC = (,,) <$> limA <+> limB <+> limC
+
+-- | Given a limit for a list item, generate limit for a list with N elements
+vectorOf :: Int -> Limit l -> Limit [l]
+vectorOf k (Limit x) =
+    Limit $ encodedListLength + x * (fromIntegral k)
+  where
+    -- should be enough for most reasonable cases
+    -- FIXME this is silly.
+    -- Better solution: never read in an arbitrary-length structure from the
+    -- network. If you want a list, read in one item at a time.
+    encodedListLength = 20
+
+vectorOfNE :: Int -> Limit l -> Limit (NonEmpty l)
+vectorOfNE k (Limit x) =
+    Limit $ encodedListLength + x * (fromIntegral k)
+  where
+    encodedListLength = 20
+{-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
+module Main (main) where
+
+import Data.List ( nub, sortBy )
+import Data.Ord ( comparing )
+import Distribution.Package ( PackageId, InstalledPackageId, packageVersion, packageName )
+import Distribution.PackageDescription ( PackageDescription(), Executable(..) )
+import Distribution.InstalledPackageInfo (sourcePackageId, installedPackageId)
+import Distribution.Simple ( defaultMainWithHooks, UserHooks(..), simpleUserHooks )
+import Distribution.Simple.Utils ( rewriteFile, createDirectoryIfMissingVerbose )
+import Distribution.Simple.BuildPaths ( autogenModulesDir )
+import Distribution.Simple.PackageIndex (allPackages, dependencyClosure)
+import Distribution.Simple.Setup ( BuildFlags(buildVerbosity), fromFlag )
+import Distribution.Simple.LocalBuildInfo ( installedPkgs, withLibLBI, withExeLBI, LocalBuildInfo(), ComponentLocalBuildInfo(componentPackageDeps) )
+import Distribution.Types.PackageName (PackageName, unPackageName)
+import Distribution.Types.UnqualComponentName (unUnqualComponentName)
+import Distribution.Verbosity ( Verbosity )
+import Distribution.Version ( showVersion )
+import System.FilePath ( (</>) )
+
+main :: IO ()
+main = defaultMainWithHooks simpleUserHooks
+  { buildHook = \pkg lbi hooks flags -> do
+     generateBuildModule (fromFlag (buildVerbosity flags)) pkg lbi
+     buildHook simpleUserHooks pkg lbi hooks flags
+  }
+
+generateBuildModule :: Verbosity -> PackageDescription -> LocalBuildInfo -> IO ()
+generateBuildModule verbosity pkg lbi = do
+  let dir = autogenModulesDir lbi
+  createDirectoryIfMissingVerbose verbosity True dir
+  withLibLBI pkg lbi $ \_ libcfg -> do
+    withExeLBI pkg lbi $ \exe clbi ->
+      rewriteFile (dir </> "Build_" ++ exeName' exe ++ ".hs") $ unlines
+        [ "module Build_" ++ exeName' exe ++ " where"
+        , ""
+        , "deps :: [String]"
+        , "deps = " ++ (show $ formatdeps (transDeps libcfg clbi))
+        ]
+  where
+    exeName' = unUnqualComponentName . exeName
+    formatdeps = map formatone . sortBy (comparing unPackageName')
+    formatone p = unPackageName' p ++ "-" ++ showVersion (packageVersion p)
+    unPackageName' = unPackageName . packageName
+    transDeps xs ys =
+      either (map sourcePackageId . allPackages) handleDepClosureFailure $ dependencyClosure allInstPkgsIdx availInstPkgIds
+      where
+        allInstPkgsIdx = installedPkgs lbi
+        allInstPkgIds = map installedPackageId $ allPackages allInstPkgsIdx
+        -- instPkgIds includes `stack-X.X.X`, which is not a dependency hence is missing from allInstPkgsIdx. Filter that out.
+        availInstPkgIds = filter (`elem` allInstPkgIds) $ testDeps xs ys
+        handleDepClosureFailure unsatisfied =
+          error $
+            "Computation of transitive dependencies failed." ++
+            if null unsatisfied then "" else " Unresolved dependencies: " ++ show unsatisfied
+
+testDeps :: ComponentLocalBuildInfo -> ComponentLocalBuildInfo -> [InstalledPackageId]
+testDeps xs ys = map fst $ nub $ componentPackageDeps xs ++ componentPackageDeps ys

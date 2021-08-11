@@ -1,0 +1,106 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+use base64;
+use hyper::mime::{Attr, Mime, SubLevel, TopLevel, Value};
+use servo_url::ServoUrl;
+use url::Position;
+use url::percent_encoding::percent_decode;
+
+pub enum DecodeError {
+    InvalidDataUri,
+    NonBase64DataUri,
+}
+
+pub type DecodeData = (Mime, Vec<u8>);
+
+pub fn decode(url: &ServoUrl) -> Result<DecodeData, DecodeError> {
+    assert_eq!(url.scheme(), "data");
+    // Split out content type and data.
+    let parts: Vec<&str> = url[Position::BeforePath..Position::AfterQuery].splitn(2, ',').collect();
+    if parts.len() != 2 {
+        return Err(DecodeError::InvalidDataUri);
+    }
+
+    // ";base64" must come at the end of the content type, per RFC 2397.
+    // rust-http will fail to parse it because there's no =value part.
+    let mut ct_str = parts[0];
+    let is_base64 = ct_str.ends_with(";base64");
+    if is_base64 {
+        ct_str = &ct_str[..ct_str.len() - ";base64".len()];
+    }
+    let ct_str = if ct_str.starts_with(";charset=") {
+        format!("text/plain{}", ct_str)
+    } else {
+        ct_str.to_owned()
+    };
+
+    let content_type = ct_str.parse().unwrap_or_else(|_| {
+        Mime(TopLevel::Text, SubLevel::Plain,
+             vec![(Attr::Charset, Value::Ext("US-ASCII".to_owned()))])
+    });
+
+    let mut bytes = percent_decode(parts[1].as_bytes()).collect::<Vec<_>>();
+    if is_base64 {
+        // FIXME(#2909): It’s unclear what to do with non-alphabet characters,
+        // but Acid 3 apparently depends on spaces being ignored.
+        bytes = bytes.into_iter().filter(|&b| b != b' ').collect::<Vec<u8>>();
+        match base64::decode(&bytes) {
+            Err(..) => return Err(DecodeError::NonBase64DataUri),
+            Ok(data) => bytes = data,
+        }
+    }
+    Ok((content_type, bytes))
+}
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::env;
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref HOST_TABLE: Mutex<Option<HashMap<String, IpAddr>>> = Mutex::new(create_host_table());
+}
+
+fn create_host_table() -> Option<HashMap<String, IpAddr>> {
+    let path = env::var_os("HOST_FILE")?;
+
+    let file = File::open(&path).ok()?;
+    let mut reader = BufReader::new(file);
+
+    let mut lines = String::new();
+    reader.read_to_string(&mut lines).ok()?;
+
+    Some(parse_hostsfile(&lines))
+}
+
+pub fn replace_host_table(table: HashMap<String, IpAddr>) {
+    *HOST_TABLE.lock().unwrap() = Some(table);
+}
+
+pub fn parse_hostsfile(hostsfile_content: &str) -> HashMap<String, IpAddr> {
+    hostsfile_content.lines().filter_map(|line| {
+        let mut iter = line.split('#').next().unwrap().split_whitespace();
+        Some((iter.next()?.parse().ok()?, iter))
+    }).flat_map(|(ip, hosts)| {
+        hosts.filter(|host| {
+            let invalid = ['\0', '\t', '\n', '\r', ' ', '#', '%', '/', ':', '?', '@', '[', '\\', ']'];
+            host.parse::<Ipv4Addr>().is_err() && !host.contains(&invalid[..])
+        }).map(move |host| {
+            (host.to_owned(), ip)
+        })
+    }).collect()
+}
+
+pub fn replace_host(host: &str) -> Cow<str> {
+    HOST_TABLE.lock().unwrap().as_ref()
+        .and_then(|table| table.get(host))
+        .map_or(host.into(), |replaced_host| replaced_host.to_string().into())
+}

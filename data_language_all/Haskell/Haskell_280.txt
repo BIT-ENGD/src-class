@@ -1,0 +1,94 @@
+module Luna.Interpreter.Test where
+
+import Prologue
+
+import qualified Control.Monad.Exception.IO      as Exception
+import qualified Language.Haskell.TH             as TH
+import qualified Luna.Interpreter.Tests.Internal as Internal
+import qualified Path                            as Path
+import qualified System.Directory                as Directory
+
+import Control.Monad.Exception (MonadException)
+import Path                    (Path, Abs, Dir, Rel, File, PathException)
+import System.FilePath         (FilePath, (</>))
+
+
+
+-----------------------
+-- === Constants === --
+-----------------------
+
+rawDir :: FilePath
+rawDir = $(do
+    canPath <- TH.runIO . Directory.canonicalizePath
+        $ Internal.staticFileDir </> Internal.testsRelPath
+    TH.litE $ TH.StringL canPath)
+
+standaloneFileName :: Path Rel File
+standaloneFileName = $(Path.mkRelFile "Main.luna")
+
+-----------------
+-- === API === --
+-----------------
+
+directory :: (MonadIO m, MonadException PathException m) => m (Path Abs Dir)
+directory = Exception.rethrowFromIO @PathException $ Path.parseAbsDir rawDir
+
+module Main where
+
+import Prologue
+
+import qualified Control.Monad.Exception.IO as Exception
+import qualified Luna.Interpreter.Test      as Test
+import qualified Luna.Package               as Package
+import qualified Luna.Shell.Interpret       as Interpret
+import qualified Path                       as Path
+import qualified System.Directory           as Directory
+
+import Luna.Shell.Interpret (InterpreterMonad)
+import Path                 (Path, Abs, File, Dir, PathException)
+import System.FilePath      ((</>))
+
+
+
+------------------
+-- === Main === --
+------------------
+
+main :: IO ()
+main = Exception.rethrowFromIO @PathException $ do
+    testsDir <- Path.toFilePath <$> Test.directory
+    putStrLn $ "Executing benchmarks in " <> testsDir
+
+    benchmarkDirs     <- Directory.listDirectory testsDir
+    benchmarkPackages <- sequence $ (Path.parseAbsDir <$> (testsDir </>))
+        <$> benchmarkDirs
+
+    for_ benchmarkPackages (\pkgName -> do
+        isPkg <- Package.isLunaPackage pkgName
+        if isPkg
+            then benchmarkPackage (convert $ Path.toFilePath pkgName) pkgName
+            else do
+                let testFile = pkgName Path.</> Test.standaloneFileName
+                isValid <- Directory.doesFileExist $ Path.toFilePath testFile
+                if isValid then
+                    benchmarkFile (convert $ Path.toFilePath pkgName) testFile
+                else putStrLn $ "File " <> Path.toFilePath testFile
+                        <> " does not exist.")
+
+
+
+-----------------
+-- === API === --
+-----------------
+
+benchmarkFile :: InterpreterMonad m => Text -> Path Abs File -> m ()
+benchmarkFile name file = do
+    putStrLn . convert $ "Benchmarking " <> name
+    Interpret.file file
+
+benchmarkPackage :: InterpreterMonad m => Text -> Path Abs Dir -> m ()
+benchmarkPackage name pkg = do
+    putStrLn . convert $ "Benchmarking " <> name
+    Interpret.package pkg
+

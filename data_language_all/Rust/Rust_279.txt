@@ -1,0 +1,108 @@
+use rocket::local::Client;
+use rocket::http::Status;
+
+fn register_hit(client: &Client) {
+    let response = client.get("/").dispatch();;
+    assert_eq!(response.status(), Status::Ok);
+}
+
+fn get_count(client: &Client) -> usize {
+    let mut response = client.get("/count").dispatch();
+    response.body_string().and_then(|s| s.parse().ok()).unwrap()
+}
+
+#[test]
+fn test_count() {
+    let client = Client::new(super::rocket()).unwrap();
+
+    // Count should start at 0.
+    assert_eq!(get_count(&client), 0);
+
+    for _ in 0..99 { register_hit(&client); }
+    assert_eq!(get_count(&client), 99);
+
+    register_hit(&client);
+    assert_eq!(get_count(&client), 100);
+}
+
+// Cargo runs each test in parallel on different threads. We use all of these
+// tests below to show (and assert) that state is managed per-Rocket instance.
+#[test] fn test_count_parallel() { test_count() }
+#[test] fn test_count_parallel_2() { test_count() }
+#[test] fn test_count_parallel_3() { test_count() }
+#[test] fn test_count_parallel_4() { test_count() }
+#[test] fn test_count_parallel_5() { test_count() }
+#[test] fn test_count_parallel_6() { test_count() }
+#[test] fn test_count_parallel_7() { test_count() }
+#[test] fn test_count_parallel_8() { test_count() }
+#[test] fn test_count_parallel_9() { test_count() }
+use super::rocket;
+use rocket::Response;
+use rocket::local::Client;
+use rocket::http::{Status, Cookie, ContentType};
+
+fn user_id_cookie(response: &Response) -> Option<Cookie<'static>> {
+    let cookie = response.headers()
+        .get("Set-Cookie")
+        .filter(|v| v.starts_with("user_id"))
+        .nth(0)
+        .and_then(|val| Cookie::parse_encoded(val).ok());
+
+    cookie.map(|c| c.into_owned())
+}
+
+fn login(client: &Client, user: &str, pass: &str) -> Option<Cookie<'static>> {
+    let response = client.post("/login")
+        .header(ContentType::Form)
+        .body(format!("username={}&password={}", user, pass))
+        .dispatch();
+
+    user_id_cookie(&response)
+}
+
+#[test]
+fn redirect_on_index() {
+    let client = Client::new(rocket()).unwrap();
+    let response = client.get("/").dispatch();
+    assert_eq!(response.status(), Status::SeeOther);
+    assert_eq!(response.headers().get_one("Location"), Some("/login"));
+}
+
+#[test]
+fn can_login() {
+    let client = Client::new(rocket()).unwrap();
+
+    let mut response = client.get("/login").dispatch();
+    let body = response.body_string().unwrap();
+    assert_eq!(response.status(), Status::Ok);
+    assert!(body.contains("Please login to continue."));
+}
+
+#[test]
+fn login_fails() {
+    let client = Client::new(rocket()).unwrap();
+    assert!(login(&client, "Seergio", "password").is_none());
+    assert!(login(&client, "Sergio", "idontknow").is_none());
+}
+
+#[test]
+fn login_logout_succeeds() {
+    let client = Client::new(rocket()).unwrap();
+    let login_cookie = login(&client, "Sergio", "password").expect("logged in");
+
+    // Ensure we're logged in.
+    let mut response = client.get("/").cookie(login_cookie.clone()).dispatch();
+    let body = response.body_string().unwrap();
+    assert_eq!(response.status(), Status::Ok);
+    assert!(body.contains("Logged in with user ID 1"));
+
+    // One more.
+    let response = client.get("/login").cookie(login_cookie.clone()).dispatch();
+    assert_eq!(response.status(), Status::SeeOther);
+    assert_eq!(response.headers().get_one("Location"), Some("/"));
+
+    // Logout.
+    let response = client.post("/logout").cookie(login_cookie).dispatch();
+    let cookie = user_id_cookie(&response).expect("logout cookie");
+    assert!(cookie.value().is_empty());
+}

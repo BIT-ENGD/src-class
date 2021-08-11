@@ -1,0 +1,305 @@
+/*
+ * Copyright (C) 2016 The Guava Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.google.common.graph;
+
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.graph.GraphConstants.SELF_LOOPS_NOT_ALLOWED;
+import static com.google.common.graph.Graphs.checkNonNegative;
+import static com.google.common.graph.Graphs.checkPositive;
+
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+
+/**
+ * Configurable implementation of {@link MutableValueGraph} that supports both directed and
+ * undirected graphs. Instances of this class should be constructed with {@link ValueGraphBuilder}.
+ *
+ * <p>Time complexities for mutation methods are all O(1) except for {@code removeNode(N node)},
+ * which is in O(d_node) where d_node is the degree of {@code node}.
+ *
+ * @author James Sexton
+ * @author Joshua O'Madadhain
+ * @author Omar Darwish
+ * @param <N> Node parameter type
+ * @param <V> Value parameter type
+ */
+final class ConfigurableMutableValueGraph<N, V> extends ConfigurableValueGraph<N, V>
+    implements MutableValueGraph<N, V> {
+
+  /** Constructs a mutable graph with the properties specified in {@code builder}. */
+  ConfigurableMutableValueGraph(AbstractGraphBuilder<? super N> builder) {
+    super(builder);
+  }
+
+  @Override
+  @CanIgnoreReturnValue
+  public boolean addNode(N node) {
+    checkNotNull(node, "node");
+
+    if (containsNode(node)) {
+      return false;
+    }
+
+    addNodeInternal(node);
+    return true;
+  }
+
+  /**
+   * Adds {@code node} to the graph and returns the associated {@link GraphConnections}.
+   *
+   * @throws IllegalStateException if {@code node} is already present
+   */
+  @CanIgnoreReturnValue
+  private GraphConnections<N, V> addNodeInternal(N node) {
+    GraphConnections<N, V> connections = newConnections();
+    checkState(nodeConnections.put(node, connections) == null);
+    return connections;
+  }
+
+  @Override
+  @CanIgnoreReturnValue
+  public V putEdgeValue(N nodeU, N nodeV, V value) {
+    checkNotNull(nodeU, "nodeU");
+    checkNotNull(nodeV, "nodeV");
+    checkNotNull(value, "value");
+
+    if (!allowsSelfLoops()) {
+      checkArgument(!nodeU.equals(nodeV), SELF_LOOPS_NOT_ALLOWED, nodeU);
+    }
+
+    GraphConnections<N, V> connectionsU = nodeConnections.get(nodeU);
+    if (connectionsU == null) {
+      connectionsU = addNodeInternal(nodeU);
+    }
+    V previousValue = connectionsU.addSuccessor(nodeV, value);
+    GraphConnections<N, V> connectionsV = nodeConnections.get(nodeV);
+    if (connectionsV == null) {
+      connectionsV = addNodeInternal(nodeV);
+    }
+    connectionsV.addPredecessor(nodeU, value);
+    if (previousValue == null) {
+      checkPositive(++edgeCount);
+    }
+    return previousValue;
+  }
+
+  @Override
+  @CanIgnoreReturnValue
+  public boolean removeNode(N node) {
+    checkNotNull(node, "node");
+
+    GraphConnections<N, V> connections = nodeConnections.get(node);
+    if (connections == null) {
+      return false;
+    }
+
+    if (allowsSelfLoops()) {
+      // Remove self-loop (if any) first, so we don't get CME while removing incident edges.
+      if (connections.removeSuccessor(node) != null) {
+        connections.removePredecessor(node);
+        --edgeCount;
+      }
+    }
+
+    for (N successor : connections.successors()) {
+      nodeConnections.getWithoutCaching(successor).removePredecessor(node);
+      --edgeCount;
+    }
+    if (isDirected()) { // In undirected graphs, the successor and predecessor sets are equal.
+      for (N predecessor : connections.predecessors()) {
+        checkState(nodeConnections.getWithoutCaching(predecessor).removeSuccessor(node) != null);
+        --edgeCount;
+      }
+    }
+    nodeConnections.remove(node);
+    checkNonNegative(edgeCount);
+    return true;
+  }
+
+  @Override
+  @CanIgnoreReturnValue
+  public V removeEdge(N nodeU, N nodeV) {
+    checkNotNull(nodeU, "nodeU");
+    checkNotNull(nodeV, "nodeV");
+
+    GraphConnections<N, V> connectionsU = nodeConnections.get(nodeU);
+    GraphConnections<N, V> connectionsV = nodeConnections.get(nodeV);
+    if (connectionsU == null || connectionsV == null) {
+      return null;
+    }
+
+    V previousValue = connectionsU.removeSuccessor(nodeV);
+    if (previousValue != null) {
+      connectionsV.removePredecessor(nodeU);
+      checkNonNegative(--edgeCount);
+    }
+    return previousValue;
+  }
+
+  private GraphConnections<N, V> newConnections() {
+    return isDirected()
+        ? DirectedGraphConnections.<N, V>of()
+        : UndirectedGraphConnections.<N, V>of();
+  }
+}
+
+package com.xxmassdeveloper.mpchartexample;
+
+import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.widget.ArrayAdapter;
+import android.widget.ListView;
+
+import com.github.mikephil.charting.charts.BarChart;
+import com.github.mikephil.charting.components.XAxis;
+import com.github.mikephil.charting.components.XAxis.XAxisPosition;
+import com.github.mikephil.charting.components.YAxis;
+import com.github.mikephil.charting.data.BarData;
+import com.github.mikephil.charting.data.BarDataSet;
+import com.github.mikephil.charting.data.BarEntry;
+import com.github.mikephil.charting.interfaces.datasets.IBarDataSet;
+import com.github.mikephil.charting.utils.ColorTemplate;
+import com.xxmassdeveloper.mpchartexample.notimportant.DemoBase;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Demonstrates the use of charts inside a ListView. IMPORTANT: provide a
+ * specific height attribute for the chart inside your listview-item
+ * 
+ * @author Philipp Jahoda
+ */
+public class ListViewBarChartActivity extends DemoBase {
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        setContentView(R.layout.activity_listview_chart);
+        
+        ListView lv = findViewById(R.id.listView1);
+
+        ArrayList<BarData> list = new ArrayList<BarData>();
+
+        // 20 items
+        for (int i = 0; i < 20; i++) {
+            list.add(generateData(i + 1));
+        }
+
+        ChartDataAdapter cda = new ChartDataAdapter(getApplicationContext(), list);
+        lv.setAdapter(cda);
+    }
+
+    private class ChartDataAdapter extends ArrayAdapter<BarData> {
+
+        public ChartDataAdapter(Context context, List<BarData> objects) {
+            super(context, 0, objects);
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+
+            BarData data = getItem(position);
+
+            ViewHolder holder = null;
+
+            if (convertView == null) {
+
+                holder = new ViewHolder();
+
+                convertView = LayoutInflater.from(getContext()).inflate(
+                        R.layout.list_item_barchart, null);
+                holder.chart = convertView.findViewById(R.id.chart);
+
+                convertView.setTag(holder);
+
+            } else {
+                holder = (ViewHolder) convertView.getTag();
+            }
+
+            // apply styling
+            data.setValueTypeface(mTfLight);
+            data.setValueTextColor(Color.BLACK);
+            holder.chart.getDescription().setEnabled(false);
+            holder.chart.setDrawGridBackground(false);
+
+            XAxis xAxis = holder.chart.getXAxis();
+            xAxis.setPosition(XAxisPosition.BOTTOM);
+            xAxis.setTypeface(mTfLight);
+            xAxis.setDrawGridLines(false);
+            
+            YAxis leftAxis = holder.chart.getAxisLeft();
+            leftAxis.setTypeface(mTfLight);
+            leftAxis.setLabelCount(5, false);
+            leftAxis.setSpaceTop(15f);
+            
+            YAxis rightAxis = holder.chart.getAxisRight();
+            rightAxis.setTypeface(mTfLight);
+            rightAxis.setLabelCount(5, false);
+            rightAxis.setSpaceTop(15f);
+
+            // set data
+            holder.chart.setData(data);
+            holder.chart.setFitBars(true);
+            
+            // do not forget to refresh the chart
+//            holder.chart.invalidate();
+            holder.chart.animateY(700);
+
+            return convertView;
+        }
+
+        private class ViewHolder {
+
+            BarChart chart;
+        }
+    }
+
+    /**
+     * generates a random ChartData object with just one DataSet
+     * 
+     * @return
+     */
+    private BarData generateData(int cnt) {
+
+        ArrayList<BarEntry> entries = new ArrayList<BarEntry>();
+
+        for (int i = 0; i < 12; i++) {
+            entries.add(new BarEntry(i, (float) (Math.random() * 70) + 30));
+        }
+
+        BarDataSet d = new BarDataSet(entries, "New DataSet " + cnt);
+        d.setColors(ColorTemplate.VORDIPLOM_COLORS);
+        d.setBarShadowColor(Color.rgb(203, 203, 203));
+        
+        ArrayList<IBarDataSet> sets = new ArrayList<IBarDataSet>();
+        sets.add(d);
+        
+        BarData cd = new BarData(sets);
+        cd.setBarWidth(0.9f);
+        return cd;
+    }
+}

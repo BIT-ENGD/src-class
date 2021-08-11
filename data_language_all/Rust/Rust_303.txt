@@ -1,0 +1,287 @@
+//! Utility layer to give a tensor another shape.
+//!
+//! This layer should be used as in-place operation,
+//! so the tensor that should be reshaped should be specified
+//! as both input and output.
+//!
+//! Reshaping a tensor is required so that it becomes
+//! usable for Layers that interpret meaning into the shape of
+//! the tensor.
+//!
+//! A lot of layers interpret the last dimensions as NCHW,
+//! where the letters stand for:
+//!
+//! - `N` : number of batch samples
+//! - `C` : number of feature maps
+//! - `H` : height
+//! - `W` : width
+use co::{IBackend, SharedTensor};
+use layer::*;
+use util::ArcLock;
+use leaf_capnp::reshape_config as capnp_config;
+use capnp_util::*;
+
+#[derive(Debug, Clone)]
+/// Reshape Utility Layer
+pub struct Reshape{
+    shape: Vec<usize>,
+}
+
+impl Reshape {
+    /// Create a Reshape layer from a ReshapeConfig.
+    pub fn from_config(config: &ReshapeConfig) -> Reshape {
+        Reshape {
+            shape: config.shape.clone(),
+        }
+    }
+}
+
+impl<B: IBackend> ILayer<B> for Reshape {
+    fn compute_in_place(&self) -> bool {
+        true
+    }
+
+    fn auto_output_blobs(&self) -> bool {
+        false
+    }
+
+    fn reshape(&mut self,
+               backend: ::std::rc::Rc<B>,
+               input_data: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               input_gradient: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               weights_data: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               weights_gradient: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               output_data: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               output_gradient: &mut Vec<ArcLock<SharedTensor<f32>>>) {
+        output_data[0].write().unwrap().resize(&self.shape).unwrap();
+        output_gradient[0].write().unwrap().resize(&self.shape).unwrap();
+    }
+}
+
+impl<B: IBackend> ComputeOutput<f32, B> for Reshape {
+    fn compute_output(&self,
+                      backend: &B,
+                      _weights: &[&SharedTensor<f32>],
+                      input_data: &[&SharedTensor<f32>],
+                      output_data: &mut [&mut SharedTensor<f32>]) {
+    }
+}
+
+impl<B: IBackend> ComputeInputGradient<f32, B> for Reshape {
+    fn compute_input_gradient(&self,
+                              backend: &B,
+                              weights_data: &[&SharedTensor<f32>],
+                              output_data: &[&SharedTensor<f32>],
+                              output_gradients: &[&SharedTensor<f32>],
+                              input_data: &[&SharedTensor<f32>],
+                              input_gradients: &mut [&mut SharedTensor<f32>]) {}
+}
+
+impl<B: IBackend> ComputeParametersGradient<f32, B> for Reshape {}
+
+#[derive(Debug, Clone)]
+/// Specifies configuration parameters for a Reshape Layer.
+pub struct ReshapeConfig {
+    /// The target shape that the input should assume.
+    ///
+    /// Preceding dimensions are treated as independent inputs
+    ///
+    /// Defaults to `1`
+    pub shape: Vec<usize>,
+}
+
+impl ReshapeConfig {
+    /// Create a ReshapeConfig that describes a Reshape layer with a provided shape.
+    pub fn of_shape(shape: &[usize]) -> ReshapeConfig {
+        ReshapeConfig {
+            shape: shape.to_owned()
+        }
+    }
+}
+
+impl<'a> CapnpWrite<'a> for ReshapeConfig {
+    type Builder = capnp_config::Builder<'a>;
+
+    /// Write the ReshapeConfig into a capnp message.
+    fn write_capnp(&self, builder: &mut Self::Builder) {
+        let mut shape = builder.borrow().init_shape(self.shape.len() as u32);
+        for (i, dim) in self.shape.iter().enumerate() {
+            shape.set(i as u32, *dim as u64);
+        }
+    }
+}
+
+impl<'a> CapnpRead<'a> for ReshapeConfig {
+    type Reader = capnp_config::Reader<'a>;
+
+    fn read_capnp(reader: Self::Reader) -> Self {
+        let read_shape = reader.get_shape().unwrap();
+        let mut shape = Vec::new();
+        for i in 0..read_shape.len() {
+            shape.push(read_shape.get(i) as usize)
+        }
+
+        ReshapeConfig {
+            shape: shape
+        }
+    }
+}
+
+impl Into<LayerType> for ReshapeConfig {
+    fn into(self) -> LayerType {
+        LayerType::Reshape(self)
+    }
+}
+//! TODO: DOC
+//!
+use co::{IBackend, ITensorDesc, SharedTensor};
+use layer::*;
+use util::{ArcLock, native_backend};
+use leaf_capnp::negative_log_likelihood_config as capnp_config;
+use capnp_util::*;
+
+#[derive(Debug, Clone)]
+#[allow(missing_copy_implementations)]
+/// NegativeLogLikelihood Loss Layer
+pub struct NegativeLogLikelihood {
+    num_classes: usize,
+}
+
+impl NegativeLogLikelihood {
+    /// Create a NegativeLogLikelihood layer from a NegativeLogLikelihoodConfig.
+    pub fn from_config(config: &NegativeLogLikelihoodConfig) -> NegativeLogLikelihood {
+        NegativeLogLikelihood {
+            num_classes: config.num_classes,
+        }
+    }
+
+    fn calculate_outer_num(softmax_axis: usize, input_shape: &[usize]) -> usize {
+        input_shape.iter().take(softmax_axis + 1).fold(1, |prod, i| prod * i)
+    }
+
+    fn calculate_inner_num(softmax_axis: usize, input_shape: &[usize]) -> usize {
+        input_shape.iter().skip(softmax_axis + 1).fold(1, |prod, i| prod * i)
+    }
+
+    fn batch_size(input_shape: &[usize]) -> usize {
+        match input_shape.len() {
+            1 => 1,
+            2 => input_shape[0],
+            _ => panic!("NegativeLogLikelihood layer only supports 1D/2D inputs")
+        }
+    }
+}
+
+impl<B: IBackend> ILayer<B> for NegativeLogLikelihood {
+    impl_ilayer_loss!();
+
+    fn sync_native(&self) -> bool {
+        true
+    }
+
+    fn reshape(&mut self,
+               backend: ::std::rc::Rc<B>,
+               input_data: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               input_gradient: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               weights_data: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               weights_gradient: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               output_data: &mut Vec<ArcLock<SharedTensor<f32>>>,
+               output_gradient: &mut Vec<ArcLock<SharedTensor<f32>>>) {
+        let data = input_data[0].read().unwrap();
+        let label = input_data[1].read().unwrap();
+
+        input_gradient[0].write().unwrap().resize(data.desc()).unwrap();
+        output_data[0].write().unwrap().resize(label.desc()).unwrap();
+    }
+}
+
+impl<B: IBackend> ComputeOutput<f32, B> for NegativeLogLikelihood {
+    fn compute_output(&self,
+                      backend: &B,
+                      _weights: &[&SharedTensor<f32>],
+                      input_data: &[&SharedTensor<f32>],
+                      output_data: &mut [&mut SharedTensor<f32>]) {
+        let probabilities = input_data[0];
+        let labels = input_data[1];
+
+        let batch_size = Self::batch_size(labels.desc());
+
+        let native = native_backend();
+        let native_labels = labels.get(native.device()).unwrap().as_native().unwrap().as_slice::<f32>();
+        let native_probabilities = probabilities.get(native.device()).unwrap().as_native().unwrap().as_slice::<f32>();
+
+        let mut writable_loss = Vec::<f32>::new();
+        for &label_value in native_labels {
+            let probability_value = native_probabilities[label_value as usize];
+            writable_loss.push(-probability_value);
+        }
+
+        let mut loss = writable_loss.iter().fold(0f32, |sum, &val| sum + val);
+        loss = loss / (batch_size as f32);
+        writable_loss = vec![loss];
+
+        ::util::write_to_memory(output_data[0].get_mut(native.device()).unwrap(), &writable_loss);
+    }
+}
+
+impl<B: IBackend> ComputeInputGradient<f32, B> for NegativeLogLikelihood {
+    fn compute_input_gradient(&self,
+                              backend: &B,
+                              weights_data: &[&SharedTensor<f32>],
+                              output_data: &[&SharedTensor<f32>],
+                              output_gradients: &[&SharedTensor<f32>],
+                              input_data: &[&SharedTensor<f32>],
+                              input_gradients: &mut [&mut SharedTensor<f32>]) {
+        let labels = input_data[1];
+        let batch_size = Self::batch_size(input_data[0].desc());
+        let num_classes = self.num_classes;
+
+        let native = native_backend();
+        let native_labels = labels.get(native.device()).unwrap().as_native().unwrap().as_slice::<f32>();
+        let mut writable_gradient = vec![0f32; input_gradients[0].desc().size()];
+
+        for (batch_n, &label_value) in native_labels.iter().enumerate() {
+            let index = (num_classes * batch_n) + label_value as usize;
+            writable_gradient[index] = -1f32;
+        }
+        input_gradients[0].sync(native.device()).unwrap();
+        ::util::write_to_memory(input_gradients[0].get_mut(native.device()).unwrap(), &writable_gradient);
+    }
+}
+
+impl<B: IBackend> ComputeParametersGradient<f32, B> for NegativeLogLikelihood { }
+
+#[derive(Debug, Clone)]
+#[allow(missing_copy_implementations)]
+/// Specifies configuration parameters for a NegativeLogLikelihood Layer.
+pub struct NegativeLogLikelihoodConfig {
+    /// How many different classes can be classified.
+    pub num_classes: usize,
+}
+
+impl<'a> CapnpWrite<'a> for NegativeLogLikelihoodConfig {
+    type Builder = capnp_config::Builder<'a>;
+
+    /// Write the NegativeLogLikelihoodConfig into a capnp message.
+    fn write_capnp(&self, builder: &mut Self::Builder) {
+        builder.set_num_classes(self.num_classes as u64);
+    }
+}
+
+impl<'a> CapnpRead<'a> for NegativeLogLikelihoodConfig {
+    type Reader = capnp_config::Reader<'a>;
+
+    fn read_capnp(reader: Self::Reader) -> Self {
+        let num_classes = reader.get_num_classes() as usize;
+
+        NegativeLogLikelihoodConfig {
+            num_classes: num_classes
+        }
+    }
+}
+
+impl Into<LayerType> for NegativeLogLikelihoodConfig {
+    fn into(self) -> LayerType {
+        LayerType::NegativeLogLikelihood(self)
+    }
+}

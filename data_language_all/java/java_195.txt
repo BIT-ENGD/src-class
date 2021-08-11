@@ -1,0 +1,434 @@
+/*
+ * Copyright (C) 2011 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package okhttp3.android;
+
+import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.net.CacheRequest;
+import java.net.CacheResponse;
+import java.net.ResponseCache;
+import java.net.URI;
+import java.net.URLConnection;
+import java.util.List;
+import java.util.Map;
+import okhttp3.AndroidShimResponseCache;
+import okhttp3.Cache;
+import okhttp3.OkCacheContainer;
+
+/**
+ * A copy of android.net.http.HttpResponseCache taken from AOSP. Android need to keep this code
+ * working somehow. Dependencies on okhttp3 are com.android.okhttp on Android.
+ *
+ * <p>This class exists in okhttp-android-support to help keep the API as it always has been on
+ * Android. The public API cannot be changed. This class delegates to {@link
+ * AndroidShimResponseCache}, a class that exists in a package that enables it to interact with
+ * non-public OkHttp classes.
+ */
+public final class HttpResponseCache extends ResponseCache implements Closeable, OkCacheContainer {
+
+  private AndroidShimResponseCache shimResponseCache;
+
+  private HttpResponseCache(AndroidShimResponseCache shimResponseCache) {
+    this.shimResponseCache = shimResponseCache;
+  }
+
+  /**
+   * Returns the currently-installed {@code HttpResponseCache}, or null if there is no cache
+   * installed or it is not a {@code HttpResponseCache}.
+   */
+  public static HttpResponseCache getInstalled() {
+    ResponseCache installed = ResponseCache.getDefault();
+    if (installed instanceof HttpResponseCache) {
+      return (HttpResponseCache) installed;
+    }
+    return null;
+  }
+
+  /**
+   * Creates a new HTTP response cache and sets it as the system default cache.
+   *
+   * @param directory the directory to hold cache data.
+   * @param maxSize the maximum size of the cache in bytes.
+   * @return the newly-installed cache
+   * @throws java.io.IOException if {@code directory} cannot be used for this cache. Most
+   * applications should respond to this exception by logging a warning.
+   */
+  public static synchronized HttpResponseCache install(File directory, long maxSize) throws
+      IOException {
+    ResponseCache installed = ResponseCache.getDefault();
+
+    if (installed instanceof HttpResponseCache) {
+      HttpResponseCache installedResponseCache = (HttpResponseCache) installed;
+      // don't close and reopen if an equivalent cache is already installed
+      AndroidShimResponseCache trueResponseCache = installedResponseCache.shimResponseCache;
+      if (trueResponseCache.isEquivalent(directory, maxSize)) {
+        return installedResponseCache;
+      } else {
+        // The HttpResponseCache that owns this object is about to be replaced.
+        trueResponseCache.close();
+      }
+    }
+
+    AndroidShimResponseCache trueResponseCache =
+        AndroidShimResponseCache.create(directory, maxSize);
+    HttpResponseCache newResponseCache = new HttpResponseCache(trueResponseCache);
+    ResponseCache.setDefault(newResponseCache);
+    return newResponseCache;
+  }
+
+  @Override public CacheResponse get(URI uri, String requestMethod,
+      Map<String, List<String>> requestHeaders) throws IOException {
+    return shimResponseCache.get(uri, requestMethod, requestHeaders);
+  }
+
+  @Override public CacheRequest put(URI uri, URLConnection urlConnection) throws IOException {
+    return shimResponseCache.put(uri, urlConnection);
+  }
+
+  /**
+   * Returns the number of bytes currently being used to store the values in this cache. This may be
+   * greater than the {@link #maxSize} if a background deletion is pending.
+   */
+  public long size() {
+    try {
+      return shimResponseCache.size();
+    } catch (IOException e) {
+      // This can occur if the cache failed to lazily initialize. Return -1 to mean "unknown".
+      return -1;
+    }
+  }
+
+  /**
+   * Returns the maximum number of bytes that this cache should use to store its data.
+   */
+  public long maxSize() {
+    return shimResponseCache.maxSize();
+  }
+
+  /**
+   * Force buffered operations to the filesystem. This ensures that responses written to the cache
+   * will be available the next time the cache is opened, even if this process is killed.
+   */
+  public void flush() {
+    try {
+      shimResponseCache.flush();
+    } catch (IOException ignored) {
+    }
+  }
+
+  /**
+   * Returns the number of HTTP requests that required the network to either supply a response or
+   * validate a locally cached response.
+   */
+  public int getNetworkCount() {
+    return shimResponseCache.getNetworkCount();
+  }
+
+  /**
+   * Returns the number of HTTP requests whose response was provided by the cache. This may include
+   * conditional {@code GET} requests that were validated over the network.
+   */
+  public int getHitCount() {
+    return shimResponseCache.getHitCount();
+  }
+
+  /**
+   * Returns the total number of HTTP requests that were made. This includes both client requests
+   * and requests that were made on the client's behalf to handle a redirects and retries.
+   */
+  public int getRequestCount() {
+    return shimResponseCache.getRequestCount();
+  }
+
+  /**
+   * Uninstalls the cache and releases any active resources. Stored contents will remain on the
+   * filesystem.
+   */
+  @Override public void close() throws IOException {
+    if (ResponseCache.getDefault() == this) {
+      ResponseCache.setDefault(null);
+    }
+    shimResponseCache.close();
+  }
+
+  /**
+   * Uninstalls the cache and deletes all of its stored contents.
+   */
+  public void delete() throws IOException {
+    if (ResponseCache.getDefault() == this) {
+      ResponseCache.setDefault(null);
+    }
+    shimResponseCache.delete();
+  }
+
+  @Override
+  public Cache getCache() {
+    return shimResponseCache.getCache();
+  }
+}
+/*
+ * Copyright (C) 2016 The Guava Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.google.common.graph;
+
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.graph.GraphConstants.INNER_CAPACITY;
+import static com.google.common.graph.GraphConstants.INNER_LOAD_FACTOR;
+import static com.google.common.graph.Graphs.checkNonNegative;
+import static com.google.common.graph.Graphs.checkPositive;
+
+import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.UnmodifiableIterator;
+import java.util.AbstractSet;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import org.checkerframework.checker.nullness.compatqual.NullableDecl;
+
+/**
+ * An implementation of {@link GraphConnections} for directed graphs.
+ *
+ * @author James Sexton
+ * @param <N> Node parameter type
+ * @param <V> Value parameter type
+ */
+final class DirectedGraphConnections<N, V> implements GraphConnections<N, V> {
+  /**
+   * A wrapper class to indicate a node is both a predecessor and successor while still providing
+   * the successor value.
+   */
+  private static final class PredAndSucc {
+    private final Object successorValue;
+
+    PredAndSucc(Object successorValue) {
+      this.successorValue = successorValue;
+    }
+  }
+
+  private static final Object PRED = new Object();
+
+  // Every value in this map must either be an instance of PredAndSucc with a successorValue of
+  // type V, PRED (representing predecessor), or an instance of type V (representing successor).
+  private final Map<N, Object> adjacentNodeValues;
+
+  private int predecessorCount;
+  private int successorCount;
+
+  private DirectedGraphConnections(
+      Map<N, Object> adjacentNodeValues, int predecessorCount, int successorCount) {
+    this.adjacentNodeValues = checkNotNull(adjacentNodeValues);
+    this.predecessorCount = checkNonNegative(predecessorCount);
+    this.successorCount = checkNonNegative(successorCount);
+    checkState(
+        predecessorCount <= adjacentNodeValues.size()
+            && successorCount <= adjacentNodeValues.size());
+  }
+
+  static <N, V> DirectedGraphConnections<N, V> of() {
+    // We store predecessors and successors in the same map, so double the initial capacity.
+    int initialCapacity = INNER_CAPACITY * 2;
+    return new DirectedGraphConnections<>(
+        new HashMap<N, Object>(initialCapacity, INNER_LOAD_FACTOR), 0, 0);
+  }
+
+  static <N, V> DirectedGraphConnections<N, V> ofImmutable(
+      Set<N> predecessors, Map<N, V> successorValues) {
+    Map<N, Object> adjacentNodeValues = new HashMap<>();
+    adjacentNodeValues.putAll(successorValues);
+    for (N predecessor : predecessors) {
+      Object value = adjacentNodeValues.put(predecessor, PRED);
+      if (value != null) {
+        adjacentNodeValues.put(predecessor, new PredAndSucc(value));
+      }
+    }
+    return new DirectedGraphConnections<>(
+        ImmutableMap.copyOf(adjacentNodeValues), predecessors.size(), successorValues.size());
+  }
+
+  @Override
+  public Set<N> adjacentNodes() {
+    return Collections.unmodifiableSet(adjacentNodeValues.keySet());
+  }
+
+  @Override
+  public Set<N> predecessors() {
+    return new AbstractSet<N>() {
+      @Override
+      public UnmodifiableIterator<N> iterator() {
+        final Iterator<Entry<N, Object>> entries = adjacentNodeValues.entrySet().iterator();
+        return new AbstractIterator<N>() {
+          @Override
+          protected N computeNext() {
+            while (entries.hasNext()) {
+              Entry<N, Object> entry = entries.next();
+              if (isPredecessor(entry.getValue())) {
+                return entry.getKey();
+              }
+            }
+            return endOfData();
+          }
+        };
+      }
+
+      @Override
+      public int size() {
+        return predecessorCount;
+      }
+
+      @Override
+      public boolean contains(@NullableDecl Object obj) {
+        return isPredecessor(adjacentNodeValues.get(obj));
+      }
+    };
+  }
+
+  @Override
+  public Set<N> successors() {
+    return new AbstractSet<N>() {
+      @Override
+      public UnmodifiableIterator<N> iterator() {
+        final Iterator<Entry<N, Object>> entries = adjacentNodeValues.entrySet().iterator();
+        return new AbstractIterator<N>() {
+          @Override
+          protected N computeNext() {
+            while (entries.hasNext()) {
+              Entry<N, Object> entry = entries.next();
+              if (isSuccessor(entry.getValue())) {
+                return entry.getKey();
+              }
+            }
+            return endOfData();
+          }
+        };
+      }
+
+      @Override
+      public int size() {
+        return successorCount;
+      }
+
+      @Override
+      public boolean contains(@NullableDecl Object obj) {
+        return isSuccessor(adjacentNodeValues.get(obj));
+      }
+    };
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public V value(N node) {
+    Object value = adjacentNodeValues.get(node);
+    if (value == PRED) {
+      return null;
+    }
+    if (value instanceof PredAndSucc) {
+      return (V) ((PredAndSucc) value).successorValue;
+    }
+    return (V) value;
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public void removePredecessor(N node) {
+    Object previousValue = adjacentNodeValues.get(node);
+    if (previousValue == PRED) {
+      adjacentNodeValues.remove(node);
+      checkNonNegative(--predecessorCount);
+    } else if (previousValue instanceof PredAndSucc) {
+      adjacentNodeValues.put((N) node, ((PredAndSucc) previousValue).successorValue);
+      checkNonNegative(--predecessorCount);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public V removeSuccessor(Object node) {
+    Object previousValue = adjacentNodeValues.get(node);
+    if (previousValue == null || previousValue == PRED) {
+      return null;
+    } else if (previousValue instanceof PredAndSucc) {
+      adjacentNodeValues.put((N) node, PRED);
+      checkNonNegative(--successorCount);
+      return (V) ((PredAndSucc) previousValue).successorValue;
+    } else { // successor
+      adjacentNodeValues.remove(node);
+      checkNonNegative(--successorCount);
+      return (V) previousValue;
+    }
+  }
+
+  @Override
+  public void addPredecessor(N node, V unused) {
+    Object previousValue = adjacentNodeValues.put(node, PRED);
+    if (previousValue == null) {
+      checkPositive(++predecessorCount);
+    } else if (previousValue instanceof PredAndSucc) {
+      // Restore previous PredAndSucc object.
+      adjacentNodeValues.put(node, previousValue);
+    } else if (previousValue != PRED) { // successor
+      // Do NOT use method parameter value 'unused'. In directed graphs, successors store the value.
+      adjacentNodeValues.put(node, new PredAndSucc(previousValue));
+      checkPositive(++predecessorCount);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public V addSuccessor(N node, V value) {
+    Object previousValue = adjacentNodeValues.put(node, value);
+    if (previousValue == null) {
+      checkPositive(++successorCount);
+      return null;
+    } else if (previousValue instanceof PredAndSucc) {
+      adjacentNodeValues.put(node, new PredAndSucc(value));
+      return (V) ((PredAndSucc) previousValue).successorValue;
+    } else if (previousValue == PRED) {
+      adjacentNodeValues.put(node, new PredAndSucc(value));
+      checkPositive(++successorCount);
+      return null;
+    } else { // successor
+      return (V) previousValue;
+    }
+  }
+
+  private static boolean isPredecessor(@NullableDecl Object value) {
+    return (value == PRED) || (value instanceof PredAndSucc);
+  }
+
+  private static boolean isSuccessor(@NullableDecl Object value) {
+    return (value != PRED) && (value != null);
+  }
+}

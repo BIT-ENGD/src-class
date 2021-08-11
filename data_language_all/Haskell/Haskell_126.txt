@@ -1,0 +1,329 @@
+module File.Artifacts
+  ( ignore
+  , write
+  , writeDocs
+  )
+  where
+
+
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar)
+import Control.Monad (foldM, void)
+import Control.Monad.Except (liftIO)
+import qualified Data.Binary as Binary
+import Data.Map (Map)
+import qualified Data.Map as Map
+import qualified Data.Maybe as Maybe
+import qualified Data.Text.Encoding as Text
+
+import qualified Elm.Compiler as Compiler
+import qualified Elm.Compiler.Module as Module
+import qualified Elm.Docs as Docs
+import qualified Json.Encode as Encode
+
+import File.Compile (Answer(..))
+import qualified Reporting.Exit.Compile as E
+import qualified Reporting.Exit as Exit
+import qualified Reporting.Task as Task
+import qualified Stuff.Paths as Path
+
+
+
+-- IGNORE
+
+
+ignore :: Map Module.Raw Answer -> Task.Task (Map Module.Raw Compiler.Artifacts)
+ignore answers =
+  let
+    ignorer _name result =
+      return result
+  in
+    gather ignorer answers
+
+
+
+-- WRITE
+
+
+write :: FilePath -> Map Module.Raw Answer -> Task.Task (Map Module.Raw Compiler.Artifacts)
+write root answers =
+  let
+    writer name result@(Compiler.Artifacts elmi elmo _) =
+      do  mvar <- newEmptyMVar
+          void $ forkIO $
+            do  Binary.encodeFile (Path.elmi root name) elmi
+                Binary.encodeFile (Path.elmo root name) elmo
+                putMVar mvar result
+          return mvar
+  in
+    do  mvars <- gather writer answers
+        liftIO $ traverse readMVar mvars
+
+
+writeDocs :: Map Module.Raw Compiler.Artifacts -> FilePath -> Task.Task Docs.Documentation
+writeDocs results path =
+  let
+    getDocs (Compiler.Artifacts _ _ docs) =
+      docs
+  in
+    case Maybe.mapMaybe getDocs (Map.elems results) of
+      [] ->
+        return Map.empty
+
+      docs ->
+        do  liftIO $ Encode.writeUgly path $ Encode.list Docs.encode docs
+            return $ Docs.toDict docs
+
+
+
+-- GATHER
+
+
+gather :: OnGood a -> Map Module.Raw Answer -> Task.Task (Map Module.Raw a)
+gather onGood answers =
+  do  summary <- liftIO $
+        foldM (gatherHelp onGood) (Right Map.empty) (Map.toList answers)
+
+      case summary of
+        Left (err, errors) ->
+          Task.throw (Exit.Compile err errors)
+
+        Right results ->
+          return results
+
+
+type OnGood a = Module.Raw -> Compiler.Artifacts -> IO a
+
+
+gatherHelp :: OnGood a -> Summary a -> (Module.Raw, Answer) -> IO (Summary a)
+gatherHelp onGood summary (name, answer) =
+  case answer of
+    Blocked ->
+      return summary
+
+    Bad path time src errors ->
+      do  let err = E.Exit name path time (Text.decodeUtf8 src) errors
+          return (addErr err summary)
+
+    Good result ->
+      do  value <- onGood name result
+          return (addOk name value summary)
+
+
+
+-- DICT RESULT
+
+
+type Summary a =
+  Either (E.Exit, [E.Exit]) (Map Module.Raw a)
+
+
+addOk :: Module.Raw -> a -> Summary a -> Summary a
+addOk name result acc =
+  case acc of
+    Left _ ->
+      acc
+
+    Right results ->
+      Right (Map.insert name result results)
+
+
+addErr :: E.Exit -> Summary a -> Summary a
+addErr err acc =
+  case acc of
+    Left (e, es) ->
+      Left (err, e:es)
+
+    Right _ ->
+      Left (err, [])
+module File.Compile
+  ( compile
+  , Answer(..)
+  )
+  where
+
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, readMVar, takeMVar)
+import Control.Monad (void)
+import Control.Monad.Except (liftIO)
+import qualified Data.ByteString as BS
+import qualified Data.Map as Map
+import qualified Data.Time.Clock as Time
+
+import qualified Elm.Compiler as Compiler
+import qualified Elm.Compiler.Module as Module
+
+import Elm.Project.Json (Project)
+import qualified Elm.Project.Json as Project
+import qualified File.Plan as Plan
+import qualified Reporting.Progress as Progress
+import qualified Reporting.Task as Task
+
+
+
+-- COMPILE
+
+
+compile :: Project -> Maybe FilePath -> Module.Interfaces -> Dict Plan.Info -> Task.Task (Dict Answer)
+compile project maybeDocsPath ifaces modules =
+  do  Task.report (Progress.CompileStart (Map.size modules))
+
+      tell <- Task.getReporter
+
+      answers <- liftIO $
+        do  mvar <- newEmptyMVar
+            iMVar <- newMVar ifaces
+            answerMVars <- Map.traverseWithKey (compileModule tell project maybeDocsPath mvar iMVar) modules
+            putMVar mvar answerMVars
+            traverse readMVar answerMVars
+
+      Task.report Progress.CompileEnd
+
+      return answers
+
+
+
+-- ANSWERS
+
+
+data Answer
+  = Blocked
+  | Bad FilePath Time.UTCTime BS.ByteString [Compiler.Error]
+  | Good Compiler.Artifacts
+
+
+type Dict a = Map.Map Module.Raw a
+
+
+
+-- COMPILE MODULE
+
+
+compileModule
+  :: (Progress.Progress -> IO ())
+  -> Project
+  -> Maybe FilePath
+  -> MVar (Dict (MVar Answer))
+  -> MVar Module.Interfaces
+  -> Module.Raw
+  -> Plan.Info
+  -> IO (MVar Answer)
+compileModule tell project maybeDocsPath answersMVar ifacesMVar name info =
+  do  mvar <- newEmptyMVar
+
+      void $ forkIO $
+        do  answers <- readMVar answersMVar
+            blocked <- isBlocked answers info
+            if blocked
+              then putMVar mvar Blocked
+              else
+                do  tell (Progress.CompileFileStart name)
+                    let pkg = Project.getName project
+                    let docs = toDocsFlag name project maybeDocsPath
+                    let imports = makeImports project info
+                    ifaces <- readMVar ifacesMVar
+                    let source = Plan._src info
+                    case Compiler.compile docs pkg imports ifaces source of
+                      (_warnings, Left errors) ->
+                        do  tell (Progress.CompileFileEnd name Progress.Bad)
+                            let time = Plan._time info
+                            let path = Plan._path info
+                            putMVar mvar (Bad path time source errors)
+
+                      (_warnings, Right result@(Compiler.Artifacts elmi _ _)) ->
+                        do  tell (Progress.CompileFileEnd name Progress.Good)
+                            let canonicalName = Module.Canonical pkg name
+                            lock <- takeMVar ifacesMVar
+                            putMVar ifacesMVar (Map.insert canonicalName elmi lock)
+                            putMVar mvar (Good result)
+
+      return mvar
+
+
+
+-- TO DOCS FLAG
+
+
+toDocsFlag :: Module.Raw -> Project -> Maybe FilePath -> Compiler.DocsFlag
+toDocsFlag name project maybeDocsPath =
+  case maybeDocsPath of
+    Nothing ->
+      Compiler.NoDocs
+
+    Just _ ->
+      case project of
+        Project.App _ ->
+          Compiler.NoDocs
+
+        Project.Pkg info ->
+          if isExposed name (Project._pkg_exposed info) then
+            Compiler.YesDocs
+          else
+            Compiler.NoDocs
+
+
+isExposed :: Module.Raw -> Project.Exposed -> Bool
+isExposed name exposed =
+  case exposed of
+    Project.ExposedList modules ->
+      elem name modules
+
+    Project.ExposedDict chunks ->
+      elem name (concatMap snd chunks)
+
+
+
+-- IMPORTS
+
+
+makeImports :: Project -> Plan.Info -> Dict Module.Canonical
+makeImports project (Plan.Info _ _ _ clean dirty foreign) =
+  let
+    pkgName =
+      Project.getName project
+
+    mkLocal name =
+      ( name, Module.Canonical pkgName name )
+
+    mkForeign canonicalName@(Module.Canonical _ name) =
+      ( name, canonicalName )
+  in
+    Map.fromList $
+      map mkLocal clean
+      ++ map mkLocal dirty
+      ++ map mkForeign foreign
+
+
+
+-- INTERFACES
+
+
+isBlocked :: Dict (MVar Answer) -> Plan.Info -> IO Bool
+isBlocked answers info =
+  anyBlock <$> traverse (get answers) (Plan._dirty info)
+
+
+get :: Dict (MVar Answer) -> Module.Raw -> IO Answer
+get names name =
+  case Map.lookup name names of
+    Nothing ->
+      error "bug manifesting in File.Complie.get, please report at <TODO>!"
+
+    Just mvar ->
+      readMVar mvar
+
+
+anyBlock :: [Answer] -> Bool
+anyBlock answers =
+  case answers of
+    [] ->
+      False
+
+    Blocked : _ ->
+      True
+
+    Bad _ _ _ _ : _ ->
+      True
+
+    Good _ : otherAnswers ->
+      anyBlock otherAnswers

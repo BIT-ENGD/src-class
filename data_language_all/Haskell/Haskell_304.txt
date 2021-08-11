@@ -1,0 +1,286 @@
+module Template where
+
+import qualified Data.Set as Set
+import Debug.Trace
+
+import Util
+import Types
+import Obj
+import Parsing
+import Infer
+import Concretize
+import ToTemplate
+
+-- | Create a binding pair used for adding a template instantiation to an environment.
+instanceBinder :: SymPath -> Ty -> Template -> (String, Binder)
+instanceBinder path@(SymPath _ name) actualType template =
+  let (x, _) = instantiateTemplate path actualType template
+  in  (name, Binder emptyMeta x)
+
+-- | Create a binding pair and don't discard the dependencies
+instanceBinderWithDeps :: SymPath -> Ty -> Template -> ((String, Binder), [XObj])
+instanceBinderWithDeps path@(SymPath _ name) actualType template =
+  let (x, deps) = instantiateTemplate path actualType template
+  in  ((name, Binder emptyMeta x), deps)
+
+-- | Templates are instructions for the compiler to generate some C-code
+-- | based on some template and the names and types to fill into the template.
+-- | Templates are generic and need to be given an explicit type to generate the
+-- | correct code.
+
+-- | Example:
+-- | template1 : ((Array T) -> Int) = "int length__T(<T> xs) { return xs->len; }"
+-- | Given the type ((Array Float) -> Int) the following code is produced:
+-- | "int length__Float(Array__Float xs) { return xs->len; }"
+
+-- | Create a binding pair used for adding a template definition to an environment.
+defineTemplate :: SymPath -> Ty -> [Token] -> [Token] -> (Ty -> [XObj]) -> (String, Binder)
+defineTemplate path t declaration definition depsFunc =
+  let (SymPath _ name) = path
+      template = Template t (const declaration) (const definition) depsFunc
+      i = Info 0 0 (show path ++ ".template") Set.empty 0
+      defLst = [XObj (Deftemplate (TemplateCreator (\_ _ -> template))) Nothing Nothing, XObj (Sym path Symbol) Nothing Nothing]
+  in  (name, Binder emptyMeta (XObj (Lst defLst) (Just i) (Just t)))
+
+-- | The more advanced version of a template, where the code can vary depending on the type.
+defineTypeParameterizedTemplate :: TemplateCreator -> SymPath -> Ty -> (String, Binder)
+defineTypeParameterizedTemplate templateCreator path t =
+  let (SymPath _ name) = path
+      i = Info 0 0 (show path ++ ".parameterizedTemplate") Set.empty 0
+      defLst = [XObj (Deftemplate templateCreator) Nothing Nothing, XObj (Sym path Symbol) Nothing Nothing]
+  in  (name, Binder emptyMeta (XObj (Lst defLst) (Just i) (Just t)))
+
+-- | Concretizes the types used in @token
+--   @cName is the name of the definition, i.e. the "foo" in "void foo() { ... }"
+concretizeTypesInToken :: TypeMappings -> String -> [Token] -> Token -> [Token]
+concretizeTypesInToken mappings cName decl token =
+  case token of
+    TokDecl -> concatMap (concretizeTypesInToken mappings cName (error "Nope.")) decl
+    TokName -> [TokC cName]
+    TokTy t mode -> [TokTy (replaceTyVars mappings t) mode]
+    _ -> [token]
+
+-- | The code needed to correctly call a lambda from C.
+templateCodeForCallingLambda :: String -> Ty -> [String] -> String
+templateCodeForCallingLambda functionName t args =
+  let FuncTy argTys retTy = t
+      castToFnWithEnv = tyToCast (FuncTy (lambdaEnvTy : argTys) retTy)
+      castToFn = tyToCast t
+  in
+    functionName ++ ".env ? " ++
+    "((" ++ castToFnWithEnv ++ ")" ++ functionName ++ ".callback)(" ++ functionName ++ ".env" ++ (if null args then "" else ", ") ++ joinWithComma args ++ ")" ++
+    " : " ++
+    "((" ++ castToFn ++ ")" ++ functionName ++ ".callback)(" ++  joinWithComma args ++ ")"
+
+-- | Must cast a lambda:s .callback member to the correct type to be able to call it.
+tyToCast :: Ty -> String
+tyToCast t =
+  let FuncTy argTys retTy = t
+  in  "§(Fn [" ++ joinWithSpace (map show argTys) ++ "] " ++ show retTy ++ ")" -- Note! The '§' means that the emitted type will be "raw" and not converted to 'Lambda'.
+
+----------------------------------------------------------------------------------------------------------
+-- ACTUAL TEMPLATES
+
+-- | This function accepts a pointer and will do nothing with it.
+templateNoop :: (String, Binder)
+templateNoop = defineTemplate
+  (SymPath [] "noop")
+  (FuncTy [PointerTy (VarTy "a")] UnitTy)
+  (toTemplate "void $NAME ($a* a)")
+  (toTemplate "$DECL { }")
+  (const [])
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# OPTIONS_GHC -fno-cse #-}
+
+module Main where
+
+import System.Console.CmdArgs
+import Text.Parsec ((<|>))
+import qualified Text.Parsec as Parsec
+import Data.Char (toLower, isUpper)
+import Util
+import Types
+import Obj
+
+data Args = Args { sourcePath :: String
+                 , prefixToRemove :: String
+                 , kebabCase :: Bool
+                 } deriving (Show, Data, Typeable)
+
+main = do parsedArgs <- cmdArgs (Args { sourcePath = def &= argPos 0
+                                      , prefixToRemove = def
+                                      , kebabCase = False
+                                      }
+                                 &= summary "Carp Header Parse 0.0.1")
+          let path = sourcePath parsedArgs
+          if path /= ""
+            then do source <- readFile path
+                    putStrLn (joinWith "\n" (map pretty (parseHeaderFile path source
+                                                         (prefixToRemove parsedArgs)
+                                                         (kebabCase parsedArgs))))
+            else print parsedArgs
+
+parseHeaderFile :: FilePath -> String -> String -> Bool -> [XObj]
+parseHeaderFile path src prefix kebab =
+  case Parsec.runParser cSyntax () path src of
+    Left err -> error (show err)
+    Right ok -> concat ok
+  where
+        cSyntax :: Parsec.Parsec String () [[XObj]]
+        cSyntax = Parsec.sepBy line (Parsec.char '\n')
+
+        line :: Parsec.Parsec String () [XObj]
+        line = Parsec.try prefixedFunctionPrototype <|>
+               Parsec.try functionPrototype <|>
+               Parsec.try define <|>
+               discarded
+
+        define :: Parsec.Parsec String () [XObj]
+        define = do Parsec.many spaceOrTab
+                    Parsec.string "#define"
+                    Parsec.many spaceOrTab
+                    name <- Parsec.many1 identifierChar
+                    argList <- Parsec.optionMaybe argList
+                    Parsec.many spaceOrTab
+                    _ <- defineBody
+                    Parsec.many spaceOrTab
+                    -- OBS! Never kebab
+                    case argList of
+                      Nothing ->
+                        let tyXObj =
+                              XObj (Sym (SymPath [] "a") Symbol) Nothing Nothing
+                        in return (createRegisterForm name tyXObj prefix False)
+                      Just args ->
+                        let argsTy = genTypes (length args)
+                            tyXObj = toFnTypeXObj argsTy ("a", 0)
+                        in return (createRegisterForm name tyXObj prefix False)
+            where argList = do
+                    _ <- Parsec.char '('
+                    args <- Parsec.sepBy
+                              (Parsec.many spaceOrTab >>
+                               Parsec.many1 identifierChar)
+                              (Parsec.char ',')
+                    _ <- Parsec.char ')'
+                    return args
+                  genTypes 0 = []
+                  genTypes n = (("a" ++ show n), 0) : genTypes (n - 1)
+
+        defineBody :: Parsec.Parsec String () ()
+        defineBody = do s <- Parsec.many (Parsec.noneOf "\\\n")
+                        ending <- Parsec.optionMaybe (Parsec.string "\\\\\n")
+                        case ending of
+                          Nothing ->
+                            do c <- Parsec.optionMaybe (Parsec.noneOf "\n")
+                               case c of
+                                 Just _  -> defineBody
+                                 Nothing -> return ()
+                          Just _ -> defineBody
+
+        prefixedFunctionPrototype :: Parsec.Parsec String () [XObj]
+        prefixedFunctionPrototype = do Parsec.many spaceOrTab
+                                       _ <- Parsec.many1 identifierChar
+                                       functionPrototype
+
+        functionPrototype :: Parsec.Parsec String () [XObj]
+        functionPrototype = do Parsec.many spaceOrTab
+                               returnTypeString <- Parsec.many1 identifierChar
+                               stars1 <- stars
+                               Parsec.many1 spaceOrTab
+                               stars2 <- stars
+                               name <- Parsec.many1 identifierChar
+                               Parsec.many spaceOrTab
+                               argTypeStrings <- Parsec.try voidArg <|>
+                                                 argList
+                               Parsec.many spaceOrTab
+                               Parsec.char ';'
+                               Parsec.many spaceOrTab
+                               let tyXObj = toFnTypeXObj argTypeStrings (returnTypeString, length stars1 + length stars2)
+                               return (createRegisterForm name tyXObj prefix kebab)
+
+        voidArg :: Parsec.Parsec String () [(String, Int)]
+        voidArg = do _ <- Parsec.string "(void)"
+                     return []
+
+        argList :: Parsec.Parsec String () [(String, Int)]
+        argList = do Parsec.char '('
+                     args <- Parsec.sepBy arg (Parsec.char ',')
+                     Parsec.char ')'
+                     return args
+
+        arg :: Parsec.Parsec String () (String, Int)
+        arg = do Parsec.many spaceOrTab
+                 _ <- Parsec.option "" $ do Parsec.string "const"
+                                            Parsec.many spaceOrTab
+                 argTypeAsString <- Parsec.many1 identifierChar
+                 stars1 <- stars
+                 Parsec.many1 spaceOrTab
+                 stars2 <- stars
+                 _ <- Parsec.many1 identifierChar
+                 Parsec.many spaceOrTab
+                 return (argTypeAsString, length stars1 + length stars2)
+
+        stars :: Parsec.Parsec String () String
+        stars = Parsec.many (Parsec.char '*')
+
+        spaceOrTab :: Parsec.Parsec String () Char
+        spaceOrTab = Parsec.choice [Parsec.char ' ', Parsec.char '\t']
+
+        discarded :: Parsec.Parsec String () [XObj]
+        discarded = do discardedLine <- Parsec.many (Parsec.noneOf "\n")
+                       return []
+                       --return [(XObj (Str ("DISCARDED: " ++ discardedLine)) Nothing Nothing)]
+
+createRegisterForm :: String -> XObj -> String -> Bool -> [XObj]
+createRegisterForm name tyXObj prefix kebab =
+  let carpName = (if kebab then (toKebab . lowerFirst) else id)
+                   (if prefix == "" then name else removePrefix prefix name)
+      emitName = name
+  in [XObj (Lst ([ (XObj (Sym (SymPath [] "register") Symbol) Nothing Nothing)
+                 , (XObj (Sym (SymPath [] carpName) Symbol) Nothing Nothing)
+                 , tyXObj
+                 ] ++
+                  if prefix == ""
+                  then []
+                  else [(XObj (Str emitName) Nothing Nothing)]
+                )) Nothing Nothing]
+
+toFnTypeXObj :: [(String, Int)] -> (String, Int) -> XObj
+toFnTypeXObj argTypeStrings returnTypeString =
+  (XObj (Lst [ (XObj (Sym (SymPath [] "λ") Symbol) Nothing Nothing)
+             , (XObj (Arr (map (tyToXObj . cTypeToCarpType) argTypeStrings)) Nothing Nothing)
+             , (XObj (Sym (SymPath [] (show (cTypeToCarpType returnTypeString))) Symbol) Nothing Nothing)
+             ]) Nothing Nothing)
+
+toTypeXObj :: (String, Int) -> XObj
+toTypeXObj typeString =
+  (XObj (Sym (SymPath [] (show (cTypeToCarpType typeString))) Symbol) Nothing Nothing)
+
+cTypeToCarpType :: (String, Int) -> Ty
+cTypeToCarpType ("char", 0) = CharTy
+cTypeToCarpType ("int", 0) = IntTy
+cTypeToCarpType ("bool", 0) = BoolTy
+cTypeToCarpType ("long", 0) = LongTy
+cTypeToCarpType ("double", 0) = DoubleTy
+cTypeToCarpType ("float", 0) = FloatTy
+cTypeToCarpType ("void", 0) = UnitTy
+cTypeToCarpType (s, 0) = (StructTy s [])
+cTypeToCarpType (x, stars) = (PointerTy (cTypeToCarpType (x, stars - 1)))
+
+identifierChar :: Parsec.Parsec String () Char
+identifierChar = Parsec.choice [Parsec.letter, Parsec.digit, Parsec.char '_']
+
+removePrefix :: String -> String -> String
+removePrefix prefix s =
+  case Parsec.runParser match () "" s of
+    Left err -> s
+    Right ok -> ok
+  where match =
+          do _ <- Parsec.string prefix
+             Parsec.many1 identifierChar
+
+lowerFirst :: String -> String
+lowerFirst (c : cs) = toLower c : cs
+
+toKebab :: String -> String
+toKebab [] = []
+toKebab (c : cs) = (if isUpper c then ['-', toLower c] else [c]) ++ toKebab cs

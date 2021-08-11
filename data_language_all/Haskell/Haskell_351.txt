@@ -1,0 +1,117 @@
+{-# LANGUAGE TypeOperators #-}
+
+data Unit = Unit                 -- 1
+data Empty                       -- 0
+data (a * b) = Product a b       -- a * b
+data (a + b) = Inl a | Inr b     -- a + b
+data Exp a b = Exp (a -> b)      -- a^b
+data Rec f   = Mu (f (Rec f))    -- \mu
+
+-- Products
+
+type Prod3 a b c = a*(b*c)
+
+data Prod3' a b c
+  = Prod3 a b c
+
+prod3 :: Prod3 Int Int Int
+prod3 = Product 1 (Product 2 3)
+
+-- Sums
+
+type Sum3 a b c = (a+b)+c
+
+data Sum3' a b c
+  = Opt1 a
+  | Opt2 b
+  | Opt3 c
+
+sum3 :: Sum3 Int Int Int
+sum3 = Inl (Inl 2)
+
+data Option a = None | Some a
+
+type Option' a = Unit + a
+
+some :: Unit + a
+some = Inl Unit
+
+none :: a -> Unit + a
+none a = Inr a
+
+-- Recursion
+
+type Nat = Rec NatF
+data NatF s = Zero | Succ s
+
+zero :: Nat
+zero = Mu Zero
+
+succ :: Nat -> Nat
+succ x = Mu (Succ x)
+
+data ListF a b = Nil | Cons a b
+type List a = Rec (ListF a)
+
+-- syntactic sugar
+nil :: List a
+nil = Mu Nil
+
+cons :: a -> List a -> List a
+cons x y = Mu (Cons x y)
+
+roll :: Rec f -> f (Rec f)
+roll (Mu f) = f
+
+unroll :: f (Rec f) -> Rec f
+unroll f = Mu f
+
+main = return ()
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DefaultSignatures #-}
+
+import GHC.Generics
+
+-- Auxiliary class
+class GEq' f where
+  geq' :: f a -> f a -> Bool
+
+instance GEq' U1 where
+  geq' _ _ = True
+
+instance (GEq c) => GEq' (K1 i c) where
+  geq' (K1 a) (K1 b) = geq a b
+
+instance (GEq' a) => GEq' (M1 i c a) where
+  geq' (M1 a) (M1 b) = geq' a b
+
+instance (GEq' a, GEq' b) => GEq' (a :+: b) where
+  geq' (L1 a) (L1 b) = geq' a b
+  geq' (R1 a) (R1 b) = geq' a b
+  geq' _      _      = False
+
+instance (GEq' a, GEq' b) => GEq' (a :*: b) where
+  geq' (a1 :*: b1) (a2 :*: b2) = geq' a1 a2 && geq' b1 b2
+
+--
+class GEq a where
+  geq :: a -> a -> Bool
+  default geq :: (Generic a, GEq' (Rep a)) => a -> a -> Bool
+  geq x y = geq' (from x) (from y)
+
+-- Base equalities
+instance GEq Char where geq = (==)
+instance GEq Int where geq = (==)
+instance GEq Float where geq = (==)
+
+-- Equalities derived from structure of (:+:) and (:*:)
+instance GEq a => GEq (Maybe a)
+instance (GEq a, GEq b) => GEq (a,b)
+
+main :: IO ()
+main = do
+  print $ geq 2 (3 :: Int)
+  print $ geq 'a' 'b'
+  print $ geq (Just 'a') (Just 'a')
+  print $ geq ('a','b') ('a', 'b')

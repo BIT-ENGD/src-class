@@ -1,0 +1,66 @@
+{-# OPTIONS_GHC -cpp #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+module Main where
+
+import Control.Concurrent
+
+haskellFun :: Int -> IO ()
+haskellFun c = putStrLn ("Haskell: " ++ show c)
+
+foreign export ccall "hFun"  haskellFun :: Int -> IO ()
+foreign import ccall safe "hFun"  hFun :: Int -> IO ()
+
+#ifdef mingw32_HOST_OS
+foreign import stdcall safe "Sleep" _sleepBlock :: Int -> IO ()
+sleepBlock n = _sleepBlock (n*1000)
+#else
+foreign import ccall safe "sleep" sleepBlock :: Int -> IO ()
+#endif
+
+
+
+main :: IO ()
+main = do
+  th <- newEmptyMVar
+  forkIO $ do
+     putStrLn "newThread started"
+     sleepBlock 1
+     putStrLn "newThread back again"
+     putMVar th "1 sec later"
+  threadDelay 500000 >> putStrLn "mainThread"
+	-- this will not be blocked in the threaded RTS
+  forkIO $ (hFun 2)
+	-- neither will this
+  x <- takeMVar th
+  putStrLn x
+  putStrLn "\nshutting down"
+
+{-# LANGUAGE ForeignFunctionInterface #-}
+
+import Foreign
+import Data.IORef
+import Control.Concurrent
+import Control.Exception
+import System.IO.Unsafe
+
+foreign import ccall "wrapper"
+  wrap :: IO () -> IO (FunPtr (IO ()))
+
+foreign import ccall "dynamic" 
+  invoke :: FunPtr (IO ()) -> IO ()
+
+{-# NOINLINE m #-}
+m :: IORef ThreadId
+m = unsafePerformIO (newIORef (error "m"))
+
+main = do
+  id <- myThreadId
+  writeIORef m id
+  raise' <- wrap raise
+  invoke raise'
+
+raise = do
+  id <- readIORef m
+  me <- myThreadId
+  forkIO $ do threadDelay 10000; throwTo me (ErrorCall "timeout")
+  throwTo id (ErrorCall "kapow!")

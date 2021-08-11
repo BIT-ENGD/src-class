@@ -1,0 +1,557 @@
+// Copyright 2017 The xi-editor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Plugins and related functionality.
+
+pub mod rpc;
+pub mod manifest;
+mod catalog;
+
+use std::fmt;
+use std::io::BufReader;
+use std::path::Path;
+use std::process::{Child, Command as ProcCommand, Stdio};
+use std::thread;
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use xi_rpc::{self, RpcPeer, RpcLoop};
+use xi_trace;
+
+use WeakXiCore;
+use config::Table;
+use tabs::ViewId;
+use syntax::LanguageId;
+
+use self::rpc::{PluginUpdate, PluginBufferInfo};
+
+pub use self::manifest::{PluginDescription, Command, PlaceholderRpc};
+pub(crate) use self::catalog::PluginCatalog;
+
+pub type PluginName = String;
+
+/// A process-unique identifier for a running plugin.
+///
+/// Note: two instances of the same executable will have different identifiers.
+/// Note: this identifier is distinct from the OS's process id.
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy, Hash,
+         PartialEq, Eq, PartialOrd, Ord)]
+pub struct PluginPid(pub(crate) usize);
+
+pub type PluginId = PluginPid;
+
+impl fmt::Display for PluginPid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "plugin-{}", self.0)
+    }
+}
+
+pub struct Plugin {
+    peer: RpcPeer,
+    pub(crate) id: PluginId,
+    pub(crate) name: String,
+    #[allow(dead_code)]
+    process: Child,
+}
+
+impl Plugin {
+    //TODO: initialize should be sent automatically during launch,
+    //and should only send the plugin_id. We can just use the existing 'new_buffer'
+    // RPC for adding views
+    pub fn initialize(&self, info: Vec<PluginBufferInfo>) {
+        self.peer.send_rpc_notification("initialize",
+                                        &json!({
+                                         "plugin_id": self.id,
+                                         "buffer_info": info,
+                                        }))
+    }
+
+    pub fn shutdown(&self) {
+        self.peer.send_rpc_notification("shutdown", &json!({}));
+    }
+
+    // TODO: rethink naming, does this need to be a vec?
+    pub fn new_buffer(&self, info: &PluginBufferInfo) {
+        self.peer.send_rpc_notification("new_buffer",
+                                        &json!({
+                                            "buffer_info": [info],
+                                        }))
+    }
+
+    pub fn close_view(&self, view_id: ViewId) {
+        self.peer.send_rpc_notification("did_close",
+                                        &json!({
+                                            "view_id": view_id,
+                                        }))
+
+    }
+
+    pub fn did_save(&self, view_id: ViewId, path: &Path) {
+        self.peer.send_rpc_notification("did_save",
+                                        &json!({
+                                            "view_id": view_id,
+                                            "path": path,
+                                        }))
+    }
+
+    pub fn update<F>(&self, update: &PluginUpdate, callback: F)
+        where F: FnOnce(Result<Value, xi_rpc::Error>) + Send + 'static
+    {
+        self.peer.send_rpc_request_async("update", &json!(update),
+                                         Box::new(callback))
+    }
+
+
+    pub fn toggle_tracing(&self, enabled: bool) {
+        self.peer.send_rpc_notification("tracing_config",
+                                        &json!({"enabled": enabled}))
+    }
+
+    pub fn collect_trace(&self) -> Result<Value, xi_rpc::Error> {
+        self.peer.send_rpc_request("collect_trace", &json!({}))
+    }
+
+    pub fn config_changed(&self, view_id: ViewId, changes: &Table) {
+        self.peer.send_rpc_notification("config_changed",
+                                        &json!({"view_id": view_id,
+                                                "changes": changes}))
+    }
+
+    pub fn language_changed(&self, view_id: ViewId, new_lang: &LanguageId) {
+        self.peer.send_rpc_notification("language_changed",
+                                        &json!({"view_id": view_id,
+                                                "new_lang": new_lang}))
+    }
+
+    pub fn get_hover(&self, view_id: ViewId, request_id: usize, position: usize) {
+        self.peer.send_rpc_notification("get_hover",
+                                        &json!({"view_id": view_id,
+                                                "request_id": request_id,
+                                                "position": position}))
+    }
+
+    pub fn dispatch_command(&self, view_id: ViewId, method: &str, params: &Value) {
+        self.peer.send_rpc_notification("custom_command",
+                                        &json!({"view_id": view_id,
+                                                "method": method,
+                                                "params": params}))
+    }
+}
+
+pub(crate) fn start_plugin_process(plugin_desc: Arc<PluginDescription>,
+                                    id: PluginId, core: WeakXiCore) {
+
+    let spawn_result = thread::Builder::new()
+        .name(format!("<{}> core host thread", &plugin_desc.name))
+        .spawn(move || {
+            info!("starting plugin {}", &plugin_desc.name);
+            let child = ProcCommand::new(&plugin_desc.exec_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn();
+
+            match child {
+                Ok(mut child) => {
+                    let child_stdin = child.stdin.take().unwrap();
+                    let child_stdout = child.stdout.take().unwrap();
+                    let mut looper = RpcLoop::new(child_stdin);
+                    let peer: RpcPeer = Box::new(looper.get_raw_peer());
+                    let name = plugin_desc.name.clone();
+                    peer.send_rpc_notification("ping", &Value::Array(Vec::new()));
+                    let plugin = Plugin { peer, process: child, name, id };
+
+                    // set tracing immediately
+                    if xi_trace::is_enabled() {
+                        plugin.toggle_tracing(true);
+                    }
+
+                    core.plugin_connect(Ok(plugin));
+                    let mut core = core;
+                    let err = looper.mainloop(|| BufReader::new(child_stdout),
+                    &mut core);
+                    core.plugin_exit(id, err);
+                }
+                Err(err) => core.plugin_connect(Err(err)),
+            }
+        });
+
+    if let Err(err) = spawn_result {
+        error!("thread spawn failed for {}, {:?}", id, err);
+    }
+}
+// Copyright 2017 The xi-editor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! RPC types, corresponding to protocol requests, notifications & responses.
+
+use std::path::PathBuf;
+use std::borrow::Borrow;
+
+use serde::de::{self, Deserialize, Deserializer};
+use serde::ser::{self, Serialize, Serializer};
+use serde_json::{self, Value};
+
+use xi_rope::rope::{RopeDelta, Rope, LinesMetric};
+use xi_rpc::RemoteError;
+use super::PluginPid;
+use syntax::LanguageId;
+use tabs::{BufferIdentifier, ViewId};
+use config::Table;
+
+//TODO: At the moment (May 08, 2017) this is all very much in flux.
+// At some point, it will be stabalized and then perhaps will live in another crate,
+// shared with the plugin lib.
+
+// ====================================================================
+// core -> plugin RPC method types + responses
+// ====================================================================
+
+/// Buffer information sent on plugin init.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PluginBufferInfo {
+    /// The buffer's unique identifier.
+    pub buffer_id: BufferIdentifier,
+    /// The buffer's current views.
+    pub views: Vec<ViewId>,
+    pub rev: u64,
+    pub buf_size: usize,
+    pub nb_lines: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub syntax: LanguageId,
+    pub config: Table,
+}
+
+//TODO: very likely this should be merged with PluginDescription
+//TODO: also this does not belong here.
+/// Describes an available plugin to the client.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ClientPluginInfo {
+    pub name: String,
+    pub running: bool,
+}
+
+/// A simple update, sent to a plugin.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PluginUpdate {
+    pub view_id: ViewId,
+    /// The delta representing changes to the document.
+    ///
+    /// Note: Is `Some` in the general case; only if the delta involves
+    /// inserting more than some maximum number of bytes, will this be `None`,
+    /// indicating the plugin should flush cache and fetch manually.
+    pub delta: Option<RopeDelta>,
+    /// The size of the document after applying this delta.
+    pub new_len: usize,
+    /// The total number of lines in the document after applying this delta.
+    pub new_line_count: usize,
+    pub rev: u64,
+    /// The undo_group associated with this update. The plugin may pass
+    /// this value back to core when making an edit, to associate the
+    /// plugin's edit with this undo group. Core uses undo_group
+    //  to undo actions occurred due to plugins after a user action
+    // in a single step.
+    pub undo_group: Option<usize>,
+    pub edit_type: String,
+    pub author: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmptyStruct {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "method", content = "params")]
+/// RPC requests sent from the host
+pub enum HostRequest {
+    Update(PluginUpdate),
+    CollectTrace(EmptyStruct),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "method", content = "params")]
+/// RPC Notifications sent from the host
+pub enum HostNotification {
+    Ping(EmptyStruct),
+    Initialize { plugin_id: PluginPid, buffer_info: Vec<PluginBufferInfo> },
+    DidSave { view_id: ViewId, path: PathBuf },
+    ConfigChanged { view_id: ViewId, changes: Table },
+    NewBuffer { buffer_info: Vec<PluginBufferInfo> },
+    DidClose { view_id: ViewId },
+    GetHover { view_id: ViewId, request_id: usize, position: usize },
+    Shutdown(EmptyStruct),
+    TracingConfig {enabled: bool},
+    LanguageChanged { view_id: ViewId, new_lang: LanguageId },
+}
+
+
+// ====================================================================
+// plugin -> core RPC method types
+// ====================================================================
+
+/// A simple edit, received from a plugin.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PluginEdit {
+    pub rev: u64,
+    pub delta: RopeDelta,
+    /// the edit priority determines the resolution strategy when merging
+    /// concurrent edits. The highest priority edit will be applied last.
+    pub priority: u64,
+    /// whether the inserted text prefers to be to the right of the cursor.
+    pub after_cursor: bool,
+    /// the originator of this edit: some identifier (plugin name, 'core', etc)
+    /// undo_group associated with this edit
+    pub undo_group: Option<usize>,
+    pub author: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct ScopeSpan {
+    pub start: usize,
+    pub end: usize,
+    pub scope_id: u32,
+}
+
+/// The object returned by the `get_data` RPC.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetDataResponse {
+    pub chunk: String,
+    pub offset: usize,
+    pub first_line: usize,
+    pub first_line_offset: usize,
+}
+
+/// The unit of measure when requesting data.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum TextUnit {
+    /// The requested offset is in bytes. The returned chunk will be valid
+    /// UTF8, and is guaruanteed to include the byte specified the offset.
+    Utf8,
+    /// The requested offset is a line number. The returned chunk will begin
+    /// at the offset of the requested line.
+    Line,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "method", content = "params")]
+/// RPC requests sent from plugins.
+pub enum PluginRequest {
+    GetData { start: usize, unit: TextUnit, max_size: usize, rev: u64 },
+    LineCount,
+    GetSelections,
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "method", content = "params")]
+/// RPC commands sent from plugins.
+pub enum PluginNotification {
+    AddScopes { scopes: Vec<Vec<String>> },
+    UpdateSpans { start: usize, len: usize, spans: Vec<ScopeSpan>, rev: u64 },
+    Edit { edit: PluginEdit },
+    Alert { msg: String },
+    AddStatusItem { key: String, value: String, alignment: String },
+    UpdateStatusItem { key: String, value: String  },
+    RemoveStatusItem { key: String },
+    ShowHover { request_id: usize, result: Result<Hover, RemoteError> },
+}
+
+/// Range expressed in terms of PluginPosition. Meant to be sent from
+/// plugin to core.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct Range {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Hover Item sent from Plugin to Core
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct Hover {
+    pub content: String,
+    pub range: Option<Range>
+}
+
+/// Common wrapper for plugin-originating RPCs.
+pub struct PluginCommand<T> {
+    pub view_id: ViewId,
+    pub plugin_id: PluginPid,
+    pub cmd: T,
+}
+
+impl<T: Serialize> Serialize for PluginCommand<T>
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        let mut v = serde_json::to_value(&self.cmd).map_err(ser::Error::custom)?;
+        v["params"]["view_id"] = json!(self.view_id);
+        v["params"]["plugin_id"] = json!(self.plugin_id);
+        v.serialize(serializer)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for PluginCommand<T>
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        #[derive(Deserialize)]
+        struct InnerIds {
+            view_id: ViewId,
+            plugin_id: PluginPid,
+        }
+        #[derive(Deserialize)]
+        struct IdsWrapper {
+            params: InnerIds,
+        }
+
+        let v = Value::deserialize(deserializer)?;
+        let helper = IdsWrapper::deserialize(&v).map_err(de::Error::custom)?;
+        let InnerIds { view_id, plugin_id } = helper.params;
+        let cmd = T::deserialize(v).map_err(de::Error::custom)?;
+        Ok(PluginCommand { view_id, plugin_id, cmd })
+    }
+}
+
+impl PluginBufferInfo {
+    pub fn new(buffer_id: BufferIdentifier, views: &[ViewId],
+               rev: u64, buf_size: usize, nb_lines: usize,
+               path: Option<PathBuf>, syntax: LanguageId,
+               config: Table) -> Self {
+        //TODO: do make any current assertions about paths being valid utf-8? do we want to?
+        let path = path.map(|p| p.to_str().unwrap().to_owned());
+        let views = views.to_owned();
+        PluginBufferInfo { buffer_id, views, rev, buf_size,
+        nb_lines, path, syntax, config }
+    }
+}
+
+impl PluginUpdate {
+    pub fn new<D>(view_id: ViewId, rev: u64, delta: D, new_len: usize,
+                  new_line_count: usize, undo_group: Option<usize>, edit_type: String, author: String) -> Self
+        where D: Into<Option<RopeDelta>>
+    {
+        let delta = delta.into();
+        PluginUpdate { view_id, delta, new_len, new_line_count, rev, undo_group, edit_type, author }
+    }
+}
+
+// maybe this should be in xi_rope? has a strong resemblance to the various
+// concrete `Metric` types.
+impl TextUnit {
+    /// Converts an offset in some unit to a concrete byte offset. Returns
+    /// `None` if the input offset is out of bounds in its unit space.
+    pub fn resolve_offset<T: Borrow<Rope>>(&self, text: T, offset: usize) -> Option<usize> {
+        let text = text.borrow();
+        match *self {
+            TextUnit::Utf8 => {
+                if offset > text.len() {
+                    None
+                } else {
+                    if text.is_codepoint_boundary(offset) {
+                        offset.into()
+                    } else {
+                        text.prev_codepoint_offset(offset)
+                    }
+                }
+            }
+            TextUnit::Line => {
+                let max_line_number = text.measure::<LinesMetric>() + 1;
+                if offset > max_line_number {
+                    None
+                } else {
+                    text.offset_of_line(offset).into()
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_plugin_update() {
+        let json = r#"{
+            "view_id": "view-id-42",
+            "delta": {"base_len": 6, "els": [{"copy": [0,5]}, {"insert":"rofls"}, {"copy": [5,6]}]},
+            "new_len": 11,
+            "new_line_count": 1,
+            "rev": 5,
+            "undo_group": 6,
+            "edit_type": "something",
+            "author": "me"
+    }"#;
+
+    let val: PluginUpdate = match serde_json::from_str(json) {
+        Ok(val) => val,
+        Err(err) => panic!("{:?}", err),
+    };
+    assert!(val.delta.is_some());
+    assert!(val.delta.unwrap().as_simple_insert().is_some());
+    }
+
+    #[test]
+    fn test_deserde_init() {
+        let json = r#"
+            {"buffer_id": 42,
+             "views": ["view-id-4"],
+             "rev": 1,
+             "buf_size": 20,
+             "nb_lines": 5,
+             "path": "some_path",
+             "syntax": "toml",
+             "config": {"some_key": 420}}"#;
+
+        let val: PluginBufferInfo = match serde_json::from_str(json) {
+            Ok(val) => val,
+            Err(err) => panic!("{:?}", err),
+        };
+        assert_eq!(val.rev, 1);
+        assert_eq!(val.path, Some("some_path".to_owned()));
+        assert_eq!(val.syntax, "toml".into());
+    }
+
+    #[test]
+    fn test_de_plugin_rpc() {
+        let json = r#"{"method": "alert", "params": {"view_id": "view-id-1", "plugin_id": 42, "msg": "ahhh!"}}"#;
+        let de: PluginCommand<PluginNotification> = serde_json::from_str(json).unwrap();
+        assert_eq!(de.view_id, ViewId(1));
+        assert_eq!(de.plugin_id, PluginPid(42));
+        match de.cmd {
+            PluginNotification::Alert { ref msg } if msg == "ahhh!" => (),
+            _ => panic!("{:?}", de.cmd),
+        }
+    }
+}

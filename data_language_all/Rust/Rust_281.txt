@@ -1,0 +1,58 @@
+use super::rocket;
+use rocket::local::Client;
+use rocket::http::Status;
+
+fn test(uri: &str, expected: &str) {
+    let client = Client::new(rocket()).unwrap();
+    let mut res = client.get(uri).dispatch();
+    assert_eq!(res.body_string(), Some(expected.into()));
+}
+
+fn test_404(uri: &str) {
+    let client = Client::new(rocket()).unwrap();
+    let res = client.get(uri).dispatch();
+    assert_eq!(res.status(), Status::NotFound);
+}
+
+#[test]
+fn test_people() {
+    test("/people/7f205202-7ba1-4c39-b2fc-3e630722bf9f", "We found: Lacy");
+    test("/people/4da34121-bc7d-4fc1-aee6-bf8de0795333", "We found: Bob");
+    test("/people/ad962969-4e3d-4de7-ac4a-2d86d6d10839", "We found: George");
+    test("/people/e18b3a5c-488f-4159-a240-2101e0da19fd",
+         "Person not found for UUID: e18b3a5c-488f-4159-a240-2101e0da19fd");
+    test_404("/people/invalid_uuid");
+}
+use std::fs::{self, File};
+use std::io::prelude::*;
+
+use rocket::local::Client;
+
+#[test]
+fn test_root() {
+    let client = Client::new(super::rocket()).unwrap();
+    let mut res = client.get("/").dispatch();
+
+    // Check that we have exactly 25,000 'a'.
+    let res_str = res.body_string().unwrap();
+    assert_eq!(res_str.len(), 25000);
+    for byte in res_str.as_bytes() {
+        assert_eq!(*byte, b'a');
+    }
+}
+
+#[test]
+fn test_file() {
+    // Create the 'big_file'
+    const CONTENTS: &str = "big_file contents...not so big here";
+    let mut file = File::create(super::FILENAME).expect("create big_file");
+    file.write_all(CONTENTS.as_bytes()).expect("write to big_file");
+
+    // Get the big file contents, hopefully.
+    let client = Client::new(super::rocket()).unwrap();
+    let mut res = client.get("/big_file").dispatch();
+    assert_eq!(res.body_string(), Some(CONTENTS.into()));
+
+    // Delete the 'big_file'.
+    fs::remove_file(super::FILENAME).expect("remove big_file");
+}

@@ -1,0 +1,272 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-|
+Module      : Idris.ASTUtils
+Description : This implements just a few basic lens-like concepts to ease state updates. Similar to fclabels in approach, just without the extra dependency.
+
+License     : BSD3
+Maintainer  : The Idris Community.
+
+This implements just a few basic lens-like concepts to ease state updates.
+Similar to fclabels in approach, just without the extra dependency.
+
+We don't include an explicit export list
+because everything here is meant to be exported.
+
+Short synopsis:
+---------------
+@
+f :: Idris ()
+f = do
+     -- these two steps:
+     detaggable <- fgetState (opt_detaggable . ist_optimisation typeName)
+     fputState (opt_detaggable . ist_optimisation typeName) (not detaggable)
+
+     -- are equivalent to:
+     fmodifyState (opt_detaggable . ist_optimisation typeName) not
+
+     -- of course, the long accessor can be put in a variable;
+     -- everything is first-class
+     let detag n = opt_detaggable . ist_optimisation n
+     fputState (detag n1) True
+     fputState (detag n2) False
+
+     -- Note that all these operations handle missing items consistently
+     -- and transparently, as prescribed by the default values included
+     -- in the definitions of the ist_* functions.
+     --
+     -- Especially, it's no longer necessary to have initial values of
+     -- data structures copied (possibly inconsistently) all over the compiler.
+@
+-}
+module Idris.ASTUtils(
+    Field(), cg_usedpos, ctxt_lookup, fgetState, fmodifyState
+  , fputState, idris_fixities, ist_callgraph, ist_optimisation
+  , known_interfaces, known_terms, opt_detaggable, opt_inaccessible
+  , opt_forceable, opts_idrisCmdline, repl_definitions
+  ) where
+
+import Idris.AbsSyntaxTree
+import Idris.Core.Evaluate
+import Idris.Core.TT
+import Idris.Options
+
+import Prelude hiding (id, (.))
+
+import Control.Category
+import Control.Monad.State.Class
+import Data.Maybe
+
+data Field rec fld = Field
+    { fget :: rec -> fld
+    , fset :: fld -> rec -> rec
+    }
+
+fmodify :: Field rec fld -> (fld -> fld) -> rec -> rec
+fmodify field f x = fset field (f $ fget field x) x
+
+instance Category Field where
+    id = Field id const
+    Field g2 s2 . Field g1 s1 = Field (g2 . g1) (\v2 x1 -> s1 (s2 v2 $ g1 x1) x1)
+
+fgetState :: MonadState s m => Field s a -> m a
+fgetState field = gets $ fget field
+
+fputState :: MonadState s m => Field s a -> a -> m ()
+fputState field x = fmodifyState field (const x)
+
+fmodifyState :: MonadState s m => Field s a -> (a -> a) -> m ()
+fmodifyState field f = modify $ fmodify field f
+
+-- | Exact-name context lookup; uses Nothing for deleted values
+-- (read+write!).
+--
+-- Reading a non-existing value yields Nothing,
+-- writing Nothing deletes the value (if it existed).
+ctxt_lookup :: Name -> Field (Ctxt a) (Maybe a)
+ctxt_lookup n = Field
+    { fget = lookupCtxtExact n
+    , fset = \newVal -> case newVal of
+        Just x  -> addDef n x
+        Nothing -> deleteDefExact n
+    }
+
+-- Maybe-lens with a default value.
+maybe_default :: a -> Field (Maybe a) a
+maybe_default dflt = Field (fromMaybe dflt) (const . Just)
+
+
+-----------------------------------
+-- Individual records and fields --
+-----------------------------------
+--
+-- These could probably be generated; let's use lazy addition for now.
+--
+
+
+-- OptInfo
+----------
+
+-- | the optimisation record for the given (exact) name
+ist_optimisation :: Name -> Field IState OptInfo
+ist_optimisation n =
+      maybe_default Optimise
+        { inaccessible = []
+        , detaggable = False
+        , forceable = []
+        }
+    . ctxt_lookup n
+    . Field idris_optimisation (\v ist -> ist{ idris_optimisation = v })
+
+-- | two fields of the optimisation record
+opt_inaccessible :: Field OptInfo [(Int, Name)]
+opt_inaccessible = Field inaccessible (\v opt -> opt{ inaccessible = v })
+
+opt_detaggable :: Field OptInfo Bool
+opt_detaggable = Field detaggable (\v opt -> opt{ detaggable = v })
+
+opt_forceable :: Field OptInfo [Int]
+opt_forceable = Field forceable (\v opt -> opt{ forceable = v })
+
+-- | callgraph record for the given (exact) name
+ist_callgraph :: Name -> Field IState CGInfo
+ist_callgraph n =
+      maybe_default CGInfo
+        { calls = [], allCalls = Nothing, scg = [], usedpos = []
+        }
+    . ctxt_lookup n
+    . Field idris_callgraph (\v ist -> ist{ idris_callgraph = v })
+
+cg_usedpos :: Field CGInfo [(Int, [UsageReason])]
+cg_usedpos = Field usedpos (\v cg -> cg{ usedpos = v })
+
+-- | Commandline flags
+opts_idrisCmdline :: Field IState [Opt]
+opts_idrisCmdline =
+      Field opt_cmdline (\v opts -> opts{ opt_cmdline = v })
+    . Field idris_options (\v ist -> ist{ idris_options = v })
+
+-- | TT Context
+--
+-- This has a terrible name, but I'm not sure of a better one that
+-- isn't confusingly close to tt_ctxt
+known_terms :: Field IState (Ctxt (Def, RigCount, Injectivity, Accessibility, Totality, MetaInformation))
+known_terms = Field (definitions . tt_ctxt)
+                    (\v state -> state {tt_ctxt = (tt_ctxt state) {definitions = v}})
+
+known_interfaces :: Field IState (Ctxt InterfaceInfo)
+known_interfaces = Field idris_interfaces (\v state -> state {idris_interfaces = idris_interfaces state})
+
+
+-- | Names defined at the repl
+repl_definitions :: Field IState [Name]
+repl_definitions = Field idris_repl_defs (\v state -> state {idris_repl_defs = v})
+
+-- | Fixity declarations in an IState
+idris_fixities :: Field IState [FixDecl]
+idris_fixities = Field idris_infixes (\v state -> state {idris_infixes = v})
+{-|
+Module      : Idris.Apropos
+Description : Search loaded Idris code and named modules for things.
+
+License     : BSD3
+Maintainer  : The Idris Community.
+-}
+{-# LANGUAGE FlexibleInstances #-}
+module Idris.Apropos (apropos, aproposModules) where
+
+import Idris.AbsSyntax
+import Idris.Core.Evaluate (Def(..), ctxtAlist)
+import Idris.Core.TT (Binder(..), Const(..), Name(..), NameType(..), TT(..),
+                      toAlist)
+import Idris.Docstrings (DocTerm, Docstring, containsText)
+
+import Data.List (intersperse, nub, nubBy)
+import qualified Data.Text as T
+
+-- | Find definitions that are relevant to all space-delimited components of
+-- some string. Relevance is one or more of the following:
+--
+-- * the string is a substring of the name
+--
+-- * the string occurs in the documentation string
+--
+-- * the type of the definition is apropos
+apropos :: IState -> T.Text -> [Name]
+apropos ist what = let defs = ctxtAlist (tt_ctxt ist)
+                       docs = toAlist (idris_docstrings ist)
+                   in nub (map fst (isAproposAll parts defs) ++
+                           map fst (isAproposAll parts docs))
+  where isAproposAll []          xs = xs
+        isAproposAll (what:more) xs = filter (isApropos what)
+                                             (isAproposAll more xs)
+        parts = filter ((> 0) . T.length) . T.splitOn (T.pack " ") $ what
+
+-- | Find modules whose names or docstrings contain all the
+-- space-delimited components of some string.
+aproposModules :: IState -> T.Text -> [(String, Docstring DocTerm)]
+aproposModules ist what = let mods  = toAlist (idris_moduledocs ist)
+                              found = nubBy (\x y -> fst x == fst y)
+                                            (isAproposAll parts mods)
+                          in map unModName found
+  where isAproposAll []          xs = xs
+        isAproposAll (what:more) xs = filter (\(n,d) -> isApropos what n || isApropos what d)
+                                             (isAproposAll more xs)
+        parts = filter ((> 0) . T.length) . T.splitOn (T.pack " ") $ what
+        unModName (NS _ ns, d) = ((concat . intersperse "." . map T.unpack . reverse) ns, d)
+        unModName (n,       d) = ("<<MODULE>>", d)
+
+textIn :: T.Text -> T.Text -> Bool
+textIn a b = T.isInfixOf (T.toLower a) (T.toLower b)
+
+class Apropos a where
+  isApropos :: T.Text -> a -> Bool
+
+instance Apropos Name where
+  isApropos str (UN n)     = textIn str n
+  isApropos str (NS n' ns) = isApropos str n' || any (textIn str) ns
+  -- Handle special names from stdlib
+  isApropos str n | (n == unitTy || n == unitCon) && str == T.pack "()" = True
+                  | (n == pairTy || n == pairCon) && str == T.pack "," = True
+                  | n == eqTy && str == T.pack "=" = True
+                  | n == eqCon && (T.toLower str) == T.pack "Refl" = True
+                  | (n == sigmaTy || n == sigmaCon) && str == T.pack "**" = True
+  isApropos _   _          = False -- we don't care about case blocks, MNs, etc
+
+instance Apropos Def where
+  isApropos str (Function ty tm) = isApropos str ty
+  isApropos str (TyDecl _ ty) = isApropos str ty
+  isApropos str (Operator ty _ _) = isApropos str ty
+  isApropos str (CaseOp _ ty ty' _ _ _) = isApropos str ty
+
+instance Apropos (Binder (TT Name)) where
+  isApropos str (Lam _ ty)    = str == T.pack "\\" || isApropos str ty
+  isApropos str (Pi _ _ ty _) = str == T.pack "->" || isApropos str ty
+  isApropos str (Let _ ty val)  = str == T.pack "let" || isApropos str ty || isApropos str val
+  isApropos str (NLet ty val) = str == T.pack "let" || isApropos str ty || isApropos str val
+  isApropos str _             = False -- these shouldn't occur in defined libraries
+
+instance Apropos (TT Name) where
+  isApropos str (P Ref n ty) = isApropos str n || isApropos str ty
+  isApropos str (P (TCon _ _) n ty) = isApropos str n || isApropos str ty
+  isApropos str (P (DCon _ _ _) n ty) = isApropos str n || isApropos str ty
+  isApropos str (P Bound _ ty)      = isApropos str ty
+  isApropos str (Bind n b tm)       = isApropos str b || isApropos str tm
+  isApropos str (App _ t1 t2)       = isApropos str t1 || isApropos str t2
+  isApropos str (Constant const)    = isApropos str const
+  isApropos str _                   = False
+
+instance Apropos Const where
+  isApropos str c = textIn str (T.pack (show c))
+
+instance Apropos (Docstring a) where
+  isApropos str d = containsText str d
+
+instance (Apropos a, Apropos b) => Apropos (a, b) where
+  isApropos str (x, y) = isApropos str x || isApropos str y
+
+instance (Apropos a) => Apropos (Maybe a) where
+  isApropos str (Just x) = isApropos str x
+  isApropos _   Nothing  = False
+
+instance (Apropos a) => Apropos [a] where
+  isApropos str xs = any (isApropos str) xs

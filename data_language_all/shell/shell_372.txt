@@ -1,0 +1,506 @@
+#!/usr/bin/env bash
+
+#
+# Steps:
+#
+#  1. Download corresponding html file for some README.md:
+#       curl -s $1
+#
+#  2. Discard rows where no substring 'user-content-' (github's markup):
+#       awk '/user-content-/ { ...
+#
+#  3.1 Get last number in each row like ' ... </span></a>sitemap.js</h1'.
+#      It's a level of the current header:
+#       substr($0, length($0), 1)
+#
+#  3.2 Get level from 3.1 and insert corresponding number of spaces before '*':
+#       sprintf("%*s", substr($0, length($0), 1)*3, " ")
+#
+#  4. Find head's text and insert it inside "* [ ... ]":
+#       substr($0, match($0, /a>.*<\/h/)+2, RLENGTH-5)
+#
+#  5. Find anchor and insert it inside "(...)":
+#       substr($0, match($0, "href=\"[^\"]+?\" ")+6, RLENGTH-8)
+#
+
+gh_toc_version="0.4.8"
+
+gh_user_agent="gh-md-toc v$gh_toc_version"
+
+#
+# Download rendered into html README.md by its url.
+#
+#
+gh_toc_load() {
+    local gh_url=$1
+
+    if type curl &>/dev/null; then
+        curl --user-agent "$gh_user_agent" -s "$gh_url"
+    elif type wget &>/dev/null; then
+        wget --user-agent="$gh_user_agent" -qO- "$gh_url"
+    else
+        echo "Please, install 'curl' or 'wget' and try again."
+        exit 1
+    fi
+}
+
+#
+# Converts local md file into html by GitHub
+#
+# ➥ curl -X POST --data '{"text": "Hello world github/linguist#1 **cool**, and #1!"}' https://api.github.com/markdown
+# <p>Hello world github/linguist#1 <strong>cool</strong>, and #1!</p>'"
+gh_toc_md2html() {
+    local gh_file_md=$1
+    URL=https://api.github.com/markdown/raw
+    TOKEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/token.txt"
+    if [ -f "$TOKEN" ]; then
+        URL="$URL?access_token=$(cat $TOKEN)"
+    fi
+    curl -s --user-agent "$gh_user_agent" \
+        --data-binary @"$gh_file_md" -H "Content-Type:text/plain" \
+        $URL
+}
+
+#
+# Is passed string url
+#
+gh_is_url() {
+    case $1 in
+        https* | http*)
+            echo "yes";;
+        *)
+            echo "no";;
+    esac
+}
+
+#
+# TOC generator
+#
+gh_toc(){
+    local gh_src=$1
+    local gh_src_copy=$1
+    local gh_ttl_docs=$2
+
+    if [ "$gh_src" = "" ]; then
+        echo "Please, enter URL or local path for a README.md"
+        exit 1
+    fi
+
+
+    # Show "TOC" string only if working with one document
+    if [ "$gh_ttl_docs" = "1" ]; then
+
+        echo "Table of Contents"
+        echo "================="
+        echo ""
+        gh_src_copy=""
+
+    fi
+
+    if [ "$(gh_is_url "$gh_src")" == "yes" ]; then
+        gh_toc_load "$gh_src" | gh_toc_grab "$gh_src_copy"
+    else
+        gh_toc_md2html "$gh_src" | gh_toc_grab "$gh_src_copy"
+    fi
+}
+
+#
+# Grabber of the TOC from rendered html
+#
+# $1 — a source url of document.
+# It's need if TOC is generated for multiple documents.
+#
+gh_toc_grab() {
+	# if closed <h[1-6]> is on the new line, then move it on the prev line
+	# for example:
+	# 	was: The command <code>foo1</code>
+	# 		 </h1>
+	# 	became: The command <code>foo1</code></h1>
+    sed -e ':a' -e 'N' -e '$!ba' -e 's/\n<\/h/<\/h/g' |
+    # find strings that corresponds to template
+    grep -E -o '<a\s*id="user-content-[^"]*".*</h[1-6]' |
+    # remove code tags
+    sed 's/<code>//' | sed 's/<\/code>//' |
+    # now all rows are like:
+    #   <a id="user-content-..." href="..."><span ...></span></a> ... </h1
+    # format result line
+    #   * $0 — whole string
+    echo -e "$(awk -v "gh_url=$1" '{
+    print sprintf("%*s", substr($0, length($0), 1)*3, " ") "* [" substr($0, match($0, /a>.*<\/h/)+2, RLENGTH-5)"](" gh_url substr($0, match($0, "href=\"[^\"]+?\" ")+6, RLENGTH-8) ")"}' | sed 'y/+/ /; s/%/\\x/g')"
+}
+
+#
+# Returns filename only from full path or url
+#
+gh_toc_get_filename() {
+    echo "${1##*/}"
+}
+
+#
+# Options hendlers
+#
+gh_toc_app() {
+    local app_name="gh-md-toc"
+
+    if [ "$1" = '--help' ] || [ $# -eq 0 ] ; then
+        echo "GitHub TOC generator ($app_name): $gh_toc_version"
+        echo ""
+        echo "Usage:"
+        echo "  $app_name src [src]     Create TOC for a README file (url or local path)"
+        echo "  $app_name -             Create TOC for markdown from STDIN"
+        echo "  $app_name --help        Show help"
+        echo "  $app_name --version     Show version"
+        return
+    fi
+
+    if [ "$1" = '--version' ]; then
+        echo "$gh_toc_version"
+        return
+    fi
+
+    if [ "$1" = "-" ]; then
+        if [ -z "$TMPDIR" ]; then
+            TMPDIR="/tmp"
+        elif [ -n "$TMPDIR" -a ! -d "$TMPDIR" ]; then
+            mkdir -p "$TMPDIR"
+        fi
+        local gh_tmp_md
+        gh_tmp_md=$(mktemp $TMPDIR/tmp.XXXXXX)
+        while read input; do
+            echo "$input" >> "$gh_tmp_md"
+        done
+        gh_toc_md2html "$gh_tmp_md" | gh_toc_grab ""
+        return
+    fi
+
+    for md in "$@"
+    do
+        echo ""
+        gh_toc "$md" "$#"
+    done
+
+    echo ""
+    echo "Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc)"
+}
+
+#
+# Entry point
+#
+gh_toc_app "$@"
+#!/bin/bash
+
+set -ex
+
+LOCAL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "$LOCAL_DIR"/../.. && pwd)
+
+# Setup sccache if SCCACHE_BUCKET is set
+if [ -n "${SCCACHE_BUCKET}" ]; then
+  mkdir -p ./sccache
+
+  SCCACHE="$(which sccache)"
+  if [ -z "${SCCACHE}" ]; then
+    echo "Unable to find sccache..."
+    exit 1
+  fi
+
+  # Setup wrapper scripts
+  for compiler in cc c++ gcc g++ x86_64-linux-gnu-gcc; do
+    (
+      echo "#!/bin/sh"
+      echo "exec $SCCACHE $(which $compiler) \"\$@\""
+    ) > "./sccache/$compiler"
+    chmod +x "./sccache/$compiler"
+  done
+
+  # CMake must find these wrapper scripts
+  export PATH="$PWD/sccache:$PATH"
+fi
+
+# Setup ccache if configured to use it (and not sccache)
+if [ -z "${SCCACHE}" ] && which ccache > /dev/null; then
+  mkdir -p ./ccache
+  ln -sf "$(which ccache)" ./ccache/cc
+  ln -sf "$(which ccache)" ./ccache/c++
+  ln -sf "$(which ccache)" ./ccache/gcc
+  ln -sf "$(which ccache)" ./ccache/g++
+  ln -sf "$(which ccache)" ./ccache/x86_64-linux-gnu-gcc
+  export CCACHE_WRAPPER_DIR="$PWD/ccache"
+  export PATH="$CCACHE_WRAPPER_DIR:$PATH"
+fi
+
+CMAKE_ARGS=("-DBUILD_BINARY=ON")
+CMAKE_ARGS+=("-DUSE_OBSERVERS=ON")
+CMAKE_ARGS+=("-DUSE_ZSTD=ON")
+
+# Run build script from scripts if applicable
+if [[ "${BUILD_ENVIRONMENT}" == *-android* ]]; then
+  export ANDROID_NDK=/opt/ndk
+  "${ROOT_DIR}/scripts/build_android.sh" ${CMAKE_ARGS[*]} "$@"
+  exit 0
+fi
+if [[ "${BUILD_ENVIRONMENT}" == conda* ]]; then
+
+  # click (required by onnx) wants these set
+  export LANG=C.UTF-8
+  export LC_ALL=C.UTF-8
+
+  # SKIP_CONDA_TESTS refers to only the 'test' section of the meta.yaml
+  export SKIP_CONDA_TESTS=1
+  export CONDA_INSTALL_LOCALLY=1
+  "${ROOT_DIR}/scripts/build_anaconda.sh" "$@"
+
+  # The tests all need hypothesis, tabulate, and pydot, which aren't included
+  # in the conda packages
+  conda install -y hypothesis tabulate pydot
+
+  # This build will be tested against onnx tests, which needs onnx installed.
+  # Onnx should be built against the same protobuf that Caffe2 uses, which is
+  # only installed in the conda environment when Caffe2 is.
+  # This path comes from install_anaconda.sh which installs Anaconda into the
+  # docker image
+  PROTOBUF_INCDIR=/opt/conda/include pip install "${ROOT_DIR}/third_party/onnx"
+  exit 0
+fi
+
+# Run cmake from ./build directory
+mkdir -p ./build
+cd ./build
+
+INSTALL_PREFIX="/usr/local/caffe2"
+CMAKE_ARGS+=("-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}")
+
+# Explicitly set Python executable.
+# On Ubuntu 16.04 the default Python is still 2.7.
+PYTHON="$(which python)"
+if [[ "${BUILD_ENVIRONMENT}" == py3* ]]; then
+  PYTHON=/usr/bin/python3
+  CMAKE_ARGS+=("-DPYTHON_EXECUTABLE=${PYTHON}")
+fi
+
+case "${BUILD_ENVIRONMENT}" in
+  *-mkl*)
+    CMAKE_ARGS+=("-DBLAS=MKL")
+    ;;
+  *-cuda*)
+    CMAKE_ARGS+=("-DUSE_CUDA=ON")
+    CMAKE_ARGS+=("-DCUDA_ARCH_NAME=Maxwell")
+    CMAKE_ARGS+=("-DUSE_NNPACK=OFF")
+
+    # Add ccache symlink for nvcc
+    ln -sf "$(which ccache)" "${CCACHE_WRAPPER_DIR}/nvcc"
+
+    # Explicitly set path to NVCC such that the symlink to ccache is used
+    CMAKE_ARGS+=("-DCUDA_NVCC_EXECUTABLE=${CCACHE_WRAPPER_DIR}/nvcc")
+
+    # Ensure FindCUDA.cmake can infer the right path to the CUDA toolkit.
+    # Setting PATH to resolve to the right nvcc alone isn't enough.
+    # See /usr/share/cmake-3.5/Modules/FindCUDA.cmake, block at line 589.
+    export CUDA_PATH="/usr/local/cuda"
+
+    # Ensure the ccache symlink can still find the real nvcc binary.
+    export PATH="/usr/local/cuda/bin:$PATH"
+    ;;
+esac
+
+# Try to include Redis support for Linux builds
+if [ "$(uname)" == "Linux" ]; then
+  CMAKE_ARGS+=("-DUSE_REDIS=ON")
+fi
+
+# Currently, on Jenkins mac os, we will use custom protobuf. Mac OS
+# contbuild at the moment is minimal dependency - it doesn't use glog
+# or gflags either.
+if [ "$(uname)" == "Darwin" ]; then
+  CMAKE_ARGS+=("-DBUILD_CUSTOM_PROTOBUF=ON")
+fi
+
+# We test the presence of cmake3 (for platforms like Centos and Ubuntu 14.04)
+# and use that if so.
+if [[ -x "$(command -v cmake3)" ]]; then
+    CMAKE_BINARY=cmake3
+else
+    CMAKE_BINARY=cmake
+fi
+
+# Configure
+${CMAKE_BINARY} "${ROOT_DIR}" ${CMAKE_ARGS[*]} "$@"
+
+# Build
+if [ "$(uname)" == "Linux" ]; then
+  make "-j$(nproc)" install
+else
+  echo "Don't know how to build on $(uname)"
+  exit 1
+fi
+
+# Install ONNX into a local directory
+ONNX_INSTALL_PATH="/usr/local/onnx"
+pip install "${ROOT_DIR}/third_party/onnx" -t "${ONNX_INSTALL_PATH}"
+
+# Symlink the caffe2 base python path into the system python path,
+# so that we can import caffe2 without having to change $PYTHONPATH.
+# Run in a subshell to contain environment set by /etc/os-release.
+#
+# This is only done when running on Jenkins!  We don't want to pollute
+# the user environment with Python symlinks and ld.so.conf.d hacks.
+#
+if [ -n "${JENKINS_URL}" ]; then
+  (
+    source /etc/os-release
+
+    function python_version() {
+      "$PYTHON" -c 'import sys; print("python%d.%d" % sys.version_info[0:2])'
+    }
+
+    # Debian/Ubuntu
+    if [[ "$ID_LIKE" == *debian* ]]; then
+      python_path="/usr/local/lib/$(python_version)/dist-packages"
+      sudo ln -sf "${INSTALL_PREFIX}/caffe2" "${python_path}"
+      sudo ln -sf "${ONNX_INSTALL_PATH}/onnx" "${python_path}"
+    fi
+
+    # RHEL/CentOS
+    if [[ "$ID_LIKE" == *rhel* ]]; then
+      python_path="/usr/lib64/$(python_version)/site-packages/"
+      sudo ln -sf "${INSTALL_PREFIX}/caffe2" "${python_path}"
+      sudo ln -sf "${ONNX_INSTALL_PATH}/onnx" "${python_path}"
+    fi
+
+    # /etc/ld.so.conf.d is used on both Debian and RHEL
+    echo "${INSTALL_PREFIX}/lib" | sudo tee /etc/ld.so.conf.d/caffe2.conf
+    sudo ldconfig
+  )
+fi
+#!/bin/bash
+
+set -ex
+
+LOCAL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "$LOCAL_DIR"/../.. && pwd)
+
+# Figure out which Python to use
+PYTHON="python"
+if [ -n "$BUILD_ENVIRONMENT" ]; then
+  if [[ "$BUILD_ENVIRONMENT" == py2* ]]; then
+    PYTHON="python2"
+  elif [[ "$BUILD_ENVIRONMENT" == py3* ]]; then
+    PYTHON="python3"
+  fi
+fi
+
+# The prefix must mirror the setting from build.sh
+INSTALL_PREFIX="/usr/local/caffe2"
+
+# Anaconda builds have a special install prefix and python
+if [[ "$BUILD_ENVIRONMENT" == conda* ]]; then
+  # This path comes from install_anaconda.sh which installs Anaconda into the
+  # docker image
+  PYTHON="/opt/conda/bin/python"
+  INSTALL_PREFIX="/opt/conda/"
+
+  # Testing requires separate packages
+  if [[ $BUILD_ENVIRONMENT == *gcc4* ]]; then
+    # These are from conda-forge
+    conda install -yc conda-forge hypothesis tabulate pydot networkx==2.0 click pytest scipy
+    # These packages are from the default channels
+    conda install -y opencv=3.1.0=np112py27_1 pil=1.1.7=py27_2
+  else
+    conda install -y hypothesis tabulate pydot
+  fi
+
+  # This build will be tested against onnx tests, which needs onnx installed.
+  # Onnx should be built against the same protobuf that Caffe2 uses, which is
+  # only installed in the conda environment when Caffe2 is.
+  # This path comes from install_anaconda.sh which installs Anaconda into the
+  # docker image
+  PROTOBUF_INCDIR=/opt/conda/include pip install "${ROOT_DIR}/third_party/onnx"
+fi
+
+# Add the site-packages in the caffe2 install prefix to the PYTHONPATH
+SITE_DIR=$($PYTHON -c "from distutils import sysconfig; print(sysconfig.get_python_lib(prefix=''))")
+INSTALL_SITE_DIR="${INSTALL_PREFIX}/${SITE_DIR}"
+
+# Skip tests in environments where they are not built/applicable
+if [[ "${BUILD_ENVIRONMENT}" == *-android* ]]; then
+  echo 'Skipping tests'
+  exit 0
+fi
+
+# Set PYTHONPATH and LD_LIBRARY_PATH so that python can find the installed
+# Caffe2. This shouldn't be done on Anaconda, as Anaconda should handle this.
+if [[ "$BUILD_ENVIRONMENT" != conda* ]]; then
+  export PYTHONPATH="${PYTHONPATH}:$INSTALL_SITE_DIR"
+  export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${INSTALL_PREFIX}/lib"
+fi
+
+exit_code=0
+
+cd "$ROOT_DIR"
+
+if [ -d ./test ]; then
+  echo "Directory ./test already exists; please remove it..."
+  exit 1
+fi
+
+mkdir -p ./test/{cpp,python}
+TEST_DIR="$PWD/test"
+
+cd ${INSTALL_PREFIX}
+
+# Commands below may exit with non-zero status
+set +e
+
+# C++ tests
+echo "Running C++ tests.."
+for test in ./test/*; do
+  # Skip tests we know are hanging or bad
+  case "$(basename "$test")" in
+    mkl_utils_test)
+      continue
+      ;;
+    # TODO investigate conv_op_test failures when using MKL
+    conv_op_test)
+      continue
+      ;;
+  esac
+
+  "$test" --gtest_output=xml:"$TEST_DIR"/cpp/$(basename "$test").xml
+  tmp_exit_code="$?"
+  if [ "$exit_code" -eq 0 ]; then
+    exit_code="$tmp_exit_code"
+  fi
+done
+
+# Get the relative path to where the caffe2 python module was installed
+CAFFE2_PYPATH="$INSTALL_SITE_DIR/caffe2"
+
+# Collect additional tests to run (outside caffe2/python)
+EXTRA_TESTS=()
+
+# CUDA builds always include NCCL support
+if [[ "$BUILD_ENVIRONMENT" == *-cuda* ]]; then
+  EXTRA_TESTS+=("$CAFFE2_PYPATH/contrib/nccl")
+fi
+
+# Python tests
+echo "Running Python tests.."
+"$PYTHON" \
+  -m pytest \
+  -x \
+  -v \
+  --junit-xml="$TEST_DIR/python/result.xml" \
+  --ignore "$CAFFE2_PYPATH/python/test/executor_test.py" \
+  --ignore "$CAFFE2_PYPATH/python/operator_test/matmul_op_test.py" \
+  --ignore "$CAFFE2_PYPATH/python/operator_test/pack_ops_test.py" \
+  --ignore "$CAFFE2_PYPATH/python/mkl/mkl_sbn_speed_test.py" \
+  "$CAFFE2_PYPATH/python" \
+  "${EXTRA_TESTS[@]}"
+
+tmp_exit_code="$?"
+if [ "$exit_code" -eq 0 ]; then
+  exit_code="$tmp_exit_code"
+fi
+
+# Exit with the first non-zero status we got
+exit "$exit_code"

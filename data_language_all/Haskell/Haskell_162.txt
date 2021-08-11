@@ -1,0 +1,155 @@
+-- Copyright (c) 2014-present, Facebook, Inc.
+-- All rights reserved.
+--
+-- This source code is distributed under the terms of a BSD license,
+-- found in the LICENSE file.
+
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
+
+-- | A data source that can be made to fail in various ways, for testing
+
+module BadDataSource (
+    -- * initialise the state
+    State(..), initGlobalState,
+
+    -- * requests for this data source
+    FailAfter(..),
+  ) where
+
+import Haxl.Prelude
+import Prelude ()
+
+import Haxl.Core
+
+import Control.Exception
+import Data.Typeable
+import Data.Hashable
+import Control.Concurrent
+
+data FailAfter a where
+  FailAfter :: Int -> FailAfter Int
+  deriving Typeable
+
+deriving instance Eq (FailAfter a)
+deriving instance Show (FailAfter a)
+instance ShowP FailAfter where showp = show
+
+instance Hashable (FailAfter a) where
+   hashWithSalt s (FailAfter a) = hashWithSalt s (0::Int,a)
+
+instance StateKey FailAfter where
+  data State FailAfter = FailAfterState
+         { failAcquireDelay :: Int
+         , failAcquire :: IO ()
+         , failReleaseDelay :: Int
+         , failRelease :: IO ()
+         , failDispatchDelay :: Int
+         , failDispatch :: IO ()
+         , failWaitDelay :: Int
+         , failWait :: IO ()
+        }
+
+instance DataSourceName FailAfter where
+  dataSourceName _ = "BadDataSource"
+
+instance DataSource u FailAfter where
+  -- I'll define exampleFetch below
+  fetch state@FailAfterState{..} = asyncFetchAcquireRelease
+     (do threadDelay failAcquireDelay; failAcquire)
+     (\_ -> do threadDelay failReleaseDelay; failRelease)
+     (\_ -> do threadDelay failDispatchDelay; failDispatch)
+     (\_ -> do threadDelay failWaitDelay; failWait)
+     submit state
+   where
+     submit :: () -> FailAfter a -> IO (IO (Either SomeException a))
+     submit _ (FailAfter t) = do
+       threadDelay t
+       return (return (Left (toException (FetchError "failed request"))))
+
+-- Every data source should define a function 'initGlobalState' that
+-- initialises the state for that data source.  The arguments to this
+-- function might vary depending on the data source - we might need to
+-- pass in resources from the environment, or parameters to set up the
+-- data source.
+initGlobalState :: IO (State FailAfter)
+initGlobalState = do
+  return FailAfterState
+    { failAcquireDelay = 0
+    , failAcquire = return ()
+    , failReleaseDelay = 0
+    , failRelease = return ()
+    , failDispatchDelay = 0
+    , failDispatch = return ()
+    , failWaitDelay = 0
+    , failWait = return ()
+    }
+-- Copyright (c) 2014-present, Facebook, Inc.
+-- All rights reserved.
+--
+-- This source code is distributed under the terms of a BSD license,
+-- found in the LICENSE file.
+
+{-# LANGUAGE RankNTypes, GADTs, BangPatterns, DeriveDataTypeable,
+    StandaloneDeriving #-}
+{-# OPTIONS_GHC -fno-warn-unused-do-bind -fno-warn-type-defaults #-}
+
+module Bench where
+
+import Haxl.Core.DataCache as DataCache
+
+import Prelude hiding (mapM)
+
+import Data.Hashable
+import Data.IORef
+import Data.Time.Clock
+import Data.Traversable
+import Data.Typeable
+import System.Environment
+import Text.Printf
+
+data TestReq a where
+  ReqInt    :: {-# UNPACK #-} !Int -> TestReq Int
+  ReqDouble :: {-# UNPACK #-} !Int -> TestReq Double
+  ReqBool   :: {-# UNPACK #-} !Int -> TestReq Bool
+  deriving Typeable
+
+deriving instance Eq (TestReq a)
+deriving instance Show (TestReq a)
+
+instance Hashable (TestReq a) where
+  hashWithSalt salt (ReqInt i) = hashWithSalt salt (0::Int, i)
+  hashWithSalt salt (ReqDouble i) = hashWithSalt salt (1::Int, i)
+  hashWithSalt salt (ReqBool i) = hashWithSalt salt (2::Int, i)
+
+main = do
+  [n] <- fmap (fmap read) getArgs
+  t0 <- getCurrentTime
+  let
+     f 0  !cache = return cache
+     f !n !cache = do
+       m <- newIORef 0
+       f (n-1) (DataCache.insert (ReqInt n) m cache)
+  --
+  cache <- f n emptyDataCache
+  let m = DataCache.lookup (ReqInt (n `div` 2)) cache
+  print =<< mapM readIORef m
+  t1 <- getCurrentTime
+  printf "insert: %.2fs\n" (realToFrac (t1 `diffUTCTime` t0) :: Double)
+
+  t0 <- getCurrentTime
+  let
+     f 0  !m = return m
+     f !n !m = case DataCache.lookup (ReqInt n) cache of
+                 Nothing -> f (n-1) m
+                 Just _  -> f (n-1) (m+1)
+  f n 0 >>= print
+  t1 <- getCurrentTime
+  printf "lookup: %.2fs\n" (realToFrac (t1 `diffUTCTime` t0) :: Double)

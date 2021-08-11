@@ -1,0 +1,395 @@
+// Copyright 2017 The xi-editor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Structured representation of a plugin's features and capabilities.
+
+use std::path::PathBuf;
+
+use serde_json::{self, Value};
+use serde::Serialize;
+
+use syntax::{LanguageDefinition, LanguageId};
+
+/// Describes attributes and capabilities of a plugin.
+///
+/// Note: - these will eventually be loaded from manifest files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PluginDescription {
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub scope: PluginScope,
+    // more metadata ...
+    /// path to plugin executable
+    pub exec_path: PathBuf,
+    /// Events that cause this plugin to run
+    #[serde(default)]
+    pub activations: Vec<PluginActivation>,
+    #[serde(default)]
+    pub commands: Vec<Command>,
+    #[serde(default)]
+    pub languages: Vec<LanguageDefinition>,
+}
+
+/// `PluginActivation`s represent events that trigger running a plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginActivation {
+    /// Always run this plugin, when available.
+    Autorun,
+    /// Run this plugin if the provided SyntaxDefinition is active.
+    #[allow(dead_code)]
+    OnSyntax(LanguageId),
+    /// Run this plugin in response to a given command.
+    #[allow(dead_code)]
+    OnCommand,
+}
+
+/// Describes the scope of events a plugin receives.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginScope {
+    /// The plugin receives events from multiple buffers.
+    Global,
+    /// The plugin receives events for a single buffer.
+    BufferLocal,
+    /// The plugin is launched in response to a command, and receives no
+    /// further updates.
+    SingleInvocation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents a custom command provided by a plugin.
+pub struct Command {
+    /// Human readable title, for display in (for example) a menu.
+    pub title: String,
+    /// A short description of the command.
+    pub description: String,
+    /// Template of the command RPC as it should be sent to the plugin.
+    pub rpc_cmd: PlaceholderRpc,
+    /// A list of `CommandArgument`s, which the client should use to build the RPC.
+    pub args: Vec<CommandArgument>,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A user provided argument to a plugin command.
+pub struct CommandArgument {
+    /// A human readable name for this argument, for use as placeholder
+    /// text or equivelant.
+    pub title: String,
+    /// A short (single sentence) description of this argument's use.
+    pub description: String,
+    pub key: String,
+    pub arg_type: ArgumentType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// If `arg_type` is `Choice`, `options` must contain a list of options.
+    pub options: Option<Vec<ArgumentOption>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ArgumentType {
+    Number, Int, PosInt, Bool, String, Choice
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents an option for a user-selectable argument.
+pub struct ArgumentOption {
+    pub title: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+/// A placeholder type which can represent a generic RPC.
+///
+/// This is the type used for custom plugin commands, which may have arbitrary
+/// method names and parameters.
+pub struct PlaceholderRpc {
+    pub method: String,
+    pub params: Value,
+    pub rpc_type: RpcType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RpcType {
+    Notification, Request
+}
+
+impl Command {
+    pub fn new<S, V>(title: S, description: S,
+                     rpc_cmd: PlaceholderRpc, args: V) -> Self
+    where S: AsRef<str>,
+          V: Into<Option<Vec<CommandArgument>>> {
+        let title = title.as_ref().to_owned();
+        let description = description.as_ref().to_owned();
+        let args = args.into().unwrap_or_else(Vec::new);
+        Command { title, description, rpc_cmd, args }
+    }
+}
+
+impl CommandArgument {
+    pub fn new<S: AsRef<str>>(title: S, description: S, key: S,
+                              arg_type: ArgumentType,
+                              options: Option<Vec<ArgumentOption>>) -> Self {
+        let key = key.as_ref().to_owned();
+        let title = title.as_ref().to_owned();
+        let description = description.as_ref().to_owned();
+        if arg_type == ArgumentType::Choice { assert!(options.is_some()) }
+        CommandArgument { title, description, key, arg_type, options }
+    }
+}
+
+impl ArgumentOption {
+    pub fn new<S: AsRef<str>, V: Serialize>(title: S, value: V) -> Self {
+        let title = title.as_ref().to_owned();
+        let value = serde_json::to_value(value).unwrap();
+        ArgumentOption { title, value }
+    }
+}
+
+impl PlaceholderRpc {
+    pub fn new<S, V>(method: S, params: V, request: bool) -> Self
+        where S: AsRef<str>,
+              V: Into<Option<Value>>
+    {
+        let method = method.as_ref().to_owned();
+        let params = params.into().unwrap_or(json!({}));
+        let rpc_type = if request { RpcType::Request } else { RpcType::Notification };
+
+        PlaceholderRpc { method, params, rpc_type }
+    }
+
+    pub fn is_request(&self) -> bool {
+        self.rpc_type == RpcType::Request
+    }
+
+    /// Returns a reference to the placeholder's params.
+    pub fn params_ref(&self) -> &Value {
+        &self.params
+    }
+
+    /// Returns a mutable reference to the placeholder's params.
+    pub fn params_ref_mut(&mut self) -> &mut Value {
+        &mut self.params
+    }
+
+    /// Returns a reference to the placeholder's method.
+    pub fn method_ref(&self) -> &str {
+        &self.method
+    }
+}
+
+impl PluginDescription {
+    /// Returns `true` if this plugin is globally scoped, else `false`.
+    pub fn is_global(&self) -> bool {
+        match self.scope {
+            PluginScope::Global => true,
+            _ => false,
+        }
+    }
+}
+
+impl Default for PluginScope {
+    fn default() -> Self {
+        PluginScope::BufferLocal
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_serde_command() {
+        let json = r#"
+    {
+        "title": "Test Command",
+        "description": "Passes the current test",
+        "rpc_cmd": {
+            "rpc_type": "notification",
+            "method": "test.cmd",
+            "params": {
+                "view": "",
+                "non_arg": "plugin supplied value",
+                "arg_one": "",
+                "arg_two": ""
+            }
+        },
+        "args": [
+            {
+                "title": "First argument",
+                "description": "Indicates something",
+                "key": "arg_one",
+                "arg_type": "Bool"
+            },
+            {
+                "title": "Favourite Number",
+                "description": "A number used in a test.",
+                "key": "arg_two",
+                "arg_type": "Choice",
+                "options": [
+                    {"title": "Five", "value": 5},
+                    {"title": "Ten", "value": 10}
+                ]
+            }
+        ]
+    }
+        "#;
+
+        let command: Command = serde_json::from_str(&json).unwrap();
+        assert_eq!(command.title, "Test Command");
+        assert_eq!(command.args[0].arg_type, ArgumentType::Bool);
+        assert_eq!(command.rpc_cmd.params_ref()["non_arg"], "plugin supplied value");
+        assert_eq!(command.args[1].options.clone().unwrap()[1].value, json!(10));
+    }
+}
+// Copyright 2018 The xi-editor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Cache and utilities for doing width measurement.
+
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
+
+use xi_rpc;
+
+use client::{Client, WidthReq};
+
+/// A token which can be used to retrieve an actual width value when the
+/// batch request is submitted.
+///
+/// Internally, it is implemented as an index into the `widths` array.
+pub type Token = usize;
+
+pub struct WidthCache {
+    // maps cache key to index within widths
+    m: HashMap<WidthCacheKey<'static>, Token>,
+    widths: Vec<f64>,
+}
+
+#[derive(Eq, PartialEq, Hash)]
+struct WidthCacheKey<'a> {
+    id: usize,  // style id
+    s: Cow<'a, str>,
+}
+
+/// A batched request, so that a number of strings can be measured in a
+/// a single RPC.
+pub struct WidthBatchReq<'a> {
+    cache: &'a mut WidthCache,
+    pending_tok: usize,
+    req: Vec<WidthReq>,
+    req_toks: Vec<Vec<Token>>,
+    // maps style id to index into req/req_toks
+    req_ids: BTreeMap<usize, usize>,
+}
+
+impl WidthCache {
+    pub fn new() -> WidthCache {
+        WidthCache {
+            m: HashMap::new(),
+            widths: Vec::new(),
+        }
+    }
+
+    /// Resolve a previously obtained token into a width value.
+    pub fn resolve(&self, tok: Token) -> f64 {
+        self.widths[tok]
+    }
+
+    /// Create a new batch of requests.
+    pub fn batch_req(self: &mut WidthCache) -> WidthBatchReq {
+        let pending_tok = self.widths.len();
+        WidthBatchReq {
+            cache: self,
+            pending_tok,
+            req: Vec::new(),
+            req_toks: Vec::new(),
+            req_ids: BTreeMap::new(),
+        }
+    }
+}
+
+impl<'a> WidthBatchReq<'a> {
+
+    /// Request measurement of one string/style pair within the batch.
+    pub fn request(&mut self, id: usize, s: &str) -> Token {
+        let key = WidthCacheKey {
+            id,
+            s: Cow::Borrowed(s),
+        };
+        if let Some(tok) = self.cache.m.get(&key) {
+            return *tok;
+        }
+        // cache miss, add the request
+        let key = WidthCacheKey {
+            id,
+            s: Cow::Owned(s.to_owned()),
+        };
+        let req = &mut self.req;
+        let req_toks = &mut self.req_toks;
+        let id_off = *self.req_ids.entry(id).or_insert_with(|| {
+            let id_off = req.len();
+            req.push(WidthReq { id, strings: Vec::new() });
+            req_toks.push(Vec::new());
+            id_off
+        });
+        // To avoid this second clone, we could potentially do a tricky thing where
+        // we extract the strings from the WidthReq. Probably not worth it though.
+        req[id_off].strings.push(s.to_owned());
+        let tok = self.pending_tok;
+        self.cache.m.insert(key, tok);
+        self.pending_tok += 1;
+        req_toks[id_off].push(tok);
+        tok
+    }
+
+    /// Issue the RPC (synchronously for now). On success, the tokens given by
+    /// `request` will resolve in the cache.
+    ///
+    /// Note: this currently takes a document context so we can issue an RPC to
+    /// the front-end, but it would probably be better to use a more general width
+    /// measurement trait, so that different width providers could be used (a mock
+    /// for testing, one based on unicode_width if the front-end didn't support
+    /// width measurement, a binary binding, etc).
+    pub fn issue(&mut self, client: &Client) -> Result<(), xi_rpc::Error> {
+        // The 0.0 values should all get replaced with actual widths, assuming the
+        // shape of the response from the front-end matches that of the request.
+        if self.pending_tok > self.cache.widths.len() {
+            self.cache.widths.resize(self.pending_tok, 0.0);
+            let widths = client.measure_width(&self.req)?;
+            for (w, t) in widths.iter().zip(self.req_toks.iter()) {
+                for (width, tok) in w.iter().zip(t.iter()) {
+                    self.cache.widths[*tok] = *width;
+                }
+            }
+        }
+        Ok(())
+    }
+}

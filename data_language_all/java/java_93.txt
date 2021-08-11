@@ -1,0 +1,295 @@
+/*
+ * Copyright 2012-2018 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.springframework.boot.actuate.autoconfigure.metrics.export.prometheus;
+
+import io.micrometer.core.instrument.Clock;
+import io.micrometer.prometheus.PrometheusConfig;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
+import io.prometheus.client.CollectorRegistry;
+import org.junit.Test;
+
+import org.springframework.boot.actuate.autoconfigure.web.server.ManagementContextAutoConfiguration;
+import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusPushGatewayManager;
+import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusScrapeEndpoint;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Tests for {@link PrometheusMetricsExportAutoConfiguration}.
+ *
+ * @author Andy Wilkinson
+ */
+public class PrometheusMetricsExportAutoConfigurationTests {
+
+	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+			.withConfiguration(AutoConfigurations
+					.of(PrometheusMetricsExportAutoConfiguration.class));
+
+	@Test
+	public void backsOffWithoutAClock() {
+		this.contextRunner.run((context) -> assertThat(context)
+				.doesNotHaveBean(PrometheusMeterRegistry.class));
+	}
+
+	@Test
+	public void autoConfiguresItsConfigCollectorRegistryAndMeterRegistry() {
+		this.contextRunner.withUserConfiguration(BaseConfiguration.class)
+				.run((context) -> assertThat(context)
+						.hasSingleBean(PrometheusMeterRegistry.class)
+						.hasSingleBean(CollectorRegistry.class)
+						.hasSingleBean(PrometheusConfig.class));
+	}
+
+	@Test
+	public void autoConfigurationCanBeDisabled() {
+		this.contextRunner
+				.withPropertyValues("management.metrics.export.prometheus.enabled=false")
+				.run((context) -> assertThat(context)
+						.doesNotHaveBean(PrometheusMeterRegistry.class)
+						.doesNotHaveBean(CollectorRegistry.class)
+						.doesNotHaveBean(PrometheusConfig.class));
+	}
+
+	@Test
+	public void allowsCustomConfigToBeUsed() {
+		this.contextRunner.withUserConfiguration(CustomConfigConfiguration.class)
+				.run((context) -> assertThat(context)
+						.hasSingleBean(PrometheusMeterRegistry.class)
+						.hasSingleBean(CollectorRegistry.class)
+						.hasSingleBean(PrometheusConfig.class).hasBean("customConfig"));
+	}
+
+	@Test
+	public void allowsCustomRegistryToBeUsed() {
+		this.contextRunner.withUserConfiguration(CustomRegistryConfiguration.class)
+				.run((context) -> assertThat(context)
+						.hasSingleBean(PrometheusMeterRegistry.class)
+						.hasBean("customRegistry").hasSingleBean(CollectorRegistry.class)
+						.hasSingleBean(PrometheusConfig.class));
+	}
+
+	@Test
+	public void allowsCustomCollectorRegistryToBeUsed() {
+		this.contextRunner
+				.withUserConfiguration(CustomCollectorRegistryConfiguration.class)
+				.run((context) -> assertThat(context)
+						.hasSingleBean(PrometheusMeterRegistry.class)
+						.hasBean("customCollectorRegistry")
+						.hasSingleBean(CollectorRegistry.class)
+						.hasSingleBean(PrometheusConfig.class));
+	}
+
+	@Test
+	public void addsScrapeEndpointToManagementContext() {
+		this.contextRunner
+				.withConfiguration(
+						AutoConfigurations.of(ManagementContextAutoConfiguration.class))
+				.withUserConfiguration(BaseConfiguration.class)
+				.run((context) -> assertThat(context)
+						.hasSingleBean(PrometheusScrapeEndpoint.class));
+	}
+
+	@Test
+	public void scrapeEndpointCanBeDisabled() {
+		this.contextRunner
+				.withConfiguration(
+						AutoConfigurations.of(ManagementContextAutoConfiguration.class))
+				.withPropertyValues("management.endpoint.prometheus.enabled=false")
+				.withUserConfiguration(BaseConfiguration.class)
+				.run((context) -> assertThat(context)
+						.doesNotHaveBean(PrometheusScrapeEndpoint.class));
+	}
+
+	@Test
+	public void allowsCustomScrapeEndpointToBeUsed() {
+		this.contextRunner
+				.withConfiguration(
+						AutoConfigurations.of(ManagementContextAutoConfiguration.class))
+				.withUserConfiguration(CustomEndpointConfiguration.class)
+				.run((context) -> assertThat(context).hasBean("customEndpoint")
+						.hasSingleBean(PrometheusScrapeEndpoint.class));
+	}
+
+	@Test
+	public void withPushGatewayEnabled() {
+		this.contextRunner
+				.withConfiguration(
+						AutoConfigurations.of(ManagementContextAutoConfiguration.class))
+				.withPropertyValues(
+						"management.metrics.export.prometheus.pushgateway.enabled=true")
+				.withUserConfiguration(BaseConfiguration.class)
+				.run((context) -> assertThat(context)
+						.hasSingleBean(PrometheusPushGatewayManager.class));
+	}
+
+	@Configuration
+	static class BaseConfiguration {
+
+		@Bean
+		public Clock clock() {
+			return Clock.SYSTEM;
+		}
+
+	}
+
+	@Configuration
+	@Import(BaseConfiguration.class)
+	static class CustomConfigConfiguration {
+
+		@Bean
+		public PrometheusConfig customConfig() {
+			return new PrometheusConfig() {
+
+				@Override
+				public String get(String k) {
+					return null;
+				}
+
+			};
+		}
+
+	}
+
+	@Configuration
+	@Import(BaseConfiguration.class)
+	static class CustomRegistryConfiguration {
+
+		@Bean
+		public PrometheusMeterRegistry customRegistry(PrometheusConfig config,
+				CollectorRegistry collectorRegistry, Clock clock) {
+			return new PrometheusMeterRegistry(config, collectorRegistry, clock);
+		}
+
+	}
+
+	@Configuration
+	@Import(BaseConfiguration.class)
+	static class CustomCollectorRegistryConfiguration {
+
+		@Bean
+		public CollectorRegistry customCollectorRegistry() {
+			return new CollectorRegistry();
+		}
+
+	}
+
+	@Configuration
+	@Import(BaseConfiguration.class)
+	static class CustomEndpointConfiguration {
+
+		@Bean
+		public PrometheusScrapeEndpoint customEndpoint(
+				CollectorRegistry collectorRegistry) {
+			return new PrometheusScrapeEndpoint(collectorRegistry);
+		}
+
+	}
+
+}
+/*
+ * Copyright (C) 2016 Jake Wharton
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package retrofit2.adapter.rxjava;
+
+import retrofit2.Response;
+import rx.Observable.OnSubscribe;
+import rx.Subscriber;
+import rx.exceptions.CompositeException;
+import rx.exceptions.Exceptions;
+import rx.exceptions.OnCompletedFailedException;
+import rx.exceptions.OnErrorFailedException;
+import rx.exceptions.OnErrorNotImplementedException;
+import rx.plugins.RxJavaPlugins;
+
+final class BodyOnSubscribe<T> implements OnSubscribe<T> {
+  private final OnSubscribe<Response<T>> upstream;
+
+  BodyOnSubscribe(OnSubscribe<Response<T>> upstream) {
+    this.upstream = upstream;
+  }
+
+  @Override public void call(Subscriber<? super T> subscriber) {
+    upstream.call(new BodySubscriber<T>(subscriber));
+  }
+
+  private static class BodySubscriber<R> extends Subscriber<Response<R>> {
+    private final Subscriber<? super R> subscriber;
+    /** Indicates whether a terminal event has been sent to {@link #subscriber}. */
+    private boolean subscriberTerminated;
+
+    BodySubscriber(Subscriber<? super R> subscriber) {
+      super(subscriber);
+      this.subscriber = subscriber;
+    }
+
+    @Override public void onNext(Response<R> response) {
+      if (response.isSuccessful()) {
+        subscriber.onNext(response.body());
+      } else {
+        subscriberTerminated = true;
+        Throwable t = new HttpException(response);
+        try {
+          subscriber.onError(t);
+        } catch (OnCompletedFailedException
+            | OnErrorFailedException
+            | OnErrorNotImplementedException e) {
+          RxJavaPlugins.getInstance().getErrorHandler().handleError(e);
+        } catch (Throwable inner) {
+          Exceptions.throwIfFatal(inner);
+          CompositeException composite = new CompositeException(t, inner);
+          RxJavaPlugins.getInstance().getErrorHandler().handleError(composite);
+        }
+      }
+    }
+
+    @Override public void onError(Throwable throwable) {
+      if (!subscriberTerminated) {
+        subscriber.onError(throwable);
+      } else {
+        // This should never happen! onNext handles and forwards errors automatically.
+        Throwable broken = new AssertionError(
+            "This should never happen! Report as a Retrofit bug with the full stacktrace.");
+        //noinspection UnnecessaryInitCause Two-arg AssertionError constructor is 1.7+ only.
+        broken.initCause(throwable);
+        RxJavaPlugins.getInstance().getErrorHandler().handleError(broken);
+      }
+    }
+
+    @Override public void onCompleted() {
+      if (!subscriberTerminated) {
+        subscriber.onCompleted();
+      }
+    }
+  }
+}

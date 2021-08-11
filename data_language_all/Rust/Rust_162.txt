@@ -1,0 +1,256 @@
+use ansi_term::Style;
+use diff::LineChange;
+use printer::{Colors, InteractivePrinter};
+
+#[derive(Clone)]
+pub struct DecorationText {
+    pub width: usize,
+    pub text: String,
+}
+
+pub trait Decoration {
+    fn generate(
+        &self,
+        line_number: usize,
+        continuation: bool,
+        printer: &InteractivePrinter,
+    ) -> DecorationText;
+    fn width(&self) -> usize;
+}
+
+pub struct LineNumberDecoration {
+    color: Style,
+    cached_wrap: DecorationText,
+    cached_wrap_invalid_at: usize,
+}
+
+impl LineNumberDecoration {
+    pub fn new(colors: &Colors) -> Self {
+        LineNumberDecoration {
+            color: colors.line_number,
+            cached_wrap_invalid_at: 10000,
+            cached_wrap: DecorationText {
+                text: colors.line_number.paint(" ".repeat(4)).to_string(),
+                width: 4,
+            },
+        }
+    }
+}
+
+impl Decoration for LineNumberDecoration {
+    fn generate(
+        &self,
+        line_number: usize,
+        continuation: bool,
+        _printer: &InteractivePrinter,
+    ) -> DecorationText {
+        if continuation {
+            if line_number > self.cached_wrap_invalid_at {
+                let new_width = self.cached_wrap.width + 1;
+                return DecorationText {
+                    text: self.color.paint(" ".repeat(new_width)).to_string(),
+                    width: new_width,
+                };
+            }
+
+            self.cached_wrap.clone()
+        } else {
+            let plain: String = format!("{:4}", line_number);
+            DecorationText {
+                width: plain.len(),
+                text: self.color.paint(plain).to_string(),
+            }
+        }
+    }
+
+    fn width(&self) -> usize {
+        4
+    }
+}
+
+pub struct LineChangesDecoration {
+    cached_none: DecorationText,
+    cached_added: DecorationText,
+    cached_removed_above: DecorationText,
+    cached_removed_below: DecorationText,
+    cached_modified: DecorationText,
+}
+
+impl LineChangesDecoration {
+    #[inline]
+    fn generate_cached(style: Style, text: &str) -> DecorationText {
+        DecorationText {
+            text: style.paint(text).to_string(),
+            width: text.chars().count(),
+        }
+    }
+
+    pub fn new(colors: &Colors) -> Self {
+        LineChangesDecoration {
+            cached_none: Self::generate_cached(Style::default(), " "),
+            cached_added: Self::generate_cached(colors.git_added, "+"),
+            cached_removed_above: Self::generate_cached(colors.git_removed, "‾"),
+            cached_removed_below: Self::generate_cached(colors.git_removed, "_"),
+            cached_modified: Self::generate_cached(colors.git_modified, "~"),
+        }
+    }
+}
+
+impl Decoration for LineChangesDecoration {
+    fn generate(
+        &self,
+        line_number: usize,
+        continuation: bool,
+        printer: &InteractivePrinter,
+    ) -> DecorationText {
+        if !continuation {
+            if let Some(ref changes) = printer.line_changes {
+                return match changes.get(&(line_number as u32)) {
+                    Some(&LineChange::Added) => self.cached_added.clone(),
+                    Some(&LineChange::RemovedAbove) => self.cached_removed_above.clone(),
+                    Some(&LineChange::RemovedBelow) => self.cached_removed_below.clone(),
+                    Some(&LineChange::Modified) => self.cached_modified.clone(),
+                    _ => self.cached_none.clone(),
+                };
+            }
+        }
+
+        self.cached_none.clone()
+    }
+
+    fn width(&self) -> usize {
+        self.cached_none.width
+    }
+}
+
+pub struct GridBorderDecoration {
+    cached: DecorationText,
+}
+
+impl GridBorderDecoration {
+    pub fn new(colors: &Colors) -> Self {
+        GridBorderDecoration {
+            cached: DecorationText {
+                text: colors.grid.paint("│").to_string(),
+                width: 1,
+            },
+        }
+    }
+}
+
+impl Decoration for GridBorderDecoration {
+    fn generate(
+        &self,
+        _line_number: usize,
+        _continuation: bool,
+        _printer: &InteractivePrinter,
+    ) -> DecorationText {
+        self.cached.clone()
+    }
+
+    fn width(&self) -> usize {
+        self.cached.width
+    }
+}
+use std::env;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+extern crate tempdir;
+use self::tempdir::TempDir;
+
+extern crate git2;
+use self::git2::build::CheckoutBuilder;
+use self::git2::Repository;
+use self::git2::Signature;
+
+pub struct BatTester {
+    /// Temporary working directory
+    temp_dir: TempDir,
+
+    /// Path to the *bat* executable
+    exe: PathBuf,
+}
+
+impl BatTester {
+    pub fn new() -> Self {
+        let temp_dir = create_sample_directory().expect("sample directory");
+
+        let root = env::current_exe()
+            .expect("tests executable")
+            .parent()
+            .expect("tests executable directory")
+            .parent()
+            .expect("bat executable directory")
+            .to_path_buf();
+
+        let exe_name = if cfg!(windows) { "bat.exe" } else { "bat" };
+        let exe = root.join(exe_name);
+
+        BatTester { temp_dir, exe }
+    }
+
+    pub fn test_snapshot(&self, name: &str, style: &str) {
+        let output = Command::new(&self.exe)
+            .current_dir(self.temp_dir.path())
+            .args(&[
+                "sample.rs",
+                "--no-config",
+                "--paging=never",
+                "--color=never",
+                "--decorations=always",
+                "--terminal-width=80",
+                &format!("--style={}", style),
+            ])
+            .output()
+            .expect("bat failed");
+
+        // have to do the replace because the filename in the header changes based on the current working directory
+        let actual = String::from_utf8_lossy(&output.stdout)
+            .as_ref()
+            .replace("tests/snapshots/", "");
+
+        let mut expected = String::new();
+        let mut file = File::open(format!("tests/snapshots/output/{}.snapshot.txt", name))
+            .expect("snapshot file missing");
+        file.read_to_string(&mut expected)
+            .expect("could not read snapshot file");
+
+        assert_eq!(expected, actual);
+    }
+}
+
+fn create_sample_directory() -> Result<TempDir, git2::Error> {
+    // Create temp directory and initialize repository
+    let temp_dir = TempDir::new("bat-tests").expect("Temp directory");
+    let repo = Repository::init(&temp_dir)?;
+
+    // Copy over `sample.rs`
+    let sample_path = temp_dir.path().join("sample.rs");
+    println!("{:?}", &sample_path);
+    fs::copy("tests/snapshots/sample.rs", &sample_path).expect("successful copy");
+
+    // Commit
+    let mut index = repo.index()?;
+    index.add_path(Path::new("sample.rs"))?;
+
+    let oid = index.write_tree()?;
+    let signature = Signature::now("bat test runner", "bat@test.runner")?;
+    let tree = repo.find_tree(oid)?;
+    let _ = repo.commit(
+        Some("HEAD"), //  point HEAD to our new commit
+        &signature,   // author
+        &signature,   // committer
+        "initial commit",
+        &tree,
+        &[],
+    );
+    let mut opts = CheckoutBuilder::new();
+    repo.checkout_head(Some(opts.force()))?;
+
+    fs::copy("tests/snapshots/sample.modified.rs", &sample_path).expect("successful copy");
+
+    Ok(temp_dir)
+}

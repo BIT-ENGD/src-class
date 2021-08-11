@@ -1,0 +1,282 @@
+#!/bin/sh
+
+/etc/init.d/autoformat start
+mkdir -p /var/lib/boot2docker
+chown docker:docker /var/lib/boot2docker
+
+if [ -s /var/lib/boot2docker/etc/hostname ]; then
+	# https://github.com/docker/machine/blob/97c1136d1ec9ae4c3ab69fda615e3dd577809e5c/libmachine/provision/boot2docker.go#L113
+	hostname="$(cat /var/lib/boot2docker/etc/hostname)"
+	sethostname "$hostname"
+fi
+
+cgroupfs-mount
+
+mkdir -p /var/lib/boot2docker/log
+chown docker /var/lib/boot2docker/log
+
+# wouldn't it be great if ntpd had a "log to XYZ file" option? (like crond does!)
+ntpd -d -n -q >> /var/lib/boot2docker/log/ntp.log 2>&1
+ntpd -d -n >> /var/lib/boot2docker/log/ntp.log 2>&1 &
+
+# install certs from "/var/lib/boot2docker/certs"
+for f in /var/lib/boot2docker/certs/*.pem /var/lib/boot2docker/certs/*.crt; do
+	[ -e "$f" ] || continue
+	# /usr/local/share/ca-certificates/**.crt gets loaded by "update-ca-certificates"
+	targetFile="/usr/local/share/ca-certificates/boot2docker/$(basename "$f")"
+	if [ "$targetFile" = "${targetFile%.crt}" ]; then
+		targetFile="$targetFile.crt"
+	fi
+	mkdir -p "$(dirname "$targetFile")"
+	ln -sfT "$f" "$targetFile"
+done
+if [ -d /usr/local/share/ca-certificates/boot2docker ]; then
+	/usr/local/tce.installed/ca-certificates
+fi
+
+if [ -f /var/lib/boot2docker/profile ]; then
+	. /var/lib/boot2docker/profile
+fi
+
+crond -L /var/lib/boot2docker/log/crond.log
+
+/etc/init.d/vbox start
+if grep -qi vmware /sys/class/dmi/id/sys_vendor 2>/dev/null; then
+	# try to mount the root shared folder; this command can fail (if shared folders are disabled on the host, vmtoolsd will take care of the mount if they are enabled while the machine is running)
+	[ -d /mnt/hgfs ] || { mkdir -p /mnt/hgfs; vmhgfs-fuse -o allow_other .host:/ /mnt/hgfs; }
+	vmtoolsd --background /var/run/vmtoolsd.pid
+	# TODO evaluate /usr/local/etc/init.d/open-vm-tools further (does more than this short blurb, and doesn't invoke vmhgfs-fuse)
+fi
+if modprobe hv_utils > /dev/null 2>&1; then
+	hv_kvp_daemon
+fi
+/usr/local/etc/init.d/prltoolsd start
+/etc/init.d/xe-linux-distribution start
+
+if [ -d /var/lib/boot2docker/ssh ]; then
+	rm -rf /usr/local/etc/ssh
+else
+	mv /usr/local/etc/ssh /var/lib/boot2docker/
+fi
+ln -sT /var/lib/boot2docker/ssh /usr/local/etc/ssh
+for keyType in rsa dsa ecdsa ed25519; do # pre-generate a few SSH host keys to decrease the verbosity of /usr/local/etc/init.d/openssh
+	keyFile="/usr/local/etc/ssh/ssh_host_${keyType}_key"
+	[ ! -f "$keyFile" ] || continue
+	echo "Generating $keyFile"
+	ssh-keygen -q -t "$keyType" -N '' -f "$keyFile"
+done
+/usr/local/etc/init.d/openssh start
+
+/usr/local/etc/init.d/acpid start
+
+# https://github.com/boot2docker/boot2docker/pull/1322
+/etc/init.d/haveged conditional
+# (if the system doesn't have enough entropy, "dockerd" hangs without any output until it get a sufficient amount)
+
+if [ -e /var/lib/boot2docker/bootsync.sh ]; then
+	sh /var/lib/boot2docker/bootsync.sh
+fi
+
+/etc/init.d/docker start
+
+if [ -e /var/lib/boot2docker/bootlocal.sh ]; then
+	sh /var/lib/boot2docker/bootlocal.sh &
+fi
+
+/opt/bootlocal.sh &
+#!/bin/sh
+set -e
+
+if [ "$(id -u)" != 0 ]; then
+	echo >&2 "error: must be root to invoke $0"
+	exit 1
+fi
+
+diskLabel='boot2docker-data'
+swapLabel='boot2dockerswap' # (swap has a character limit on labels)
+b2dMagic='boot2docker, please format-me'
+
+# use blockdev to return the disk with the biggest size
+_blockdev_report() {
+	# always ignore "zram" (compressed RAM / swap)
+	blockdev --report "$@" \
+		| awk 'NR > 1 && $7 ~ /^\/dev\// { print $6, $7 }' \
+		| sort -nr \
+		| cut -d' ' -f2 \
+		| grep -vE '^/dev/zram[0-9]*$'
+}
+
+_find_device_to_format() {
+	local devices device deviceHeader deviceData
+
+	# get a list of all attached storage (excluding CDs like sr0 and partitions like sda1 and xvda3) listed in order from biggest to smallest
+	devices="$(_blockdev_report | grep -vE '^/dev/(sr[0-9]+|(s|xv)d[a-z]+[0-9]+)$' || :)"
+	[ -n "$devices" ] || return
+
+	# check all disks for "boot2docker, please format-me" magic string
+	for device in $devices; do
+		deviceHeader="$(dd if="$device" bs="${#b2dMagic}" count=1 2>/dev/null | tr -d '\0')" || continue
+		[ "$deviceHeader" = "$b2dMagic" ] || continue
+
+		# save the "userdata" tarball for later use
+		echo >&2 "Saving userdata.tar"
+		dd if="$device" of=/userdata.tar bs=4096 count=1 > /dev/null
+
+		echo "$device"
+		return
+	done
+
+	# otherwise, return first unpartitioned disk
+	for device in $devices; do
+		deviceData="$(blkid "$device" 2>/dev/null || :)"
+		[ -z "$deviceData" ] || continue
+		echo "$device"
+		return
+	done
+}
+
+_find_device() {
+	local device
+
+	# check for an existing data partition (with the right label)
+	device="$(blkid -o device -l -t "LABEL=$diskLabel" || :)"
+	if [ -n "$device" ]; then
+		echo "$device"
+		return
+	fi
+
+	device="$(_find_device_to_format || :)"
+	[ -n "$device" ] || return
+
+	echo >&2 "Partitioning $device"
+	{
+		# use GPT (wave of the future and all that)
+		echo g
+
+		# add a swap partition (so Docker doesn't complain about it missing)
+		echo n; echo 2; echo; echo +1000M
+		echo t; echo 19
+
+		# rest of the disk for boot2docker data
+		echo n; echo 1; echo; echo
+
+		# write it!
+		echo w
+	} | fdisk "$device" > /dev/null
+
+	echo >&2 "Formatting ${device}2 (swap)"
+	mkswap -L "$swapLabel" "${device}2" > /dev/null
+
+	echo >&2 "Formatting ${device}1 (ext4)"
+	mkfs.ext4 -q -L "$diskLabel" -i 8192 "${device}1" > /dev/null
+
+	echo "${device}1"
+	return
+}
+
+_is_swap() {
+	# TCL will auto-swapon possible swap partitions, so chances are very high that our swap partition is already swapped -- we should check /proc/swaps
+
+	grep -qE '^'"$1"'[[:space:]]' /proc/swaps
+}
+
+_find_swap() {
+	local device devices
+
+	# if we've got a swap device with _our_ label, use that
+	device="$(blkid -o device -l -t "LABEL=$swapLabel" || :)"
+	if [ -n "$device" ] && ! _is_swap "$device"; then
+		echo "$device"
+		return
+	fi
+
+	# otherwise, find the biggest swap device available (ignoring the compressed swap device / zram TCL set up)
+	devices="$(blkid -o device -t 'TYPE=swap' || :)"
+	[ -n "$devices" ] || return
+	devices="$(_blockdev_report $devices || :)"
+	[ -n "$devices" ] || return
+
+	for device in $devices; do
+		if ! _is_swap "$device"; then
+			echo "$device"
+			return
+		fi
+	done
+}
+
+_mount() {
+	local device partName dockerUid dockerGid
+
+	device="$(_find_device || :)"
+	[ -n "$device" ] || return
+
+	partName="$(basename "$device")"
+	mkdir -p "/mnt/$partName"
+
+	echo >&2 "Mounting $device to /mnt/$partName"
+	mount "$device" "/mnt/$partName" > /dev/null || return
+
+	umount -f -l /var/lib/docker > /dev/null 2>&1 || :
+
+	rm -rf /var/lib/docker /var/lib/boot2docker
+	mkdir -p \
+		"/mnt/$partName/var/lib/boot2docker" \
+		"/mnt/$partName/var/lib/docker" \
+		/var/lib
+	ln -sf "/mnt/$partName/var/lib/boot2docker" /var/lib/boot2docker
+	ln -sf "/mnt/$partName/var/lib/docker" /var/lib/docker
+
+	rm -rf "/mnt/$partName/tmp"
+	mv /tmp "/mnt/$partName/tmp"
+	ln -sf "/mnt/$partName/tmp" /tmp
+
+	if [ -e /userdata.tar ]; then
+		mv /userdata.tar /var/lib/boot2docker/
+	fi
+
+	if [ -e /var/lib/boot2docker/userdata.tar ]; then
+		echo >&2 "Extracting userdata.tar into /home/docker"
+		tar -xf /var/lib/boot2docker/userdata.tar -C /home/docker
+		rm -f "/home/docker/$b2dMagic"
+		dockerUid="$(id -u docker)"
+		dockerGid="$(id -g docker)"
+		chown -R "$dockerUid:$dockerGid" /home/docker
+	fi
+
+	echo "$device"
+	return
+}
+_swapon() {
+	local device
+
+	device="$(_find_swap || :)" # _find_device will sometimes _create_ a swap device, so make sure it runs before this line
+	[ -n "$device" ] || return
+
+	echo >&2 "Enabling swap device $device"
+	swapon "$device" > /dev/null
+
+	echo "$device"
+	return
+}
+
+start() {
+	local mountDevice swapDevice
+
+	mountDevice="$(_mount || :)"
+	swapDevice="$(_swapon || :)"
+
+	if [ -z "$mountDevice" ]; then
+		echo >&2 "error: unable to find a partition with the appropriate label ($diskLabel), an unpartitioned disk, or a disk containing the magic string ($b2dMagic)"
+		exit 1
+	fi
+
+	if [ -z "$swapDevice" ]; then
+		echo >&2 "warning: unable to find a partition with the swap label ($swapLabel) or TYPE=swap (so Docker will likely complain about swap)"
+		echo >&2 " - this could also mean TCL already mounted it! (see 'free' or '/proc/swaps')"
+	fi
+}
+
+case "$1" in
+	start) "$1" ;;
+	*) echo "Usage $0 {start}"; exit 1 ;;
+esac

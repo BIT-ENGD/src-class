@@ -1,0 +1,98 @@
+module Pretty (
+  ppexpr,
+  pptype
+) where
+
+import Syntax
+import Type
+
+import Text.PrettyPrint (Doc, (<>), (<+>))
+import qualified Text.PrettyPrint as PP
+
+parensIf ::  Bool -> Doc -> Doc
+parensIf True = PP.parens
+parensIf False = id
+
+class Pretty p where
+  ppr :: Int -> p -> Doc
+
+instance Pretty Expr where
+  ppr p expr = case expr of
+    Zero -> PP.text "0"
+    Tr -> PP.text "true"
+    Fl -> PP.text "false"
+    Succ a -> (parensIf (p > 0) $ PP.text "succ" <+> ppr (p+1) a)
+    Pred a -> (parensIf (p > 0) $ PP.text "succ" <+> ppr (p+1) a)
+    IsZero a -> (parensIf (p > 0) $ PP.text "iszero" <+> ppr (p+1) a)
+    If a b c ->
+          PP.text "if"   <+> ppr p a
+      <+> PP.text "then" <+> ppr p b
+      <+> PP.text "else" <+> ppr p c
+
+instance Pretty Type where
+  ppr _ TNat = PP.text "Nat"
+  ppr _ TBool = PP.text "Bool"
+
+ppexpr :: Expr -> String
+ppexpr = PP.render . ppr 0
+
+pptype :: Type -> String
+pptype = PP.render . ppr 0
+module Check (
+  check,
+  checkTop,
+  TypeError(..)
+) where
+
+import Syntax
+import Control.Monad.Except
+import Control.Monad.Reader
+
+type Env = [(Name, Type)]
+
+extend :: (Name, Type) -> Env -> Env
+extend xt env = xt : env
+
+data TypeError
+  = Mismatch Type Type
+  | NotFunction Type
+  | NotInScope Name
+
+type Check = ExceptT TypeError (Reader Env)
+
+inEnv :: (Name, Type) -> Check a -> Check a
+inEnv (x,t) = local (extend (x,t))
+
+lookupVar :: Name -> Check Type
+lookupVar x = do
+  env <- ask
+  case lookup x env of
+    Just e  -> return e
+    Nothing -> throwError $ NotInScope x
+
+check :: Expr -> Check Type
+check expr = case expr of
+
+  Lit LInt{} -> return TInt
+
+  Lit LBool{} -> return TBool
+
+  Lam x t e -> do
+    rhs <- inEnv (x,t) (check e)
+    return (TArr t rhs)
+
+  App e1 e2 -> do
+    t1 <- check e1
+    t2 <- check e2
+    case t1 of
+       (TArr a b) | a == t2 -> return b
+                  | otherwise -> throwError $ Mismatch t2 a
+       ty -> throwError $ NotFunction ty
+
+  Var x -> lookupVar x
+
+runCheck :: Env -> Check a -> Either TypeError a
+runCheck env = flip runReader env . runExceptT
+
+checkTop :: Env -> Expr -> Either TypeError Type
+checkTop env x = runCheck env $ (check x)

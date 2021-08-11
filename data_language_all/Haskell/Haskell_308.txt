@@ -1,0 +1,189 @@
+module Scoring (scoreTypeBinder, scoreValueBinder) where
+
+import Debug.Trace
+import qualified Data.Set as Set
+
+import Types
+import Obj
+import Lookup
+
+-- | Scoring of types.
+-- | The score is used for sorting the bindings before emitting them.
+-- | A lower score means appearing earlier in the emitted file.
+scoreTypeBinder :: TypeEnv -> Binder -> (Int, Binder)
+scoreTypeBinder typeEnv b@(Binder _ (XObj (Lst (XObj x _ _ : XObj (Sym _ _) _ _ : _)) _ _)) =
+  case x of
+    Defalias aliasedType ->
+      let selfName = ""
+      -- we add 1 here because deftypes generate aliases that
+      -- will at least have the same score as the type, but
+      -- need to come after. the increment represents this dependency
+      in  (depthOfType typeEnv selfName aliasedType + 1, b)
+    Typ (StructTy structName varTys) ->
+      case lookupInEnv (SymPath [] structName) (getTypeEnv typeEnv) of
+        Just (_, Binder _ typedef) -> let depth = ((depthOfDeftype typeEnv typedef varTys), b)
+                                    in  --trace ("depth of " ++ structName ++ ": " ++ show depth)
+                                        depth
+        Nothing -> error ("Can't find user defined type '" ++ structName ++ "' in type env.")
+    _ ->
+      (500, b)
+scoreTypeBinder _ b@(Binder _ (XObj (Mod _) _ _)) =
+  (1000, b)
+scoreTypeBinder _ x = error ("Can't score: " ++ show x)
+
+depthOfDeftype :: TypeEnv -> XObj -> [Ty] -> Int
+depthOfDeftype typeEnv (XObj (Lst (_ : XObj (Sym (SymPath _ selfName) _) _ _ : rest)) _ _) varTys =
+  case concatMap expandCase rest of
+    [] -> 100
+    xs -> (maximum xs) + 1
+  where
+    expandCase :: XObj -> [Int]
+    expandCase (XObj (Arr arr) _ _) =
+      let members = memberXObjsToPairs arr
+          depthsFromMembers = map (depthOfType typeEnv selfName . snd) members
+          depthsFromVarTys = map (depthOfType typeEnv selfName) varTys
+      in depthsFromMembers ++ depthsFromVarTys
+    expandCase _ = error "Malformed case in typedef."
+depthOfDeftype _ xobj _ =
+  error ("Can't get dependency depth from " ++ show xobj)
+
+depthOfType :: TypeEnv -> String -> Ty -> Int
+depthOfType typeEnv selfName = visitType
+  where
+    visitType :: Ty -> Int
+    visitType t@(StructTy name varTys) = depthOfStructType (tyToC t) varTys
+    visitType (FuncTy argTys retTy) =
+      -- trace ("Depth of args of " ++ show argTys ++ ": " ++ show (map (visitType . Just) argTys))
+      maximum (visitType retTy : fmap visitType argTys) + 1
+    visitType (PointerTy p) = visitType p
+    visitType (RefTy r) = visitType r
+    visitType _ = 100
+
+    depthOfStructType :: String -> [Ty] -> Int
+    depthOfStructType name varTys =
+      case name of
+        "Array" -> depthOfVarTys
+        _ | name == selfName -> 30
+          | otherwise ->
+              case lookupInEnv (SymPath [] name) (getTypeEnv typeEnv) of
+                Just (_, Binder _ typedef) -> (depthOfDeftype typeEnv typedef varTys) + 1
+                Nothing -> --trace ("Unknown type: " ++ name) $
+                           depthOfVarTys -- The problem here is that generic types don't generate
+                                         -- their definition in time so we get nothing for those.
+                                         -- Instead, let's try the type vars.
+      where depthOfVarTys =
+              case fmap (depthOfType typeEnv name) varTys of
+                [] -> 50
+                xs -> (maximum xs) + 1
+
+
+
+-- | Scoring of value bindings ('def' and 'defn')
+-- | The score is used for sorting the bindings before emitting them.
+-- | A lower score means appearing earlier in the emitted file.
+scoreValueBinder :: Env -> Set.Set SymPath -> Binder -> (Int, Binder)
+scoreValueBinder globalEnv _ binder@(Binder _ (XObj (Lst ((XObj (External _) _ _) : _)) _ _)) =
+  (0, binder)
+scoreValueBinder globalEnv visited binder@(Binder _ (XObj (Lst [(XObj Def  _ _), XObj (Sym path Symbol) _ _, body]) _ _)) =
+  (scoreBody globalEnv visited body, binder)
+scoreValueBinder globalEnv visited binder@(Binder _ (XObj (Lst [(XObj Defn _ _), XObj (Sym path Symbol) _ _, _, body]) _ _)) =
+  (scoreBody globalEnv visited body, binder)
+scoreValueBinder _ _ binder =
+  (0, binder)
+
+scoreBody :: Env -> Set.Set SymPath -> XObj -> Int
+scoreBody globalEnv visited root = visit root
+  where
+    visit xobj =
+      case obj xobj of
+        (Lst _) ->
+          visitList xobj
+        (Arr _) ->
+          visitArray xobj
+        (Sym path (LookupGlobal _ _)) ->
+          if Set.member path visited
+          then 0
+          else case lookupInEnv path globalEnv of
+                 Just (_, foundBinder) ->
+                   let (score, _) = scoreValueBinder globalEnv (Set.insert path visited) foundBinder
+                   in  score + 1
+                 Nothing ->
+                   error ("Failed to lookup '" ++ show path ++ "'.")
+        _ -> 0
+    visitList (XObj (Lst []) _ _) =
+      0
+    visitList (XObj (Lst xobjs) _ _) =
+      maximum (fmap visit xobjs)
+    visitArray (XObj (Arr []) _ _) =
+      0
+    visitArray (XObj (Arr xobjs) _ _) =
+      maximum (fmap visit xobjs)
+module Infer (annotate
+             ,initialTypes
+             ,genConstraints
+             ,assignTypes
+             ,concretizeXObj
+             ,manageMemory
+             ,depsOfPolymorphicFunction
+             ) where
+
+import Control.Monad.State
+import Control.Monad (replicateM)
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+import Data.List (foldl', sort)
+import Data.Maybe (mapMaybe)
+import Debug.Trace
+
+import Obj
+import Constraints
+import Types
+import Util
+import TypeError
+import InitialTypes
+import AssignTypes
+import GenerateConstraints
+import Concretize
+
+-- | Performs all the steps of creating initial types, solving constraints and assigning the types.
+-- | Returns a list of all the bindings that need to be added for the new form to work.
+-- | The concretization of MultiSym:s (= ambiguous use of symbols, resolved by type usage)
+-- | makes it possible to solve more types so let's do it several times.
+annotate :: TypeEnv -> Env -> XObj -> Either TypeError (XObj, [XObj])
+annotate typeEnv globalEnv xobj =
+  do initiated <- initialTypes typeEnv globalEnv xobj
+     (annotated, dependencies) <- annotateUntilDone typeEnv globalEnv initiated [] 100
+     (final, deleteDeps) <- manageMemory typeEnv globalEnv annotated
+     finalWithNiceTypes <- beautifyTypeVariables final
+     return (finalWithNiceTypes, dependencies ++ deleteDeps)
+
+-- | Call the 'annotateOne' function until nothing changes
+annotateUntilDone :: TypeEnv -> Env -> XObj -> [XObj] -> Int -> Either TypeError (XObj, [XObj])
+annotateUntilDone typeEnv globalEnv xobj deps limiter =
+  if limiter <= 0
+  then Left (TooManyAnnotateCalls xobj)
+  else do (xobj', deps') <- annotateOne typeEnv globalEnv xobj True
+          let newDeps = deps ++ deps'
+          if xobj == xobj' -- Is it the same?
+            then return (xobj', newDeps)
+            else annotateUntilDone typeEnv globalEnv xobj' newDeps (limiter - 1)
+
+-- | Performs ONE step of annotation. The 'annotate' function will call this function several times.
+-- | TODO: Remove the allowAmbiguity flag?
+annotateOne :: TypeEnv -> Env -> XObj -> Bool -> Either TypeError (XObj, [XObj])
+annotateOne typeEnv env xobj allowAmbiguity = do
+  constraints <- genConstraints xobj
+  mappings <- solveConstraintsAndConvertErrorIfNeeded constraints -- (trace ("Constraints for '" ++ getName xobj ++ "':\n" ++ joinWith "\n" (map show constraints)) constraints)
+  typed <- assignTypes mappings xobj -- (trace ("Mappings for '" ++ getName xobj ++ ": " ++ show mappings) mappings) xobj
+  concretizeXObj allowAmbiguity typeEnv env [] typed
+
+-- | Convert from the type 'UnificationFailure' to 'TypeError' (enables monadic chaining of Either).
+solveConstraintsAndConvertErrorIfNeeded :: [Constraint] -> Either TypeError TypeMappings
+solveConstraintsAndConvertErrorIfNeeded constraints =
+  case solve constraints of
+    Left failure@(UnificationFailure _ _) -> Left (UnificationFailed
+                                                   (unificationFailure failure)
+                                                   (unificationMappings failure)
+                                                   constraints)
+    Left (Holes holes) -> Left (HolesFound holes)
+    Right ok -> Right ok

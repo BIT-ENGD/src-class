@@ -1,0 +1,381 @@
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+
+use syntect::dumps::{dump_to_file, from_binary, from_reader};
+use syntect::highlighting::{Theme, ThemeSet};
+use syntect::parsing::{SyntaxReference, SyntaxSet, SyntaxSetBuilder};
+
+use dirs::PROJECT_DIRS;
+
+use errors::*;
+use inputfile::{InputFile, InputFileReader};
+use syntax_mapping::SyntaxMapping;
+
+pub const BAT_THEME_DEFAULT: &str = "Monokai Extended";
+
+pub struct HighlightingAssets {
+    pub syntax_set: SyntaxSet,
+    pub theme_set: ThemeSet,
+}
+
+impl HighlightingAssets {
+    pub fn new() -> Self {
+        Self::from_cache().unwrap_or_else(|_| Self::from_binary())
+    }
+
+    pub fn from_files(dir: Option<&Path>, start_empty: bool) -> Result<Self> {
+        let source_dir = dir.unwrap_or_else(|| PROJECT_DIRS.config_dir());
+
+        let mut theme_set = if start_empty {
+            ThemeSet {
+                themes: BTreeMap::new(),
+            }
+        } else {
+            Self::get_integrated_themeset()
+        };
+
+        let theme_dir = source_dir.join("themes");
+
+        let res = theme_set.add_from_folder(&theme_dir);
+        if !res.is_ok() {
+            println!(
+                "No themes were found in '{}', using the default set",
+                theme_dir.to_string_lossy()
+            );
+        }
+
+        let mut syntax_set_builder = if start_empty {
+            let mut builder = SyntaxSetBuilder::new();
+            builder.add_plain_text_syntax();
+            builder
+        } else {
+            Self::get_integrated_syntaxset().into_builder()
+        };
+
+        let syntax_dir = source_dir.join("syntaxes");
+        if syntax_dir.exists() {
+            syntax_set_builder.add_from_folder(syntax_dir, true)?;
+        } else {
+            println!(
+                "No syntaxes were found in '{}', using the default set.",
+                syntax_dir.to_string_lossy()
+            );
+        }
+
+        Ok(HighlightingAssets {
+            syntax_set: syntax_set_builder.build(),
+            theme_set,
+        })
+    }
+
+    fn from_cache() -> Result<Self> {
+        let theme_set_path = theme_set_path();
+        let syntax_set_file = File::open(&syntax_set_path()).chain_err(|| {
+            format!(
+                "Could not load cached syntax set '{}'",
+                syntax_set_path().to_string_lossy()
+            )
+        })?;
+        let syntax_set: SyntaxSet = from_reader(BufReader::new(syntax_set_file))
+            .chain_err(|| "Could not parse cached syntax set")?;
+
+        let theme_set_file = File::open(&theme_set_path).chain_err(|| {
+            format!(
+                "Could not load cached theme set '{}'",
+                theme_set_path.to_string_lossy()
+            )
+        })?;
+        let theme_set: ThemeSet = from_reader(BufReader::new(theme_set_file))
+            .chain_err(|| "Could not parse cached theme set")?;
+
+        Ok(HighlightingAssets {
+            syntax_set,
+            theme_set,
+        })
+    }
+
+    fn get_integrated_syntaxset() -> SyntaxSet {
+        from_binary(include_bytes!("../assets/syntaxes.bin"))
+    }
+
+    fn get_integrated_themeset() -> ThemeSet {
+        from_binary(include_bytes!("../assets/themes.bin"))
+    }
+
+    fn from_binary() -> Self {
+        let syntax_set = Self::get_integrated_syntaxset();
+        let theme_set = Self::get_integrated_themeset();
+
+        HighlightingAssets {
+            syntax_set,
+            theme_set,
+        }
+    }
+
+    pub fn save(&self, dir: Option<&Path>) -> Result<()> {
+        let target_dir = dir.unwrap_or_else(|| PROJECT_DIRS.cache_dir());
+        let _ = fs::create_dir(target_dir);
+        let theme_set_path = target_dir.join("themes.bin");
+        let syntax_set_path = target_dir.join("syntaxes.bin");
+
+        print!(
+            "Writing theme set to {} ... ",
+            theme_set_path.to_string_lossy()
+        );
+        dump_to_file(&self.theme_set, &theme_set_path).chain_err(|| {
+            format!(
+                "Could not save theme set to {}",
+                theme_set_path.to_string_lossy()
+            )
+        })?;
+        println!("okay");
+
+        print!(
+            "Writing syntax set to {} ... ",
+            syntax_set_path.to_string_lossy()
+        );
+        dump_to_file(&self.syntax_set, &syntax_set_path).chain_err(|| {
+            format!(
+                "Could not save syntax set to {}",
+                syntax_set_path.to_string_lossy()
+            )
+        })?;
+        println!("okay");
+
+        Ok(())
+    }
+
+    pub fn get_theme(&self, theme: &str) -> &Theme {
+        match self.theme_set.themes.get(theme) {
+            Some(theme) => theme,
+            None => {
+                use ansi_term::Colour::Yellow;
+                eprintln!(
+                    "{}: Unknown theme '{}', using default.",
+                    Yellow.paint("[bat warning]"),
+                    theme
+                );
+                &self.theme_set.themes[BAT_THEME_DEFAULT]
+            }
+        }
+    }
+
+    pub fn get_syntax(
+        &self,
+        language: Option<&str>,
+        filename: InputFile,
+        reader: &mut InputFileReader,
+        mapping: &SyntaxMapping,
+    ) -> &SyntaxReference {
+        let syntax = match (language, filename) {
+            (Some(language), _) => self.syntax_set.find_syntax_by_token(language),
+            (None, InputFile::Ordinary(filename)) => {
+                let path = Path::new(filename);
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+
+                let file_name = mapping.replace(file_name);
+                let extension = mapping.replace(extension);
+
+                let ext_syntax = self
+                    .syntax_set
+                    .find_syntax_by_extension(&file_name)
+                    .or_else(|| self.syntax_set.find_syntax_by_extension(&extension));
+                let line_syntax = if ext_syntax.is_none() {
+                    String::from_utf8(reader.first_line.clone())
+                        .ok()
+                        .and_then(|l| self.syntax_set.find_syntax_by_first_line(&l))
+                } else {
+                    None
+                };
+                let syntax = ext_syntax.or(line_syntax);
+                syntax
+            }
+            (None, InputFile::StdIn) => String::from_utf8(reader.first_line.clone())
+                .ok()
+                .and_then(|l| self.syntax_set.find_syntax_by_first_line(&l)),
+            (_, InputFile::ThemePreviewFile) => self.syntax_set.find_syntax_by_name("Rust"),
+        };
+
+        syntax.unwrap_or_else(|| self.syntax_set.find_syntax_plain_text())
+    }
+}
+
+fn theme_set_path() -> PathBuf {
+    PROJECT_DIRS.cache_dir().join("themes.bin")
+}
+
+fn syntax_set_path() -> PathBuf {
+    PROJECT_DIRS.cache_dir().join("syntaxes.bin")
+}
+
+pub fn config_dir() -> Cow<'static, str> {
+    PROJECT_DIRS.config_dir().to_string_lossy()
+}
+
+pub fn clear_assets() {
+    print!("Clearing theme set cache ... ");
+    fs::remove_file(theme_set_path()).ok();
+    println!("okay");
+
+    print!("Clearing syntax set cache ... ");
+    fs::remove_file(syntax_set_path()).ok();
+    println!("okay");
+}
+use ansi_term::Style;
+use diff::LineChange;
+use printer::{Colors, InteractivePrinter};
+
+#[derive(Clone)]
+pub struct DecorationText {
+    pub width: usize,
+    pub text: String,
+}
+
+pub trait Decoration {
+    fn generate(
+        &self,
+        line_number: usize,
+        continuation: bool,
+        printer: &InteractivePrinter,
+    ) -> DecorationText;
+    fn width(&self) -> usize;
+}
+
+pub struct LineNumberDecoration {
+    color: Style,
+    cached_wrap: DecorationText,
+    cached_wrap_invalid_at: usize,
+}
+
+impl LineNumberDecoration {
+    pub fn new(colors: &Colors) -> Self {
+        LineNumberDecoration {
+            color: colors.line_number,
+            cached_wrap_invalid_at: 10000,
+            cached_wrap: DecorationText {
+                text: colors.line_number.paint(" ".repeat(4)).to_string(),
+                width: 4,
+            },
+        }
+    }
+}
+
+impl Decoration for LineNumberDecoration {
+    fn generate(
+        &self,
+        line_number: usize,
+        continuation: bool,
+        _printer: &InteractivePrinter,
+    ) -> DecorationText {
+        if continuation {
+            if line_number > self.cached_wrap_invalid_at {
+                let new_width = self.cached_wrap.width + 1;
+                return DecorationText {
+                    text: self.color.paint(" ".repeat(new_width)).to_string(),
+                    width: new_width,
+                };
+            }
+
+            self.cached_wrap.clone()
+        } else {
+            let plain: String = format!("{:4}", line_number);
+            DecorationText {
+                width: plain.len(),
+                text: self.color.paint(plain).to_string(),
+            }
+        }
+    }
+
+    fn width(&self) -> usize {
+        4
+    }
+}
+
+pub struct LineChangesDecoration {
+    cached_none: DecorationText,
+    cached_added: DecorationText,
+    cached_removed_above: DecorationText,
+    cached_removed_below: DecorationText,
+    cached_modified: DecorationText,
+}
+
+impl LineChangesDecoration {
+    #[inline]
+    fn generate_cached(style: Style, text: &str) -> DecorationText {
+        DecorationText {
+            text: style.paint(text).to_string(),
+            width: text.chars().count(),
+        }
+    }
+
+    pub fn new(colors: &Colors) -> Self {
+        LineChangesDecoration {
+            cached_none: Self::generate_cached(Style::default(), " "),
+            cached_added: Self::generate_cached(colors.git_added, "+"),
+            cached_removed_above: Self::generate_cached(colors.git_removed, "‾"),
+            cached_removed_below: Self::generate_cached(colors.git_removed, "_"),
+            cached_modified: Self::generate_cached(colors.git_modified, "~"),
+        }
+    }
+}
+
+impl Decoration for LineChangesDecoration {
+    fn generate(
+        &self,
+        line_number: usize,
+        continuation: bool,
+        printer: &InteractivePrinter,
+    ) -> DecorationText {
+        if !continuation {
+            if let Some(ref changes) = printer.line_changes {
+                return match changes.get(&(line_number as u32)) {
+                    Some(&LineChange::Added) => self.cached_added.clone(),
+                    Some(&LineChange::RemovedAbove) => self.cached_removed_above.clone(),
+                    Some(&LineChange::RemovedBelow) => self.cached_removed_below.clone(),
+                    Some(&LineChange::Modified) => self.cached_modified.clone(),
+                    _ => self.cached_none.clone(),
+                };
+            }
+        }
+
+        self.cached_none.clone()
+    }
+
+    fn width(&self) -> usize {
+        self.cached_none.width
+    }
+}
+
+pub struct GridBorderDecoration {
+    cached: DecorationText,
+}
+
+impl GridBorderDecoration {
+    pub fn new(colors: &Colors) -> Self {
+        GridBorderDecoration {
+            cached: DecorationText {
+                text: colors.grid.paint("│").to_string(),
+                width: 1,
+            },
+        }
+    }
+}
+
+impl Decoration for GridBorderDecoration {
+    fn generate(
+        &self,
+        _line_number: usize,
+        _continuation: bool,
+        _printer: &InteractivePrinter,
+    ) -> DecorationText {
+        self.cached.clone()
+    }
+
+    fn width(&self) -> usize {
+        self.cached.width
+    }
+}

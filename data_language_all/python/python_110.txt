@@ -1,0 +1,278 @@
+import os
+import pytest
+from thefuck import shells
+from thefuck import conf, const
+from thefuck.system import Path
+
+shells.shell = shells.Generic()
+
+
+def pytest_addoption(parser):
+    """Adds `--enable-functional` argument."""
+    group = parser.getgroup("thefuck")
+    group.addoption('--enable-functional', action="store_true", default=False,
+                    help="Enable functional tests")
+
+
+@pytest.fixture
+def no_memoize(monkeypatch):
+    monkeypatch.setattr('thefuck.utils.memoize.disabled', True)
+
+
+@pytest.fixture(autouse=True)
+def settings(request):
+    def _reset_settings():
+        conf.settings.clear()
+        conf.settings.update(const.DEFAULT_SETTINGS)
+
+    request.addfinalizer(_reset_settings)
+    conf.settings.user_dir = Path('~/.thefuck')
+    return conf.settings
+
+
+@pytest.fixture
+def no_colors(settings):
+    settings.no_colors = True
+
+
+@pytest.fixture(autouse=True)
+def no_cache(monkeypatch):
+    monkeypatch.setattr('thefuck.utils.cache.disabled', True)
+
+
+@pytest.fixture(autouse=True)
+def functional(request):
+    if request.node.get_marker('functional') \
+            and not request.config.getoption('enable_functional'):
+        pytest.skip('functional tests are disabled')
+
+
+@pytest.fixture
+def source_root():
+    return Path(__file__).parent.parent.resolve()
+
+
+@pytest.fixture
+def set_shell(monkeypatch):
+    def _set(cls):
+        shell = cls()
+        monkeypatch.setattr('thefuck.shells.shell', shell)
+        return shell
+
+    return _set
+
+
+@pytest.fixture(autouse=True)
+def os_environ(monkeypatch):
+    env = {'PATH': os.environ['PATH']}
+    monkeypatch.setattr('os.environ', env)
+    return env
+import os
+import pytest
+from thefuck import shells
+from thefuck import conf, const
+from thefuck.system import Path
+
+shells.shell = shells.Generic()
+
+
+def pytest_addoption(parser):
+    """Adds `--enable-functional` argument."""
+    group = parser.getgroup("thefuck")
+    group.addoption('--enable-functional', action="store_true", default=False,
+                    help="Enable functional tests")
+
+
+@pytest.fixture
+def no_memoize(monkeypatch):
+    monkeypatch.setattr('thefuck.utils.memoize.disabled', True)
+
+
+@pytest.fixture(autouse=True)
+def settings(request):
+    def _reset_settings():
+        conf.settings.clear()
+        conf.settings.update(const.DEFAULT_SETTINGS)
+
+    request.addfinalizer(_reset_settings)
+    conf.settings.user_dir = Path('~/.thefuck')
+    return conf.settings
+
+
+@pytest.fixture
+def no_colors(settings):
+    settings.no_colors = True
+
+
+@pytest.fixture(autouse=True)
+def no_cache(monkeypatch):
+    monkeypatch.setattr('thefuck.utils.cache.disabled', True)
+
+
+@pytest.fixture(autouse=True)
+def functional(request):
+    if request.node.get_marker('functional') \
+            and not request.config.getoption('enable_functional'):
+        pytest.skip('functional tests are disabled')
+
+
+@pytest.fixture
+def source_root():
+    return Path(__file__).parent.parent.resolve()
+
+
+@pytest.fixture
+def set_shell(monkeypatch):
+    def _set(cls):
+        shell = cls()
+        monkeypatch.setattr('thefuck.shells.shell', shell)
+        return shell
+
+    return _set
+
+
+@pytest.fixture(autouse=True)
+def os_environ(monkeypatch):
+    env = {'PATH': os.environ['PATH']}
+    monkeypatch.setattr('os.environ', env)
+    return env
+import pytest
+import json
+from six import StringIO
+from mock import MagicMock
+from thefuck.shells.generic import ShellConfiguration
+from thefuck.entrypoints.not_configured import main
+
+
+@pytest.fixture(autouse=True)
+def usage_tracker(mocker):
+    return mocker.patch(
+        'thefuck.entrypoints.not_configured._get_not_configured_usage_tracker_path',
+        new_callable=MagicMock)
+
+
+@pytest.fixture(autouse=True)
+def usage_tracker_io(usage_tracker):
+    io = StringIO()
+    usage_tracker.return_value \
+                 .open.return_value \
+                 .__enter__.return_value = io
+    return io
+
+
+@pytest.fixture(autouse=True)
+def usage_tracker_exists(usage_tracker):
+    usage_tracker.return_value \
+                 .exists.return_value = True
+    return usage_tracker.return_value.exists
+
+
+def _assert_tracker_updated(usage_tracker_io, pid):
+    usage_tracker_io.seek(0)
+    info = json.load(usage_tracker_io)
+    assert info['pid'] == pid
+
+
+def _change_tracker(usage_tracker_io, pid):
+    usage_tracker_io.truncate(0)
+    info = {'pid': pid, 'time': 0}
+    json.dump(info, usage_tracker_io)
+    usage_tracker_io.seek(0)
+
+
+@pytest.fixture(autouse=True)
+def shell_pid(mocker):
+    return mocker.patch('thefuck.entrypoints.not_configured._get_shell_pid',
+                        new_callable=MagicMock)
+
+
+@pytest.fixture(autouse=True)
+def shell(mocker):
+    shell = mocker.patch('thefuck.entrypoints.not_configured.shell',
+                         new_callable=MagicMock)
+    shell.get_history.return_value = []
+    shell.how_to_configure.return_value = ShellConfiguration(
+        content='eval $(thefuck --alias)',
+        path='/tmp/.bashrc',
+        reload='bash',
+        can_configure_automatically=True)
+    return shell
+
+
+@pytest.fixture(autouse=True)
+def shell_config(mocker):
+    path_mock = mocker.patch('thefuck.entrypoints.not_configured.Path',
+                             new_callable=MagicMock)
+    return path_mock.return_value \
+        .expanduser.return_value \
+        .open.return_value \
+        .__enter__.return_value
+
+
+@pytest.fixture(autouse=True)
+def logs(mocker):
+    return mocker.patch('thefuck.entrypoints.not_configured.logs',
+                        new_callable=MagicMock)
+
+
+def test_for_generic_shell(shell, logs):
+    shell.how_to_configure.return_value = None
+    main()
+    logs.how_to_configure_alias.assert_called_once()
+
+
+def test_on_first_run(usage_tracker_io, usage_tracker_exists, shell_pid, logs):
+    shell_pid.return_value = 12
+    main()
+    usage_tracker_exists.return_value = False
+    _assert_tracker_updated(usage_tracker_io, 12)
+    logs.how_to_configure_alias.assert_called_once()
+
+
+def test_on_run_after_other_commands(usage_tracker_io, shell_pid, shell, logs):
+    shell_pid.return_value = 12
+    shell.get_history.return_value = ['fuck', 'ls']
+    _change_tracker(usage_tracker_io, 12)
+    main()
+    logs.how_to_configure_alias.assert_called_once()
+
+
+def test_on_first_run_from_current_shell(usage_tracker_io, shell_pid,
+                                         shell, logs):
+    shell.get_history.return_value = ['fuck']
+    shell_pid.return_value = 12
+    main()
+    _assert_tracker_updated(usage_tracker_io, 12)
+    logs.how_to_configure_alias.assert_called_once()
+
+
+def test_when_cant_configure_automatically(shell_pid, shell, logs):
+    shell_pid.return_value = 12
+    shell.how_to_configure.return_value = ShellConfiguration(
+        content='eval $(thefuck --alias)',
+        path='/tmp/.bashrc',
+        reload='bash',
+        can_configure_automatically=False)
+    main()
+    logs.how_to_configure_alias.assert_called_once()
+
+
+def test_when_already_configured(usage_tracker_io, shell_pid,
+                                 shell, shell_config, logs):
+    shell.get_history.return_value = ['fuck']
+    shell_pid.return_value = 12
+    _change_tracker(usage_tracker_io, 12)
+    shell_config.read.return_value = 'eval $(thefuck --alias)'
+    main()
+    logs.already_configured.assert_called_once()
+
+
+def test_when_successfully_configured(usage_tracker_io, shell_pid,
+                                      shell, shell_config, logs):
+    shell.get_history.return_value = ['fuck']
+    shell_pid.return_value = 12
+    _change_tracker(usage_tracker_io, 12)
+    shell_config.read.return_value = ''
+    main()
+    shell_config.write.assert_any_call('eval $(thefuck --alias)')
+    logs.configured_successfully.assert_called_once()

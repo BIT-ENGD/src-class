@@ -1,0 +1,642 @@
+// Copyright 2017 The xi-editor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Simple parser expression generator
+
+use std::char::from_u32;
+use std::ops;
+
+pub trait Peg {
+    fn p(&self, s: &[u8]) -> Option<usize>;
+}
+
+impl<F: Fn(&[u8]) -> Option<usize>> Peg for F {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self(s)
+    }
+}
+
+pub struct OneByte<F>(pub F);
+
+impl<F: Fn(u8) -> bool> Peg for OneByte<F> {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        if s.is_empty() || !self.0(s[0]) {
+            None
+        } else {
+            Some(1)
+        }
+    }
+}
+
+impl Peg for u8 {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        OneByte(|b| b == *self).p(s)
+    }
+}
+
+pub struct OneChar<F>(pub F);
+
+fn decode_utf8(s: &[u8]) -> Option<(char, usize)> {
+    if s.is_empty() {
+        return None;
+    }
+    let b = s[0];
+    if b < 0x80 {
+        return Some((b as char, 1));
+    } else if b >= 0xc2 && b < 0xe0 && s.len() >= 2 {
+        let b2 = s[1];
+        if (b2 as i8) > -0x40 { return None; }
+        let cp = ((b as u32) << 6) + (b2 as u32) - 0x3080;
+        return from_u32(cp).map(|ch| (ch, 2));
+    } else if b >= 0xe0 && b < 0xf0 && s.len() >= 3 {
+        let b2 = s[1];
+        let b3 = s[2];
+        if (b2 as i8) > -0x40 || (b3 as i8) > -0x40 { return None; }
+        let cp = ((b as u32) << 12) + ((b2 as u32) << 6) + (b3 as u32) - 0xe2080;
+        if cp < 0x800 { return None; } // overlong encoding
+        return from_u32(cp).map(|ch| (ch, 3));
+    } else if b >= 0xf0 && b < 0xf5 && s.len() >= 4 {
+        let b2 = s[1];
+        let b3 = s[2];
+        let b4 = s[3];
+        if (b2 as i8) > -0x40 || (b3 as i8) > -0x40 || (b4 as i8) > -0x40 {
+            return None;
+        }
+        let cp = ((b as u32) << 18) + ((b2 as u32) << 12) + ((b3 as u32) << 6)
+            + (b4 as u32) - 0x3c82080;
+        if cp < 0x10000 { return None; } // overlong encoding
+        return from_u32(cp).map(|ch| (ch, 4));
+    }
+    None
+}
+
+impl<F: Fn(char) -> bool> Peg for OneChar<F> {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        if let Some((ch, len)) = decode_utf8(s) {
+            if self.0(ch) {
+                return Some(len)
+            }
+        }
+        None
+    }
+}
+
+// split out into a separate function to help inlining heuristics; even so,
+// prefer to use bytes even though they're not quite as ergonomic
+fn char_helper(s: &[u8], c: char) -> Option<usize> {
+    OneChar(|x| x == c).p(s)
+}
+
+impl Peg for char {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let c = *self;
+        if c <= '\x7f' {
+            (c as u8).p(s)
+        } else {
+            char_helper(s, c)
+        }
+    }
+}
+
+// byte ranges, including inclusive variants
+
+/// Use Inclusive(a..b) to indicate an inclusive range. When a...b syntax becomes
+/// stable, we'll get rid of this and switch to that.
+pub struct Inclusive<T>(pub T);
+
+impl Peg for ops::Range<u8> {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        OneByte(|x| x >= self.start && x < self.end).p(s)
+    }
+}
+
+impl Peg for Inclusive<ops::Range<u8>> {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        OneByte(|x| x >= self.0.start && x <= self.0.end).p(s)
+    }
+}
+
+// Note: char ranges are also possible, but probably not commonly used, and inefficient
+
+impl<'a> Peg for &'a [u8] {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let len = self.len();
+        if s.len() >= len && &s[..len] == *self {
+            Some(len)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> Peg for &'a str {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.as_bytes().p(s)
+    }
+}
+
+impl<P1: Peg, P2: Peg> Peg for (P1, P2) {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.0.p(s).and_then(|len1|
+            self.1.p(&s[len1..]).map(|len2|
+                len1 + len2))
+    }
+}
+
+impl<P1: Peg, P2: Peg, P3: Peg> Peg for (P1, P2, P3) {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.0.p(s).and_then(|len1|
+            self.1.p(&s[len1..]).and_then(|len2|
+                self.2.p(&s[len1 + len2..]).map(|len3|
+                    len1 + len2 + len3)))
+    }
+}
+
+macro_rules! impl_tuple {
+    ( $( $p:ident $ix:ident ),* ) => {
+        impl< $( $p : Peg ),* > Peg for ( $( $p ),* ) {
+            #[inline(always)]
+            fn p(&self, s: &[u8]) -> Option<usize> {
+                let ( $( ref $ix ),* ) = *self;
+                let mut i = 0;
+                $(
+                    if let Some(len) = $ix.p(&s[i..]) {
+                        i += len;
+                    } else {
+                        return None;
+                    }
+                )*
+                Some(i)
+            }
+        }
+    }
+}
+impl_tuple!(P1 p1, P2 p2, P3 p3, P4 p4);
+
+
+/// Choice from two heterogeneous alternatives.
+pub struct Alt<P1, P2>(pub P1, pub P2);
+
+impl<P1: Peg, P2: Peg> Peg for Alt<P1, P2> {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.0.p(s).or_else(|| self.1.p(s))
+    }
+}
+
+/// Choice from three heterogeneous alternatives.
+pub struct Alt3<P1, P2, P3>(pub P1, pub P2, pub P3);
+
+impl<P1: Peg, P2: Peg, P3: Peg> Peg for Alt3<P1, P2, P3> {
+    #[inline(always)]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.0.p(s).or_else(|| self.1.p(s).or_else(|| self.2.p(s)))
+    }
+}
+
+/// Choice from a homogenous slice of parsers.
+pub struct OneOf<'a, P: 'a>(pub &'a [P]);
+
+impl<'a, P: Peg> Peg for OneOf<'a, P> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        for ref p in self.0 {
+            if let Some(len) = p.p(s) {
+                return Some(len);
+            }
+        }
+        None
+    }
+}
+
+/// Repetition with a minimum and maximum (inclusive) bound
+pub struct Repeat<P, R>(pub P, pub R);
+
+impl<P: Peg> Peg for Repeat<P, usize> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let Repeat(ref p, reps) = *self;
+        let mut i = 0;
+        let mut count = 0;
+        while count < reps {
+            if let Some(len) = p.p(&s[i..]) {
+                i += len;
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        Some(i)
+    }
+}
+
+impl<P: Peg> Peg for Repeat<P, ops::Range<usize>> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let Repeat(ref p, ops::Range { start, end }) = *self;
+        let mut i = 0;
+        let mut count = 0;
+        while count + 1 < end {
+            if let Some(len) = p.p(&s[i..]) {
+                i += len;
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        if count >= start {
+            Some(i)
+        } else {
+            None
+        }
+    }
+}
+
+impl<P: Peg> Peg for Repeat<P, ops::RangeFrom<usize>> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let Repeat(ref p, ops::RangeFrom { start }) = *self;
+        let mut i = 0;
+        let mut count = 0;
+        while let Some(len) = p.p(&s[i..]) {
+            i += len;
+            count += 1;
+        }
+        if count >= start {
+            Some(i)
+        } else {
+            None
+        }
+    }
+}
+
+impl<P: Peg> Peg for Repeat<P, ops::RangeFull> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        ZeroOrMore(Ref(&self.0)).p(s)
+    }
+}
+
+impl<P: Peg> Peg for Repeat<P, ops::RangeTo<usize>> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let Repeat(ref p, ops::RangeTo { end }) = *self;
+        Repeat(Ref(p), 0..end).p(s)
+    }
+}
+
+pub struct Optional<P>(pub P);
+
+impl<P: Peg> Peg for Optional<P> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.0.p(s).or(Some(0))
+    }
+}
+
+#[allow(dead_code)]  // not used by rust lang, but used in tests
+pub struct OneOrMore<P>(pub P);
+
+impl<P: Peg> Peg for OneOrMore<P> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        Repeat(Ref(&self.0), 1..).p(s)
+    }
+}
+
+pub struct ZeroOrMore<P>(pub P);
+
+impl<P: Peg> Peg for ZeroOrMore<P> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let mut i = 0;
+        while let Some(len) = self.0.p(&s[i..]) {
+            i += len;
+        }
+        Some(i)
+    }
+}
+
+/// Fail to match if the arg matches, otherwise match empty.
+pub struct FailIf<P>(pub P);
+
+impl<P: Peg> Peg for FailIf<P> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        match self.0.p(s) {
+            Some(_) => None,
+            None => Some(0)
+        }
+    }
+}
+
+/// A wrapper to use whenever you have a reference to a Peg object
+pub struct Ref<'a, P: 'a>(pub &'a P);
+
+impl<'a, P: Peg> Peg for Ref<'a, P> {
+    #[inline]
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        self.0.p(s)
+    }
+}
+// Copyright 2017 The xi-editor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Rust language syntax analysis and highlighting.
+
+use std::io::{stdin, Read};
+
+use statestack::{State, Context, NewState};
+use colorize::{self, Colorize, DebugNewState, Style};
+use peg::*;
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum StateEl {
+    StrQuote,
+    CharQuote,
+    Comment,  // One for each /*
+    CharConst,
+    NumericLiteral,
+    Invalid,
+    Keyword,
+    Operator,
+    PrimType,
+    //RawStrHash,  // One for each hash in a raw string
+    //Block,    // One for each {
+    //Bracket,  // One for each [
+    //Paren,    // One for each (
+    // generics etc
+}
+
+pub fn to_style(style: &mut Style, el: &StateEl) {
+    match *el {
+        StateEl::Comment => style.fg_color = 0xFF75715E,
+        StateEl::StrQuote => style.fg_color = 0xFF998844,
+        StateEl::CharQuote => style.fg_color = 0xFF998844,
+        StateEl::Invalid => style.fg_color = 0xFFFF0000,
+        StateEl::NumericLiteral => style.fg_color = 0xFF6644EE,
+        StateEl::CharConst => style.fg_color = 0xFF8866EE,
+        StateEl::Keyword => style.font = 1,
+        StateEl::Operator => style.fg_color = 0xFFAA2244,
+        StateEl::PrimType => style.fg_color = 0xFF44AAAA,
+    }
+}
+
+// sorted for easy binary searching
+const RUST_KEYWORDS: &'static [&'static [u8]] = &[
+    b"Self", b"abstract", b"alignof", b"as", b"become", b"box", b"break",
+    b"const", b"continue", b"crate", b"default", b"do", b"else", b"enum",
+    b"extern", b"false", b"final", b"fn", b"for", b"if", b"impl", b"in", b"let",
+    b"loop", b"macro", b"match", b"mod", b"move", b"mut", b"offsetof",
+    b"override", b"priv", b"proc", b"pub", b"pure", b"ref", b"return", b"self",
+    b"sizeof", b"static", b"struct", b"super", b"trait", b"true", b"type",
+    b"typeof", b"union", b"unsafe", b"unsized", b"use", b"virtual", b"where",
+    b"while", b"yield"
+];
+
+// sorted for easy binary searching
+const RUST_PRIM_TYPES: &'static [&'static [u8]] = &[
+    b"bool", b"char", b"f32", b"f64", b"i128", b"i16", b"i32", b"i64", b"i8",
+    b"isize", b"str", b"u128", b"u16", b"u32", b"u64", b"u8", b"usize"
+];
+
+const RUST_OPERATORS: &'static [&'static [u8]] = &[
+    b"!", b"%=", b"%", b"&=", b"&&", b"&", b"*=", b"*", b"+=", b"+", b"-=", b"-",
+    b"/=", b"/", b"<<=", b"<<", b">>=", b">>", b"^=", b"^", b"|=", b"||", b"|",
+    b"==", b"=", b"..", b"=>", b"<=", b"<", b">=", b">"
+];
+
+pub struct RustColorize<N> {
+    ctx: Context<StateEl, N>,
+}
+
+impl<N: NewState<StateEl>> RustColorize<N> {
+    pub fn new(new_state: N) -> RustColorize<N> {
+        RustColorize {
+            ctx: Context::new(new_state),
+        }
+    }
+
+    pub fn get_new_state(&self) -> &N {
+        self.ctx.get_new_state()
+    }
+
+    fn quoted_str(&mut self, t: &[u8], state: State) -> (usize, State, usize, State) {
+        let mut i = 0;
+        while i < t.len() {
+            let b = t[i];
+            if b == b'"' {
+                return (0, state, i + 1, self.ctx.pop(state).unwrap());
+            } else if b == b'\\' {
+                if let Some(len) = escape.p(&t[i..]) {
+                    return (i, self.ctx.push(state, StateEl::CharConst), len, state);
+                } else if let Some(len) = 
+                        (FailIf(OneOf(b"\r\nbu")), OneChar(|_| true)).p(&t[i+1..]) {
+                    return (i + 1, self.ctx.push(state, StateEl::Invalid), len, state);
+                }
+            }
+            i += 1;
+        }
+        (0, state, i, state)
+    }
+}
+
+fn is_digit(c: u8) -> bool {
+    c >= b'0' && c <= b'9'
+}
+
+fn is_hex_digit(c: u8) -> bool {
+    (c >= b'0' && c <= b'9') || (c >= b'a' && c <= b'f') || (c >= b'A' && c <= b'F')
+}
+
+// Note: will have to rework this if we want to support non-ASCII identifiers
+fn is_ident_start(c: u8) -> bool {
+    (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') || c == b'_'
+}
+
+fn is_ident_continue(c: u8) -> bool {
+    is_ident_start(c) || is_digit(c)
+}
+
+fn ident(s: &[u8]) -> Option<usize> {
+    (OneByte(is_ident_start), ZeroOrMore(OneByte(is_ident_continue))).p(s)
+}
+
+// sequence of decimal digits with optional separator
+fn raw_numeric(s: &[u8]) -> Option<usize> {
+    (OneByte(is_digit), ZeroOrMore(Alt(b'_', OneByte(is_digit)))).p(s)
+}
+
+fn int_suffix(s: &[u8]) -> Option<usize> {
+    (Alt(b'u', b'i'), OneOf(&["8", "16", "32", "64", "128", "size"])).p(s)
+}
+
+// At least one P with any number of SEP mixed in. Note: this is also an example
+// of composing combinators to make a new combinator.
+struct OneOrMoreWithSep<P, SEP>(P, SEP);
+
+impl<P: Peg, SEP: Peg> Peg for OneOrMoreWithSep<P, SEP> {
+    fn p(&self, s: &[u8]) -> Option<usize> {
+        let OneOrMoreWithSep(ref p, ref sep) = *self;
+        (ZeroOrMore(Ref(sep)), Ref(p), ZeroOrMore(Alt(Ref(p), Ref(sep)))).p(s)
+    }
+}
+
+fn positive_nondecimal(s: &[u8]) -> Option<usize> {
+    (
+        b'0',
+        Alt3(
+            (b'x', OneOrMoreWithSep(OneByte(is_hex_digit), b'_')),
+            (b'o', OneOrMoreWithSep(Inclusive(b'0'..b'7'), b'_')),
+            (b'b', OneOrMoreWithSep(Alt(b'0', b'1'), b'_')),
+        ),
+        Optional(int_suffix)
+    ).p(s)
+}
+
+fn positive_decimal(s: &[u8]) -> Option<usize> {
+    (
+        raw_numeric,
+        Alt(int_suffix,
+            (
+                Optional((b'.', FailIf(OneByte(is_ident_start)), Optional(raw_numeric))),
+                Optional((Alt(b'e', b'E'), Optional(Alt(b'+', b'-')), raw_numeric)),
+                Optional(Alt("f32", "f64"))
+            )
+        )
+    ).p(s)
+}
+
+fn numeric_literal(s: &[u8]) -> Option<usize> {
+    (Optional(b'-'), Alt(positive_nondecimal, positive_decimal)).p(s)
+}
+
+fn escape(s: &[u8]) -> Option<usize> {
+    (
+        b'\\',
+        Alt3(
+            OneOf(b"\\\'\"0nrt"),
+            (b'x', Repeat(OneByte(is_hex_digit), 2)),
+            ("u{", Repeat(OneByte(is_hex_digit), 1..7), b'}')
+        )
+    ).p(s)
+}
+
+fn char_literal(s: &[u8]) -> Option<usize> {
+    (
+        b'\'',
+        Alt(OneChar(|c| c != '\\' && c != '\''), escape),
+        b'\''
+    ).p(s)
+}
+
+impl<N: NewState<StateEl>> Colorize for RustColorize<N> {
+    fn colorize(&mut self, text: &str, mut state: State) -> (usize, State, usize, State) {
+        let t = text.as_bytes();
+        match self.ctx.tos(state) {
+            Some(StateEl::Comment) => {
+                for i in 0..t.len() {
+                    if let Some(len) = "/*".p(&t[i..]) {
+                        state = self.ctx.push(state, StateEl::Comment);
+                        return (i, state, len, state);
+                    } else if let Some(len) = "*/".p(&t[i..]) {
+                        return (0, state, i + len, self.ctx.pop(state).unwrap());
+                    }
+                }
+                return (0, state, t.len(), state);
+            }
+            Some(StateEl::StrQuote) => return self.quoted_str(t, state),
+            _ => ()
+        }
+        let mut i = 0;
+        while i < t.len() {
+            let b = t[i];
+            if let Some(len) = "/*".p(&t[i..]) {
+                state = self.ctx.push(state, StateEl::Comment);
+                return (i, state, len, state);
+            } else if let Some(_) = "//".p(&t[i..]) {
+                return (i, self.ctx.push(state, StateEl::Comment), t.len(), state);
+            } else if let Some(len) = numeric_literal.p(&t[i..]) {
+                return (i, self.ctx.push(state, StateEl::NumericLiteral), len, state);
+            } else if b == b'"' {
+                state = self.ctx.push(state, StateEl::StrQuote);
+                return (i, state, 1, state);
+            } else if let Some(len) = char_literal.p(&t[i..]) {
+                return (i, self.ctx.push(state, StateEl::CharQuote), len, state);
+            } else if let Some(len) = OneOf(RUST_OPERATORS).p(&t[i..]) {
+                return (i, self.ctx.push(state, StateEl::Operator), len, state);
+            } else if let Some(len) = ident.p(&t[i..]) {
+                if RUST_KEYWORDS.binary_search(&&t[i..i + len]).is_ok() {
+                    return (i, self.ctx.push(state, StateEl::Keyword), len, state);
+                } else if RUST_PRIM_TYPES.binary_search(&&t[i..i + len]).is_ok() {
+                    return (i, self.ctx.push(state, StateEl::PrimType), len, state);
+                } else {
+                    i += len;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        (0, state, t.len(), state)
+    }
+}
+
+// A simple stdio based harness for testing.
+pub fn test() {
+    let mut buf = String::new();
+    let _ = stdin().read_to_string(&mut buf).unwrap();
+    let mut c = RustColorize::new(DebugNewState::new());
+    colorize::run_debug(&mut c, &buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::numeric_literal;
+
+    #[test]
+    fn numeric_literals() {
+        assert_eq!(Some(1), numeric_literal(b"2.f64"));
+        assert_eq!(Some(6), numeric_literal(b"2.0f64"));
+        assert_eq!(Some(1), numeric_literal(b"2._f64"));
+        assert_eq!(Some(1), numeric_literal(b"2._0f64"));
+        assert_eq!(Some(5), numeric_literal(b"1_2__"));
+        assert_eq!(Some(7), numeric_literal(b"1_2__u8"));
+        assert_eq!(Some(9), numeric_literal(b"1_2__u128"));
+        assert_eq!(None, numeric_literal(b"_1_"));
+        assert_eq!(Some(4), numeric_literal(b"0xff"));
+        assert_eq!(Some(4), numeric_literal(b"0o6789"));
+    }
+}

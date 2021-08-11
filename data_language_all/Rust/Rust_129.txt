@@ -1,0 +1,338 @@
+use std::error;
+use std::ffi::OsStr;
+use std::fmt;
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::Path;
+use std::str;
+
+use escape::{escape, escape_os};
+
+/// An error that occurs when a pattern could not be converted to valid UTF-8.
+///
+/// The purpose of this error is to give a more targeted failure mode for
+/// patterns written by end users that are not valid UTF-8.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InvalidPatternError {
+    original: String,
+    valid_up_to: usize,
+}
+
+impl InvalidPatternError {
+    /// Returns the index in the given string up to which valid UTF-8 was
+    /// verified.
+    pub fn valid_up_to(&self) -> usize {
+        self.valid_up_to
+    }
+}
+
+impl error::Error for InvalidPatternError {
+    fn description(&self) -> &str { "invalid pattern" }
+}
+
+impl fmt::Display for InvalidPatternError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "found invalid UTF-8 in pattern at byte offset {} \
+             (use hex escape sequences to match arbitrary bytes \
+             in a pattern, e.g., \\xFF): '{}'",
+            self.valid_up_to,
+            self.original,
+        )
+    }
+}
+
+impl From<InvalidPatternError> for io::Error {
+    fn from(paterr: InvalidPatternError) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, paterr)
+    }
+}
+
+/// Convert an OS string into a regular expression pattern.
+///
+/// This conversion fails if the given pattern is not valid UTF-8, in which
+/// case, a targeted error with more information about where the invalid UTF-8
+/// occurs is given. The error also suggests the use of hex escape sequences,
+/// which are supported by many regex engines.
+pub fn pattern_from_os(pattern: &OsStr) -> Result<&str, InvalidPatternError> {
+    pattern.to_str().ok_or_else(|| {
+        let valid_up_to = pattern
+            .to_string_lossy()
+            .find('\u{FFFD}')
+            .expect("a Unicode replacement codepoint for invalid UTF-8");
+        InvalidPatternError {
+            original: escape_os(pattern),
+            valid_up_to: valid_up_to,
+        }
+    })
+}
+
+/// Convert arbitrary bytes into a regular expression pattern.
+///
+/// This conversion fails if the given pattern is not valid UTF-8, in which
+/// case, a targeted error with more information about where the invalid UTF-8
+/// occurs is given. The error also suggests the use of hex escape sequences,
+/// which are supported by many regex engines.
+pub fn pattern_from_bytes(
+    pattern: &[u8],
+) -> Result<&str, InvalidPatternError> {
+    str::from_utf8(pattern).map_err(|err| {
+        InvalidPatternError {
+            original: escape(pattern),
+            valid_up_to: err.valid_up_to(),
+        }
+    })
+}
+
+/// Read patterns from a file path, one per line.
+///
+/// If there was a problem reading or if any of the patterns contain invalid
+/// UTF-8, then an error is returned. If there was a problem with a specific
+/// pattern, then the error message will include the line number and the file
+/// path.
+pub fn patterns_from_path<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
+    let path = path.as_ref();
+    let file = File::open(path).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("{}: {}", path.display(), err),
+        )
+    })?;
+    patterns_from_reader(file).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("{}:{}", path.display(), err),
+        )
+    })
+}
+
+/// Read patterns from stdin, one per line.
+///
+/// If there was a problem reading or if any of the patterns contain invalid
+/// UTF-8, then an error is returned. If there was a problem with a specific
+/// pattern, then the error message will include the line number and the fact
+/// that it came from stdin.
+pub fn patterns_from_stdin() -> io::Result<Vec<String>> {
+    let stdin = io::stdin();
+    let locked = stdin.lock();
+    patterns_from_reader(locked).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("<stdin>:{}", err),
+        )
+    })
+}
+
+/// Read patterns from any reader, one per line.
+///
+/// If there was a problem reading or if any of the patterns contain invalid
+/// UTF-8, then an error is returned. If there was a problem with a specific
+/// pattern, then the error message will include the line number.
+///
+/// Note that this routine uses its own internal buffer, so the caller should
+/// not provide their own buffered reader if possible.
+///
+/// # Example
+///
+/// This shows how to parse patterns, one per line.
+///
+/// ```
+/// use grep_cli::patterns_from_reader;
+///
+/// # fn example() -> Result<(), Box<::std::error::Error>> {
+/// let patterns = "\
+/// foo
+/// bar\\s+foo
+/// [a-z]{3}
+/// ";
+///
+/// assert_eq!(patterns_from_reader(patterns.as_bytes())?, vec![
+///     r"foo",
+///     r"bar\s+foo",
+///     r"[a-z]{3}",
+/// ]);
+/// # Ok(()) }
+/// ```
+pub fn patterns_from_reader<R: io::Read>(rdr: R) -> io::Result<Vec<String>> {
+    let mut patterns = vec![];
+    let mut bufrdr = io::BufReader::new(rdr);
+    let mut line = vec![];
+    let mut line_number = 0;
+    while {
+        line.clear();
+        line_number += 1;
+        bufrdr.read_until(b'\n', &mut line)? > 0
+    } {
+        line.pop().unwrap(); // remove trailing '\n'
+        if line.last() == Some(&b'\r') {
+            line.pop().unwrap();
+        }
+        match pattern_from_bytes(&line) {
+            Ok(pattern) => patterns.push(pattern.to_string()),
+            Err(err) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("{}: {}", line_number, err),
+                ));
+            }
+        }
+    }
+    Ok(patterns)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bytes() {
+        let pat = b"abc\xFFxyz";
+        let err = pattern_from_bytes(pat).unwrap_err();
+        assert_eq!(3, err.valid_up_to());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn os() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::ffi::OsStr;
+
+        let pat = OsStr::from_bytes(b"abc\xFFxyz");
+        let err = pattern_from_os(pat).unwrap_err();
+        assert_eq!(3, err.valid_up_to());
+    }
+}
+use std::io;
+
+use termcolor;
+
+use is_tty_stdout;
+
+/// A writer that supports coloring with either line or block buffering.
+pub struct StandardStream(StandardStreamKind);
+
+/// Returns a possibly buffered writer to stdout for the given color choice.
+///
+/// The writer returned is either line buffered or block buffered. The decision
+/// between these two is made automatically based on whether a tty is attached
+/// to stdout or not. If a tty is attached, then line buffering is used.
+/// Otherwise, block buffering is used. In general, block buffering is more
+/// efficient, but may increase the time it takes for the end user to see the
+/// first bits of output.
+///
+/// If you need more fine grained control over the buffering mode, then use one
+/// of `stdout_buffered_line` or `stdout_buffered_block`.
+///
+/// The color choice given is passed along to the underlying writer. To
+/// completely disable colors in all cases, use `ColorChoice::Never`.
+pub fn stdout(color_choice: termcolor::ColorChoice) -> StandardStream {
+    if is_tty_stdout() {
+        stdout_buffered_line(color_choice)
+    } else {
+        stdout_buffered_block(color_choice)
+    }
+}
+
+/// Returns a line buffered writer to stdout for the given color choice.
+///
+/// This writer is useful when printing results directly to a tty such that
+/// users see output as soon as it's written. The downside of this approach
+/// is that it can be slower, especially when there is a lot of output.
+///
+/// You might consider using
+/// [`stdout`](fn.stdout.html)
+/// instead, which chooses the buffering strategy automatically based on
+/// whether stdout is connected to a tty.
+pub fn stdout_buffered_line(
+    color_choice: termcolor::ColorChoice,
+) -> StandardStream {
+    let out = termcolor::StandardStream::stdout(color_choice);
+    StandardStream(StandardStreamKind::LineBuffered(out))
+}
+
+/// Returns a block buffered writer to stdout for the given color choice.
+///
+/// This writer is useful when printing results to a file since it amortizes
+/// the cost of writing data. The downside of this approach is that it can
+/// increase the latency of display output when writing to a tty.
+///
+/// You might consider using
+/// [`stdout`](fn.stdout.html)
+/// instead, which chooses the buffering strategy automatically based on
+/// whether stdout is connected to a tty.
+pub fn stdout_buffered_block(
+    color_choice: termcolor::ColorChoice,
+) -> StandardStream {
+    let out = termcolor::BufferedStandardStream::stdout(color_choice);
+    StandardStream(StandardStreamKind::BlockBuffered(out))
+}
+
+enum StandardStreamKind {
+    LineBuffered(termcolor::StandardStream),
+    BlockBuffered(termcolor::BufferedStandardStream),
+}
+
+impl io::Write for StandardStream {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.write(buf),
+            BlockBuffered(ref mut w) => w.write(buf),
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.flush(),
+            BlockBuffered(ref mut w) => w.flush(),
+        }
+    }
+}
+
+impl termcolor::WriteColor for StandardStream {
+    #[inline]
+    fn supports_color(&self) -> bool {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref w) => w.supports_color(),
+            BlockBuffered(ref w) => w.supports_color(),
+        }
+    }
+
+    #[inline]
+    fn set_color(&mut self, spec: &termcolor::ColorSpec) -> io::Result<()> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.set_color(spec),
+            BlockBuffered(ref mut w) => w.set_color(spec),
+        }
+    }
+
+    #[inline]
+    fn reset(&mut self) -> io::Result<()> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.reset(),
+            BlockBuffered(ref mut w) => w.reset(),
+        }
+    }
+
+    #[inline]
+    fn is_synchronous(&self) -> bool {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref w) => w.is_synchronous(),
+            BlockBuffered(ref w) => w.is_synchronous(),
+        }
+    }
+}

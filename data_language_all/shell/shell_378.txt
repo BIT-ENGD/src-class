@@ -1,0 +1,196 @@
+#!/bin/sh
+
+/etc/init.d/autoformat start
+mkdir -p /var/lib/boot2docker
+chown docker:docker /var/lib/boot2docker
+
+if [ -s /var/lib/boot2docker/etc/hostname ]; then
+	# https://github.com/docker/machine/blob/97c1136d1ec9ae4c3ab69fda615e3dd577809e5c/libmachine/provision/boot2docker.go#L113
+	hostname="$(cat /var/lib/boot2docker/etc/hostname)"
+	sethostname "$hostname"
+fi
+
+cgroupfs-mount
+
+mkdir -p /var/lib/boot2docker/log
+chown docker /var/lib/boot2docker/log
+
+# wouldn't it be great if ntpd had a "log to XYZ file" option? (like crond does!)
+ntpd -d -n -q >> /var/lib/boot2docker/log/ntp.log 2>&1
+ntpd -d -n >> /var/lib/boot2docker/log/ntp.log 2>&1 &
+
+# install certs from "/var/lib/boot2docker/certs"
+for f in /var/lib/boot2docker/certs/*.pem /var/lib/boot2docker/certs/*.crt; do
+	[ -e "$f" ] || continue
+	# /usr/local/share/ca-certificates/**.crt gets loaded by "update-ca-certificates"
+	targetFile="/usr/local/share/ca-certificates/boot2docker/$(basename "$f")"
+	if [ "$targetFile" = "${targetFile%.crt}" ]; then
+		targetFile="$targetFile.crt"
+	fi
+	mkdir -p "$(dirname "$targetFile")"
+	ln -sfT "$f" "$targetFile"
+done
+if [ -d /usr/local/share/ca-certificates/boot2docker ]; then
+	/usr/local/tce.installed/ca-certificates
+fi
+
+if [ -f /var/lib/boot2docker/profile ]; then
+	. /var/lib/boot2docker/profile
+fi
+
+crond -L /var/lib/boot2docker/log/crond.log
+
+/etc/init.d/vbox start
+if grep -qi vmware /sys/class/dmi/id/sys_vendor 2>/dev/null; then
+	# try to mount the root shared folder; this command can fail (if shared folders are disabled on the host, vmtoolsd will take care of the mount if they are enabled while the machine is running)
+	[ -d /mnt/hgfs ] || { mkdir -p /mnt/hgfs; vmhgfs-fuse -o allow_other .host:/ /mnt/hgfs; }
+	vmtoolsd --background /var/run/vmtoolsd.pid
+	# TODO evaluate /usr/local/etc/init.d/open-vm-tools further (does more than this short blurb, and doesn't invoke vmhgfs-fuse)
+fi
+if modprobe hv_utils > /dev/null 2>&1; then
+	hv_kvp_daemon
+fi
+/usr/local/etc/init.d/prltoolsd start
+/etc/init.d/xe-linux-distribution start
+
+if [ -d /var/lib/boot2docker/ssh ]; then
+	rm -rf /usr/local/etc/ssh
+else
+	mv /usr/local/etc/ssh /var/lib/boot2docker/
+fi
+ln -sT /var/lib/boot2docker/ssh /usr/local/etc/ssh
+for keyType in rsa dsa ecdsa ed25519; do # pre-generate a few SSH host keys to decrease the verbosity of /usr/local/etc/init.d/openssh
+	keyFile="/usr/local/etc/ssh/ssh_host_${keyType}_key"
+	[ ! -f "$keyFile" ] || continue
+	echo "Generating $keyFile"
+	ssh-keygen -q -t "$keyType" -N '' -f "$keyFile"
+done
+/usr/local/etc/init.d/openssh start
+
+/usr/local/etc/init.d/acpid start
+
+# https://github.com/boot2docker/boot2docker/pull/1322
+/etc/init.d/haveged conditional
+# (if the system doesn't have enough entropy, "dockerd" hangs without any output until it get a sufficient amount)
+
+if [ -e /var/lib/boot2docker/bootsync.sh ]; then
+	sh /var/lib/boot2docker/bootsync.sh
+fi
+
+/etc/init.d/docker start
+
+if [ -e /var/lib/boot2docker/bootlocal.sh ]; then
+	sh /var/lib/boot2docker/bootlocal.sh &
+fi
+
+/opt/bootlocal.sh &
+set -e -f -o pipefail
+source "/usr/local/etc/babun.instance"
+source "$babun_tools/script.sh"
+
+# NO LOGIC
+#!/bin/bash
+set -e -f -o pipefail
+source "/usr/local/etc/babun.instance"
+ 
+source "$babun_tools/script.sh"
+src="$babun_source/babun-core/plugins/core/src"
+
+typeset -i installed_version
+installed_version=$(echo "$1" || echo "0") 
+
+/bin/cp -rf $src/babun /usr/local/bin
+chmod 755 /usr/local/bin/babun
+
+/bin/cp -rf /usr/local/etc/babun.rc /usr/local/etc/babun.rc.old || echo ""
+/bin/cp -rf $src/babun.rc /usr/local/etc
+source /usr/local/etc/babun.rc
+
+/bin/cp -rf $src/babun.bash /usr/local/etc
+/bin/cp -rf $src/babun.zsh /usr/local/etc
+/bin/cp -rf $src/babun.start /usr/local/etc
+/bin/cp -rf $src/babun.instance /usr/local/etc
+
+mkdir -p "$babun/home/core"
+/bin/cp -rf $src/.babunrc "$babun/home/core/.babunrc"
+
+
+profiles=("/etc/bash.bashrc")
+for profile in "${profiles[@]}"; do	
+	if ! grep -Fxq "source /usr/local/etc/babun.rc" "$profile" ;then
+		echo "Supplementing shell with babun.rc -> $profile"
+		echo "source /usr/local/etc/babun.rc" >> "$profile"
+	fi
+
+	if ! grep -Fxq "source /usr/local/etc/babun.bash" "$profile" ;then
+		echo "Supplementing bash -> $profile"
+		echo "source /usr/local/etc/babun.bash" >> "$profile"
+	fi
+
+	if ! grep -Fxq "source /usr/local/etc/babun.start" "$profile" ;then
+		echo "Adding startup script -> $profile"
+		echo "source /usr/local/etc/babun.start" >> "$profile"
+	fi
+done
+
+if ! [ -f /etc/zshrc ]; then
+	touch /etc/zshrc
+	chmod 755 /etc/zshrc
+fi
+
+profiles=("/etc/zshrc")
+for profile in "${profiles[@]}"; do	
+	if ! grep -Fxq "source /usr/local/etc/babun.rc" "$profile" ;then
+		echo "Supplementing shell with babun.rc -> $profile"
+		echo "source /usr/local/etc/babun.rc" >> "$profile"
+	fi
+
+	if ! grep -Fxq "source /usr/local/etc/babun.zsh" "$profile" ;then
+		echo "Supplementing zsh -> $profile"
+		echo "source /usr/local/etc/babun.zsh" >> "$profile"
+	fi
+
+	if ! grep -Fxq "source /usr/local/etc/babun.start" "$profile" ;then
+		echo "Adding startup script -> $profile"
+		echo "source /usr/local/etc/babun.start" >> "$profile"
+	fi
+done
+
+# COMPATIBILITY FIXES
+# INSTALLED_VERSION=1
+if [[ "$installed_version" -le 1 ]]; then	
+	echo "Compatibility fixes [core] version=[$installed_version]"
+
+	# fix permissions on cygdrive
+	echo "Fixing /etc/fstab permissions on /cygdrive"
+	/bin/sed -e "s/binary,posix/binary,noacl,posix/" -i /etc/fstab
+
+	# fix /etc/passwd in case the $HOME variable is set to the user's Windows HOME folder
+	if [[ "$HOME" == /cygdrive* ]]; then
+		echo "Fixing /etc/passwd for a Windows based home folder"
+		/bin/mkpasswd -l -p "$(/bin/cygpath -H)" > /etc/passwd
+		/bin/mkgroup -l -c > /etc/group
+		#setting default shell back to /bin/zsh
+		/bin/sed -i 's/\/bin\/bash/\/bin\/zsh/' "/etc/passwd"
+	fi
+
+	# fix permissions in /usr/local
+	echo "Fixing permissions"
+	/bin/chmod 755 -R /usr/local
+	/bin/chmod u+rwx -R /etc
+
+
+	# fix mintty problem in the babun.bat launcher (best effort)
+	if [[ -f "$BABUN_HOME/babun.bat" ]]; then
+		echo "Trying to fix babun.bat launcher"
+		/bin/sed -i "s/--size 100,35 -o Font='Lucida Console'//" "$BABUN_HOME/babun.bat"
+	fi
+	
+
+fi
+
+if [[ "$installed_version" -le 2 ]]; then	
+	#remove duplicate lines from /etc/zshrc (consequence of #249)
+	/bin/awk '!a[$0]++' /etc/zshrc > /etc/zshrc.fixed
+	/bin/mv /etc/zshrc.fixed /etc/zshrc
+fi

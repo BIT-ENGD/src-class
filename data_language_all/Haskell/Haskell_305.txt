@@ -1,0 +1,249 @@
+module ToTemplate where
+
+import qualified Text.Parsec as Parsec
+import Text.Parsec ((<|>))
+
+import Obj
+import Types
+import Parsing
+import Util
+
+-- | High-level helper function for creating templates from strings of C code.
+toTemplate :: String -> [Token]
+toTemplate text = case Parsec.runParser templateSyntax 0 "(template)" text of
+                    Right ok -> ok
+                    Left err -> error (show err)
+  where
+    templateSyntax :: Parsec.Parsec String Int [Token]
+    templateSyntax = Parsec.many parseTok
+
+    parseTok = Parsec.try parseTokDecl <|>      --- $DECL
+               Parsec.try parseTokName <|>      --- $NAME
+               Parsec.try parseTokTyGrouped <|> --- i.e. $(Fn [Int] t)
+               Parsec.try parseTokTyRawGrouped <|>
+               Parsec.try parseTokTy <|>        --- i.e. $t
+               parseTokC                        --- Anything else...
+
+    parseTokDecl :: Parsec.Parsec String Int Token
+    parseTokDecl = do _ <- Parsec.string "$DECL"
+                      return TokDecl
+
+    parseTokName :: Parsec.Parsec String Int Token
+    parseTokName = do _ <- Parsec.string "$NAME"
+                      return TokName
+
+    parseTokC :: Parsec.Parsec String Int Token
+    parseTokC = do s <- Parsec.many1 validInSymbol
+                   return (TokC s)
+      where validInSymbol = Parsec.choice [Parsec.letter, Parsec.digit, Parsec.oneOf validCharactersInTemplate]
+            validCharactersInTemplate = " ><{}()[]|;:.,_-+*#/'^!?€%&=@\"\n\t"
+
+    parseTokTy :: Parsec.Parsec String Int Token
+    parseTokTy = do _ <- Parsec.char '$'
+                    s <- Parsec.many1 Parsec.letter
+                    return (toTokTy Normal s)
+
+    parseTokTyGrouped :: Parsec.Parsec String Int Token
+    parseTokTyGrouped = do _ <- Parsec.char '$'
+                           _ <- Parsec.char '('
+                           Parsec.putState 1 -- One paren to close.
+                           s <- fmap ('(' :) (Parsec.many parseCharBalanced)
+                           -- Note: The closing paren is read by parseCharBalanced.
+                           return (toTokTy Normal s)
+
+    parseTokTyRawGrouped :: Parsec.Parsec String Int Token
+    parseTokTyRawGrouped = do _ <- Parsec.char '§'
+                              _ <- Parsec.char '('
+                              Parsec.putState 1 -- One paren to close.
+                              s <- fmap ('(' :) (Parsec.many parseCharBalanced)
+                              -- Note: The closing paren is read by parseCharBalanced.
+                              return (toTokTy Raw s)
+
+    parseCharBalanced :: Parsec.Parsec String Int Char
+    parseCharBalanced = do balanceState <- Parsec.getState
+                           if balanceState > 0
+                             then Parsec.try openParen <|>
+                                  Parsec.try closeParen <|>
+                                  Parsec.anyChar
+                             else Parsec.char '\0' -- Should always fail which will end the string.
+
+    openParen :: Parsec.Parsec String Int Char
+    openParen = do _ <- Parsec.char '('
+                   Parsec.modifyState (+1)
+                   return '('
+
+    closeParen :: Parsec.Parsec String Int Char
+    closeParen = do _ <- Parsec.char ')'
+                    Parsec.modifyState (\x -> x - 1)
+                    return ')'
+
+-- | Converts a string containing a type to a template token ('TokTy').
+-- | i.e. the string "(Array Int)" becomes (TokTy (StructTy "Array" IntTy)).
+toTokTy :: TokTyMode -> String -> Token
+toTokTy mode s =
+  case parse s "" of
+    Left err -> error (show err)
+    Right [] -> error ("toTokTy got [] when parsing: '" ++ s ++ "'")
+    Right [xobj] -> case xobjToTy xobj of
+                      Just ok -> TokTy ok mode
+                      Nothing -> error ("toTokTy failed to convert this s-expression to a type: " ++ pretty xobj)
+    Right xobjs -> error ("toTokTy parsed too many s-expressions: " ++ joinWithSpace (map pretty xobjs))
+module Qualify where
+
+import qualified Data.Set as Set
+import qualified Data.Map as Map
+import Data.List (intercalate, foldl')
+import Debug.Trace
+
+import Types
+import Obj
+import Lookup
+import Util
+
+-- | Changes the symbol part of a defn (the name) to a new symbol path
+-- | Example: (defn foo () 123) => (defn GreatModule.foo () 123)
+setFullyQualifiedDefn :: XObj -> SymPath -> XObj
+setFullyQualifiedDefn (XObj (Lst [defn, XObj _ symi symt, args, body]) i t) newPath =
+  XObj (Lst [defn, XObj (Sym newPath Symbol) symi symt, args, body]) i t
+setFullyQualifiedDefn (XObj (Lst [def, XObj _ symi symt, expr]) i t) newPath =
+  XObj (Lst [def, XObj (Sym newPath Symbol) symi symt, expr]) i t
+setFullyQualifiedDefn xobj _ = error ("Can't set new path on " ++ show xobj)
+
+-- | Changes all symbols EXCEPT bound vars (defn names, variable names, etc) to their fully qualified paths.
+-- | This must run after the 'setFullyQualifiedDefn' function has fixed the paths of all bindings in the environment.
+-- | This function does NOT go into function-body scope environments and the like.
+setFullyQualifiedSymbols :: TypeEnv -> Env -> Env -> XObj -> XObj
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst [defn@(XObj Defn _ _),
+                                                 sym@(XObj (Sym (SymPath _ functionName) _) _ _),
+                                                 args@(XObj (Arr argsArr) _ _),
+                                                 body])
+                                      i t) =
+  -- For self-recursion, there must be a binding to the function in the inner env.
+  -- It is marked as RecursionEnv basically is the same thing as external to not mess up lookup.
+  -- Inside the recursion env is the function env that contains bindings for the arguments of the function.
+  -- Note: These inner envs is ephemeral since they are not stored in a module or global scope.
+  let recursionEnv = Env Map.empty (Just env) (Just (functionName ++ "-recurse-env")) [] RecursionEnv 0
+      envWithSelf = extendEnv recursionEnv functionName sym
+      functionEnv = Env Map.empty (Just envWithSelf) Nothing [] InternalEnv 0
+      envWithArgs = foldl' (\e arg@(XObj (Sym (SymPath _ argSymName) _) _ _) -> extendEnv e argSymName arg) functionEnv argsArr
+  in  XObj (Lst [defn, sym, args, setFullyQualifiedSymbols typeEnv globalEnv envWithArgs body]) i t
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst [fn@(XObj (Fn _ _) _ _),
+                                                 args@(XObj (Arr argsArr) _ _),
+                                                 body])
+                                      i t) =
+  let lvl = envFunctionNestingLevel env
+      functionEnv = Env Map.empty (Just env) Nothing [] InternalEnv (lvl + 1)
+      envWithArgs = foldl' (\e arg@(XObj (Sym (SymPath _ argSymName) _) _ _) -> extendEnv e argSymName arg) functionEnv argsArr
+  in  XObj (Lst [fn, args, setFullyQualifiedSymbols typeEnv globalEnv envWithArgs body]) i t
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst [the@(XObj The _ _), typeXObj, value]) i t) =
+  let value' = setFullyQualifiedSymbols typeEnv globalEnv env value
+  in  XObj (Lst [the, typeXObj, value']) i t
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst [def@(XObj Def _ _), sym, expr]) i t) =
+  let expr' = setFullyQualifiedSymbols typeEnv globalEnv env expr
+  in  XObj (Lst [def, sym, expr']) i t
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst [letExpr@(XObj Let _ _), bind@(XObj (Arr bindings) bindi bindt), body]) i t) =
+  if even (length bindings)
+  then let Just ii = i
+           lvl = envFunctionNestingLevel env
+           innerEnv = Env Map.empty (Just env) (Just ("let-env-" ++ show (infoIdentifier ii))) [] InternalEnv lvl
+           (innerEnv', bindings') =
+             foldl' (\(e, bs) (s@(XObj (Sym (SymPath _ binderName) _) _ _), o) ->
+                       let qualified = setFullyQualifiedSymbols typeEnv globalEnv e o
+                       in (extendEnv e binderName s, bs ++ [s, qualified]))
+                    (innerEnv, []) (pairwise bindings)
+           newBody = setFullyQualifiedSymbols typeEnv globalEnv innerEnv' body
+       in  XObj (Lst [letExpr, XObj (Arr bindings') bindi bindt, newBody]) i t
+  else XObj (Lst [letExpr, bind, body]) i t -- Leave it untouched for the compiler to find the error.
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst [XObj With _ _, XObj (Sym path _) _ _, expression]) _ _) =
+  let useThese = envUseModules env
+      env' = if path `elem` useThese then env else env { envUseModules = path : useThese }
+  in  setFullyQualifiedSymbols typeEnv globalEnv env' expression
+setFullyQualifiedSymbols typeEnv globalEnv env (XObj (Lst xobjs) i t) =
+  -- TODO: Perhaps this general case can be sufficient? No need with all the cases above..?
+  let xobjs' = map (setFullyQualifiedSymbols typeEnv globalEnv env) xobjs
+  in  XObj (Lst xobjs') i t
+setFullyQualifiedSymbols typeEnv globalEnv localEnv xobj@(XObj (Sym path _) i t) =
+  case path of
+    -- Unqualified:
+    SymPath [] name ->
+      case lookupInEnv path (getTypeEnv typeEnv) of
+        Just found ->
+          -- Found an interface with the same path!
+          -- Have to ensure it's not a local variable with the same name as the interface
+          case lookupInEnv path localEnv of
+            Just (foundEnv, _) ->
+              if envIsExternal foundEnv
+              then createInterfaceSym name
+              else doesNotBelongToAnInterface False localEnv
+            Nothing ->
+              --trace ("Will turn '" ++ show path ++ "' " ++ prettyInfoFromXObj xobj ++ " into an interface symbol.")
+                createInterfaceSym name
+        Nothing ->
+          doesNotBelongToAnInterface False localEnv
+    -- Qualified:
+    _ ->
+      doesNotBelongToAnInterface False localEnv
+  where
+    createInterfaceSym name =
+      XObj (InterfaceSym name) i t
+
+    captureOrNot foundEnv = if envFunctionNestingLevel foundEnv < envFunctionNestingLevel localEnv
+                            then Capture
+                            else NoCapture
+
+    doesNotBelongToAnInterface :: Bool -> Env -> XObj
+    doesNotBelongToAnInterface finalRecurse theEnv =
+      let results = multiLookupQualified path theEnv
+          results' = removeThoseShadowedByRecursiveSymbol results
+      in
+      case results' of
+          [] -> case envParent theEnv of
+                  Just p ->
+                    doesNotBelongToAnInterface False p
+                  Nothing ->
+                    -- | OBS! The environment with no parent is the global env but it's an old one without the latest bindings!
+                    if finalRecurse
+                    then xobj -- This was the TRUE global env, stop here and leave 'xobj' as is.
+                    else doesNotBelongToAnInterface True globalEnv
+          [(_, Binder _ foundOne@(XObj (Lst ((XObj (External (Just overrideWithName)) _ _) : _)) _ _))] ->
+            XObj (Sym (getPath foundOne) (LookupGlobalOverride overrideWithName)) i t
+          [(e, Binder _ foundOne)] ->
+            case envMode e of
+              ExternalEnv -> XObj (Sym (getPath foundOne)
+                                   (LookupGlobal (if isExternalFunction foundOne then ExternalCode else CarpLand) (definitionMode foundOne))) i t
+              RecursionEnv -> XObj (Sym (getPath foundOne) LookupRecursive) i t
+              _ -> --trace ("\nLOCAL variable " ++ show (getPath foundOne) ++ ":\n" ++ prettyEnvironmentChain e) $
+                   XObj (Sym (getPath foundOne) (LookupLocal (captureOrNot e))) i t
+          multiple ->
+            case filter (not . envIsExternal . fst) multiple of
+            -- There is at least one local binding, use the path of that one:
+              (e, Binder _ local) : _ -> XObj (Sym (getPath local) (LookupLocal (captureOrNot e))) i t
+            -- There are no local bindings, this is allowed to become a multi lookup symbol:
+              [] ->
+                --(trace $ "Turned " ++ show path ++ " into multisym: " ++ joinWithComma (map (show . (\(e, b) -> (getPath (binderXObj b), safeEnvModuleName e, envMode e))) multiple)) $
+                case path of
+                  (SymPath [] name) ->
+                     -- Create a MultiSym!
+                    XObj (MultiSym name (map (getPath . binderXObj . snd) multiple)) i t
+                  pathWithQualifiers ->
+                    -- The symbol IS qualified but can't be found, should produce an error later during compilation.
+                    trace ("PROBLEMATIC: " ++ show path) (XObj (Sym pathWithQualifiers (LookupGlobal CarpLand AFunction)) i t)
+
+    removeThoseShadowedByRecursiveSymbol :: [(Env, Binder)] -> [(Env, Binder)]
+    removeThoseShadowedByRecursiveSymbol allBinders = visit allBinders allBinders
+      where visit [] result = result
+            visit (b:bs) result =
+              visit bs $ case b of
+                           (Env { envMode = RecursionEnv }, Binder _ xobj) ->
+                             remove (\(_, Binder _ x) -> xobj /= x && getName xobj == getName x) result
+                           _ -> result
+
+
+setFullyQualifiedSymbols typeEnv globalEnv env xobj@(XObj (Arr array) i t) =
+  let array' = map (setFullyQualifiedSymbols typeEnv globalEnv env) array
+  in  XObj (Arr array') i t
+setFullyQualifiedSymbols _ _ _ xobj = xobj
+
+isExternalFunction :: XObj -> Bool
+isExternalFunction (XObj (Lst (XObj (External _) _ _ : _)) _ _) = True
+isExternalFunction _ = False

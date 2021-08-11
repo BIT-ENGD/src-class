@@ -1,0 +1,192 @@
+/* works fine using total_keyword_seaches_view */
+
+SELECT z.AccessDateTime, z.Keyword, z.Series_Code, z.total_searches, z.sum_link
+	  ,COUNT(z.Unique_CodeFix) AS Total_CodeFix_Count, z.Tab_name_count
+
+FROM
+
+(	SELECT s.*, t.total_searches, t.sum_link, c.Unique_CodeFix, d.Tab_name_count 
+	FROM search s
+	JOIN total_keyword_searches 
+	AS t ON s.Keyword = t.Keyword AND s.Series_Code <> ''
+
+	LEFT JOIN(
+		SELECT DISTINCT AccessDateTime, SessionId, Series_Code, Referer_URL, Product_Code
+				, COUNT(DISTINCT Product_Code) AS Unique_CodeFix
+		FROM code_fix
+		GROUP BY SessionId, Series_Code, Referer_URL, Product_Code
+		ORDER BY Series_Code DESC
+	) AS c ON s.SessionId = c.SessionId AND s.URL = c.Referer_URL 
+
+# Tab_Name = 4 is commented and Tab_Name is removed from group by to get 
+# the counts for all tabs
+	LEFT JOIN (
+		SELECT 	SessionId#, Page_URL
+				,Tab_Name, Series_Code
+			   ,COUNT(DISTINCT Tab_Name) AS Tab_name_count
+		FROM detail_tab
+		#WHERE Tab_Name = '4' 
+		GROUP BY SessionId, Series_Code#, Tab_Name
+	) AS d ON s.SessionId = d.SessionId AND s.Series_Code = d.Series_Code 
+																				 
+	GROUP BY s.Keyword, s.Series_Code, s.URL
+
+) AS z
+WHERE z.Keyword IN ('lead screw')
+GROUP BY z.Keyword, z.Series_Code
+ORDER BY z.total_searches DESC, z.keyword DESC
+;
+
+
+
+/* works fine, per session and ignoring total searches that resutls blank series code */
+/* to get the total searches use the view total_keyword_searches and removing session_id = session_id */
+
+SELECT z.AccessDateTime, z.Keyword, z.Series_Code, z.total_searches, z.sum_link
+
+	,COUNT(z.Unique_CodeFix) AS Total_CodeFix_Count, COUNT(z.Tab_name_count) AS Total_Tab_name_count
+
+FROM
+
+(
+	SELECT s.*, t.total_searches, t.sum_link, c.Unique_CodeFix, d.Tab_name_count 
+
+	FROM search s
+
+	JOIN total_keyword_searches_by_session 
+
+	AS t ON s.Keyword = t.Keyword AND s.SessionId = t.SessionId AND s.Series_Code <> ''
+
+	LEFT JOIN(
+		SELECT DISTINCT AccessDateTime, SessionId, Series_Code, Referer_URL, Product_Code
+				, COUNT(DISTINCT Product_Code) AS Unique_CodeFix
+		FROM code_fix
+		GROUP BY SessionId, Series_Code, Referer_URL, Product_Code
+		ORDER BY Series_Code DESC
+	) AS c ON s.SessionId = c.SessionId AND s.URL = c.Referer_URL 
+
+	LEFT JOIN (
+		SELECT 	SessionId#, Page_URL
+				,Tab_Name, Series_Code
+			   ,COUNT(DISTINCT Tab_Name) AS Tab_name_count
+		FROM detail_tab
+		WHERE Tab_Name = '4' 
+		GROUP BY SessionId, Series_Code, Tab_Name
+	) AS d ON s.SessionId = d.SessionId AND s.Series_Code = d.Series_Code 
+																							 
+	#Where s.Keyword in ('anb', 'CLBU8-11-10') #and s.Series_Code <> ''
+
+	GROUP BY s.Keyword, s.Series_Code, s.URL
+)
+AS z
+WHERE z.Keyword IN ('CLBU8-11-10', 'ABHPL', 'bushing','anb')
+GROUP BY z.Keyword, z.Series_Code
+ORDER BY z.total_searches DESC, z.keyword DESC
+;
+
+
+
+# Prior version of above query is 
+
+
+SELECT *#s.*, c.Unique_CodeFix, d.Tab_name_count
+
+	FROM search s
+
+	JOIN total_keyword_searches_by_session 
+
+	AS t ON s.Keyword = t.Keyword AND s.SessionId = t.SessionId AND s.Series_Code <> ''
+
+	LEFT JOIN(
+		SELECT DISTINCT AccessDateTime, SessionId, Series_Code, Referer_URL, Product_Code
+				, COUNT(DISTINCT Product_Code) AS Unique_CodeFix
+		FROM code_fix
+		GROUP BY SessionId, Series_Code, Referer_URL, Product_Code
+		ORDER BY Series_Code DESC
+	) AS c ON s.SessionId = c.SessionId AND s.URL = c.Referer_URL 
+
+	LEFT JOIN (
+		SELECT 	SessionId#, Page_URL
+				,Tab_Name, Series_Code
+			   ,COUNT(DISTINCT Tab_Name) AS Tab_name_count
+		FROM detail_tab
+		WHERE Tab_Name = '4' 
+		GROUP BY SessionId, Series_Code, Tab_Name
+	) AS d ON s.SessionId = d.SessionId AND s.Series_Code = d.Series_Code 
+																							 
+	WHERE s.Keyword IN ('anb', 'CLBU8-11-10', 'ABHPL') #and s.Series_Code <> ''
+
+	GROUP BY s.Keyword, s.Series_Code, s.URL
+
+
+
+/* view that is used in the top query */
+CREATE VIEW total_keyword_searches_by_session AS
+
+	SELECT DISTINCT s.SessionId, s.Keyword, s.Series_Code
+			,(SUM(IF(s.Status = 'Hit',1,0)) + SUM(IF(s.Status = 'NotFound',1,0))) AS total_searches	
+			, SUM(IF(s.Status = 'Link',1,0)) AS sum_Link
+	FROM search s
+	#Where s.Keyword in ('anb', 'CLBU8-11-10')
+	GROUP BY s.Keyword, s.SessionId;
+
+
+CREATE VIEW total_keyword_searches AS
+
+	SELECT DISTINCT s.SessionId, s.Keyword, s.Series_Code
+			,(SUM(IF(s.Status = 'Hit',1,0)) + SUM(IF(s.Status = 'NotFound',1,0))) AS total_searches	
+			, SUM(IF(s.Status = 'Link',1,0)) AS sum_Link
+	FROM search s
+	#Where s.Keyword in ('anb', 'CLBU8-11-10')
+	GROUP BY s.Keyword;
+
+
+	SELECT 	d.SessionId#, Page_URL
+			,d.Tab_Name
+			,d.Series_Code
+		   ,COUNT(DISTINCT Tab_Name) AS Tab_name_count
+	FROM detail_tab d
+	WHERE d.Tab_Name = '4' 
+		 AND d.SessionId IN ('79cd94d793c9984c833eb5da9eafabf3')#, '7d981db72a5c5797d340619b603e12bf');
+	GROUP BY d.SessionId, d.Series_Code, d.Tab_Name;
+
+
+
+	SELECT DISTINCT c.SessionId, c.Series_Code, c.Referer_URL
+			#, COUNT(DISTINCT c.Product_Code) AS Unique_CodeFix
+	FROM code_fix c
+	WHERE c.SessionId IN ('79cd94d793c9984c833eb5da9eafabf3')#, '7d981db72a5c5797d340619b603e12bf');
+	GROUP BY c.SessionId, c.Series_Code, c.Referer_URL
+	ORDER BY c.Series_Code DESC;
+
+-- SmartGameobjectAI to spawn Eliza
+DELETE FROM `smart_scripts` WHERE `entryorguid`=51708 AND `source_type`=1;
+INSERT INTO `smart_scripts` (`entryorguid`,`source_type`,`event_type`,`event_param1`,`action_type`,`action_param1`,`action_param2`,`action_param3`,`action_param4`,`action_param5`,`target_type`,`target_x`,`target_y`,`target_z`,`target_o`,`comment`) VALUE
+(51708,1,20,254,12,314,1,300000,0,1,8,-10267,52.52,42.54,2.5,'Eliza Grave Dirt - On Quest Complete - Spawn Eliza');
+-- SmartAI for Eliza
+UPDATE `creature_template` SET `AIName`='SmartAI' WHERE `entry`=314;
+-- DELETE FROM `creature_ai_scripts` WHERE `creature_id`=314;
+DELETE FROM `smart_scripts` WHERE `entryorguid`=314 AND `source_type`=0;
+INSERT INTO `smart_scripts`(`entryorguid`,`id`,`link`,`event_type`,`event_phase_mask`,`event_param1`,`event_param2`,`event_param3`,`event_param4`,`action_type`,`action_param1`,`target_type`,`comment`) VALUES 
+(314,1,0,11,0,0,0,0,0,21,0,1,'Eliza - Phase 0 - On spawn - Prevent combat movement'),
+(314,2,3,4,0,0,0,0,0,1,0,1,'Eliza - Phase 0 - On aggro - Say'),
+(314,4,0,61,0,0,0,0,0,22,1,1,'Eliza - Phase 0 - On aggro - Set phase 1'),
+(314,5,0,9,1,0,40,0,0,11,20819,5,'Eliza - Phase 1 - In combat - Cast Frostbolt'),
+(314,6,0,9,1,0,5,0,0,21,1,1,'Eliza - Phase 1 - 0 to 5 yards - Activate combat movement'),
+(314,7,0,9,1,5,35,0,0,21,0,1,'Eliza - Phase 1 - 5 to 35 yards - Deactivate combat movement'),
+(314,8,0,9,1,35,80,0,0,21,1,1,'Eliza - Phase 1 - 35 to 80 yards - Activate combat movement'),
+(314,9,0,0,1,4100,6400,72300,72300,11, 3107,1,'Eliza - Phase 1 - In combat - Summon Elizas Guard'),
+(314,10,0,0,1,2100,2900,12500,36300,11,11831,5,'Eliza - Phase 1 - In combat - Cast Frost Nova'),
+(314,11,12,3,1,0,7,0,0,21,1,1,'Eliza - Phase 1 - At 7% mana - Start combat movement'),
+(314,12,0,61,1,0,0,0,0,22,2,1,'Eliza - Phase 1 - At 7% mana - Set phase 2'),
+(314,13,0,3,2,100,15,100,100,22,1,1,'Eliza - Phase 2 - At 15% mana - Set phase 1');
+-- Birth aura
+DELETE FROM `creature_template_addon` WHERE `entry`=314;
+INSERT INTO `creature_template_addon`(`entry`,`auras`) VALUE
+(314,'26047');
+-- Texts used in the SmartAI
+-- DELETE FROM `creature_ai_texts` WHERE `entry`IN (-460,-461);
+DELETE FROM `creature_text` WHERE `entry`=314;
+INSERT INTO `creature_text` (`entry`,`groupid`,`id`,`text`,`type`,`language`,`probability`,`comment`) VALUES
+(314,0,0,'Wait...you are not my husband.  But he must have sent you.  And you... look... delicious!',12,0,100,'Eliza'),
+(314,0,1,'Aber? Is that you...? Oh...I''m so hungry, Aber! SO HUNGRY!!',12,0,100,'Eliza');

@@ -1,0 +1,353 @@
+{-|
+Module      : Idris.Apropos
+Description : Search loaded Idris code and named modules for things.
+
+License     : BSD3
+Maintainer  : The Idris Community.
+-}
+{-# LANGUAGE FlexibleInstances #-}
+module Idris.Apropos (apropos, aproposModules) where
+
+import Idris.AbsSyntax
+import Idris.Core.Evaluate (Def(..), ctxtAlist)
+import Idris.Core.TT (Binder(..), Const(..), Name(..), NameType(..), TT(..),
+                      toAlist)
+import Idris.Docstrings (DocTerm, Docstring, containsText)
+
+import Data.List (intersperse, nub, nubBy)
+import qualified Data.Text as T
+
+-- | Find definitions that are relevant to all space-delimited components of
+-- some string. Relevance is one or more of the following:
+--
+-- * the string is a substring of the name
+--
+-- * the string occurs in the documentation string
+--
+-- * the type of the definition is apropos
+apropos :: IState -> T.Text -> [Name]
+apropos ist what = let defs = ctxtAlist (tt_ctxt ist)
+                       docs = toAlist (idris_docstrings ist)
+                   in nub (map fst (isAproposAll parts defs) ++
+                           map fst (isAproposAll parts docs))
+  where isAproposAll []          xs = xs
+        isAproposAll (what:more) xs = filter (isApropos what)
+                                             (isAproposAll more xs)
+        parts = filter ((> 0) . T.length) . T.splitOn (T.pack " ") $ what
+
+-- | Find modules whose names or docstrings contain all the
+-- space-delimited components of some string.
+aproposModules :: IState -> T.Text -> [(String, Docstring DocTerm)]
+aproposModules ist what = let mods  = toAlist (idris_moduledocs ist)
+                              found = nubBy (\x y -> fst x == fst y)
+                                            (isAproposAll parts mods)
+                          in map unModName found
+  where isAproposAll []          xs = xs
+        isAproposAll (what:more) xs = filter (\(n,d) -> isApropos what n || isApropos what d)
+                                             (isAproposAll more xs)
+        parts = filter ((> 0) . T.length) . T.splitOn (T.pack " ") $ what
+        unModName (NS _ ns, d) = ((concat . intersperse "." . map T.unpack . reverse) ns, d)
+        unModName (n,       d) = ("<<MODULE>>", d)
+
+textIn :: T.Text -> T.Text -> Bool
+textIn a b = T.isInfixOf (T.toLower a) (T.toLower b)
+
+class Apropos a where
+  isApropos :: T.Text -> a -> Bool
+
+instance Apropos Name where
+  isApropos str (UN n)     = textIn str n
+  isApropos str (NS n' ns) = isApropos str n' || any (textIn str) ns
+  -- Handle special names from stdlib
+  isApropos str n | (n == unitTy || n == unitCon) && str == T.pack "()" = True
+                  | (n == pairTy || n == pairCon) && str == T.pack "," = True
+                  | n == eqTy && str == T.pack "=" = True
+                  | n == eqCon && (T.toLower str) == T.pack "Refl" = True
+                  | (n == sigmaTy || n == sigmaCon) && str == T.pack "**" = True
+  isApropos _   _          = False -- we don't care about case blocks, MNs, etc
+
+instance Apropos Def where
+  isApropos str (Function ty tm) = isApropos str ty
+  isApropos str (TyDecl _ ty) = isApropos str ty
+  isApropos str (Operator ty _ _) = isApropos str ty
+  isApropos str (CaseOp _ ty ty' _ _ _) = isApropos str ty
+
+instance Apropos (Binder (TT Name)) where
+  isApropos str (Lam _ ty)    = str == T.pack "\\" || isApropos str ty
+  isApropos str (Pi _ _ ty _) = str == T.pack "->" || isApropos str ty
+  isApropos str (Let _ ty val)  = str == T.pack "let" || isApropos str ty || isApropos str val
+  isApropos str (NLet ty val) = str == T.pack "let" || isApropos str ty || isApropos str val
+  isApropos str _             = False -- these shouldn't occur in defined libraries
+
+instance Apropos (TT Name) where
+  isApropos str (P Ref n ty) = isApropos str n || isApropos str ty
+  isApropos str (P (TCon _ _) n ty) = isApropos str n || isApropos str ty
+  isApropos str (P (DCon _ _ _) n ty) = isApropos str n || isApropos str ty
+  isApropos str (P Bound _ ty)      = isApropos str ty
+  isApropos str (Bind n b tm)       = isApropos str b || isApropos str tm
+  isApropos str (App _ t1 t2)       = isApropos str t1 || isApropos str t2
+  isApropos str (Constant const)    = isApropos str const
+  isApropos str _                   = False
+
+instance Apropos Const where
+  isApropos str c = textIn str (T.pack (show c))
+
+instance Apropos (Docstring a) where
+  isApropos str d = containsText str d
+
+instance (Apropos a, Apropos b) => Apropos (a, b) where
+  isApropos str (x, y) = isApropos str x || isApropos str y
+
+instance (Apropos a) => Apropos (Maybe a) where
+  isApropos str (Just x) = isApropos str x
+  isApropos _   Nothing  = False
+
+instance (Apropos a) => Apropos [a] where
+  isApropos str xs = any (isApropos str) xs
+{-|
+Module      : Idris.Chaser
+Description : Module chaser to determine cycles and import modules.
+
+License     : BSD3
+Maintainer  : The Idris Community.
+-}
+{-# LANGUAGE FlexibleContexts #-}
+
+module Idris.Chaser(
+    buildTree, getImports
+  , getModuleFiles
+  , ModuleTree(..)
+  ) where
+
+import Idris.AbsSyntax
+import Idris.Core.TT
+import Idris.Error
+import Idris.Imports
+import Idris.Parser
+import Idris.Unlit
+
+import Control.Monad.State
+import Data.List
+import qualified Data.Map as M
+import qualified Data.Set as S
+import Data.Time.Clock
+import System.Directory
+import Util.System (readSource)
+
+data ModuleTree = MTree { mod_path :: IFileType,
+                          mod_needsRecheck :: Bool,
+                          mod_time :: UTCTime,
+                          mod_deps :: [ModuleTree] }
+  deriving Show
+
+latest :: UTCTime -> [IFileType] -> [ModuleTree] -> UTCTime
+latest tm done [] = tm
+latest tm done (m : ms)
+    | mod_path m `elem` done = latest tm done ms
+    | otherwise = latest (max tm (mod_time m)) (mod_path m : done) ms
+
+modName :: IFileType -> String
+modName (IDR fp) = fp
+modName (LIDR fp) = fp
+modName (IBC fp src) = modName src
+
+-- | Given a module tree, return the list of files to be loaded. If
+-- any module has a descendent which needs reloading, return its
+-- source, otherwise return the IBC
+getModuleFiles :: [ModuleTree] -> [IFileType]
+getModuleFiles ts
+    = let (files, (rebuild, _)) = runState (modList ts) (S.empty, M.empty) in
+          updateToSrc rebuild (reverse files)
+ where
+   -- Get the order of building modules. As we go we'll find things that
+   -- need rebuilding, which we keep track of in the Set.
+   -- The order of the list matters - things which get built first appear
+   -- in the list first. We'll remove any repetition later.
+   modList :: [ModuleTree] ->
+              State (S.Set IFileType,
+                     M.Map IFileType (Bool, [IFileType])) [IFileType]
+   modList [] = return []
+   modList (m : ms) = do (_, fs) <- modTree S.empty m
+                         fs' <- modList ms
+                         pure (fs ++ fs')
+
+   modTree path m@(MTree p rechk tm deps)
+       = do let file = chkReload rechk p
+            (rebuild, res) <- get
+            case M.lookup file res of
+                 Just ms -> pure ms
+                 Nothing -> do
+                    toBuildsAll <- mapM (modTree (S.insert (getSrc p) path)) deps
+                    let (rechkDep_in, toBuilds) = unzip toBuildsAll
+                    let rechkDep = or rechkDep_in
+
+                    (rebuild, res) <- get
+
+                    -- Needs rechecking if 'rechk' is true, or if any of the
+                    -- modification times in 'deps' are later than tm, or
+                    -- if any dependency needed rechecking
+                    let depMod = latest tm [] deps
+                    let needsRechk = rechkDep || rechk || depMod > tm
+
+                    -- Remove duplicates, but keep the last...
+                    let rnub = reverse . nub . reverse
+
+                    let ret = if needsRechk
+                                 then (needsRechk, rnub (getSrc file : concat toBuilds))
+                                 else (needsRechk, rnub (file : concat toBuilds))
+
+                    -- Cache the result
+                    put (if needsRechk
+                            then S.union path rebuild
+                            else rebuild, M.insert file ret res)
+                    pure ret
+
+   chkReload False p = p
+   chkReload True (IBC fn src) = chkReload True src
+   chkReload True p = p
+
+   getSrc (IBC fn src) = getSrc src
+   getSrc f = f
+
+   updateToSrc rebuilds [] = []
+   updateToSrc rebuilds (x : xs)
+       = if getSrc x `S.member` rebuilds
+            then getSrc x : updateToSrc rebuilds xs
+            else x : updateToSrc rebuilds xs
+
+-- | Strip quotes and the backslash escapes that Haskeline adds
+extractFileName :: String -> String
+extractFileName ('"':xs) = takeWhile (/= '"') xs
+extractFileName ('\'':xs) = takeWhile (/= '\'') xs
+extractFileName x = build x []
+                        where
+                            build [] acc = reverse $ dropWhile (== ' ') acc
+                            build ('\\':' ':xs) acc = build xs (' ':acc)
+                            build (x:xs) acc = build xs (x:acc)
+
+getIModTime (IBC i _) = getModificationTime i
+getIModTime (IDR i) = getModificationTime i
+getIModTime (LIDR i) = getModificationTime i
+
+getImports :: [(FilePath, [ImportInfo])]
+           -> [FilePath]
+           -> Idris [(FilePath, [ImportInfo])]
+getImports acc [] = return acc
+getImports acc (f : fs) = do
+   i <- getIState
+   let file = extractFileName f
+   ibcsd <- valIBCSubDir i
+   idrisCatch (do
+       srcds <- allSourceDirs
+       fp <- findImport srcds ibcsd file
+       let parsef = fname fp
+       case lookup parsef acc of
+            Just _ -> getImports acc fs
+            _ -> do
+               exist <- runIO $ doesFileExist parsef
+               if exist then do
+                   src_in <- runIO $ readSource parsef
+                   src <- if lit fp then tclift $ unlit parsef src_in
+                                    else return src_in
+                   (_, _, modules, _) <- parseImports parsef src
+                   clearParserWarnings
+                   getImports ((parsef, modules) : acc)
+                              (fs ++ map import_path modules)
+                     else getImports ((parsef, []) : acc) fs)
+        (\_ -> getImports acc fs) -- not in current soure tree, ignore
+  where
+    lit (LIDR _) = True
+    lit _ = False
+
+    fname (IDR fn) = fn
+    fname (LIDR fn) = fn
+    fname (IBC _ src) = fname src
+
+buildTree :: [FilePath]                 -- ^ already guaranteed built
+          -> [(FilePath, [ImportInfo])] -- ^ import lists (don't reparse)
+          -> FilePath
+          -> Idris [ModuleTree]
+buildTree built importlists fp = evalStateT (btree [] fp) []
+ where
+  addFile :: FilePath -> [ModuleTree] ->
+             StateT [(FilePath, [ModuleTree])] Idris [ModuleTree]
+  addFile f m = do fs <- get
+                   put ((f, m) : fs)
+                   return m
+
+  btree :: [FilePath] -> FilePath ->
+           StateT [(FilePath, [ModuleTree])] Idris [ModuleTree]
+  btree stk f =
+    do i <- lift getIState
+       let file = extractFileName f
+       lift $ logLvl 1 $ "CHASING " ++ show file ++ " (" ++ show fp ++ ")"
+       ibcsd <- lift $ valIBCSubDir i
+       ids   <- lift allImportDirs
+       fp   <- lift $ findImport ids ibcsd file
+       lift $ logLvl 1 $ "Found " ++ show fp
+       mt <- lift $ runIO $ getIModTime fp
+       if (file `elem` built)
+          then return [MTree fp False mt []]
+               else if file `elem` stk then
+                       do lift $ tclift $ tfail
+                            (Msg $ "Cycle detected in imports: "
+                                     ++ showSep " -> " (reverse (file : stk)))
+                 else do donetree <- get
+                         case lookup file donetree of
+                            Just t -> return t
+                            _ -> do ms <- mkChildren file fp
+                                    addFile file ms
+
+    where mkChildren file (LIDR fn) = do ms <- children True fn (file : stk)
+                                         mt <- lift $ runIO $ getModificationTime fn
+                                         return [MTree (LIDR fn) True mt ms]
+          mkChildren file (IDR fn) = do ms <- children False fn (file : stk)
+                                        mt <- lift $ runIO $ getModificationTime fn
+                                        return [MTree (IDR fn) True mt ms]
+          mkChildren file (IBC fn src)
+              = do srcexist <- lift $ runIO $ doesFileExist (getSrcFile src)
+                   ms <- if srcexist then
+                               do [MTree _ _ _ ms'] <- mkChildren file src
+                                  return ms'
+                             else return []
+                   -- Modification time is the later of the source/ibc modification time
+                   smt <- lift $ idrisCatch (runIO $ getIModTime src)
+                                    (\c -> runIO $ getModificationTime fn)
+                   mt <- lift $ idrisCatch (do t <- runIO $ getModificationTime fn
+                                               return (max smt t))
+                                    (\c -> return smt)
+                   -- FIXME: It's also not up to date if anything it imports has
+                   -- been modified since its own ibc has.
+                   --
+                   -- Issue #1592 on the issue tracker.
+                   --
+                   -- https://github.com/idris-lang/Idris-dev/issues/1592
+                   ibcOutdated <- lift $ fn `younger` (getSrcFile src)
+                   -- FIXME (EB): The below 'hasValidIBCVersion' that's
+                   -- commented out appears to be breaking reloading in vim
+                   -- mode. Until we know why, I've commented it out.
+                   ibcValid <- return True -- hasValidIBCVersion fn
+                   return [MTree (IBC fn src) (ibcOutdated || not ibcValid) mt ms]
+
+          getSrcFile (IBC _ src) = getSrcFile src
+          getSrcFile (LIDR src) = src
+          getSrcFile (IDR src) = src
+
+          younger ibc src = do exist <- runIO $ doesFileExist src
+                               if exist then do
+                                   ibct <- runIO $ getModificationTime ibc
+                                   srct <- runIO $ getModificationTime src
+                                   return (srct > ibct)
+                                 else return False
+
+  children :: Bool -> FilePath -> [FilePath] ->
+              StateT [(FilePath, [ModuleTree])] Idris [ModuleTree]
+  children lit f stk = -- idrisCatch
+     do exist <- lift $ runIO $ doesFileExist f
+        if exist then do
+            lift $ logLvl 1 $ "Reading source " ++ show f
+            let modules = maybe [] id (lookup f importlists)
+            ms <- mapM (btree stk . import_path) modules
+            return (concat ms)
+           else return [] -- IBC with no source available
+--     (\c -> return []) -- error, can't chase modules here

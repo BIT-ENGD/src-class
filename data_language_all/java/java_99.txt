@@ -1,0 +1,149 @@
+/*
+ * Copyright 2012-2018 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.springframework.boot.gradle.docs;
+
+import java.io.File;
+import java.io.IOException;
+
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import org.springframework.boot.gradle.junit.GradleMultiDslSuite;
+import org.springframework.boot.gradle.testkit.GradleBuild;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Tests for the documentation about running a Spring Boot application.
+ *
+ * @author Andy Wilkinson
+ * @author Jean-Baptiste Nizet
+ */
+@RunWith(GradleMultiDslSuite.class)
+public class RunningDocumentationTests {
+
+	@Rule
+	public GradleBuild gradleBuild;
+
+	@Test
+	public void bootRunMain() throws IOException {
+		assertThat(this.gradleBuild.script("src/main/gradle/running/boot-run-main")
+				.build("configuredMainClass").getOutput())
+						.contains("com.example.ExampleApplication");
+	}
+
+	@Test
+	public void applicationPluginMainClassName() {
+		assertThat(this.gradleBuild
+				.script("src/main/gradle/running/application-plugin-main-class-name")
+				.build("configuredMainClass").getOutput())
+						.contains("com.example.ExampleApplication");
+	}
+
+	@Test
+	public void springBootDslMainClassName() throws IOException {
+		assertThat(this.gradleBuild
+				.script("src/main/gradle/running/spring-boot-dsl-main-class-name")
+				.build("configuredMainClass").getOutput())
+						.contains("com.example.ExampleApplication");
+	}
+
+	@Test
+	public void bootRunSourceResources() throws IOException {
+		assertThat(this.gradleBuild
+				.script("src/main/gradle/running/boot-run-source-resources")
+				.build("configuredClasspath").getOutput())
+						.contains(new File("src/main/resources").getPath());
+	}
+
+}
+/*
+ * Copyright (C) 2016 Jake Wharton
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package retrofit2.adapter.rxjava;
+
+import retrofit2.Response;
+import rx.Observable.OnSubscribe;
+import rx.Subscriber;
+import rx.exceptions.CompositeException;
+import rx.exceptions.Exceptions;
+import rx.exceptions.OnCompletedFailedException;
+import rx.exceptions.OnErrorFailedException;
+import rx.exceptions.OnErrorNotImplementedException;
+import rx.plugins.RxJavaPlugins;
+
+final class ResultOnSubscribe<T> implements OnSubscribe<Result<T>> {
+  private final OnSubscribe<Response<T>> upstream;
+
+  ResultOnSubscribe(OnSubscribe<Response<T>> upstream) {
+    this.upstream = upstream;
+  }
+
+  @Override public void call(Subscriber<? super Result<T>> subscriber) {
+    upstream.call(new ResultSubscriber<T>(subscriber));
+  }
+
+  private static class ResultSubscriber<R> extends Subscriber<Response<R>> {
+    private final Subscriber<? super Result<R>> subscriber;
+
+    ResultSubscriber(Subscriber<? super Result<R>> subscriber) {
+      super(subscriber);
+      this.subscriber = subscriber;
+    }
+
+    @Override public void onNext(Response<R> response) {
+      subscriber.onNext(Result.response(response));
+    }
+
+    @Override public void onError(Throwable throwable) {
+      try {
+        subscriber.onNext(Result.<R>error(throwable));
+      } catch (Throwable t) {
+        try {
+          subscriber.onError(t);
+        } catch (OnCompletedFailedException
+            | OnErrorFailedException
+            | OnErrorNotImplementedException e) {
+          RxJavaPlugins.getInstance().getErrorHandler().handleError(e);
+        } catch (Throwable inner) {
+          Exceptions.throwIfFatal(inner);
+          CompositeException composite = new CompositeException(t, inner);
+          RxJavaPlugins.getInstance().getErrorHandler().handleError(composite);
+        }
+        return;
+      }
+      subscriber.onCompleted();
+    }
+
+    @Override public void onCompleted() {
+      subscriber.onCompleted();
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
+-- |
+-- Fresh variable supply
+--
+module Control.Monad.Supply where
+
+import Prelude.Compat
+
+import Control.Applicative
+import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Writer
+
+import Data.Functor.Identity
+
+newtype SupplyT m a = SupplyT { unSupplyT :: StateT Integer m a }
+  deriving (Functor, Applicative, Monad, MonadTrans, MonadError e, MonadWriter w, MonadReader r, Alternative, MonadPlus)
+
+runSupplyT :: Integer -> SupplyT m a -> m (a, Integer)
+runSupplyT n = flip runStateT n . unSupplyT
+
+evalSupplyT :: (Functor m) => Integer -> SupplyT m a -> m a
+evalSupplyT n = fmap fst . runSupplyT n
+
+type Supply = SupplyT Identity
+
+runSupply :: Integer -> Supply a -> (a, Integer)
+runSupply n = runIdentity . runSupplyT n
+
+evalSupply :: Integer -> Supply a -> a
+evalSupply n = runIdentity . evalSupplyT n
+-- |
+-- A class for monads supporting a supply of fresh names
+--
+
+{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE TypeFamilies #-}
+
+module Control.Monad.Supply.Class where
+
+import Prelude.Compat
+
+import Control.Monad.Supply
+import Control.Monad.State
+import Control.Monad.Writer
+import Data.Text (Text, pack)
+
+class Monad m => MonadSupply m where
+  fresh :: m Integer
+  peek :: m Integer
+  default fresh :: (MonadTrans t, MonadSupply n, m ~ t n) => m Integer
+  fresh = lift fresh
+  default peek :: (MonadTrans t, MonadSupply n, m ~ t n) => m Integer
+  peek = lift peek
+
+instance Monad m => MonadSupply (SupplyT m) where
+  fresh = SupplyT $ do
+    n <- get
+    put (n + 1)
+    return n
+  peek = SupplyT get
+
+instance MonadSupply m => MonadSupply (StateT s m)
+instance (Monoid w, MonadSupply m) => MonadSupply (WriterT w m)
+
+freshName :: MonadSupply m => m Text
+freshName = fmap (("$" <> ) . pack . show) fresh

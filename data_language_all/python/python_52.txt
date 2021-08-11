@@ -1,0 +1,289 @@
+#!/usr/bin/env python
+from __future__ import unicode_literals
+
+import base64
+import io
+import json
+import mimetypes
+import netrc
+import optparse
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from youtube_dl.compat import (
+    compat_basestring,
+    compat_input,
+    compat_getpass,
+    compat_print,
+    compat_urllib_request,
+)
+from youtube_dl.utils import (
+    make_HTTPS_handler,
+    sanitized_Request,
+)
+
+
+class GitHubReleaser(object):
+    _API_URL = 'https://api.github.com/repos/rg3/youtube-dl/releases'
+    _UPLOADS_URL = 'https://uploads.github.com/repos/rg3/youtube-dl/releases/%s/assets?name=%s'
+    _NETRC_MACHINE = 'github.com'
+
+    def __init__(self, debuglevel=0):
+        self._init_github_account()
+        https_handler = make_HTTPS_handler({}, debuglevel=debuglevel)
+        self._opener = compat_urllib_request.build_opener(https_handler)
+
+    def _init_github_account(self):
+        try:
+            info = netrc.netrc().authenticators(self._NETRC_MACHINE)
+            if info is not None:
+                self._username = info[0]
+                self._password = info[2]
+                compat_print('Using GitHub credentials found in .netrc...')
+                return
+            else:
+                compat_print('No GitHub credentials found in .netrc')
+        except (IOError, netrc.NetrcParseError):
+            compat_print('Unable to parse .netrc')
+        self._username = compat_input(
+            'Type your GitHub username or email address and press [Return]: ')
+        self._password = compat_getpass(
+            'Type your GitHub password and press [Return]: ')
+
+    def _call(self, req):
+        if isinstance(req, compat_basestring):
+            req = sanitized_Request(req)
+        # Authorizing manually since GitHub does not response with 401 with
+        # WWW-Authenticate header set (see
+        # https://developer.github.com/v3/#basic-authentication)
+        b64 = base64.b64encode(
+            ('%s:%s' % (self._username, self._password)).encode('utf-8')).decode('ascii')
+        req.add_header('Authorization', 'Basic %s' % b64)
+        response = self._opener.open(req).read().decode('utf-8')
+        return json.loads(response)
+
+    def list_releases(self):
+        return self._call(self._API_URL)
+
+    def create_release(self, tag_name, name=None, body='', draft=False, prerelease=False):
+        data = {
+            'tag_name': tag_name,
+            'target_commitish': 'master',
+            'name': name,
+            'body': body,
+            'draft': draft,
+            'prerelease': prerelease,
+        }
+        req = sanitized_Request(self._API_URL, json.dumps(data).encode('utf-8'))
+        return self._call(req)
+
+    def create_asset(self, release_id, asset):
+        asset_name = os.path.basename(asset)
+        url = self._UPLOADS_URL % (release_id, asset_name)
+        # Our files are small enough to be loaded directly into memory.
+        data = open(asset, 'rb').read()
+        req = sanitized_Request(url, data)
+        mime_type, _ = mimetypes.guess_type(asset_name)
+        req.add_header('Content-Type', mime_type or 'application/octet-stream')
+        return self._call(req)
+
+
+def main():
+    parser = optparse.OptionParser(usage='%prog CHANGELOG VERSION BUILDPATH')
+    options, args = parser.parse_args()
+    if len(args) != 3:
+        parser.error('Expected a version and a build directory')
+
+    changelog_file, version, build_path = args
+
+    with io.open(changelog_file, encoding='utf-8') as inf:
+        changelog = inf.read()
+
+    mobj = re.search(r'(?s)version %s\n{2}(.+?)\n{3}' % version, changelog)
+    body = mobj.group(1) if mobj else ''
+
+    releaser = GitHubReleaser()
+
+    new_release = releaser.create_release(
+        version, name='youtube-dl %s' % version, body=body)
+    release_id = new_release['id']
+
+    for asset in os.listdir(build_path):
+        compat_print('Uploading %s...' % asset)
+        releaser.create_asset(release_id, os.path.join(build_path, asset))
+
+
+if __name__ == '__main__':
+    main()
+#!/usr/bin/env python
+from __future__ import unicode_literals
+
+import base64
+import io
+import json
+import mimetypes
+import netrc
+import optparse
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from youtube_dl.compat import (
+    compat_basestring,
+    compat_input,
+    compat_getpass,
+    compat_print,
+    compat_urllib_request,
+)
+from youtube_dl.utils import (
+    make_HTTPS_handler,
+    sanitized_Request,
+)
+
+
+class GitHubReleaser(object):
+    _API_URL = 'https://api.github.com/repos/rg3/youtube-dl/releases'
+    _UPLOADS_URL = 'https://uploads.github.com/repos/rg3/youtube-dl/releases/%s/assets?name=%s'
+    _NETRC_MACHINE = 'github.com'
+
+    def __init__(self, debuglevel=0):
+        self._init_github_account()
+        https_handler = make_HTTPS_handler({}, debuglevel=debuglevel)
+        self._opener = compat_urllib_request.build_opener(https_handler)
+
+    def _init_github_account(self):
+        try:
+            info = netrc.netrc().authenticators(self._NETRC_MACHINE)
+            if info is not None:
+                self._username = info[0]
+                self._password = info[2]
+                compat_print('Using GitHub credentials found in .netrc...')
+                return
+            else:
+                compat_print('No GitHub credentials found in .netrc')
+        except (IOError, netrc.NetrcParseError):
+            compat_print('Unable to parse .netrc')
+        self._username = compat_input(
+            'Type your GitHub username or email address and press [Return]: ')
+        self._password = compat_getpass(
+            'Type your GitHub password and press [Return]: ')
+
+    def _call(self, req):
+        if isinstance(req, compat_basestring):
+            req = sanitized_Request(req)
+        # Authorizing manually since GitHub does not response with 401 with
+        # WWW-Authenticate header set (see
+        # https://developer.github.com/v3/#basic-authentication)
+        b64 = base64.b64encode(
+            ('%s:%s' % (self._username, self._password)).encode('utf-8')).decode('ascii')
+        req.add_header('Authorization', 'Basic %s' % b64)
+        response = self._opener.open(req).read().decode('utf-8')
+        return json.loads(response)
+
+    def list_releases(self):
+        return self._call(self._API_URL)
+
+    def create_release(self, tag_name, name=None, body='', draft=False, prerelease=False):
+        data = {
+            'tag_name': tag_name,
+            'target_commitish': 'master',
+            'name': name,
+            'body': body,
+            'draft': draft,
+            'prerelease': prerelease,
+        }
+        req = sanitized_Request(self._API_URL, json.dumps(data).encode('utf-8'))
+        return self._call(req)
+
+    def create_asset(self, release_id, asset):
+        asset_name = os.path.basename(asset)
+        url = self._UPLOADS_URL % (release_id, asset_name)
+        # Our files are small enough to be loaded directly into memory.
+        data = open(asset, 'rb').read()
+        req = sanitized_Request(url, data)
+        mime_type, _ = mimetypes.guess_type(asset_name)
+        req.add_header('Content-Type', mime_type or 'application/octet-stream')
+        return self._call(req)
+
+
+def main():
+    parser = optparse.OptionParser(usage='%prog CHANGELOG VERSION BUILDPATH')
+    options, args = parser.parse_args()
+    if len(args) != 3:
+        parser.error('Expected a version and a build directory')
+
+    changelog_file, version, build_path = args
+
+    with io.open(changelog_file, encoding='utf-8') as inf:
+        changelog = inf.read()
+
+    mobj = re.search(r'(?s)version %s\n{2}(.+?)\n{3}' % version, changelog)
+    body = mobj.group(1) if mobj else ''
+
+    releaser = GitHubReleaser()
+
+    new_release = releaser.create_release(
+        version, name='youtube-dl %s' % version, body=body)
+    release_id = new_release['id']
+
+    for asset in os.listdir(build_path):
+        compat_print('Uploading %s...' % asset)
+        releaser.create_asset(release_id, os.path.join(build_path, asset))
+
+
+if __name__ == '__main__':
+    main()
+#!/usr/bin/env python
+from __future__ import unicode_literals
+
+import optparse
+import os
+from os.path import dirname as dirn
+import sys
+
+sys.path.insert(0, dirn(dirn((os.path.abspath(__file__)))))
+import youtube_dl
+from youtube_dl.utils import shell_quote
+
+FISH_COMPLETION_FILE = 'youtube-dl.fish'
+FISH_COMPLETION_TEMPLATE = 'devscripts/fish-completion.in'
+
+EXTRA_ARGS = {
+    'recode-video': ['--arguments', 'mp4 flv ogg webm mkv', '--exclusive'],
+
+    # Options that need a file parameter
+    'download-archive': ['--require-parameter'],
+    'cookies': ['--require-parameter'],
+    'load-info': ['--require-parameter'],
+    'batch-file': ['--require-parameter'],
+}
+
+
+def build_completion(opt_parser):
+    commands = []
+
+    for group in opt_parser.option_groups:
+        for option in group.option_list:
+            long_option = option.get_opt_string().strip('-')
+            complete_cmd = ['complete', '--command', 'youtube-dl', '--long-option', long_option]
+            if option._short_opts:
+                complete_cmd += ['--short-option', option._short_opts[0].strip('-')]
+            if option.help != optparse.SUPPRESS_HELP:
+                complete_cmd += ['--description', option.help]
+            complete_cmd.extend(EXTRA_ARGS.get(long_option, []))
+            commands.append(shell_quote(complete_cmd))
+
+    with open(FISH_COMPLETION_TEMPLATE) as f:
+        template = f.read()
+    filled_template = template.replace('{{commands}}', '\n'.join(commands))
+    with open(FISH_COMPLETION_FILE, 'w') as f:
+        f.write(filled_template)
+
+
+parser = youtube_dl.parseOpts()[0]
+build_completion(parser)

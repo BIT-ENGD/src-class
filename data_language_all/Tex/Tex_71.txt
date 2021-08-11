@@ -1,0 +1,102 @@
+﻿\mysection{Itanium}
+\label{itanium}
+\myindex{Itanium}
+
+Bien qu'elle n'ai pas réussi à percer, l'architecture  Intel Itanium (\ac{IA64}) est très intéressante.
+
+Là où les CPUs \ac{OOE} réarrangent les instructions afin de les exécuter en parallèle, l'architecture
+\ac{EPIC} a constitué une tentative pour déléguer cette décision au compilateur.
+
+Les compilateurs en question étaient évidemment particulièrement complexes.
+
+Voici un exemple de code pour l'architecture \ac{IA64} qui implémente un algorithme de
+chiffrage simple du noyau Linux:
+
+\lstinputlisting[caption=Linux kernel 3.2.0.4,style=customc]{other/itanium/tea_from_linux.c}
+
+Et voici maintenant le résultat de la compilation:
+
+\lstinputlisting[caption=Linux Kernel 3.2.0.4 pour Itanium 2 (McKinley)]{other/itanium/ia64_linux_3.2.0.4_mckinley.lst}
+
+Nous constatons tout d'abord que toutes les instructions \ac{IA64} sont regroupées par 3.
+
+Chaque groupe représente 16 octets (128 bits) et se décompose en une catégorie de code sur 5 bits
+puis 3 instructions de 41 bits chacune.
+
+Dans \IDA les groupes apparaissent sous la forme 6+6+4 octets~---le motif est facilement
+reconnaissable.
+
+En règle générale les trois instructions d'un groupe s'exécutent en parallèle, sauf si l'une d'elles
+est associée à un \q{stop bit}.
+
+Il est probable que les ingénieurs d'Intel et de HP ont collecté des statistiques qui leur ont permis
+d'identifier les motifs les plus fréquents. Ils auraient alors décidé d'introduire une notion de
+type de groupe (\ac{AKA} \q{templates}). Le type du groupe définit la catégorie des instructions
+qu'il contient. Ces catégories sont au nombre de 12.
+
+Par exemple, un groupe de type 0 représente \TT{MII}. Ceci signifie que la première instruction est
+une lecture ou écriture en mémoire (M), la seconde et la troisième sont des manipulations d'entiers
+(I).
+
+Un autre exemple est le groupe de type 0x1d: \TT{MFB}. La première instruction est la aussi de type
+mémoire (M), la seconde manipule un nombre flottant (F instruction \ac{FPU}), et la dernière est un
+branchement (B).
+
+Lorsque le compilateur ne parvient pas à sélectionner une instruction à inclure dans le groupe en
+cours de construction, il utilise une instruction de type \ac{NOP}. Il existe donc des instructions
+\TT{nop.i} pour remplacer ce qui devrait être une manipulation d'entier. De même un \TT{nop.m} est
+utilisé pour combler un trou là où une instruction de type mémoire devrait se trouver.
+
+Lorsque le programme est directement rédigé en assembleur, les instructions \ac{NOP}s sont ajoutées
+de manière automatique.
+
+Et ce n'est pas tout. Les groupes font eux-mêmes l'objet de regroupements.
+
+Chaque instruction peut être marquée avec un \q{stop bit}. Le processeur exécute en parallèle toutes
+les instructions, jusqu'à ce qu'il rencontre un \q{stop bit}.
+
+En pratique, les processeurs Itanium 2 peuvent exécuter jusqu'à deux groupes simultanément, soit un
+total de  6 instructions en parallèle.
+
+Il faut évidemment que les instructions exécutées en parallèle, n'aient pas d'effet de bord entre
+elles. Dans le cas contraire, le résultat n'est pas défini.
+Le compilateur doit respecter cette contrainte ainsi que le nombre maximum de groupes simultanés du
+processeur cible en plaçant les \q{stop bit} au bon endroit.
+
+En langage d'assemblage, les bits d'arrêt sont identifiés par deux point-virgule situés après
+l'instruction.
+
+Ainsi dans notre exemple les instructions [90-ac] peuvent être exécutées simultanément. Le prochain
+groupe est [b0-cc].
+
+Nous observons également un bit d'arrêt en 10c. L'instruction suivante comporte elle aussi un bit
+d'arrêt.
+
+Ces deux instructions doivent donc être exécutées isolément des autres, (comme dans une architecture
+\ac{CISC}).
+
+En effet, l'instruction en 110 utilise le résultat produit par l'instruction précédente (valeur du
+registre r26). Les deux instructions ne peuvent s'exécuter simultanément.
+
+Il semble que le compilateur n'ai pas trouvé de meilleure manière de paralléliser les instructions,
+ou en d'autres termes, de plus charger la \ac{CPU}. Les bits d'arrêt sont donc en trop grand nombre.
+
+La rédaction manuelle de code en assembleur est une tâche pénible. Le programmeur doit effectuer
+lui-même les regroupements d'instructions.
+
+Bien sûr, il peut ajouter un bit d'arrêt à chaque instruction mais cela dégrade les performances
+telles qu'elles ont été pensée pour l'Itanium.
+
+Les codes source du noyau Linux contiennent un exemple intéressant d'un code assembleur produit
+manuellement pour \ac{IA64}:
+
+\url{http://go.yurichev.com/17322}.
+
+On trouvera une introduction à l'assembleur Itanium dans :
+[Mike Burrell, \IT{Writing Efficient Itanium 2 Assembly Code} (2010)]\footnote{\AlsoAvailableAs \url{http://yurichev.com/mirrors/RE/itanium.pdf}},
+[papasutra of haquebright, \IT{WRITING SHELLCODE FOR IA-64} (2001)]\footnote{\AlsoAvailableAs \url{http://phrack.org/issues/57/5.html}}.
+
+Deux autres caractéristiques très intéressantes d'Itanium sont l'\IT{exécution spéculative}
+et le bit NaT (\q{not a thing}) qui ressemble un peu aux nombres \gls{NaN} : \\
+\href{http://go.yurichev.com/17323}{MSDN}.
+

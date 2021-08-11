@@ -1,0 +1,239 @@
+use std::io;
+
+use termcolor;
+
+use is_tty_stdout;
+
+/// A writer that supports coloring with either line or block buffering.
+pub struct StandardStream(StandardStreamKind);
+
+/// Returns a possibly buffered writer to stdout for the given color choice.
+///
+/// The writer returned is either line buffered or block buffered. The decision
+/// between these two is made automatically based on whether a tty is attached
+/// to stdout or not. If a tty is attached, then line buffering is used.
+/// Otherwise, block buffering is used. In general, block buffering is more
+/// efficient, but may increase the time it takes for the end user to see the
+/// first bits of output.
+///
+/// If you need more fine grained control over the buffering mode, then use one
+/// of `stdout_buffered_line` or `stdout_buffered_block`.
+///
+/// The color choice given is passed along to the underlying writer. To
+/// completely disable colors in all cases, use `ColorChoice::Never`.
+pub fn stdout(color_choice: termcolor::ColorChoice) -> StandardStream {
+    if is_tty_stdout() {
+        stdout_buffered_line(color_choice)
+    } else {
+        stdout_buffered_block(color_choice)
+    }
+}
+
+/// Returns a line buffered writer to stdout for the given color choice.
+///
+/// This writer is useful when printing results directly to a tty such that
+/// users see output as soon as it's written. The downside of this approach
+/// is that it can be slower, especially when there is a lot of output.
+///
+/// You might consider using
+/// [`stdout`](fn.stdout.html)
+/// instead, which chooses the buffering strategy automatically based on
+/// whether stdout is connected to a tty.
+pub fn stdout_buffered_line(
+    color_choice: termcolor::ColorChoice,
+) -> StandardStream {
+    let out = termcolor::StandardStream::stdout(color_choice);
+    StandardStream(StandardStreamKind::LineBuffered(out))
+}
+
+/// Returns a block buffered writer to stdout for the given color choice.
+///
+/// This writer is useful when printing results to a file since it amortizes
+/// the cost of writing data. The downside of this approach is that it can
+/// increase the latency of display output when writing to a tty.
+///
+/// You might consider using
+/// [`stdout`](fn.stdout.html)
+/// instead, which chooses the buffering strategy automatically based on
+/// whether stdout is connected to a tty.
+pub fn stdout_buffered_block(
+    color_choice: termcolor::ColorChoice,
+) -> StandardStream {
+    let out = termcolor::BufferedStandardStream::stdout(color_choice);
+    StandardStream(StandardStreamKind::BlockBuffered(out))
+}
+
+enum StandardStreamKind {
+    LineBuffered(termcolor::StandardStream),
+    BlockBuffered(termcolor::BufferedStandardStream),
+}
+
+impl io::Write for StandardStream {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.write(buf),
+            BlockBuffered(ref mut w) => w.write(buf),
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.flush(),
+            BlockBuffered(ref mut w) => w.flush(),
+        }
+    }
+}
+
+impl termcolor::WriteColor for StandardStream {
+    #[inline]
+    fn supports_color(&self) -> bool {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref w) => w.supports_color(),
+            BlockBuffered(ref w) => w.supports_color(),
+        }
+    }
+
+    #[inline]
+    fn set_color(&mut self, spec: &termcolor::ColorSpec) -> io::Result<()> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.set_color(spec),
+            BlockBuffered(ref mut w) => w.set_color(spec),
+        }
+    }
+
+    #[inline]
+    fn reset(&mut self) -> io::Result<()> {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref mut w) => w.reset(),
+            BlockBuffered(ref mut w) => w.reset(),
+        }
+    }
+
+    #[inline]
+    fn is_synchronous(&self) -> bool {
+        use self::StandardStreamKind::*;
+
+        match self.0 {
+            LineBuffered(ref w) => w.is_synchronous(),
+            BlockBuffered(ref w) => w.is_synchronous(),
+        }
+    }
+}
+/*!
+This crate provides featureful and fast printers that interoperate with the
+[`grep-searcher`](https://docs.rs/grep-searcher)
+crate.
+
+# Brief overview
+
+The [`Standard`](struct.Standard.html) printer shows results in a human
+readable format, and is modeled after the formats used by standard grep-like
+tools. Features include, but are not limited to, cross platform terminal
+coloring, search & replace, multi-line result handling and reporting summary
+statistics.
+
+The [`JSON`](struct.JSON.html) printer shows results in a machine readable
+format. To facilitate a stream of search results, the format uses
+[JSON Lines](http://jsonlines.org/)
+by emitting a series of messages as search results are found.
+
+The [`Summary`](struct.Summary.html) printer shows *aggregate* results for a
+single search in a human readable format, and is modeled after similar formats
+found in standard grep-like tools. This printer is useful for showing the total
+number of matches and/or printing file paths that either contain or don't
+contain matches.
+
+# Example
+
+This example shows how to create a "standard" printer and execute a search.
+
+```
+extern crate grep_regex;
+extern crate grep_printer;
+extern crate grep_searcher;
+
+use std::error::Error;
+
+use grep_regex::RegexMatcher;
+use grep_printer::Standard;
+use grep_searcher::Searcher;
+
+const SHERLOCK: &'static [u8] = b"\
+For the Doctor Watsons of this world, as opposed to the Sherlock
+Holmeses, success in the province of detective work must always
+be, to a very large extent, the result of luck. Sherlock Holmes
+can extract a clew from a wisp of straw or a flake of cigar ash;
+but Doctor Watson has to have it taken out for him and dusted,
+and exhibited clearly, with a label attached.
+";
+
+# fn main() { example().unwrap(); }
+fn example() -> Result<(), Box<Error>> {
+    let matcher = RegexMatcher::new(r"Sherlock")?;
+    let mut printer = Standard::new_no_color(vec![]);
+    Searcher::new().search_slice(&matcher, SHERLOCK, printer.sink(&matcher))?;
+
+    // into_inner gives us back the underlying writer we provided to
+    // new_no_color, which is wrapped in a termcolor::NoColor. Thus, a second
+    // into_inner gives us back the actual buffer.
+    let output = String::from_utf8(printer.into_inner().into_inner())?;
+    let expected = "\
+1:For the Doctor Watsons of this world, as opposed to the Sherlock
+3:be, to a very large extent, the result of luck. Sherlock Holmes
+";
+    assert_eq!(output, expected);
+    Ok(())
+}
+```
+*/
+
+#![deny(missing_docs)]
+
+#[cfg(feature = "serde1")]
+extern crate base64;
+extern crate grep_matcher;
+#[cfg(test)]
+extern crate grep_regex;
+extern crate grep_searcher;
+#[cfg(feature = "serde1")]
+extern crate serde;
+#[cfg(feature = "serde1")]
+#[macro_use]
+extern crate serde_derive;
+#[cfg(feature = "serde1")]
+extern crate serde_json;
+extern crate termcolor;
+
+pub use color::{ColorError, ColorSpecs, UserColorSpec, default_color_specs};
+#[cfg(feature = "serde1")]
+pub use json::{JSON, JSONBuilder, JSONSink};
+pub use standard::{Standard, StandardBuilder, StandardSink};
+pub use stats::Stats;
+pub use summary::{Summary, SummaryBuilder, SummaryKind, SummarySink};
+pub use util::PrinterPath;
+
+#[macro_use]
+mod macros;
+
+mod color;
+mod counter;
+#[cfg(feature = "serde1")]
+mod json;
+#[cfg(feature = "serde1")]
+mod jsont;
+mod standard;
+mod stats;
+mod summary;
+mod util;

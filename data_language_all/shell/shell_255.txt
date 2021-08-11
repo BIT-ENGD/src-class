@@ -1,0 +1,748 @@
+#!/usr/bin/env sh
+
+#This is the euserv.eu api wrapper for acme.sh
+#
+#Author: Michael Brueckner
+#Report Bugs: https://www.github.com/initit/acme.sh  or  mbr@initit.de
+
+#
+#EUSERV_Username="username"
+#
+#EUSERV_Password="password"
+#
+# Dependencies:
+# -------------
+# - none -
+
+EUSERV_Api="https://api.euserv.net"
+
+########  Public functions #####################
+
+#Usage: add  _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
+dns_euserv_add() {
+  fulldomain="$(echo "$1" | _lower_case)"
+  txtvalue=$2
+
+  EUSERV_Username="${EUSERV_Username:-$(_readaccountconf_mutable EUSERV_Username)}"
+  EUSERV_Password="${EUSERV_Password:-$(_readaccountconf_mutable EUSERV_Password)}"
+  if [ -z "$EUSERV_Username" ] || [ -z "$EUSERV_Password" ]; then
+    EUSERV_Username=""
+    EUSERV_Password=""
+    _err "You don't specify euserv user and password yet."
+    _err "Please create your key and try again."
+    return 1
+  fi
+
+  #save the user and email to the account conf file.
+  _saveaccountconf_mutable EUSERV_Username "$EUSERV_Username"
+  _saveaccountconf_mutable EUSERV_Password "$EUSERV_Password"
+
+  _debug "First detect the root zone"
+  if ! _get_root "$fulldomain"; then
+    _err "invalid domain"
+    return 1
+  fi
+  _debug "_sub_domain" "$_sub_domain"
+  _debug "_domain" "$_domain"
+  _info "Adding record"
+  if ! _euserv_add_record "$_domain" "$_sub_domain" "$txtvalue"; then
+    return 1
+  fi
+
+}
+
+#fulldomain txtvalue
+dns_euserv_rm() {
+
+  fulldomain="$(echo "$1" | _lower_case)"
+  txtvalue=$2
+
+  EUSERV_Username="${EUSERV_Username:-$(_readaccountconf_mutable EUSERV_Username)}"
+  EUSERV_Password="${EUSERV_Password:-$(_readaccountconf_mutable EUSERV_Password)}"
+  if [ -z "$EUSERV_Username" ] || [ -z "$EUSERV_Password" ]; then
+    EUSERV_Username=""
+    EUSERV_Password=""
+    _err "You don't specify euserv user and password yet."
+    _err "Please create your key and try again."
+    return 1
+  fi
+
+  #save the user and email to the account conf file.
+  _saveaccountconf_mutable EUSERV_Username "$EUSERV_Username"
+  _saveaccountconf_mutable EUSERV_Password "$EUSERV_Password"
+
+  _debug "First detect the root zone"
+  if ! _get_root "$fulldomain"; then
+    _err "invalid domain"
+    return 1
+  fi
+  _debug "_sub_domain" "$_sub_domain"
+  _debug "_domain" "$_domain"
+
+  _debug "Getting txt records"
+
+  xml_content=$(printf '<?xml version="1.0" encoding="UTF-8"?>
+  <methodCall>
+    <methodName>domain.dns_get_active_records</methodName>
+    <params>
+      <param>
+       <value>
+         <struct>
+           <member>
+             <name>login</name>
+             <value>
+               <string>%s</string>
+             </value>
+            </member>
+            <member>
+              <name>password</name>
+              <value>
+                <string>%s</string>
+              </value>
+            </member>
+            <member>
+              <name>domain_id</name>
+              <value>
+                <int>%s</int>
+              </value>
+            </member>
+          </struct>
+        </value>
+      </param>
+    </params>
+  </methodCall>' "$EUSERV_Username" "$EUSERV_Password" "$_euserv_domain_id")
+
+  export _H1="Content-Type: text/xml"
+  response="$(_post "$xml_content" "$EUSERV_Api" "" "POST")"
+
+  if ! _contains "$response" "<member><name>status</name><value><i4>100</i4></value></member>"; then
+    _err "Error could not get txt records"
+    _debug "xml_content" "$xml_content"
+    _debug "response" "$response"
+    return 1
+  fi
+
+  if ! echo "$response" | grep '>dns_record_content<.*>'"$txtvalue"'<' >/dev/null; then
+    _info "Do not need to delete record"
+  else
+    # find XML block where txtvalue is in. The record_id is allways prior this line!
+    _endLine=$(echo "$response" | grep -n '>dns_record_content<.*>'"$txtvalue"'<' | cut -d ':' -f 1)
+    # record_id is the last <name> Tag with a number before the row _endLine, identified by </name><value><struct> 
+    _record_id=$(echo "$response" | sed -n '1,'"$_endLine"'p' | grep '</name><value><struct>' | _tail_n 1 | sed 's/.*<name>\([0-9]*\)<\/name>.*/\1/')
+    _info "Deleting record"
+    _euserv_delete_record "$_record_id"
+  fi
+
+}
+
+####################  Private functions below ##################################
+
+_get_root() {
+  domain=$1
+  _debug "get root"
+
+  # Just to read the domain_orders once
+
+  domain=$1
+  i=2
+  p=1
+
+  if ! _euserv_get_domain_orders; then
+    return 1
+  fi
+
+  # Get saved response with domain_orders
+  response="$_euserv_domain_orders"
+
+  while true; do
+    h=$(echo "$domain" | cut -d . -f $i-100)
+    _debug h "$h"
+    if [ -z "$h" ]; then
+      #not valid
+      return 1
+    fi
+
+    if _contains "$response" "$h"; then
+      _sub_domain=$(echo "$domain" | cut -d . -f 1-$p)
+      _domain="$h"
+      if ! _euserv_get_domain_id "$_domain"; then
+        _err "invalid domain"
+        return 1
+      fi
+      return 0
+    fi
+    p=$i
+    i=$(_math "$i" + 1)
+  done
+
+  return 1
+}
+
+_euserv_get_domain_orders() {
+  # returns: _euserv_domain_orders
+
+  _debug "get domain_orders"
+
+  xml_content=$(printf '<?xml version="1.0" encoding="UTF-8"?>
+  <methodCall>
+    <methodName>domain.get_domain_orders</methodName>
+    <params>
+      <param>
+        <value>
+          <struct>
+            <member>
+              <name>login</name>
+              <value><string>%s</string></value>
+            </member>
+            <member>
+              <name>password</name>
+              <value><string>%s</string></value>
+            </member>
+          </struct>
+        </value>
+      </param>
+    </params>
+  </methodCall>' "$EUSERV_Username" "$EUSERV_Password")
+
+  export _H1="Content-Type: text/xml"
+  response="$(_post "$xml_content" "$EUSERV_Api" "" "POST")"
+
+  if ! _contains "$response" "<member><name>status</name><value><i4>100</i4></value></member>"; then
+    _err "Error could not get domain orders"
+    _debug "xml_content" "$xml_content"
+    _debug "response" "$response"
+    return 1
+  fi
+
+  # save response to reduce API calls
+  _euserv_domain_orders="$response"
+  return 0
+}
+
+_euserv_get_domain_id() {
+  # returns: _euserv_domain_id
+  domain=$1
+  _debug "get domain_id"
+
+  # find line where the domain name is within the $response
+  _startLine=$(echo "$_euserv_domain_orders" | grep -n '>domain_name<.*>'"$domain"'<' | cut -d ':' -f 1)
+  # next occurency of domain_id after the domain_name is the correct one
+  _euserv_domain_id=$(echo "$_euserv_domain_orders" | sed -n "$_startLine"',$p' | grep '>domain_id<' | _head_n 1 | sed 's/.*<i4>\([0-9]*\)<\/i4>.*/\1/')
+
+  if [ -z "$_euserv_domain_id" ]; then
+    _err "Could not find domain_id for domain $domain"
+    _debug "_euserv_domain_orders" "$_euserv_domain_orders"
+    return 1
+  fi
+
+  return 0
+}
+
+_euserv_delete_record() {
+  record_id=$1
+  xml_content=$(printf '<?xml version="1.0" encoding="UTF-8"?>
+  <methodCall>
+    <methodName>domain.dns_delete_record</methodName>
+    <params>
+      <param>
+       <value>
+         <struct>
+           <member>
+             <name>login</name>
+             <value>
+               <string>%s</string>
+             </value>
+            </member>
+            <member>
+              <name>password</name>
+              <value>
+                <string>%s</string>
+              </value>
+            </member>
+            <member>
+              <name>dns_record_id</name>
+              <value>
+                <int>%s</int>
+              </value>
+            </member>
+          </struct>
+        </value>
+      </param>
+    </params>
+  </methodCall>' "$EUSERV_Username" "$EUSERV_Password" "$record_id")
+
+  export _H1="Content-Type: text/xml"
+  response="$(_post "$xml_content" "$EUSERV_Api" "" "POST")"
+
+  if ! _contains "$response" "<member><name>status</name><value><i4>100</i4></value></member>"; then
+    _err "Error deleting record"
+    _debug "xml_content" "$xml_content"
+    _debug "response" "$response"
+    return 1
+  fi
+
+  return 0
+
+}
+
+_euserv_add_record() {
+  domain=$1
+  sub_domain=$2
+  txtval=$3
+
+  xml_content=$(printf '<?xml version="1.0" encoding="UTF-8"?>
+  <methodCall>
+  <methodName>domain.dns_create_record</methodName>
+  <params>
+   <param>
+    <value>
+     <struct>
+      <member>
+       <name>login</name>
+       <value>
+        <string>%s</string>
+       </value>
+      </member>
+      <member>
+       <name>password</name>
+       <value>
+        <string>%s</string></value>
+      </member>
+      <member>
+       <name>domain_id</name>
+       <value>
+        <int>%s</int>
+       </value>
+      </member>
+      <member>
+       <name>dns_record_subdomain</name>
+       <value>
+        <string>%s</string>
+       </value>
+      </member>
+      <member>
+       <name>dns_record_type</name>
+       <value>
+        <string>TXT</string>
+       </value>
+      </member>
+      <member>
+       <name>dns_record_value</name>
+       <value>
+        <string>%s</string>
+       </value>
+      </member>
+      <member>
+       <name>dns_record_ttl</name>
+       <value>
+        <int>300</int>
+       </value>
+      </member>
+     </struct>
+    </value>
+   </param>
+  </params>
+  </methodCall>' "$EUSERV_Username" "$EUSERV_Password" "$_euserv_domain_id" "$sub_domain" "$txtval")
+
+  export _H1="Content-Type: text/xml"
+  response="$(_post "$xml_content" "$EUSERV_Api" "" "POST")"
+
+  if ! _contains "$response" "<member><name>status</name><value><i4>100</i4></value></member>"; then
+    _err "Error could not create record"
+    _debug "xml_content" "$xml_content"
+    _debug "response" "$response"
+    return 1
+  fi
+
+  return 0
+}
+#!/usr/bin/env bash
+# Pi-hole: A black hole for Internet advertisements
+# (c) 2017 Pi-hole, LLC (https://pi-hole.net)
+# Network-wide ad blocking via your own hardware.
+#
+# Switch Pi-hole subsystems to a different Github branch.
+#
+# This file is copyright under the latest version of the EUPL.
+# Please see LICENSE file for your rights under this license.
+
+readonly PI_HOLE_FILES_DIR="/etc/.pihole"
+PH_TEST="true"
+source "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh"
+
+# webInterfaceGitUrl set in basic-install.sh
+# webInterfaceDir set in basic-install.sh
+# piholeGitURL set in basic-install.sh
+# is_repo() sourced from basic-install.sh
+# setupVars set in basic-install.sh
+# check_download_exists sourced from basic-install.sh
+# fully_fetch_repo sourced from basic-install.sh
+# get_available_branches sourced from basic-install.sh
+# fetch_checkout_pull_branch sourced from basic-install.sh
+# checkout_pull_branch sourced from basic-install.sh
+
+source "${setupVars}"
+
+warning1() {
+    echo "  Please note that changing branches severely alters your Pi-hole subsystems"
+    echo "  Features that work on the master branch, may not on a development branch"
+    echo -e "  ${COL_LIGHT_RED}This feature is NOT supported unless a Pi-hole developer explicitly asks!${COL_NC}"
+    read -r -p "  Have you read and understood this? [y/N] " response
+    case "${response}" in
+        [yY][eE][sS]|[yY])
+            echo ""
+            return 0
+            ;;
+        *)
+            echo -e "\\n  ${INFO} Branch change has been cancelled"
+            return 1
+            ;;
+    esac
+}
+
+checkout() {
+    local corebranches
+    local webbranches
+
+    # Avoid globbing
+    set -f
+
+    # This is unlikely
+    if ! is_repo "${PI_HOLE_FILES_DIR}" ; then
+        echo -e "  ${COL_LIGHT_RED}Error: Core Pi-hole repo is missing from system!"
+        echo -e "  Please re-run install script from https://github.com/pi-hole/pi-hole${COL_NC}"
+        exit 1;
+    fi
+    if [[ "${INSTALL_WEB_INTERFACE}" == "true" ]]; then
+        if ! is_repo "${webInterfaceDir}" ; then
+            echo -e "  ${COL_LIGHT_RED}Error: Web Admin repo is missing from system!"
+            echo -e "  Please re-run install script from https://github.com/pi-hole/pi-hole${COL_NC}"
+            exit 1;
+        fi
+    fi
+
+    if [[ -z "${1}" ]]; then
+        echo -e "  ${COL_LIGHT_RED}Invalid option${COL_NC}"
+        echo -e "  Try 'pihole checkout --help' for more information."
+        exit 1
+    fi
+
+    if ! warning1 ; then
+        exit 1
+    fi
+
+    if [[ "${1}" == "dev" ]] ; then
+        # Shortcut to check out development branches
+        echo -e "  ${INFO} Shortcut \"dev\" detected - checking out development / devel branches..."
+        echo ""
+        echo -e "  ${INFO} Pi-hole Core"
+        fetch_checkout_pull_branch "${PI_HOLE_FILES_DIR}" "development" || { echo "  ${CROSS} Unable to pull Core developement branch"; exit 1; }
+        if [[ "${INSTALL_WEB_INTERFACE}" == "true" ]]; then
+            echo ""
+            echo -e "  ${INFO} Web interface"
+            fetch_checkout_pull_branch "${webInterfaceDir}" "devel" || { echo "  ${CROSS} Unable to pull Web development branch"; exit 1; }
+        fi
+        #echo -e "  ${TICK} Pi-hole Core"
+
+        get_binary_name
+        local path
+        path="development/${binary}"
+        echo "development" > /etc/pihole/ftlbranch
+    elif [[ "${1}" == "master" ]] ; then
+        # Shortcut to check out master branches
+        echo -e "  ${INFO} Shortcut \"master\" detected - checking out master branches..."
+        echo -e "  ${INFO} Pi-hole core"
+        fetch_checkout_pull_branch "${PI_HOLE_FILES_DIR}" "master" || { echo "  ${CROSS} Unable to pull Core master branch"; exit 1; }
+        if [[ ${INSTALL_WEB_INTERFACE} == "true" ]]; then
+            echo -e "  ${INFO} Web interface"
+            fetch_checkout_pull_branch "${webInterfaceDir}" "master" || { echo "  ${CROSS} Unable to pull Web master branch"; exit 1; }
+        fi
+        #echo -e "  ${TICK} Web Interface"
+        get_binary_name
+        local path
+        path="master/${binary}"
+        echo "master" > /etc/pihole/ftlbranch
+    elif [[ "${1}" == "core" ]] ; then
+        str="Fetching branches from ${piholeGitUrl}"
+        echo -ne "  ${INFO} $str"
+        if ! fully_fetch_repo "${PI_HOLE_FILES_DIR}" ; then
+            echo -e "${OVER}  ${CROSS} $str"
+            exit 1
+        fi
+        corebranches=($(get_available_branches "${PI_HOLE_FILES_DIR}"))
+
+        if [[ "${corebranches[*]}" == *"master"* ]]; then
+            echo -e "${OVER}  ${TICK} $str"
+            echo -e "${INFO} ${#corebranches[@]} branches available for Pi-hole Core"
+        else
+            # Print STDERR output from get_available_branches
+            echo -e "${OVER}  ${CROSS} $str\\n\\n${corebranches[*]}"
+            exit 1
+        fi
+
+        echo ""
+        # Have the user choose the branch they want
+        if ! (for e in "${corebranches[@]}"; do [[ "$e" == "${2}" ]] && exit 0; done); then
+            echo -e "  ${INFO} Requested branch \"${2}\" is not available"
+            echo -e "  ${INFO} Available branches for Core are:"
+            for e in "${corebranches[@]}"; do echo "      - $e"; done
+            exit 1
+        fi
+        checkout_pull_branch "${PI_HOLE_FILES_DIR}" "${2}"
+    elif [[ "${1}" == "web" ]] && [[ "${INSTALL_WEB_INTERFACE}" == "true" ]] ; then
+        str="Fetching branches from ${webInterfaceGitUrl}"
+        echo -ne "  ${INFO} $str"
+        if ! fully_fetch_repo "${webInterfaceDir}" ; then
+            echo -e "${OVER}  ${CROSS} $str"
+            exit 1
+        fi
+        webbranches=($(get_available_branches "${webInterfaceDir}"))
+
+        if [[ "${webbranches[*]}" == *"master"* ]]; then
+            echo -e "${OVER}  ${TICK} $str"
+            echo -e "${INFO} ${#webbranches[@]} branches available for Web Admin"
+        else
+            # Print STDERR output from get_available_branches
+            echo -e "${OVER}  ${CROSS} $str\\n\\n${webbranches[*]}"
+            exit 1
+        fi
+
+        echo ""
+        # Have the user choose the branch they want
+        if ! (for e in "${webbranches[@]}"; do [[ "$e" == "${2}" ]] && exit 0; done); then
+            echo -e "  ${INFO} Requested branch \"${2}\" is not available"
+            echo -e "  ${INFO} Available branches for Web Admin are:"
+            for e in "${webbranches[@]}"; do echo "      - $e"; done
+            exit 1
+        fi
+        checkout_pull_branch "${webInterfaceDir}" "${2}"
+    elif [[ "${1}" == "ftl" ]] ; then
+        get_binary_name
+        local path
+        path="${2}/${binary}"
+
+        if check_download_exists "$path"; then
+            echo "  ${TICK} Branch ${2} exists"
+            echo "${2}" > /etc/pihole/ftlbranch
+            FTLinstall "${binary}"
+            start_service pihole-FTL
+            enable_service pihole-FTL
+        else
+            echo "  ${CROSS} Requested branch \"${2}\" is not available"
+            ftlbranches=( $(git ls-remote https://github.com/pi-hole/ftl | grep 'heads' | sed 's/refs\/heads\///;s/ //g' | awk '{print $2}') )
+            echo -e "  ${INFO} Available branches for FTL are:"
+            for e in "${ftlbranches[@]}"; do echo "      - $e"; done
+            exit 1
+        fi
+
+    else
+        echo -e "  ${INFO} Requested option \"${1}\" is not available"
+        exit 1
+    fi
+
+    # Force updating everything
+    if [[  ! "${1}" == "web" && ! "${1}" == "ftl" ]]; then
+        echo -e "  ${INFO} Running installer to upgrade your installation"
+        if "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh" --unattended; then
+            exit 0
+        else
+            echo -e "  ${COL_LIGHT_RED} Error: Unable to complete update, please contact support${COL_NC}"
+            exit 1
+        fi
+    fi
+}
+#!/usr/bin/env bash
+# Pi-hole: A black hole for Internet advertisements
+# (c) 2017 Pi-hole, LLC (https://pi-hole.net)
+# Network-wide ad blocking via your own hardware.
+#
+# Switch Pi-hole subsystems to a different Github branch.
+#
+# This file is copyright under the latest version of the EUPL.
+# Please see LICENSE file for your rights under this license.
+
+readonly PI_HOLE_FILES_DIR="/etc/.pihole"
+PH_TEST="true"
+source "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh"
+
+# webInterfaceGitUrl set in basic-install.sh
+# webInterfaceDir set in basic-install.sh
+# piholeGitURL set in basic-install.sh
+# is_repo() sourced from basic-install.sh
+# setupVars set in basic-install.sh
+# check_download_exists sourced from basic-install.sh
+# fully_fetch_repo sourced from basic-install.sh
+# get_available_branches sourced from basic-install.sh
+# fetch_checkout_pull_branch sourced from basic-install.sh
+# checkout_pull_branch sourced from basic-install.sh
+
+source "${setupVars}"
+
+warning1() {
+    echo "  Please note that changing branches severely alters your Pi-hole subsystems"
+    echo "  Features that work on the master branch, may not on a development branch"
+    echo -e "  ${COL_LIGHT_RED}This feature is NOT supported unless a Pi-hole developer explicitly asks!${COL_NC}"
+    read -r -p "  Have you read and understood this? [y/N] " response
+    case "${response}" in
+        [yY][eE][sS]|[yY])
+            echo ""
+            return 0
+            ;;
+        *)
+            echo -e "\\n  ${INFO} Branch change has been cancelled"
+            return 1
+            ;;
+    esac
+}
+
+checkout() {
+    local corebranches
+    local webbranches
+
+    # Avoid globbing
+    set -f
+
+    # This is unlikely
+    if ! is_repo "${PI_HOLE_FILES_DIR}" ; then
+        echo -e "  ${COL_LIGHT_RED}Error: Core Pi-hole repo is missing from system!"
+        echo -e "  Please re-run install script from https://github.com/pi-hole/pi-hole${COL_NC}"
+        exit 1;
+    fi
+    if [[ "${INSTALL_WEB_INTERFACE}" == "true" ]]; then
+        if ! is_repo "${webInterfaceDir}" ; then
+            echo -e "  ${COL_LIGHT_RED}Error: Web Admin repo is missing from system!"
+            echo -e "  Please re-run install script from https://github.com/pi-hole/pi-hole${COL_NC}"
+            exit 1;
+        fi
+    fi
+
+    if [[ -z "${1}" ]]; then
+        echo -e "  ${COL_LIGHT_RED}Invalid option${COL_NC}"
+        echo -e "  Try 'pihole checkout --help' for more information."
+        exit 1
+    fi
+
+    if ! warning1 ; then
+        exit 1
+    fi
+
+    if [[ "${1}" == "dev" ]] ; then
+        # Shortcut to check out development branches
+        echo -e "  ${INFO} Shortcut \"dev\" detected - checking out development / devel branches..."
+        echo ""
+        echo -e "  ${INFO} Pi-hole Core"
+        fetch_checkout_pull_branch "${PI_HOLE_FILES_DIR}" "development" || { echo "  ${CROSS} Unable to pull Core developement branch"; exit 1; }
+        if [[ "${INSTALL_WEB_INTERFACE}" == "true" ]]; then
+            echo ""
+            echo -e "  ${INFO} Web interface"
+            fetch_checkout_pull_branch "${webInterfaceDir}" "devel" || { echo "  ${CROSS} Unable to pull Web development branch"; exit 1; }
+        fi
+        #echo -e "  ${TICK} Pi-hole Core"
+
+        get_binary_name
+        local path
+        path="development/${binary}"
+        echo "development" > /etc/pihole/ftlbranch
+    elif [[ "${1}" == "master" ]] ; then
+        # Shortcut to check out master branches
+        echo -e "  ${INFO} Shortcut \"master\" detected - checking out master branches..."
+        echo -e "  ${INFO} Pi-hole core"
+        fetch_checkout_pull_branch "${PI_HOLE_FILES_DIR}" "master" || { echo "  ${CROSS} Unable to pull Core master branch"; exit 1; }
+        if [[ ${INSTALL_WEB_INTERFACE} == "true" ]]; then
+            echo -e "  ${INFO} Web interface"
+            fetch_checkout_pull_branch "${webInterfaceDir}" "master" || { echo "  ${CROSS} Unable to pull Web master branch"; exit 1; }
+        fi
+        #echo -e "  ${TICK} Web Interface"
+        get_binary_name
+        local path
+        path="master/${binary}"
+        echo "master" > /etc/pihole/ftlbranch
+    elif [[ "${1}" == "core" ]] ; then
+        str="Fetching branches from ${piholeGitUrl}"
+        echo -ne "  ${INFO} $str"
+        if ! fully_fetch_repo "${PI_HOLE_FILES_DIR}" ; then
+            echo -e "${OVER}  ${CROSS} $str"
+            exit 1
+        fi
+        corebranches=($(get_available_branches "${PI_HOLE_FILES_DIR}"))
+
+        if [[ "${corebranches[*]}" == *"master"* ]]; then
+            echo -e "${OVER}  ${TICK} $str"
+            echo -e "${INFO} ${#corebranches[@]} branches available for Pi-hole Core"
+        else
+            # Print STDERR output from get_available_branches
+            echo -e "${OVER}  ${CROSS} $str\\n\\n${corebranches[*]}"
+            exit 1
+        fi
+
+        echo ""
+        # Have the user choose the branch they want
+        if ! (for e in "${corebranches[@]}"; do [[ "$e" == "${2}" ]] && exit 0; done); then
+            echo -e "  ${INFO} Requested branch \"${2}\" is not available"
+            echo -e "  ${INFO} Available branches for Core are:"
+            for e in "${corebranches[@]}"; do echo "      - $e"; done
+            exit 1
+        fi
+        checkout_pull_branch "${PI_HOLE_FILES_DIR}" "${2}"
+    elif [[ "${1}" == "web" ]] && [[ "${INSTALL_WEB_INTERFACE}" == "true" ]] ; then
+        str="Fetching branches from ${webInterfaceGitUrl}"
+        echo -ne "  ${INFO} $str"
+        if ! fully_fetch_repo "${webInterfaceDir}" ; then
+            echo -e "${OVER}  ${CROSS} $str"
+            exit 1
+        fi
+        webbranches=($(get_available_branches "${webInterfaceDir}"))
+
+        if [[ "${webbranches[*]}" == *"master"* ]]; then
+            echo -e "${OVER}  ${TICK} $str"
+            echo -e "${INFO} ${#webbranches[@]} branches available for Web Admin"
+        else
+            # Print STDERR output from get_available_branches
+            echo -e "${OVER}  ${CROSS} $str\\n\\n${webbranches[*]}"
+            exit 1
+        fi
+
+        echo ""
+        # Have the user choose the branch they want
+        if ! (for e in "${webbranches[@]}"; do [[ "$e" == "${2}" ]] && exit 0; done); then
+            echo -e "  ${INFO} Requested branch \"${2}\" is not available"
+            echo -e "  ${INFO} Available branches for Web Admin are:"
+            for e in "${webbranches[@]}"; do echo "      - $e"; done
+            exit 1
+        fi
+        checkout_pull_branch "${webInterfaceDir}" "${2}"
+    elif [[ "${1}" == "ftl" ]] ; then
+        get_binary_name
+        local path
+        path="${2}/${binary}"
+
+        if check_download_exists "$path"; then
+            echo "  ${TICK} Branch ${2} exists"
+            echo "${2}" > /etc/pihole/ftlbranch
+            FTLinstall "${binary}"
+            start_service pihole-FTL
+            enable_service pihole-FTL
+        else
+            echo "  ${CROSS} Requested branch \"${2}\" is not available"
+            ftlbranches=( $(git ls-remote https://github.com/pi-hole/ftl | grep 'heads' | sed 's/refs\/heads\///;s/ //g' | awk '{print $2}') )
+            echo -e "  ${INFO} Available branches for FTL are:"
+            for e in "${ftlbranches[@]}"; do echo "      - $e"; done
+            exit 1
+        fi
+
+    else
+        echo -e "  ${INFO} Requested option \"${1}\" is not available"
+        exit 1
+    fi
+
+    # Force updating everything
+    if [[  ! "${1}" == "web" && ! "${1}" == "ftl" ]]; then
+        echo -e "  ${INFO} Running installer to upgrade your installation"
+        if "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh" --unattended; then
+            exit 0
+        else
+            echo -e "  ${COL_LIGHT_RED} Error: Unable to complete update, please contact support${COL_NC}"
+            exit 1
+        fi
+    fi
+}

@@ -1,0 +1,516 @@
+#!/usr/bin/env sh
+# -*- mode: sh; tab-width: 2; indent-tabs-mode: s; coding: utf-8 -*-
+
+# This is the InternetX autoDNS xml api wrapper for acme.sh
+# Author: auerswald@gmail.com
+# Created: 2018-01-14
+#
+#     export AUTODNS_USER="username"
+#     export AUTODNS_PASSWORD="password"
+#     export AUTODNS_CONTEXT="context"
+#
+# Usage:
+#     acme.sh --issue --dns dns_autodns -d example.com
+
+AUTODNS_API="https://gateway.autodns.com"
+
+# Arguments:
+#   txtdomain
+#   txt
+dns_autodns_add() {
+  fulldomain="$1"
+  txtvalue="$2"
+
+  AUTODNS_USER="${AUTODNS_USER:-$(_readaccountconf_mutable AUTODNS_USER)}"
+  AUTODNS_PASSWORD="${AUTODNS_PASSWORD:-$(_readaccountconf_mutable AUTODNS_PASSWORD)}"
+  AUTODNS_CONTEXT="${AUTODNS_CONTEXT:-$(_readaccountconf_mutable AUTODNS_CONTEXT)}"
+
+  if [ -z "$AUTODNS_USER" ] || [ -z "$AUTODNS_CONTEXT" ] || [ -z "$AUTODNS_PASSWORD" ]; then
+    _err "You don't specify autodns user, password and context."
+    return 1
+  fi
+
+  _saveaccountconf_mutable AUTODNS_USER "$AUTODNS_USER"
+  _saveaccountconf_mutable AUTODNS_PASSWORD "$AUTODNS_PASSWORD"
+  _saveaccountconf_mutable AUTODNS_CONTEXT "$AUTODNS_CONTEXT"
+
+  _debug "First detect the root zone"
+
+  if ! _get_autodns_zone "$fulldomain"; then
+    _err "invalid domain"
+    return 1
+  fi
+
+  _debug _sub_domain "$_sub_domain"
+  _debug _zone "$_zone"
+  _debug _system_ns "$_system_ns"
+
+  _info "Adding TXT record"
+
+  autodns_response="$(_autodns_zone_update "$_zone" "$_sub_domain" "$txtvalue" "$_system_ns")"
+
+  if [ "$?" -eq "0" ]; then
+    _info "Added, OK"
+    return 0
+  fi
+
+  return 1
+}
+
+# Arguments:
+#   txtdomain
+#   txt
+dns_autodns_rm() {
+  fulldomain="$1"
+  txtvalue="$2"
+
+  AUTODNS_USER="${AUTODNS_USER:-$(_readaccountconf_mutable AUTODNS_USER)}"
+  AUTODNS_PASSWORD="${AUTODNS_PASSWORD:-$(_readaccountconf_mutable AUTODNS_PASSWORD)}"
+  AUTODNS_CONTEXT="${AUTODNS_CONTEXT:-$(_readaccountconf_mutable AUTODNS_CONTEXT)}"
+
+  if [ -z "$AUTODNS_USER" ] || [ -z "$AUTODNS_CONTEXT" ] || [ -z "$AUTODNS_PASSWORD" ]; then
+    _err "You don't specify autodns user, password and context."
+    return 1
+  fi
+
+  _debug "First detect the root zone"
+
+  if ! _get_autodns_zone "$fulldomain"; then
+    _err "zone not found"
+    return 1
+  fi
+
+  _debug _sub_domain "$_sub_domain"
+  _debug _zone "$_zone"
+  _debug _system_ns "$_system_ns"
+
+  _info "Delete TXT record"
+
+  autodns_response="$(_autodns_zone_cleanup "$_zone" "$_sub_domain" "$txtvalue" "$_system_ns")"
+
+  if [ "$?" -eq "0" ]; then
+    _info "Deleted, OK"
+    return 0
+  fi
+
+  return 1
+}
+
+####################  Private functions below ##################################
+
+# Arguments:
+#   fulldomain
+# Returns:
+#   _sub_domain=_acme-challenge.www
+#   _zone=domain.com
+#   _system_ns
+_get_autodns_zone() {
+  domain="$1"
+
+  i=2
+  p=1
+
+  while true; do
+    h=$(printf "%s" "$domain" | cut -d . -f $i-100)
+    _debug h "$h"
+
+    if [ -z "$h" ]; then
+      # not valid
+      return 1
+    fi
+
+    autodns_response="$(_autodns_zone_inquire "$h")"
+
+    if [ "$?" -ne "0" ]; then
+      _err "invalid domain"
+      return 1
+    fi
+
+    if _contains "$autodns_response" "<summary>1</summary>" >/dev/null; then
+      _zone="$(echo "$autodns_response" | _egrep_o '<name>[^<]*</name>' | cut -d '>' -f 2 | cut -d '<' -f 1)"
+      _system_ns="$(echo "$autodns_response" | _egrep_o '<system_ns>[^<]*</system_ns>' | cut -d '>' -f 2 | cut -d '<' -f 1)"
+      _sub_domain=$(printf "%s" "$domain" | cut -d . -f 1-$p)
+      return 0
+    fi
+
+    p=$i
+    i=$(_math "$i" + 1)
+  done
+
+  return 1
+}
+
+_build_request_auth_xml() {
+  printf "<auth>
+    <user>%s</user>
+    <password>%s</password>
+    <context>%s</context>
+  </auth>" "$AUTODNS_USER" "$AUTODNS_PASSWORD" "$AUTODNS_CONTEXT"
+}
+
+# Arguments:
+#   zone
+_build_zone_inquire_xml() {
+  printf "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+  <request>
+    %s
+    <task>
+      <code>0205</code>
+      <view>
+        <children>1</children>
+        <limit>1</limit>
+      </view>
+      <where>
+        <key>name</key>
+        <operator>eq</operator>
+        <value>%s</value>
+      </where>
+    </task>
+  </request>" "$(_build_request_auth_xml)" "$1"
+}
+
+# Arguments:
+#   zone
+#   subdomain
+#   txtvalue
+#   system_ns
+_build_zone_update_xml() {
+  printf "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+  <request>
+    %s
+    <task>
+      <code>0202001</code>
+      <default>
+        <rr_add>
+          <name>%s</name>
+          <ttl>600</ttl>
+          <type>TXT</type>
+          <value>%s</value>
+        </rr_add>
+      </default>
+      <zone>
+        <name>%s</name>
+        <system_ns>%s</system_ns>
+      </zone>
+    </task>
+  </request>" "$(_build_request_auth_xml)" "$2" "$3" "$1" "$4"
+}
+
+# Arguments:
+#   zone
+_autodns_zone_inquire() {
+  request_data="$(_build_zone_inquire_xml "$1")"
+  autodns_response="$(_autodns_api_call "$request_data")"
+  ret="$?"
+
+  printf "%s" "$autodns_response"
+  return "$ret"
+}
+
+# Arguments:
+#   zone
+#   subdomain
+#   txtvalue
+#   system_ns
+_autodns_zone_update() {
+  request_data="$(_build_zone_update_xml "$1" "$2" "$3" "$4")"
+  autodns_response="$(_autodns_api_call "$request_data")"
+  ret="$?"
+
+  printf "%s" "$autodns_response"
+  return "$ret"
+}
+
+# Arguments:
+#   zone
+#   subdomain
+#   txtvalue
+#   system_ns
+_autodns_zone_cleanup() {
+  request_data="$(_build_zone_update_xml "$1" "$2" "$3" "$4")"
+  # replace 'rr_add>' with 'rr_rem>' in request_data
+  request_data="$(printf -- "%s" "$request_data" | sed 's/rr_add>/rr_rem>/g')"
+  autodns_response="$(_autodns_api_call "$request_data")"
+  ret="$?"
+
+  printf "%s" "$autodns_response"
+  return "$ret"
+}
+
+# Arguments:
+#   request_data
+_autodns_api_call() {
+  request_data="$1"
+
+  _debug request_data "$request_data"
+
+  autodns_response="$(_post "$request_data" "$AUTODNS_API")"
+  ret="$?"
+
+  _debug autodns_response "$autodns_response"
+
+  if [ "$ret" -ne "0" ]; then
+    _err "error"
+    return 1
+  fi
+
+  if _contains "$autodns_response" "<type>success</type>" >/dev/null; then
+    _info "success"
+    printf "%s" "$autodns_response"
+    return 0
+  fi
+
+  return 1
+}
+#!/bin/bash -e
+# This script publishes the GraphQL specification document to the web.
+
+# Build the specification document into publishable form
+echo "Building spec"
+npm run build > /dev/null 2>&1
+
+# Determine if this is a tagged release
+GITTAG=$(git tag --points-at HEAD)
+
+# Check out gh-pages locally.
+echo "Cloning gh-pages"
+rm -rf gh-pages
+git clone -b gh-pages "https://${GH_TOKEN}@github.com/facebook/graphql.git" gh-pages > /dev/null 2>&1
+
+# Replace /draft with this build.
+echo "Publishing to: /draft"
+rm -rf gh-pages/draft
+cp -r out/ gh-pages/draft
+
+# If this is a tagged commit, publish to a permalink and index.
+if [ -n "$GITTAG" ]; then
+  echo "Publishing to: /$GITTAG"
+  cp -r out/ "gh-pages/$GITTAG"
+fi
+
+# Create the index file
+echo "Rebuilding: / (index)"
+HTML="<html>
+  <head>
+    <title>GraphQL Specification Versions</title>
+    <style>
+      body {
+        color: #333333;
+        font: 13pt/18pt Cambria, 'Palatino Linotype', Palatino, 'Liberation Serif', serif;
+        margin: 6rem auto 3rem;
+        max-width: 780px;
+      }
+      @media (min-width: 1240px) {
+        body {
+          padding-right: 300px;
+        }
+      }
+      a {
+        color: #3B5998;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      h1 {
+        font-size: 1.5em;
+        margin: 8rem 0 2em;
+      }
+      td {
+        padding-bottom: 5px;
+      }
+      td + td {
+        padding-left: 2ch;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GraphQL</h1>
+    <table>"
+
+# Include latest draft
+GITDATE=$(git show -s --format=%cd --date=format:"%a, %b %-d, %Y" HEAD)
+HTML="$HTML
+    <tr>
+      <td><em>Prerelease</em></td>
+      <td><a href=\"./draft\" keep-hash>Working Draft</a></td>
+      <td>$GITDATE</td>
+      <td></td>
+    </tr>"
+
+GITHUB_RELEASES="https://github.com/facebook/graphql/releases/tag"
+for GITTAG in $(git tag -l --sort='-*committerdate') ; do
+  VERSIONYEAR=${GITTAG: -4}
+  TAGTITLE="${GITTAG%$VERSIONYEAR} $VERSIONYEAR"
+  TAGGEDCOMMIT=$(git rev-list -1 "$GITTAG")
+  GITDATE=$(git show -s --format=%cd --date=format:"%a, %b %-d, %Y" $TAGGEDCOMMIT)
+
+  HTML="$HTML
+    <tr>"
+
+  [ -z $HAS_LATEST_RELEASE ] && HTML="$HTML
+      <td><em>Latest Release</em></td>" || HTML="$HTML
+      <td></td>"
+  HAS_LATEST_RELEASE=1
+
+  HTML="$HTML
+      <td><a href=\"./$GITTAG\" keep-hash>$TAGTITLE</a></td>
+      <td>$GITDATE</td>
+      <td><a href=\"$GITHUB_RELEASES/$GITTAG\">Release Notes</a></td>
+    </tr>"
+done
+
+HTML="$HTML
+    </table>
+    <script>
+      var links = document.getElementsByTagName('a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].hasAttribute('keep-hash')) {
+          links[i].href += location.hash;
+          links[i].removeAttribute('keep-hash');
+        }
+      }
+    </script>
+  </body>
+</html>"
+
+echo $HTML > "gh-pages/index.html"
+
+echo "Pushing update"
+cd gh-pages
+git config user.name "Travis CI"
+git config user.email "github@fb.com"
+git add -A .
+if git diff --staged --quiet; then
+  echo "Nothing to publish"
+else
+  git commit -a -m "Deploy to GitHub Pages"
+  git push > /dev/null 2>&1
+  echo "Pushed"
+fi
+#!/bin/bash -e
+# This script publishes the GraphQL specification document to the web.
+
+# Build the specification document into publishable form
+echo "Building spec"
+npm run build > /dev/null 2>&1
+
+# Determine if this is a tagged release
+GITTAG=$(git tag --points-at HEAD)
+
+# Check out gh-pages locally.
+echo "Cloning gh-pages"
+rm -rf gh-pages
+git clone -b gh-pages "https://${GH_TOKEN}@github.com/facebook/graphql.git" gh-pages > /dev/null 2>&1
+
+# Replace /draft with this build.
+echo "Publishing to: /draft"
+rm -rf gh-pages/draft
+cp -r out/ gh-pages/draft
+
+# If this is a tagged commit, publish to a permalink and index.
+if [ -n "$GITTAG" ]; then
+  echo "Publishing to: /$GITTAG"
+  cp -r out/ "gh-pages/$GITTAG"
+fi
+
+# Create the index file
+echo "Rebuilding: / (index)"
+HTML="<html>
+  <head>
+    <title>GraphQL Specification Versions</title>
+    <style>
+      body {
+        color: #333333;
+        font: 13pt/18pt Cambria, 'Palatino Linotype', Palatino, 'Liberation Serif', serif;
+        margin: 6rem auto 3rem;
+        max-width: 780px;
+      }
+      @media (min-width: 1240px) {
+        body {
+          padding-right: 300px;
+        }
+      }
+      a {
+        color: #3B5998;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      h1 {
+        font-size: 1.5em;
+        margin: 8rem 0 2em;
+      }
+      td {
+        padding-bottom: 5px;
+      }
+      td + td {
+        padding-left: 2ch;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GraphQL</h1>
+    <table>"
+
+# Include latest draft
+GITDATE=$(git show -s --format=%cd --date=format:"%a, %b %-d, %Y" HEAD)
+HTML="$HTML
+    <tr>
+      <td><em>Prerelease</em></td>
+      <td><a href=\"./draft\" keep-hash>Working Draft</a></td>
+      <td>$GITDATE</td>
+      <td></td>
+    </tr>"
+
+GITHUB_RELEASES="https://github.com/facebook/graphql/releases/tag"
+for GITTAG in $(git tag -l --sort='-*committerdate') ; do
+  VERSIONYEAR=${GITTAG: -4}
+  TAGTITLE="${GITTAG%$VERSIONYEAR} $VERSIONYEAR"
+  TAGGEDCOMMIT=$(git rev-list -1 "$GITTAG")
+  GITDATE=$(git show -s --format=%cd --date=format:"%a, %b %-d, %Y" $TAGGEDCOMMIT)
+
+  HTML="$HTML
+    <tr>"
+
+  [ -z $HAS_LATEST_RELEASE ] && HTML="$HTML
+      <td><em>Latest Release</em></td>" || HTML="$HTML
+      <td></td>"
+  HAS_LATEST_RELEASE=1
+
+  HTML="$HTML
+      <td><a href=\"./$GITTAG\" keep-hash>$TAGTITLE</a></td>
+      <td>$GITDATE</td>
+      <td><a href=\"$GITHUB_RELEASES/$GITTAG\">Release Notes</a></td>
+    </tr>"
+done
+
+HTML="$HTML
+    </table>
+    <script>
+      var links = document.getElementsByTagName('a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].hasAttribute('keep-hash')) {
+          links[i].href += location.hash;
+          links[i].removeAttribute('keep-hash');
+        }
+      }
+    </script>
+  </body>
+</html>"
+
+echo $HTML > "gh-pages/index.html"
+
+echo "Pushing update"
+cd gh-pages
+git config user.name "Travis CI"
+git config user.email "github@fb.com"
+git add -A .
+if git diff --staged --quiet; then
+  echo "Nothing to publish"
+else
+  git commit -a -m "Deploy to GitHub Pages"
+  git push > /dev/null 2>&1
+  echo "Pushed"
+fi

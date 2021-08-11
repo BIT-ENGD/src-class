@@ -1,0 +1,224 @@
+//! A [Stochastic Gradient Descent with Momentum][1]
+//! [1]: https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Momentum
+//!
+//! Momentum in solving neural networks works similar to
+//! they way it does in physics.
+//! If you travel into a a direction with a high velocity,
+//! it becomes very hard to change (or reverse)
+//! the direction in which you are moving.
+//!
+//! Similarly when adjusting gradients during solving,
+//! keeping a part of the previous gradient update can make solving faster,
+//! since if you keep adjusting the gradients
+//! into the same direction you will reach the optimum faster.
+//! It also makes solving more stable.
+use co::prelude::*;
+use coblas::plugin::Copy;
+use layer::*;
+use solver::*;
+use solvers::SGDSolver;
+use std::rc::Rc;
+use std::sync::{Arc, RwLock};
+use util::*;
+
+#[derive(Debug)]
+/// Stochastic Gradient Descent with Momentum.
+///
+/// See [module description][1] for more information.
+/// [1]: ./index.html
+pub struct Momentum<SolverB: IBackend + SolverOps<f32>> {
+    /// The gradient update from the previous iteration for each blob.
+    history: Vec<ArcLock<SharedTensor<f32>>>,
+    /// The backend used for computing the gradient.
+    backend: Rc<SolverB>,
+
+    /// Scalar that temporarily holds learing rate for weight update computations
+    lr: SharedTensor<f32>,
+    /// Scalar that temporarily holds momentum for weight update computations
+    momentum: SharedTensor<f32>,
+}
+
+impl<SolverB: IBackend + SolverOps<f32>> Momentum<SolverB> {
+    /// Create a new SGD Momentum solver.
+    ///
+    /// Should not be called directly.
+    /// Use [Solver::from_config][2] instead.
+    ///
+    /// [2]: ../../../solver/struct.Solver.html#method.from_config
+    pub fn new(backend: Rc<SolverB>) -> Momentum<SolverB> {
+        let (lr, momentum) = {
+            let device = IBackend::device(backend.as_ref());
+
+            (SharedTensor::<f32>::new(device, &1).unwrap(),
+             SharedTensor::<f32>::new(device, &1).unwrap())
+        };
+        
+        Momentum {
+            history: Vec::new(),
+            backend: backend,
+
+            lr: lr,
+            momentum: momentum,
+        }
+    }
+
+}
+
+impl<B: IBackend + SolverOps<f32>, NetB: IBackend + LayerOps<f32> + 'static> SGDSolver<B, NetB> for Momentum<B> {
+    fn compute_update_value(&mut self,
+                            config: &SolverConfig,
+                            weight_gradient: &ArcLock<SharedTensor<f32>>,
+                            history_blob_id: usize,
+                            global_lr: &f32,
+                            blob_lr: &f32) {
+        ::weight::FillerType::Constant {
+            value: global_lr * blob_lr
+        }.fill(&mut self.lr);
+
+        ::weight::FillerType::Constant {
+            value: config.momentum
+        }.fill(&mut self.momentum);
+
+        let backend = ISolver::<B, NetB>::backend(self);
+        let device = IBackend::device(backend);
+
+        let history_blob = &self.history[history_blob_id];
+
+        let _ = weight_gradient.write().unwrap().add_device(device);
+        weight_gradient.write().unwrap().sync(device).unwrap();
+        let _ = history_blob.write().unwrap().add_device(device);
+        history_blob.write().unwrap().sync(device).unwrap();
+
+        Axpby::axpby_plain(backend,
+                           &self.lr,
+                           &weight_gradient.read().unwrap(),
+                           &self.momentum,
+                           &mut history_blob.write().unwrap()).unwrap();
+
+        backend.copy_plain(
+            &history_blob.read().unwrap(), &mut weight_gradient.write().unwrap()).unwrap();
+    }
+}
+
+impl_isolver_sgd!(Momentum<SolverB>);
+//! TODO: DOC
+use std::collections::VecDeque;
+use std::fmt;
+
+use co::SharedTensor;
+use util::native_backend;
+/// A [ConfusionMatrix][wiki].
+///
+/// [wiki]: https://en.wikipedia.org/wiki/Confusion_matrix
+#[derive(Debug)]
+pub struct ConfusionMatrix {
+    num_classes: usize,
+
+    /// maximum number of samples held
+    capacity: Option<usize>,
+    samples: VecDeque<Sample>,
+}
+
+impl ConfusionMatrix {
+    /// Create a ConfusionMatrix that analyzes the prediction of `num_classes` classes.
+    pub fn new(num_classes: usize) -> ConfusionMatrix {
+        ConfusionMatrix {
+            num_classes: num_classes,
+            capacity: None,
+            samples: VecDeque::new(),
+        }
+    }
+
+    /// Add a sample by providing the expected `target` class and the `prediction`.
+    pub fn add_sample(&mut self, prediction: usize, target: usize) {
+        if self.capacity.is_some() && self.samples.len() >= self.capacity.unwrap() {
+            self.samples.pop_front();
+        }
+        self.samples.push_back(Sample { prediction: prediction, target: target });
+    }
+
+    /// Add a batch of samples.
+    ///
+    /// See [add_sample](#method.add_sample).
+    pub fn add_samples(&mut self, predictions: &[usize], targets: &[usize]) {
+        for (&prediction, &target) in predictions.iter().zip(targets.iter()) {
+            self.add_sample(prediction, target)
+        }
+    }
+
+    /// Get the predicted classes from the output of a network.
+    ///
+    /// The prediction for each sample of the batch is found by
+    /// determining which output value had the smallest loss.
+    pub fn get_predictions(&self, network_out: &mut SharedTensor<f32>) -> Vec<usize> {
+        let native_infered = network_out.get(native_backend().device()).unwrap().as_native().unwrap();
+        let predictions_slice = native_infered.as_slice::<f32>();
+
+        let mut predictions = Vec::<usize>::new();
+        for batch_predictions in predictions_slice.chunks(self.num_classes) {
+            let mut enumerated_predictions = batch_predictions.iter().enumerate().collect::<Vec<_>>();
+            enumerated_predictions.sort_by(|&(_, one), &(_, two)| one.partial_cmp(two).unwrap_or(::std::cmp::Ordering::Equal)); // find index of prediction
+            predictions.push(enumerated_predictions.last().unwrap().0)
+        }
+        predictions
+    }
+
+    /// Set the `capacity` of the ConfusionMatrix
+    pub fn set_capacity(&mut self, capacity: Option<usize>) {
+        self.capacity = capacity;
+        // TODO: truncate if over capacity
+    }
+
+    /// Return all collected samples.
+    pub fn samples(&self) -> &VecDeque<Sample> {
+        &self.samples
+    }
+
+    /// Return the accuracy of the collected predictions.
+    pub fn accuracy(&self) -> Accuracy {
+        let num_samples = self.samples.len();
+        let num_correct = self.samples.iter().filter(|&&s| s.correct()).count();
+        Accuracy { num_samples: num_samples, num_correct: num_correct }
+    }
+}
+
+/// A single prediction Sample.
+#[derive(Debug, Clone, Copy)]
+pub struct Sample {
+    prediction: usize,
+    target: usize,
+}
+
+impl Sample {
+    /// Returns if the prediction is equal to the expected target.
+    pub fn correct(&self) -> bool {
+        self.prediction == self.target
+    }
+}
+
+impl fmt::Display for Sample {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Prediction: {:?}, Target: {:?}", self.prediction, self.target)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+/// The accuracy of the predictions in a ConfusionMatrix.
+///
+/// Used to print the accuracy.
+pub struct Accuracy {
+    num_samples: usize,
+    num_correct: usize,
+}
+
+impl Accuracy {
+    fn ratio(&self) -> f32 {
+        (self.num_correct as f32) / (self.num_samples as f32) * 100f32
+    }
+}
+
+impl fmt::Display for Accuracy {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}/{:?} = {:.2?}%", self.num_correct, self.num_samples, self.ratio())
+    }
+}

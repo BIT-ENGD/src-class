@@ -1,0 +1,261 @@
+// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Tests for the Gird
+
+use super::{Grid, BidirectionalIterator};
+use index::{Point, Line, Column};
+
+// Scroll up moves lines upwards
+#[test]
+fn scroll_up() {
+    println!();
+
+    let mut grid = Grid::new(Line(10), Column(1), 0, 0);
+    for i in 0..10 {
+        grid[Line(i)][Column(0)] = i;
+    }
+
+    println!("grid: {:?}", grid);
+
+    grid.scroll_up(&(Line(0)..Line(10)), Line(2), &0);
+
+    println!("grid: {:?}", grid);
+
+    assert_eq!(grid[Line(0)][Column(0)], 2);
+    assert_eq!(grid[Line(0)].occ, 1);
+    assert_eq!(grid[Line(1)][Column(0)], 3);
+    assert_eq!(grid[Line(1)].occ, 1);
+    assert_eq!(grid[Line(2)][Column(0)], 4);
+    assert_eq!(grid[Line(2)].occ, 1);
+    assert_eq!(grid[Line(3)][Column(0)], 5);
+    assert_eq!(grid[Line(3)].occ, 1);
+    assert_eq!(grid[Line(4)][Column(0)], 6);
+    assert_eq!(grid[Line(4)].occ, 1);
+    assert_eq!(grid[Line(5)][Column(0)], 7);
+    assert_eq!(grid[Line(5)].occ, 1);
+    assert_eq!(grid[Line(6)][Column(0)], 8);
+    assert_eq!(grid[Line(6)].occ, 1);
+    assert_eq!(grid[Line(7)][Column(0)], 9);
+    assert_eq!(grid[Line(7)].occ, 1);
+    assert_eq!(grid[Line(8)][Column(0)], 0); // was 0
+    assert_eq!(grid[Line(8)].occ, 0);
+    assert_eq!(grid[Line(9)][Column(0)], 0); // was 1
+    assert_eq!(grid[Line(9)].occ, 0);
+}
+
+// Scroll down moves lines downwards
+#[test]
+fn scroll_down() {
+    println!();
+
+    let mut grid = Grid::new(Line(10), Column(1), 0, 0);
+    for i in 0..10 {
+        grid[Line(i)][Column(0)] = i;
+    }
+
+    println!("grid: {:?}", grid);
+
+    grid.scroll_down(&(Line(0)..Line(10)), Line(2), &0);
+
+    println!("grid: {:?}", grid);
+
+    assert_eq!(grid[Line(0)][Column(0)], 0); // was 8
+    assert_eq!(grid[Line(0)].occ, 0);
+    assert_eq!(grid[Line(1)][Column(0)], 0); // was 9
+    assert_eq!(grid[Line(1)].occ, 0);
+    assert_eq!(grid[Line(2)][Column(0)], 0);
+    assert_eq!(grid[Line(2)].occ, 1);
+    assert_eq!(grid[Line(3)][Column(0)], 1);
+    assert_eq!(grid[Line(3)].occ, 1);
+    assert_eq!(grid[Line(4)][Column(0)], 2);
+    assert_eq!(grid[Line(4)].occ, 1);
+    assert_eq!(grid[Line(5)][Column(0)], 3);
+    assert_eq!(grid[Line(5)].occ, 1);
+    assert_eq!(grid[Line(6)][Column(0)], 4);
+    assert_eq!(grid[Line(6)].occ, 1);
+    assert_eq!(grid[Line(7)][Column(0)], 5);
+    assert_eq!(grid[Line(7)].occ, 1);
+    assert_eq!(grid[Line(8)][Column(0)], 6);
+    assert_eq!(grid[Line(8)].occ, 1);
+    assert_eq!(grid[Line(9)][Column(0)], 7);
+    assert_eq!(grid[Line(9)].occ, 1);
+}
+
+// Test that GridIterator works
+#[test]
+fn test_iter() {
+    info!("");
+
+    let mut grid = Grid::new(Line(5), Column(5), 0, 0);
+    for i in 0..5 {
+        for j in 0..5 {
+            grid[Line(i)][Column(j)] = i*5 + j;
+        }
+    }
+
+    info!("grid: {:?}", grid);
+
+    let mut iter = grid.iter_from(Point {
+        line: 4,
+        col: Column(0),
+    });
+
+    assert_eq!(None, iter.prev());
+    assert_eq!(Some(&1), iter.next());
+    assert_eq!(Column(1), iter.cur.col);
+    assert_eq!(4, iter.cur.line);
+
+    assert_eq!(Some(&2), iter.next());
+    assert_eq!(Some(&3), iter.next());
+    assert_eq!(Some(&4), iter.next());
+
+    // test linewrapping
+    assert_eq!(Some(&5), iter.next());
+    assert_eq!(Column(0), iter.cur.col);
+    assert_eq!(3, iter.cur.line);
+
+    assert_eq!(Some(&4), iter.prev());
+    assert_eq!(Column(4), iter.cur.col);
+    assert_eq!(4, iter.cur.line);
+
+
+    // test that iter ends at end of grid
+    let mut final_iter = grid.iter_from(Point {
+        line: 0,
+        col: Column(4),
+    });
+    assert_eq!(None, final_iter.next());
+    assert_eq!(Some(&23), final_iter.prev());
+}
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json as json;
+extern crate alacritty;
+
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::Path;
+
+use alacritty::Grid;
+use alacritty::Term;
+use alacritty::ansi;
+use alacritty::index::Column;
+use alacritty::term::Cell;
+use alacritty::term::SizeInfo;
+use alacritty::util::fmt::{Red, Green};
+use alacritty::config::Config;
+
+macro_rules! ref_tests {
+    ($($name:ident)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let test_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ref"));
+                let test_path = test_dir.join(stringify!($name));
+                ref_test(&test_path);
+            }
+        )*
+    }
+}
+
+ref_tests! {
+    csi_rep
+    fish_cc
+    indexed_256_colors
+    issue_855
+    ll
+    newline_with_cursor_beyond_scroll_region
+    tab_rendering
+    tmux_git_log
+    tmux_htop
+    vim_24bitcolors_bce
+    vim_large_window_scroll
+    vim_simple_edit
+    vttest_cursor_movement_1
+    vttest_insert
+    vttest_origin_mode_1
+    vttest_origin_mode_2
+    vttest_scroll
+    vttest_tab_clear_set
+    zsh_tab_completion
+    history
+    grid_reset
+}
+
+fn read_u8<P>(path: P) -> Vec<u8>
+    where P: AsRef<Path>
+{
+    let mut res = Vec::new();
+    File::open(path.as_ref()).unwrap()
+        .read_to_end(&mut res).unwrap();
+
+    res
+}
+
+fn read_string<P>(path: P) -> Result<String, ::std::io::Error>
+    where P: AsRef<Path>
+{
+    let mut res = String::new();
+    File::open(path.as_ref()).and_then(|mut f| f.read_to_string(&mut res))?;
+
+    Ok(res)
+}
+
+#[derive(Deserialize, Default)]
+struct RefConfig {
+    history_size: u32,
+}
+
+fn ref_test(dir: &Path) {
+    let recording = read_u8(dir.join("alacritty.recording"));
+    let serialized_size = read_string(dir.join("size.json")).unwrap();
+    let serialized_grid = read_string(dir.join("grid.json")).unwrap();
+    let serialized_cfg = read_string(dir.join("config.json")).unwrap_or_default();
+
+    let size: SizeInfo = json::from_str(&serialized_size).unwrap();
+    let grid: Grid<Cell> = json::from_str(&serialized_grid).unwrap();
+    let ref_config: RefConfig = json::from_str(&serialized_cfg).unwrap_or_default();
+
+    let mut config: Config = Default::default();
+    config.set_history(ref_config.history_size);
+
+    let mut terminal = Term::new(&config, size);
+    let mut parser = ansi::Processor::new();
+
+    for byte in recording {
+        parser.advance(&mut terminal, byte, &mut io::sink());
+    }
+
+    // Truncate invisible lines from the grid
+    let mut term_grid = terminal.grid().clone();
+    term_grid.truncate();
+
+    if grid != term_grid {
+        for i in 0..grid.len() {
+            for j in 0..grid.num_cols().0 {
+                let cell = terminal.grid()[i][Column(j)];
+                let original_cell = grid[i][Column(j)];
+                if original_cell != cell {
+                    println!("[{i}][{j}] {original:?} => {now:?}",
+                             i=i, j=j, original=Green(original_cell), now=Red(cell));
+                }
+            }
+        }
+
+        panic!("Ref test failed; grid doesn't match");
+    }
+
+    assert_eq!(grid, term_grid);
+}

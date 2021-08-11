@@ -1,0 +1,488 @@
+#!/usr/bin/env sh
+# Author: non7top@gmail.com
+# 07 Jul 2017
+# report bugs at https://github.com/non7top/acme.sh
+
+# Values to export:
+# export PDD_Token="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+########  Public functions #####################
+
+#Usage: dns_myapi_add   _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
+dns_yandex_add() {
+  fulldomain="${1}"
+  txtvalue="${2}"
+  _debug "Calling: dns_yandex_add() '${fulldomain}' '${txtvalue}'"
+  _PDD_credentials || return 1
+  export _H1="PddToken: $PDD_Token"
+
+  _PDD_get_domain "$fulldomain"
+  _debug "Found suitable domain in pdd: $curDomain"
+  curData="domain=${curDomain}&type=TXT&subdomain=${curSubdomain}&ttl=360&content=${txtvalue}"
+  curUri="https://pddimp.yandex.ru/api2/admin/dns/add"
+  curResult="$(_post "${curData}" "${curUri}")"
+  _debug "Result: $curResult"
+}
+
+#Usage: dns_myapi_rm   _acme-challenge.www.domain.com
+dns_yandex_rm() {
+  fulldomain="${1}"
+  _debug "Calling: dns_yandex_rm() '${fulldomain}'"
+  _PDD_credentials || return 1
+  export _H1="PddToken: $PDD_Token"
+  record_id=$(pdd_get_record_id "${fulldomain}")
+  _debug "Result: $record_id"
+
+  _PDD_get_domain "$fulldomain"
+  _debug "Found suitable domain in pdd: $curDomain"
+
+  curUri="https://pddimp.yandex.ru/api2/admin/dns/del"
+  curData="domain=${curDomain}&record_id=${record_id}"
+  curResult="$(_post "${curData}" "${curUri}")"
+  _debug "Result: $curResult"
+}
+
+####################  Private functions below ##################################
+
+_PDD_get_domain() {
+  fulldomain="${1}"
+  __page=1
+  __last=0
+  while [ $__last -eq 0 ]; do
+    uri1="https://pddimp.yandex.ru/api2/admin/domain/domains?page=${__page}&on_page=20"
+    res1="$(_get "$uri1" | _normalizeJson)"
+    _debug2 "res1" "$res1"
+    __found="$(echo "$res1" | sed -n -e 's#.* "found": \([^,]*\),.*#\1#p')"
+    _debug "found: $__found results on page"
+    if [ "$__found" -lt 20 ]; then
+      _debug "last page: $__page"
+      __last=1
+    fi
+
+    __all_domains="$__all_domains $(echo "$res1" | tr "," "\n" | grep '"name"' | cut -d: -f2 | sed -e 's@"@@g')"
+
+    __page=$(_math $__page + 1)
+  done
+
+  k=2
+  while [ $k -lt 10 ]; do
+    __t=$(echo "$fulldomain" | cut -d . -f $k-100)
+    _debug "finding zone for domain $__t"
+    for d in $__all_domains; do
+      if [ "$d" = "$__t" ]; then
+        p=$(_math $k - 1)
+        curSubdomain="$(echo "$fulldomain" | cut -d . -f "1-$p")"
+        curDomain="$__t"
+        return 0
+      fi
+    done
+    k=$(_math $k + 1)
+  done
+  _err "No suitable domain found in your account"
+  return 1
+}
+
+_PDD_credentials() {
+  if [ -z "${PDD_Token}" ]; then
+    PDD_Token=""
+    _err "You need to export PDD_Token=xxxxxxxxxxxxxxxxx"
+    _err "You can get it at https://pddimp.yandex.ru/api2/admin/get_token"
+    return 1
+  else
+    _saveaccountconf PDD_Token "${PDD_Token}"
+  fi
+}
+
+pdd_get_record_id() {
+  fulldomain="${1}"
+
+  _PDD_get_domain "$fulldomain"
+  _debug "Found suitable domain in pdd: $curDomain"
+
+  curUri="https://pddimp.yandex.ru/api2/admin/dns/list?domain=${curDomain}"
+  curResult="$(_get "${curUri}" | _normalizeJson)"
+  _debug "Result: $curResult"
+  echo "$curResult" | _egrep_o "{[^{]*\"content\":[^{]*\"subdomain\":\"${curSubdomain}\"" | sed -n -e 's#.* "record_id": \(.*\),[^,]*#\1#p'
+}
+#!/usr/bin/env bash
+# Pi-hole: A black hole for Internet advertisements
+# (c) 2017 Pi-hole, LLC (https://pi-hole.net)
+# Network-wide ad blocking via your own hardware.
+#
+# Check Pi-hole core and admin pages versions and determine what
+# upgrade (if any) is required. Automatically updates and reinstalls
+# application if update is detected.
+#
+# This file is copyright under the latest version of the EUPL.
+# Please see LICENSE file for your rights under this license.
+
+# Variables
+readonly ADMIN_INTERFACE_GIT_URL="https://github.com/pi-hole/AdminLTE.git"
+readonly ADMIN_INTERFACE_DIR="/var/www/html/admin"
+readonly PI_HOLE_GIT_URL="https://github.com/pi-hole/pi-hole.git"
+readonly PI_HOLE_FILES_DIR="/etc/.pihole"
+
+# shellcheck disable=SC2034
+PH_TEST=true
+
+# when --check-only is passed to this script, it will not perform the actual update
+CHECK_ONLY=false
+
+# shellcheck disable=SC1090
+source "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh"
+# shellcheck disable=SC1091
+source "/opt/pihole/COL_TABLE"
+
+# is_repo() sourced from basic-install.sh
+# make_repo() sourced from basic-install.sh
+# update_repo() source from basic-install.sh
+# getGitFiles() sourced from basic-install.sh
+# get_binary_name() sourced from basic-install.sh
+# FTLcheckUpdate() sourced from basic-install.sh
+
+GitCheckUpdateAvail() {
+    local directory
+    directory="${1}"
+    curdir=$PWD
+    cd "${directory}" || return
+
+    # Fetch latest changes in this repo
+    git fetch --quiet origin
+
+    # @ alone is a shortcut for HEAD. Older versions of git
+    # need @{0}
+    LOCAL="$(git rev-parse "@{0}")"
+
+    # The suffix @{upstream} to a branchname
+    # (short form <branchname>@{u}) refers
+    # to the branch that the branch specified
+    # by branchname is set to build on top of#
+    # (configured with branch.<name>.remote and
+    # branch.<name>.merge). A missing branchname
+    # defaults to the current one.
+    REMOTE="$(git rev-parse "@{upstream}")"
+
+    if [[ "${#LOCAL}" == 0 ]]; then
+        echo -e "\\n  ${COL_LIGHT_RED}Error: Local revision could not be obtained, please contact Pi-hole Support"
+        echo -e "  Additional debugging output:${COL_NC}"
+        git status
+        exit
+    fi
+    if [[ "${#REMOTE}" == 0 ]]; then
+        echo -e "\\n  ${COL_LIGHT_RED}Error: Remote revision could not be obtained, please contact Pi-hole Support"
+        echo -e "  Additional debugging output:${COL_NC}"
+        git status
+        exit
+    fi
+
+    # Change back to original directory
+    cd "${curdir}" || exit
+
+    if [[ "${LOCAL}" != "${REMOTE}" ]]; then
+        # Local branch is behind remote branch -> Update
+        return 0
+    else
+        # Local branch is up-to-date or in a situation
+        # where this updater cannot be used (like on a
+        # branch that exists only locally)
+        return 1
+    fi
+}
+
+main() {
+    local basicError="\\n  ${COL_LIGHT_RED}Unable to complete update, please contact Pi-hole Support${COL_NC}"
+    local core_update
+    local web_update
+    local FTL_update
+
+    core_update=false
+    web_update=false
+    FTL_update=false
+
+    # shellcheck disable=1090,2154
+    source "${setupVars}"
+
+    # This is unlikely
+    if ! is_repo "${PI_HOLE_FILES_DIR}" ; then
+        echo -e "\\n  ${COL_LIGHT_RED}Error: Core Pi-hole repo is missing from system!"
+        echo -e "  Please re-run install script from https://pi-hole.net${COL_NC}"
+        exit 1;
+    fi
+
+    echo -e "  ${INFO} Checking for updates..."
+
+    if GitCheckUpdateAvail "${PI_HOLE_FILES_DIR}" ; then
+        core_update=true
+        echo -e "  ${INFO} Pi-hole Core:\\t${COL_YELLOW}update available${COL_NC}"
+    else
+        core_update=false
+        echo -e "  ${INFO} Pi-hole Core:\\t${COL_LIGHT_GREEN}up to date${COL_NC}"
+    fi
+
+    if [[ "${INSTALL_WEB_INTERFACE}" == true ]]; then
+        if ! is_repo "${ADMIN_INTERFACE_DIR}" ; then
+            echo -e "\\n  ${COL_LIGHT_RED}Error: Web Admin repo is missing from system!"
+            echo -e "  Please re-run install script from https://pi-hole.net${COL_NC}"
+            exit 1;
+        fi
+
+        if GitCheckUpdateAvail "${ADMIN_INTERFACE_DIR}" ; then
+            web_update=true
+            echo -e "  ${INFO} Web Interface:\\t${COL_YELLOW}update available${COL_NC}"
+        else
+            web_update=false
+            echo -e "  ${INFO} Web Interface:\\t${COL_LIGHT_GREEN}up to date${COL_NC}"
+        fi
+    fi
+
+    if FTLcheckUpdate > /dev/null; then
+        FTL_update=true
+        echo -e "  ${INFO} FTL:\\t\\t${COL_YELLOW}update available${COL_NC}"
+    else
+        case $? in
+            1)
+                echo -e "  ${INFO} FTL:\\t\\t${COL_LIGHT_GREEN}up to date${COL_NC}"
+                ;;
+            2)
+                echo -e "  ${INFO} FTL:\\t\\t${COL_LIGHT_RED}Branch is not available.${COL_NC}\\n\\t\\t\\tUse ${COL_LIGHT_GREEN}pihole checkout ftl [branchname]${COL_NC} to switch to a valid branch."
+                ;;
+            *)
+                echo -e "  ${INFO} FTL:\\t\\t${COL_LIGHT_RED}Something has gone wrong, contact support${COL_NC}"
+        esac
+        FTL_update=false
+    fi
+
+    if [[ "${core_update}" == false && "${web_update}" == false && "${FTL_update}" == false ]]; then
+        echo ""
+        echo -e "  ${TICK} Everything is up to date!"
+        exit 0
+    fi
+
+    if [[ "${CHECK_ONLY}" == true ]]; then
+        echo ""
+        exit 0
+    fi
+
+    if [[ "${core_update}" == true ]]; then
+        echo ""
+        echo -e "  ${INFO} Pi-hole core files out of date, updating local repo."
+        getGitFiles "${PI_HOLE_FILES_DIR}" "${PI_HOLE_GIT_URL}"
+        echo -e "  ${INFO} If you had made any changes in '/etc/.pihole/', they have been stashed using 'git stash'"
+    fi
+
+    if [[ "${web_update}" == true ]]; then
+        echo ""
+        echo -e "  ${INFO} Pi-hole Web Admin files out of date, updating local repo."
+        getGitFiles "${ADMIN_INTERFACE_DIR}" "${ADMIN_INTERFACE_GIT_URL}"
+        echo -e "  ${INFO} If you had made any changes in '/var/www/html/admin/', they have been stashed using 'git stash'"
+    fi
+
+    if [[ "${FTL_update}" == true ]]; then
+        echo ""
+        echo -e "  ${INFO} FTL out of date, it will be updated by the installer."
+    fi
+
+    if [[ "${FTL_update}" == true || "${core_update}" == true ]]; then
+        ${PI_HOLE_FILES_DIR}/automated\ install/basic-install.sh --reconfigure --unattended || \
+        echo -e "${basicError}" && exit 1
+    fi
+    echo ""
+    exit 0
+}
+
+if [[ "$1" == "--check-only" ]]; then
+    CHECK_ONLY=true
+fi
+
+main
+#!/usr/bin/env bash
+# Pi-hole: A black hole for Internet advertisements
+# (c) 2017 Pi-hole, LLC (https://pi-hole.net)
+# Network-wide ad blocking via your own hardware.
+#
+# Check Pi-hole core and admin pages versions and determine what
+# upgrade (if any) is required. Automatically updates and reinstalls
+# application if update is detected.
+#
+# This file is copyright under the latest version of the EUPL.
+# Please see LICENSE file for your rights under this license.
+
+# Variables
+readonly ADMIN_INTERFACE_GIT_URL="https://github.com/pi-hole/AdminLTE.git"
+readonly ADMIN_INTERFACE_DIR="/var/www/html/admin"
+readonly PI_HOLE_GIT_URL="https://github.com/pi-hole/pi-hole.git"
+readonly PI_HOLE_FILES_DIR="/etc/.pihole"
+
+# shellcheck disable=SC2034
+PH_TEST=true
+
+# when --check-only is passed to this script, it will not perform the actual update
+CHECK_ONLY=false
+
+# shellcheck disable=SC1090
+source "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh"
+# shellcheck disable=SC1091
+source "/opt/pihole/COL_TABLE"
+
+# is_repo() sourced from basic-install.sh
+# make_repo() sourced from basic-install.sh
+# update_repo() source from basic-install.sh
+# getGitFiles() sourced from basic-install.sh
+# get_binary_name() sourced from basic-install.sh
+# FTLcheckUpdate() sourced from basic-install.sh
+
+GitCheckUpdateAvail() {
+    local directory
+    directory="${1}"
+    curdir=$PWD
+    cd "${directory}" || return
+
+    # Fetch latest changes in this repo
+    git fetch --quiet origin
+
+    # @ alone is a shortcut for HEAD. Older versions of git
+    # need @{0}
+    LOCAL="$(git rev-parse "@{0}")"
+
+    # The suffix @{upstream} to a branchname
+    # (short form <branchname>@{u}) refers
+    # to the branch that the branch specified
+    # by branchname is set to build on top of#
+    # (configured with branch.<name>.remote and
+    # branch.<name>.merge). A missing branchname
+    # defaults to the current one.
+    REMOTE="$(git rev-parse "@{upstream}")"
+
+    if [[ "${#LOCAL}" == 0 ]]; then
+        echo -e "\\n  ${COL_LIGHT_RED}Error: Local revision could not be obtained, please contact Pi-hole Support"
+        echo -e "  Additional debugging output:${COL_NC}"
+        git status
+        exit
+    fi
+    if [[ "${#REMOTE}" == 0 ]]; then
+        echo -e "\\n  ${COL_LIGHT_RED}Error: Remote revision could not be obtained, please contact Pi-hole Support"
+        echo -e "  Additional debugging output:${COL_NC}"
+        git status
+        exit
+    fi
+
+    # Change back to original directory
+    cd "${curdir}" || exit
+
+    if [[ "${LOCAL}" != "${REMOTE}" ]]; then
+        # Local branch is behind remote branch -> Update
+        return 0
+    else
+        # Local branch is up-to-date or in a situation
+        # where this updater cannot be used (like on a
+        # branch that exists only locally)
+        return 1
+    fi
+}
+
+main() {
+    local basicError="\\n  ${COL_LIGHT_RED}Unable to complete update, please contact Pi-hole Support${COL_NC}"
+    local core_update
+    local web_update
+    local FTL_update
+
+    core_update=false
+    web_update=false
+    FTL_update=false
+
+    # shellcheck disable=1090,2154
+    source "${setupVars}"
+
+    # This is unlikely
+    if ! is_repo "${PI_HOLE_FILES_DIR}" ; then
+        echo -e "\\n  ${COL_LIGHT_RED}Error: Core Pi-hole repo is missing from system!"
+        echo -e "  Please re-run install script from https://pi-hole.net${COL_NC}"
+        exit 1;
+    fi
+
+    echo -e "  ${INFO} Checking for updates..."
+
+    if GitCheckUpdateAvail "${PI_HOLE_FILES_DIR}" ; then
+        core_update=true
+        echo -e "  ${INFO} Pi-hole Core:\\t${COL_YELLOW}update available${COL_NC}"
+    else
+        core_update=false
+        echo -e "  ${INFO} Pi-hole Core:\\t${COL_LIGHT_GREEN}up to date${COL_NC}"
+    fi
+
+    if [[ "${INSTALL_WEB_INTERFACE}" == true ]]; then
+        if ! is_repo "${ADMIN_INTERFACE_DIR}" ; then
+            echo -e "\\n  ${COL_LIGHT_RED}Error: Web Admin repo is missing from system!"
+            echo -e "  Please re-run install script from https://pi-hole.net${COL_NC}"
+            exit 1;
+        fi
+
+        if GitCheckUpdateAvail "${ADMIN_INTERFACE_DIR}" ; then
+            web_update=true
+            echo -e "  ${INFO} Web Interface:\\t${COL_YELLOW}update available${COL_NC}"
+        else
+            web_update=false
+            echo -e "  ${INFO} Web Interface:\\t${COL_LIGHT_GREEN}up to date${COL_NC}"
+        fi
+    fi
+
+    if FTLcheckUpdate > /dev/null; then
+        FTL_update=true
+        echo -e "  ${INFO} FTL:\\t\\t${COL_YELLOW}update available${COL_NC}"
+    else
+        case $? in
+            1)
+                echo -e "  ${INFO} FTL:\\t\\t${COL_LIGHT_GREEN}up to date${COL_NC}"
+                ;;
+            2)
+                echo -e "  ${INFO} FTL:\\t\\t${COL_LIGHT_RED}Branch is not available.${COL_NC}\\n\\t\\t\\tUse ${COL_LIGHT_GREEN}pihole checkout ftl [branchname]${COL_NC} to switch to a valid branch."
+                ;;
+            *)
+                echo -e "  ${INFO} FTL:\\t\\t${COL_LIGHT_RED}Something has gone wrong, contact support${COL_NC}"
+        esac
+        FTL_update=false
+    fi
+
+    if [[ "${core_update}" == false && "${web_update}" == false && "${FTL_update}" == false ]]; then
+        echo ""
+        echo -e "  ${TICK} Everything is up to date!"
+        exit 0
+    fi
+
+    if [[ "${CHECK_ONLY}" == true ]]; then
+        echo ""
+        exit 0
+    fi
+
+    if [[ "${core_update}" == true ]]; then
+        echo ""
+        echo -e "  ${INFO} Pi-hole core files out of date, updating local repo."
+        getGitFiles "${PI_HOLE_FILES_DIR}" "${PI_HOLE_GIT_URL}"
+        echo -e "  ${INFO} If you had made any changes in '/etc/.pihole/', they have been stashed using 'git stash'"
+    fi
+
+    if [[ "${web_update}" == true ]]; then
+        echo ""
+        echo -e "  ${INFO} Pi-hole Web Admin files out of date, updating local repo."
+        getGitFiles "${ADMIN_INTERFACE_DIR}" "${ADMIN_INTERFACE_GIT_URL}"
+        echo -e "  ${INFO} If you had made any changes in '/var/www/html/admin/', they have been stashed using 'git stash'"
+    fi
+
+    if [[ "${FTL_update}" == true ]]; then
+        echo ""
+        echo -e "  ${INFO} FTL out of date, it will be updated by the installer."
+    fi
+
+    if [[ "${FTL_update}" == true || "${core_update}" == true ]]; then
+        ${PI_HOLE_FILES_DIR}/automated\ install/basic-install.sh --reconfigure --unattended || \
+        echo -e "${basicError}" && exit 1
+    fi
+    echo ""
+    exit 0
+}
+
+if [[ "$1" == "--check-only" ]]; then
+    CHECK_ONLY=true
+fi
+
+main

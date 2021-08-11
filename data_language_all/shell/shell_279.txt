@@ -1,0 +1,584 @@
+#!/usr/bin/env sh
+
+# Author: Boyan Peychev <boyan at cloudns dot net>
+# Repository: https://github.com/ClouDNS/acme.sh/
+
+#CLOUDNS_AUTH_ID=XXXXX
+#CLOUDNS_SUB_AUTH_ID=XXXXX
+#CLOUDNS_AUTH_PASSWORD="YYYYYYYYY"
+CLOUDNS_API="https://api.cloudns.net"
+
+########  Public functions #####################
+
+#Usage: dns_cloudns_add   _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
+dns_cloudns_add() {
+  _info "Using cloudns"
+
+  if ! _dns_cloudns_init_check; then
+    return 1
+  fi
+
+  zone="$(_dns_cloudns_get_zone_name "$1")"
+  if [ -z "$zone" ]; then
+    _err "Missing DNS zone at ClouDNS. Please log into your control panel and create the required DNS zone for the initial setup."
+    return 1
+  fi
+
+  host="$(echo "$1" | sed "s/\.$zone\$//")"
+  record=$2
+
+  _debug zone "$zone"
+  _debug host "$host"
+  _debug record "$record"
+
+  _info "Adding the TXT record for $1"
+  _dns_cloudns_http_api_call "dns/add-record.json" "domain-name=$zone&record-type=TXT&host=$host&record=$record&ttl=60"
+  if ! _contains "$response" "\"status\":\"Success\""; then
+    _err "Record cannot be added."
+    return 1
+  fi
+  _info "Added."
+
+  return 0
+}
+
+#Usage: dns_cloudns_rm   _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
+dns_cloudns_rm() {
+  _info "Using cloudns"
+
+  if ! _dns_cloudns_init_check; then
+    return 1
+  fi
+
+  if [ -z "$zone" ]; then
+    zone="$(_dns_cloudns_get_zone_name "$1")"
+    if [ -z "$zone" ]; then
+      _err "Missing DNS zone at ClouDNS. Please log into your control panel and create the required DNS zone for the initial setup."
+      return 1
+    fi
+  fi
+
+  host="$(echo "$1" | sed "s/\.$zone\$//")"
+  record=$2
+
+  _dns_cloudns_http_api_call "dns/records.json" "domain-name=$zone&host=$host&type=TXT"
+  if ! _contains "$response" "\"id\":"; then
+    return 1
+  fi
+
+  for i in $(echo "$response" | tr '{' "\n" | grep "$record"); do
+    record_id=$(echo "$i" | tr ',' "\n" | grep -E '^"id"' | sed -re 's/^\"id\"\:\"([0-9]+)\"$/\1/g')
+
+    if [ ! -z "$record_id" ]; then
+      _debug zone "$zone"
+      _debug host "$host"
+      _debug record "$record"
+      _debug record_id "$record_id"
+
+      _info "Deleting the TXT record for $1"
+      _dns_cloudns_http_api_call "dns/delete-record.json" "domain-name=$zone&record-id=$record_id"
+
+      if ! _contains "$response" "\"status\":\"Success\""; then
+        _err "The TXT record for $1 cannot be deleted."
+      else
+        _info "Deleted."
+      fi
+    fi
+  done
+
+  return 0
+}
+
+####################  Private functions below ##################################
+_dns_cloudns_init_check() {
+  if [ ! -z "$CLOUDNS_INIT_CHECK_COMPLETED" ]; then
+    return 0
+  fi
+
+  CLOUDNS_AUTH_ID="${CLOUDNS_AUTH_ID:-$(_readaccountconf_mutable CLOUDNS_AUTH_ID)}"
+  CLOUDNS_SUB_AUTH_ID="${CLOUDNS_SUB_AUTH_ID:-$(_readaccountconf_mutable CLOUDNS_SUB_AUTH_ID)}"
+  CLOUDNS_AUTH_PASSWORD="${CLOUDNS_AUTH_PASSWORD:-$(_readaccountconf_mutable CLOUDNS_AUTH_PASSWORD)}"
+  if [ -z "$CLOUDNS_AUTH_ID$CLOUDNS_SUB_AUTH_ID" ] || [ -z "$CLOUDNS_AUTH_PASSWORD" ]; then
+    CLOUDNS_AUTH_ID=""
+    CLOUDNS_SUB_AUTH_ID=""
+    CLOUDNS_AUTH_PASSWORD=""
+    _err "You don't specify cloudns api id and password yet."
+    _err "Please create you id and password and try again."
+    return 1
+  fi
+
+  if [ -z "$CLOUDNS_AUTH_ID" ] && [ -z "$CLOUDNS_SUB_AUTH_ID" ]; then
+    _err "CLOUDNS_AUTH_ID or CLOUDNS_SUB_AUTH_ID is not configured"
+    return 1
+  fi
+
+  if [ -z "$CLOUDNS_AUTH_PASSWORD" ]; then
+    _err "CLOUDNS_AUTH_PASSWORD is not configured"
+    return 1
+  fi
+
+  _dns_cloudns_http_api_call "dns/login.json" ""
+
+  if ! _contains "$response" "\"status\":\"Success\""; then
+    _err "Invalid CLOUDNS_AUTH_ID or CLOUDNS_AUTH_PASSWORD. Please check your login credentials."
+    return 1
+  fi
+
+  # save the api id and password to the account conf file.
+  _saveaccountconf_mutable CLOUDNS_AUTH_ID "$CLOUDNS_AUTH_ID"
+  _saveaccountconf_mutable CLOUDNS_SUB_AUTH_ID "$CLOUDNS_SUB_AUTH_ID"
+  _saveaccountconf_mutable CLOUDNS_AUTH_PASSWORD "$CLOUDNS_AUTH_PASSWORD"
+
+  CLOUDNS_INIT_CHECK_COMPLETED=1
+
+  return 0
+}
+
+_dns_cloudns_get_zone_name() {
+  i=2
+  while true; do
+    zoneForCheck=$(printf "%s" "$1" | cut -d . -f $i-100)
+
+    if [ -z "$zoneForCheck" ]; then
+      return 1
+    fi
+
+    _debug zoneForCheck "$zoneForCheck"
+
+    _dns_cloudns_http_api_call "dns/get-zone-info.json" "domain-name=$zoneForCheck"
+
+    if ! _contains "$response" "\"status\":\"Failed\""; then
+      echo "$zoneForCheck"
+      return 0
+    fi
+
+    i=$(_math "$i" + 1)
+  done
+  return 1
+}
+
+_dns_cloudns_http_api_call() {
+  method=$1
+
+  _debug CLOUDNS_AUTH_ID "$CLOUDNS_AUTH_ID"
+  _debug CLOUDNS_SUB_AUTH_ID "$CLOUDNS_SUB_AUTH_ID"
+  _debug CLOUDNS_AUTH_PASSWORD "$CLOUDNS_AUTH_PASSWORD"
+
+  if [ ! -z "$CLOUDNS_SUB_AUTH_ID" ]; then
+    auth_user="sub-auth-id=$CLOUDNS_SUB_AUTH_ID"
+  else
+    auth_user="auth-id=$CLOUDNS_AUTH_ID"
+  fi
+
+  if [ -z "$2" ]; then
+    data="$auth_user&auth-password=$CLOUDNS_AUTH_PASSWORD"
+  else
+    data="$auth_user&auth-password=$CLOUDNS_AUTH_PASSWORD&$2"
+  fi
+
+  response="$(_get "$CLOUDNS_API/$method?$data")"
+
+  _debug response "$response"
+
+  return 0
+}
+#!/usr/bin/env bash
+# shellcheck source=/dev/null
+#
+# Tests for the Pure Bash Bible.
+
+test_trim_string() {
+    result="$(trim_string "    Hello,    World    ")"
+    assert_equals "$result" "Hello,    World"
+}
+
+test_trim_all() {
+    result="$(trim_all "    Hello,    World    ")"
+    assert_equals "$result" "Hello, World"
+}
+
+test_regex() {
+    result="$(regex "#FFFFFF" '^(#?([a-fA-F0-9]{6}|[a-fA-F0-9]{3}))$')"
+    assert_equals "$result" "#FFFFFF"
+}
+
+test_lower() {
+    result="$(lower "HeLlO")"
+    assert_equals "$result" "hello"
+}
+
+test_upper() {
+    result="$(upper "HeLlO")"
+    assert_equals "$result" "HELLO"
+}
+
+test_trim_quotes() {
+    result="$(trim_quotes "\"te'st' 'str'ing\"")"
+    assert_equals "$result" "test string"
+}
+
+test_strip_all() {
+    result="$(strip_all "The Quick Brown Fox" "[aeiou]")"
+    assert_equals "$result" "Th Qck Brwn Fx"
+}
+
+test_strip() {
+    result="$(strip "The Quick Brown Fox" "[aeiou]")"
+    assert_equals "$result" "Th Quick Brown Fox"
+}
+
+test_lstrip() {
+    result="$(lstrip "!:IHello" "!:I")"
+    assert_equals "$result" "Hello"
+}
+
+test_rstrip() {
+    result="$(rstrip "Hello!:I" "!:I")"
+    assert_equals "$result" "Hello"
+}
+
+test_reverse_array() {
+    IFS=$'\n' read -d "" -ra result < <(reverse_array 1 2 3 4 5)
+    assert_equals "${result[*]}" "5 4 3 2 1"
+}
+
+test_remove_array_dups() {
+    IFS=$'\n' read -d "" -ra result < <(remove_array_dups 1 1 2 2 3 3 4 5)
+    assert_equals "${result[*]}" "1 2 3 4 5"
+}
+
+test_cycle() {
+    # shellcheck disable=2034
+    arr=(a b c d)
+    result="$(cycle; cycle; cycle)"
+    assert_equals "$result" "a b c "
+}
+
+test_head() {
+    printf '%s\n%s\n\n\n' "hello" "world" > test_file
+    result="$(head 2 test_file)"
+    assert_equals "$result" $'hello\nworld'
+}
+
+test_tail() {
+    printf '\n\n\n%s\n%s\n' "hello" "world" > test_file
+    result="$(tail 2 test_file)"
+    assert_equals "$result" $'hello\nworld'
+}
+
+test_lines() {
+    printf '\n\n\n\n\n\n\n\n' > test_file
+    result="$(lines test_file)"
+    assert_equals "$result" "8"
+}
+
+test_lines_loop() {
+    printf '\n\n\n\n\n\n\n\n' > test_file
+    result="$(lines_loop test_file)"
+    assert_equals "$result" "8"
+}
+
+test_count() {
+    result="$(count ./{README.m,LICENSE.m,.travis.ym}*)"
+    assert_equals "$result" "3"
+}
+
+test_dirname() {
+    result="$(dirname "/home/black/Pictures/Wallpapers/1.jpg")"
+    assert_equals "$result" "/home/black/Pictures/Wallpapers/"
+}
+
+test_basename() {
+    result="$(basename "/home/black/Pictures/Wallpapers/1.jpg")"
+    assert_equals "$result" "1.jpg"
+}
+
+test_hex_to_rgb() {
+    result="$(hex_to_rgb "#FFFFFF")"
+    assert_equals "$result" "255 255 255"
+
+    result="$(hex_to_rgb "000000")"
+    assert_equals "$result" "0 0 0"
+}
+
+test_rgb_to_hex() {
+    result="$(rgb_to_hex 0 0 0)"
+    assert_equals "$result" "#000000"
+}
+
+test_date() {
+    result="$(date "%C")"
+    assert_equals "$result" "20"
+}
+
+test_read_sleep() {
+    result="$((SECONDS+1))"
+    read_sleep 1
+    assert_equals "$result" "$SECONDS"
+}
+
+test_bar() {
+    result="$(bar 50 10)"
+    assert_equals "${result//$'\r'}" "[-----     ]"
+}
+
+test_get_functions() {
+    IFS=$'\n' read -d "" -ra functions < <(get_functions)
+    assert_equals "${functions[0]}" "assert_equals"
+}
+
+test_extract() {
+    printf '{\nhello, world\n}\n' > test_file
+    result="$(extract test_file "{" "}")"
+    assert_equals "$result" "hello, world"
+}
+
+test_split() {
+    IFS=$'\n' read -d "" -ra result < <(split "hello,world,my,name,is,john" ",")
+    assert_equals "${result[*]}" "hello world my name is john"
+}
+
+assert_equals() {
+    if [[ "$1" == "$2" ]]; then
+        ((pass+=1))
+        status=$'\e[32m✔'
+    else
+        ((fail+=1))
+        status=$'\e[31m✖'
+        local err="(\"$1\" != \"$2\")"
+    fi
+
+    printf ' %s\e[m | %s\n' "$status" "${FUNCNAME[1]/test_} $err"
+}
+
+main() {
+    trap 'rm readme_code test_file' EXIT
+
+    # Extract code blocks from the README.
+    while IFS=$'\n' read -r line; do
+        [[ "$code" && "$line" != \`\`\` ]] && printf '%s\n' "$line"
+        [[ "$line" =~ ^\`\`\`sh$ ]] && code=1
+        [[ "$line" =~ ^\`\`\`$ ]]   && code=
+    done < README.md > readme_code
+
+    # Run shellcheck and source the code.
+    shellcheck -s bash readme_code test.sh build.sh || exit 1
+    . readme_code
+
+    head="-> Running tests on the Pure Bash Bible.."
+    printf '\n%s\n%s\n' "$head" "${head//?/-}"
+
+    # Generate the list of tests to run.
+    IFS=$'\n' read -d "" -ra funcs < <(declare -F)
+    for func in "${funcs[@]//declare -f }"; do
+        [[ "$func" == test_* ]] && "$func";
+    done
+
+    comp="Completed $((fail+pass)) tests. ${pass:-0} passed, ${fail:-0} failed."
+    printf '%s\n%s\n\n' "${comp//?/-}" "$comp"
+
+    # If a test failed, exit with '1'.
+    ((fail>0)) || exit 0 && exit 1
+}
+
+main "$@"
+#!/usr/bin/env bash
+# shellcheck source=/dev/null
+#
+# Tests for the Pure Bash Bible.
+
+test_trim_string() {
+    result="$(trim_string "    Hello,    World    ")"
+    assert_equals "$result" "Hello,    World"
+}
+
+test_trim_all() {
+    result="$(trim_all "    Hello,    World    ")"
+    assert_equals "$result" "Hello, World"
+}
+
+test_regex() {
+    result="$(regex "#FFFFFF" '^(#?([a-fA-F0-9]{6}|[a-fA-F0-9]{3}))$')"
+    assert_equals "$result" "#FFFFFF"
+}
+
+test_lower() {
+    result="$(lower "HeLlO")"
+    assert_equals "$result" "hello"
+}
+
+test_upper() {
+    result="$(upper "HeLlO")"
+    assert_equals "$result" "HELLO"
+}
+
+test_trim_quotes() {
+    result="$(trim_quotes "\"te'st' 'str'ing\"")"
+    assert_equals "$result" "test string"
+}
+
+test_strip_all() {
+    result="$(strip_all "The Quick Brown Fox" "[aeiou]")"
+    assert_equals "$result" "Th Qck Brwn Fx"
+}
+
+test_strip() {
+    result="$(strip "The Quick Brown Fox" "[aeiou]")"
+    assert_equals "$result" "Th Quick Brown Fox"
+}
+
+test_lstrip() {
+    result="$(lstrip "!:IHello" "!:I")"
+    assert_equals "$result" "Hello"
+}
+
+test_rstrip() {
+    result="$(rstrip "Hello!:I" "!:I")"
+    assert_equals "$result" "Hello"
+}
+
+test_reverse_array() {
+    IFS=$'\n' read -d "" -ra result < <(reverse_array 1 2 3 4 5)
+    assert_equals "${result[*]}" "5 4 3 2 1"
+}
+
+test_remove_array_dups() {
+    IFS=$'\n' read -d "" -ra result < <(remove_array_dups 1 1 2 2 3 3 4 5)
+    assert_equals "${result[*]}" "1 2 3 4 5"
+}
+
+test_cycle() {
+    # shellcheck disable=2034
+    arr=(a b c d)
+    result="$(cycle; cycle; cycle)"
+    assert_equals "$result" "a b c "
+}
+
+test_head() {
+    printf '%s\n%s\n\n\n' "hello" "world" > test_file
+    result="$(head 2 test_file)"
+    assert_equals "$result" $'hello\nworld'
+}
+
+test_tail() {
+    printf '\n\n\n%s\n%s\n' "hello" "world" > test_file
+    result="$(tail 2 test_file)"
+    assert_equals "$result" $'hello\nworld'
+}
+
+test_lines() {
+    printf '\n\n\n\n\n\n\n\n' > test_file
+    result="$(lines test_file)"
+    assert_equals "$result" "8"
+}
+
+test_lines_loop() {
+    printf '\n\n\n\n\n\n\n\n' > test_file
+    result="$(lines_loop test_file)"
+    assert_equals "$result" "8"
+}
+
+test_count() {
+    result="$(count ./{README.m,LICENSE.m,.travis.ym}*)"
+    assert_equals "$result" "3"
+}
+
+test_dirname() {
+    result="$(dirname "/home/black/Pictures/Wallpapers/1.jpg")"
+    assert_equals "$result" "/home/black/Pictures/Wallpapers/"
+}
+
+test_basename() {
+    result="$(basename "/home/black/Pictures/Wallpapers/1.jpg")"
+    assert_equals "$result" "1.jpg"
+}
+
+test_hex_to_rgb() {
+    result="$(hex_to_rgb "#FFFFFF")"
+    assert_equals "$result" "255 255 255"
+
+    result="$(hex_to_rgb "000000")"
+    assert_equals "$result" "0 0 0"
+}
+
+test_rgb_to_hex() {
+    result="$(rgb_to_hex 0 0 0)"
+    assert_equals "$result" "#000000"
+}
+
+test_date() {
+    result="$(date "%C")"
+    assert_equals "$result" "20"
+}
+
+test_read_sleep() {
+    result="$((SECONDS+1))"
+    read_sleep 1
+    assert_equals "$result" "$SECONDS"
+}
+
+test_bar() {
+    result="$(bar 50 10)"
+    assert_equals "${result//$'\r'}" "[-----     ]"
+}
+
+test_get_functions() {
+    IFS=$'\n' read -d "" -ra functions < <(get_functions)
+    assert_equals "${functions[0]}" "assert_equals"
+}
+
+test_extract() {
+    printf '{\nhello, world\n}\n' > test_file
+    result="$(extract test_file "{" "}")"
+    assert_equals "$result" "hello, world"
+}
+
+test_split() {
+    IFS=$'\n' read -d "" -ra result < <(split "hello,world,my,name,is,john" ",")
+    assert_equals "${result[*]}" "hello world my name is john"
+}
+
+assert_equals() {
+    if [[ "$1" == "$2" ]]; then
+        ((pass+=1))
+        status=$'\e[32m✔'
+    else
+        ((fail+=1))
+        status=$'\e[31m✖'
+        local err="(\"$1\" != \"$2\")"
+    fi
+
+    printf ' %s\e[m | %s\n' "$status" "${FUNCNAME[1]/test_} $err"
+}
+
+main() {
+    trap 'rm readme_code test_file' EXIT
+
+    # Extract code blocks from the README.
+    while IFS=$'\n' read -r line; do
+        [[ "$code" && "$line" != \`\`\` ]] && printf '%s\n' "$line"
+        [[ "$line" =~ ^\`\`\`sh$ ]] && code=1
+        [[ "$line" =~ ^\`\`\`$ ]]   && code=
+    done < README.md > readme_code
+
+    # Run shellcheck and source the code.
+    shellcheck -s bash readme_code test.sh build.sh || exit 1
+    . readme_code
+
+    head="-> Running tests on the Pure Bash Bible.."
+    printf '\n%s\n%s\n' "$head" "${head//?/-}"
+
+    # Generate the list of tests to run.
+    IFS=$'\n' read -d "" -ra funcs < <(declare -F)
+    for func in "${funcs[@]//declare -f }"; do
+        [[ "$func" == test_* ]] && "$func";
+    done
+
+    comp="Completed $((fail+pass)) tests. ${pass:-0} passed, ${fail:-0} failed."
+    printf '%s\n%s\n\n' "${comp//?/-}" "$comp"
+
+    # If a test failed, exit with '1'.
+    ((fail>0)) || exit 0 && exit 1
+}
+
+main "$@"

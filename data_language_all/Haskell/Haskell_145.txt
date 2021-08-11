@@ -1,0 +1,159 @@
+-- Copyright (c) 2014-present, Facebook, Inc.
+-- All rights reserved.
+--
+-- This source code is distributed under the terms of a BSD license,
+-- found in the LICENSE file.
+
+{-# LANGUAGE CPP #-}
+
+-- |
+-- The 'Flags' type and related functions.  This module is provided
+-- for access to Haxl internals only; most users should import
+-- "Haxl.Core" instead.
+--
+module Haxl.Core.Flags
+  (
+    -- * Tracing flags
+    Flags(..)
+  , defaultFlags
+  , ifTrace
+  , ifReport
+  , ifProfiling
+  ) where
+
+import Control.Monad
+
+-- ---------------------------------------------------------------------------
+-- Flags
+
+-- | Flags that control the operation of the engine.
+data Flags = Flags
+  { trace :: {-# UNPACK #-} !Int
+    -- ^ Tracing level (0 = quiet, 3 = very verbose).
+  , report :: {-# UNPACK #-} !Int
+    -- ^ Report level:
+    --    * 0 = quiet
+    --    * 1 = quiet (legacy, this used to do something)
+    --    * 2 = data fetch stats & errors
+    --    * 3 = (same as 2, this used to enable errors)
+    --    * 4 = profiling
+    --    * 5 = log stack traces of dataFetch calls
+  , caching :: {-# UNPACK #-} !Int
+    -- ^ Non-zero if caching is enabled.  If caching is disabled, then
+    -- we still do batching and de-duplication, but do not cache
+    -- results.
+  , recording :: {-# UNPACK #-} !Int
+    -- ^ Non-zero if recording is enabled. This allows tests to record cache
+    -- calls for datasources by making uncachedRequest behave like dataFetch
+  }
+
+defaultFlags :: Flags
+defaultFlags = Flags
+  { trace = 0
+  , report = 0
+  , caching = 1
+  , recording = 0
+  }
+
+#if __GLASGOW_HASKELL__ >= 710
+#define FUNMONAD Monad m
+#else
+#define FUNMONAD (Functor m, Monad m)
+#endif
+
+-- | Runs an action if the tracing level is above the given threshold.
+ifTrace :: FUNMONAD => Flags -> Int -> m a -> m ()
+ifTrace flags i = when (trace flags >= i) . void
+
+-- | Runs an action if the report level is above the given threshold.
+ifReport :: FUNMONAD => Flags -> Int -> m a -> m ()
+ifReport flags i = when (report flags >= i) . void
+
+ifProfiling :: FUNMONAD => Flags -> m a -> m ()
+ifProfiling flags = when (report flags >= 4) . void
+
+#undef FUNMONAD
+-- Copyright (c) 2014-present, Facebook, Inc.
+-- All rights reserved.
+--
+-- This source code is distributed under the terms of a BSD license,
+-- found in the LICENSE file.
+
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE RecordWildCards #-}
+
+-- | Psuedo-parallel operations.  Most users should import "Haxl.Core"
+-- instead.
+--
+module Haxl.Core.Parallel
+  ( -- * Parallel operations
+    pAnd
+  , pOr
+  ) where
+
+import Haxl.Core.Monad
+
+-- -----------------------------------------------------------------------------
+-- Parallel operations
+
+-- Bind more tightly than .&&, .||
+infixr 5 `pAnd`
+infixr 4 `pOr`
+
+-- | Parallel version of '(.||)'.  Both arguments are evaluated in
+-- parallel, and if either returns 'True' then the other is
+-- not evaluated any further.
+--
+-- WARNING: exceptions may be unpredictable when using 'pOr'.  If one
+-- argument returns 'True' before the other completes, then 'pOr'
+-- returns 'True' immediately, ignoring a possible exception that
+-- the other argument may have produced if it had been allowed to
+-- complete.
+pOr :: GenHaxl u Bool -> GenHaxl u Bool -> GenHaxl u Bool
+GenHaxl a `pOr` GenHaxl b = GenHaxl $ \env@Env{..} -> do
+  let !senv = speculate env
+  ra <- a senv
+  case ra of
+    Done True -> return (Done True)
+    Done False -> b env  -- not speculative
+    Throw _ -> return ra
+    Blocked ia a' -> do
+      rb <- b senv
+      case rb of
+        Done True -> return rb
+        Done False -> return ra
+        Throw _ -> return rb
+        Blocked _ b' -> return (Blocked ia (Cont (toHaxl a' `pOr` toHaxl b')))
+          -- Note [pOr Blocked/Blocked]
+          -- This will only wake up when ia is filled, which
+          -- is whatever the left side was waiting for.  This is
+          -- suboptimal because the right side might wake up first,
+          -- but handling this non-determinism would involve a much
+          -- more complicated implementation here.
+
+-- | Parallel version of '(.&&)'.  Both arguments are evaluated in
+-- parallel, and if either returns 'False' then the other is
+-- not evaluated any further.
+--
+-- WARNING: exceptions may be unpredictable when using 'pAnd'.  If one
+-- argument returns 'False' before the other completes, then 'pAnd'
+-- returns 'False' immediately, ignoring a possible exception that
+-- the other argument may have produced if it had been allowed to
+-- complete.
+pAnd :: GenHaxl u Bool -> GenHaxl u Bool -> GenHaxl u Bool
+GenHaxl a `pAnd` GenHaxl b = GenHaxl $ \env@Env{..} -> do
+  let !senv = speculate env
+  ra <- a senv
+  case ra of
+    Done False -> return (Done False)
+    Done True -> b env
+    Throw _ -> return ra
+    Blocked ia a' -> do
+      rb <- b senv
+      case rb of
+        Done False -> return rb
+        Done True -> return ra
+        Throw _ -> return rb
+        Blocked _ b' -> return (Blocked ia (Cont (toHaxl a' `pAnd` toHaxl b')))
+         -- See Note [pOr Blocked/Blocked]

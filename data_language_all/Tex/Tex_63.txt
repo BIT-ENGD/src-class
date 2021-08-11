@@ -1,0 +1,92 @@
+\mysection{memmove() et memcpy()}
+\label{memmove_and_DF}
+\myindex{\CStandardLibrary!memmove()}
+\myindex{\CStandardLibrary!memcpy()}
+
+La différence entre ces deux fonctions standards est que \IT{memcpy()} copie aveuglément
+un bloc à un autre endroit, alors que \IT{memmove()} gère correctement les blocs
+qui se recouvrent.
+Par exemple, si vous voulez déplacer une chaîne de deux octets en avant:
+
+% TODO TikZ
+\begin{lstlisting}
+`|.|.|h|e|l|l|o|...` -> `|h|e|l|l|o|...`
+\end{lstlisting}
+
+\IT{memcpy()} qui copie des mots de 32-bit ou de 64-bit à la fois, ou même \ac{SIMD},
+va manifestement échouer ici, une routine de copie octet par octet doit être utilisée
+à la place.
+
+Maintenant un exemple encore plus avancé, insérer deux octets au début d'une chaîne:
+
+\begin{lstlisting}
+`|h|e|l|l|o|...` -> `|.|.|h|e|l|l|o|...`
+\end{lstlisting}
+
+Maintenant, même une copie octet par octet va échouer, car vous devez copier en partant
+de la fin.
+
+\myindex{x86!\Registers!DF}
+C'est un cas rare où le flag x86 \TT{DF} doit être mis avant l'instruction \INS{REP MOVSB}:
+\TT{DF} défini la direction, et maintenant, nous devons déplacer en arrière.
+
+La routine \IT{memmove()} typique fonctionne comme ceci:
+1) si la source est avant la destination, copier en avant;
+2) si la source est après la destination, copier en arrière.
+
+\myindex{uClibc}
+Ceci est la fonction \IT{memmove()} de uClibc:
+
+\begin{lstlisting}[style=customc]
+void *memmove(void *dest, const void *src, size_t n)
+{
+	int eax, ecx, esi, edi;
+	__asm__ __volatile__(
+		"	movl	%%eax, %%edi\n"
+		"	cmpl	%%esi, %%eax\n"
+		"	je	2f\n" /* (optional) src == dest -> NOP */
+		"	jb	1f\n" /* src > dest -> simple copy */
+		"	leal	-1(%%esi,%%ecx), %%esi\n"
+		"	leal	-1(%%eax,%%ecx), %%edi\n"
+		"	std\n"
+		"1:	rep; movsb\n"
+		"	cld\n"
+		"2:\n"
+		: "=&c" (ecx), "=&S" (esi), "=&a" (eax), "=&D" (edi)
+		: "0" (n), "1" (src), "2" (dest)
+		: "memory"
+	);
+	return (void*)eax;
+}
+\end{lstlisting}
+
+Dans le premier cas, \INS{REP MOVSB} est appelée avec le flag \TT{DF} à zéro.
+Dans le second, \TT{DF} est mis, puis remis à zéro.
+
+Un algorithme plus complexe contient la logique suivante:
+
+\q{Si la différence entre la \IT{source} et la \IT{destination} est plus grande que
+la largeur d'un \glslink{word}{mot}, copier en utilisant des mots plutôt que des octets,
+et utiliser une copie octet par octet pour copier les parties non alignées.}
+
+\myindex{Glibc}
+Voici comment ça se passe dans la partie C non optimisée de la Glibc 2.24.
+
+Compte tenu de cela, \IT{memmove()} peut être plus lente que \IT{memcpy()}.
+Mais certains, Linus Torvalds inclus, argumentent\footnote{\url{https://bugzilla.redhat.com/show_bug.cgi?id=638477\#c132}}
+que \IT{memcpy()} devrait être un alias (ou synonyme) de \IT{memmove()}, et cette
+dernière fonction devrait juste tester au début, si les buffers se recouvrent ou
+non, et ensuite se comporter comme \IT{memcpy()} ou \IT{memmove()}.
+De nos jours, le test de recouvrement de buffers est peu coûteux, après tout.
+
+\subsection{Stratagème anti-debugging}
+
+J'ai entendu parler de stratagème anti-debugging où tout ce que vous devez faire pour
+crasher le processus est de mettre \TT{DF}: le prochain appel à \IT{memcpy()} va
+conduire au crash, car il copiera en arrière.
+Mais je ne peux pas tester ceci: il semble que toutes les routines de copie de mémoire
+mettent \TT{DF} à 1/0 comme elles le veulent.
+D'un autre côté, \IT{memmove()} de uClibc que j'ai déjà cité ici, ne remet pas explicitement
+\TT{DF} à zéro (assume-t-elle que \TT{DF} est toujours à zéro?), donc ça peut vraiment
+planter.
+

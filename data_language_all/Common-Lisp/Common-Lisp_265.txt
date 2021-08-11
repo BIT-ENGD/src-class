@@ -1,0 +1,91 @@
+#!/bin/sh
+#|-*- mode: lisp -*-|#
+#|
+exec ros -Q -L sbcl-bin -- $0 "$@"
+|#
+(progn ;;init forms
+  (ros:ensure-asdf)
+  #+quicklisp (ql:quickload '(:cl-html-parse :uiop :dexador) :silent t))
+
+(defpackage :ros.script.debian.3703769507
+  (:use :cl))
+(in-package :ros.script.debian.3703769507)
+
+(defvar *pwd* (make-pathname :defaults cl:*load-pathname* :name nil :type nil))
+(defvar *package-name* "roswell")
+(defvar *stab-version* "99.99.99.99")
+(defun get-newest-url (base)
+  (let ((branch (or (ros:getenv "CIRCLE_BRANCH")
+                    (ros:getenv "TRAVIS_BRANCH"))))
+    (if branch
+        (format nil "https://github.com/~A/archive/~A.tar.gz" base branch)
+        (multiple-value-bind (body res)
+            (dex:get (format nil "https://github.com/~A/releases/" base))
+          (when (= res 200)
+            (net.html.parser:parse-html
+             body
+             :callbacks
+             (list (cons :a (lambda (arg)
+                              (let ((href (getf (cdr (car arg)) :href)))
+                                (when (and (> (length href) 6)
+                                           (equal (subseq href (-(length href) 6))
+                                                  "tar.gz")
+                                           ;; href which include "archive" not "release"
+                                           (eql (aref href (1+ (position #\a href))) #\r))
+                                  (return-from get-newest-url (format nil "https://github.com~A" href)))))))
+             :callback-only t))))))
+
+(defun fetch-upstream (&optional (output *pwd*))
+  (let* ((url (get-newest-url "roswell/roswell"))
+         (path (merge-pathnames (subseq url (1+ (position #\/ url :from-end t))) output)))
+    (roswell.util:download url path)
+    path))
+
+(defun rename-upstream (path &optional (package-name *package-name*) (output *pwd*))
+  (let* ((name (pathname-name path))
+         (version% (aref (nth-value 1 (cl-ppcre:scan-to-strings
+                                       "\\((.*)-[0-9]*\\)"
+                                       (uiop/run-program:run-program
+                                        (format nil "cat ~A../ChangeLog|grep ^roswell| head -n 1" *pwd*) :output :string))) 0))
+         (version (if (equal version% "master-changelog-which-not-yet-released")
+                      *stab-version*
+                      version%))
+         (new (make-pathname :name (format nil "~A_~A.orig.tar" package-name
+                                           (subseq version 0
+                                                   (position #\- version)))
+                             :defaults output)))
+    (when (probe-file new)
+      (delete-file new))
+    (uiop/os:chdir output)
+    (uiop/run-program:run-program (format nil "tar xf ~A" (namestring path)))
+    (rename-file path new)
+    new))
+
+(defun cp-debian (output)
+  (let ((path (namestring
+               (first ;; should be sort.
+                (remove-if-not 
+                 #'(lambda (x)
+                     (and (not (pathname-name x))
+                          (string-equal "roswell" 
+                                        (first (last (pathname-directory x)))
+                                        :end2 (min 7 (length (first (last 
+                                                                     (pathname-directory x))))))))
+                 (directory (merge-pathnames "*.*" output)))))))
+    (uiop/run-program:run-program
+     (format nil "cat ~A../ChangeLog|sed -e s/master-changelog-which-not-yet-released/~A/>~Adebian/changelog" *pwd* *stab-version* path))
+    path))
+
+(defun dpkg-buildpackage (path)
+  (uiop/os:chdir path)
+  (uiop/run-program:run-program "dpkg-buildpackage -us -uc" :output :interactive))
+
+(defun main (&optional (arg0 "all") &rest argv)
+  (declare (ignorable argv arg0))
+  (let ((output (ensure-directories-exist (merge-pathnames "debian/" *pwd*))))
+    (cond ((equal arg0 "all")
+           (let* ((upstream (fetch-upstream output)))
+             (rename-upstream upstream "roswell" output))
+           (dpkg-buildpackage (cp-debian output)))
+          ((equal arg0 "clean")
+           (format *error-output* "hoge~%")))))

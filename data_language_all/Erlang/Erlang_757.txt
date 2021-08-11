@@ -1,0 +1,110 @@
+#!/usr/bin/env escript
+
+
+%% Only works on localhost, assumes the current hostname will fit the localhost
+-define(NAME, filename:basename(escript:script_name())).
+
+main([Op]) -> main([Op, "logplex"]);
+
+main(["nodes", Name]) ->
+    Node = connect(Name),
+    Res = rpc:call(Node, redgrid, nodes, []),
+    io:format("Nodes: ~p~n", [Res]),
+    disconnect(),
+    halt(0);
+main(["stop", Name]) ->
+    Node = connect(Name),
+    io:format("Suspending redgrid...~n"),
+    rpc:call(Node, redgrid, suspend, []),
+    Nodes = rpc:call(Node, redgrid, nodes, []),
+    [ do_disconnect_node(Node, Target) || {Target, _} <- Nodes ],
+    io:format("ok.~n"),
+    disconnect(),
+    halt(0);
+main(["suspend", Name]) ->
+    Node = connect(Name),
+    io:format("Suspending redgrid... "),
+    rpc:call(Node, redgrid, suspend, []),
+    io:format("ok.~n"),
+    disconnect(),
+    halt(0);
+main(["resume", Name]) ->
+    Node = connect(Name),
+    io:format("Resuming redgrid... "),
+    rpc:call(Node, redgrid, resume, []),
+    io:format("ok.~n"),
+    disconnect(),
+    halt(0);
+main(["reload_config", Name]) ->
+    Node = connect(Name),
+    io:format("Reloading redgrid conf... "),
+    RedisURL = getenv("LOGPLEX_REDGRID_REDIS_URL"),
+    ok = rpc:call(Node, application, set_env, [redgrid, redis_url, RedisURL]),
+    Res = rpc:call(Node, redgrid, reload_config, []),
+    io:format("Result: ~p.~n", [Res]),
+    disconnect(),
+    halt(0);
+main(["status", Name]) ->
+    Node = connect(Name),
+    Res = rpc:call(Node, sys, get_status, [redgrid]),
+    io:format("redgrid status: ~p~n", [Res]),
+    disconnect(),
+    halt(0);
+main(_) -> %% HELP
+    io:format("nodes <Node>~n"
+              "\tAttempt to contact redgrid on <Node> and fetch the peers it can see.~n"
+              "suspend <Node>~n"
+              "\tDeregister <Node> from redgrid and suspend the update process.~n"
+              "resume <Node>~n"
+              "\tRegister <Node> back into redgrid and resume regular activities.~n"
+              "reload_config <Node>~n"
+              "\tReload <Node>'s configuration from the app env or OS if not defined.~n"
+              "status <Node>~n"
+              "\tFetches the process status for redgrid on node <Node>.~n"),
+    halt(0).
+
+connect(Name) ->
+    %% -name ?FILE -hidden -setcookie $LOGPLEX_COOKIE
+    Node = name(Name),
+    io:format("Starting distributed mode.~n"),
+    {ok, _} = net_kernel:start([name(), longnames]),
+    set_cookie(Node),
+    io:format("Connecting (hidden) to ~p.~n", [Node]),
+    true = net_kernel:hidden_connect(Node), % undocumented yay!
+    io:format("Connected.~n"),
+    Node.
+
+disconnect() ->
+    io:format("Disconnecting.~n"),
+    net_kernel:stop().
+
+do_disconnect_node(Node, Node) ->
+    skipped_self;
+do_disconnect_node(Node, Target) ->
+  Res = rpc:call(Node, erlang, disconnect_node, [Target]),
+  io:format("Disconnecting from ~p... ~p~n", [Target, Res]),
+  Res.
+
+name() ->
+    name(?NAME).
+
+name(Name) ->
+    Localhost = net_adm:localhost(),
+    list_to_atom(Name ++ "@" ++ Localhost).
+
+set_cookie(Node) ->
+    case os:getenv("LOGPLEX_COOKIE") of
+        false ->
+            io:format("LOGPLEX_COOKIE not found, proceeding without it.~n");
+        Cookie ->
+            erlang:set_cookie(Node, list_to_atom(Cookie))
+    end.
+
+getenv(Key) ->
+  case os:getenv(Key) of
+    false ->
+      io:format("Env variable ~s not set~n", [Key]),
+      halt(1);
+    Val ->
+      Val
+  end.

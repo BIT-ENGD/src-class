@@ -1,0 +1,450 @@
+#!/bin/bash
+
+set -ex
+
+LOCAL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "$LOCAL_DIR"/../.. && pwd)
+
+# Setup sccache if SCCACHE_BUCKET is set
+if [ -n "${SCCACHE_BUCKET}" ]; then
+  mkdir -p ./sccache
+
+  SCCACHE="$(which sccache)"
+  if [ -z "${SCCACHE}" ]; then
+    echo "Unable to find sccache..."
+    exit 1
+  fi
+
+  # Setup wrapper scripts
+  for compiler in cc c++ gcc g++ x86_64-linux-gnu-gcc; do
+    (
+      echo "#!/bin/sh"
+      echo "exec $SCCACHE $(which $compiler) \"\$@\""
+    ) > "./sccache/$compiler"
+    chmod +x "./sccache/$compiler"
+  done
+
+  # CMake must find these wrapper scripts
+  export PATH="$PWD/sccache:$PATH"
+fi
+
+# Setup ccache if configured to use it (and not sccache)
+if [ -z "${SCCACHE}" ] && which ccache > /dev/null; then
+  mkdir -p ./ccache
+  ln -sf "$(which ccache)" ./ccache/cc
+  ln -sf "$(which ccache)" ./ccache/c++
+  ln -sf "$(which ccache)" ./ccache/gcc
+  ln -sf "$(which ccache)" ./ccache/g++
+  ln -sf "$(which ccache)" ./ccache/x86_64-linux-gnu-gcc
+  export CCACHE_WRAPPER_DIR="$PWD/ccache"
+  export PATH="$CCACHE_WRAPPER_DIR:$PATH"
+fi
+
+CMAKE_ARGS=("-DBUILD_BINARY=ON")
+CMAKE_ARGS+=("-DUSE_OBSERVERS=ON")
+CMAKE_ARGS+=("-DUSE_ZSTD=ON")
+
+# Run build script from scripts if applicable
+if [[ "${BUILD_ENVIRONMENT}" == *-android* ]]; then
+  export ANDROID_NDK=/opt/ndk
+  "${ROOT_DIR}/scripts/build_android.sh" ${CMAKE_ARGS[*]} "$@"
+  exit 0
+fi
+if [[ "${BUILD_ENVIRONMENT}" == conda* ]]; then
+
+  # click (required by onnx) wants these set
+  export LANG=C.UTF-8
+  export LC_ALL=C.UTF-8
+
+  # SKIP_CONDA_TESTS refers to only the 'test' section of the meta.yaml
+  export SKIP_CONDA_TESTS=1
+  export CONDA_INSTALL_LOCALLY=1
+  "${ROOT_DIR}/scripts/build_anaconda.sh" "$@"
+
+  # The tests all need hypothesis, tabulate, and pydot, which aren't included
+  # in the conda packages
+  conda install -y hypothesis tabulate pydot
+
+  # This build will be tested against onnx tests, which needs onnx installed.
+  # Onnx should be built against the same protobuf that Caffe2 uses, which is
+  # only installed in the conda environment when Caffe2 is.
+  # This path comes from install_anaconda.sh which installs Anaconda into the
+  # docker image
+  PROTOBUF_INCDIR=/opt/conda/include pip install "${ROOT_DIR}/third_party/onnx"
+  exit 0
+fi
+
+# Run cmake from ./build directory
+mkdir -p ./build
+cd ./build
+
+INSTALL_PREFIX="/usr/local/caffe2"
+CMAKE_ARGS+=("-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}")
+
+# Explicitly set Python executable.
+# On Ubuntu 16.04 the default Python is still 2.7.
+PYTHON="$(which python)"
+if [[ "${BUILD_ENVIRONMENT}" == py3* ]]; then
+  PYTHON=/usr/bin/python3
+  CMAKE_ARGS+=("-DPYTHON_EXECUTABLE=${PYTHON}")
+fi
+
+case "${BUILD_ENVIRONMENT}" in
+  *-mkl*)
+    CMAKE_ARGS+=("-DBLAS=MKL")
+    ;;
+  *-cuda*)
+    CMAKE_ARGS+=("-DUSE_CUDA=ON")
+    CMAKE_ARGS+=("-DCUDA_ARCH_NAME=Maxwell")
+    CMAKE_ARGS+=("-DUSE_NNPACK=OFF")
+
+    # Add ccache symlink for nvcc
+    ln -sf "$(which ccache)" "${CCACHE_WRAPPER_DIR}/nvcc"
+
+    # Explicitly set path to NVCC such that the symlink to ccache is used
+    CMAKE_ARGS+=("-DCUDA_NVCC_EXECUTABLE=${CCACHE_WRAPPER_DIR}/nvcc")
+
+    # Ensure FindCUDA.cmake can infer the right path to the CUDA toolkit.
+    # Setting PATH to resolve to the right nvcc alone isn't enough.
+    # See /usr/share/cmake-3.5/Modules/FindCUDA.cmake, block at line 589.
+    export CUDA_PATH="/usr/local/cuda"
+
+    # Ensure the ccache symlink can still find the real nvcc binary.
+    export PATH="/usr/local/cuda/bin:$PATH"
+    ;;
+esac
+
+# Try to include Redis support for Linux builds
+if [ "$(uname)" == "Linux" ]; then
+  CMAKE_ARGS+=("-DUSE_REDIS=ON")
+fi
+
+# Currently, on Jenkins mac os, we will use custom protobuf. Mac OS
+# contbuild at the moment is minimal dependency - it doesn't use glog
+# or gflags either.
+if [ "$(uname)" == "Darwin" ]; then
+  CMAKE_ARGS+=("-DBUILD_CUSTOM_PROTOBUF=ON")
+fi
+
+# We test the presence of cmake3 (for platforms like Centos and Ubuntu 14.04)
+# and use that if so.
+if [[ -x "$(command -v cmake3)" ]]; then
+    CMAKE_BINARY=cmake3
+else
+    CMAKE_BINARY=cmake
+fi
+
+# Configure
+${CMAKE_BINARY} "${ROOT_DIR}" ${CMAKE_ARGS[*]} "$@"
+
+# Build
+if [ "$(uname)" == "Linux" ]; then
+  make "-j$(nproc)" install
+else
+  echo "Don't know how to build on $(uname)"
+  exit 1
+fi
+
+# Install ONNX into a local directory
+ONNX_INSTALL_PATH="/usr/local/onnx"
+pip install "${ROOT_DIR}/third_party/onnx" -t "${ONNX_INSTALL_PATH}"
+
+# Symlink the caffe2 base python path into the system python path,
+# so that we can import caffe2 without having to change $PYTHONPATH.
+# Run in a subshell to contain environment set by /etc/os-release.
+#
+# This is only done when running on Jenkins!  We don't want to pollute
+# the user environment with Python symlinks and ld.so.conf.d hacks.
+#
+if [ -n "${JENKINS_URL}" ]; then
+  (
+    source /etc/os-release
+
+    function python_version() {
+      "$PYTHON" -c 'import sys; print("python%d.%d" % sys.version_info[0:2])'
+    }
+
+    # Debian/Ubuntu
+    if [[ "$ID_LIKE" == *debian* ]]; then
+      python_path="/usr/local/lib/$(python_version)/dist-packages"
+      sudo ln -sf "${INSTALL_PREFIX}/caffe2" "${python_path}"
+      sudo ln -sf "${ONNX_INSTALL_PATH}/onnx" "${python_path}"
+    fi
+
+    # RHEL/CentOS
+    if [[ "$ID_LIKE" == *rhel* ]]; then
+      python_path="/usr/lib64/$(python_version)/site-packages/"
+      sudo ln -sf "${INSTALL_PREFIX}/caffe2" "${python_path}"
+      sudo ln -sf "${ONNX_INSTALL_PATH}/onnx" "${python_path}"
+    fi
+
+    # /etc/ld.so.conf.d is used on both Debian and RHEL
+    echo "${INSTALL_PREFIX}/lib" | sudo tee /etc/ld.so.conf.d/caffe2.conf
+    sudo ldconfig
+  )
+fi
+# Copyright (c) 2009 rupa deadwyler. Licensed under the WTFPL license, Version 2
+
+# maintains a jump-list of the directories you actually use
+#
+# INSTALL:
+#     * put something like this in your .bashrc/.zshrc:
+#         . /path/to/z.sh
+#     * cd around for a while to build up the db
+#     * PROFIT!!
+#     * optionally:
+#         set $_Z_CMD in .bashrc/.zshrc to change the command (default z).
+#         set $_Z_DATA in .bashrc/.zshrc to change the datafile (default ~/.z).
+#         set $_Z_NO_RESOLVE_SYMLINKS to prevent symlink resolution.
+#         set $_Z_NO_PROMPT_COMMAND if you're handling PROMPT_COMMAND yourself.
+#         set $_Z_EXCLUDE_DIRS to an array of directories to exclude.
+#         set $_Z_OWNER to your username if you want use z while sudo with $HOME kept
+#
+# USE:
+#     * z foo     # cd to most frecent dir matching foo
+#     * z foo bar # cd to most frecent dir matching foo and bar
+#     * z -r foo  # cd to highest ranked dir matching foo
+#     * z -t foo  # cd to most recently accessed dir matching foo
+#     * z -l foo  # list matches instead of cd
+#     * z -e foo  # echo the best match, don't cd
+#     * z -c foo  # restrict matches to subdirs of $PWD
+
+[ -d "${_Z_DATA:-$HOME/.z}" ] && {
+    echo "ERROR: z.sh's datafile (${_Z_DATA:-$HOME/.z}) is a directory."
+}
+
+_z() {
+
+    local datafile="${_Z_DATA:-$HOME/.z}"
+
+    # if symlink, dereference
+    [ -h "$datafile" ] && datafile=$(readlink "$datafile")
+
+    # bail if we don't own ~/.z and $_Z_OWNER not set
+    [ -z "$_Z_OWNER" -a -f "$datafile" -a ! -O "$datafile" ] && return
+
+    _z_dirs () {
+        local line
+        while read line; do
+            # only count directories
+            [ -d "${line%%\|*}" ] && echo "$line"
+        done < "$datafile"
+        return 0
+    }
+
+    # add entries
+    if [ "$1" = "--add" ]; then
+        shift
+
+        # $HOME isn't worth matching
+        [ "$*" = "$HOME" ] && return
+
+        # don't track excluded directory trees
+        local exclude
+        for exclude in "${_Z_EXCLUDE_DIRS[@]}"; do
+            case "$*" in "$exclude*") return;; esac
+        done
+
+        # maintain the data file
+        local tempfile="$datafile.$RANDOM"
+        _z_dirs | awk -v path="$*" -v now="$(date +%s)" -F"|" '
+            BEGIN {
+                rank[path] = 1
+                time[path] = now
+            }
+            $2 >= 1 {
+                # drop ranks below 1
+                if( $1 == path ) {
+                    rank[$1] = $2 + 1
+                    time[$1] = now
+                } else {
+                    rank[$1] = $2
+                    time[$1] = $3
+                }
+                count += $2
+            }
+            END {
+                if( count > 9000 ) {
+                    # aging
+                    for( x in rank ) print x "|" 0.99*rank[x] "|" time[x]
+                } else for( x in rank ) print x "|" rank[x] "|" time[x]
+            }
+        ' 2>/dev/null >| "$tempfile"
+        # do our best to avoid clobbering the datafile in a race condition.
+        if [ $? -ne 0 -a -f "$datafile" ]; then
+            env rm -f "$tempfile"
+        else
+            [ "$_Z_OWNER" ] && chown $_Z_OWNER:"$(id -ng $_Z_OWNER)" "$tempfile"
+            env mv -f "$tempfile" "$datafile" || env rm -f "$tempfile"
+        fi
+
+    # tab completion
+    elif [ "$1" = "--complete" -a -s "$datafile" ]; then
+        _z_dirs | awk -v q="$2" -F"|" '
+            BEGIN {
+                q = substr(q, 3)
+                if( q == tolower(q) ) imatch = 1
+                gsub(/ /, ".*", q)
+            }
+            {
+                if( imatch ) {
+                    if( tolower($1) ~ q ) print $1
+                } else if( $1 ~ q ) print $1
+            }
+        ' 2>/dev/null
+
+    else
+        # list/go
+        local echo fnd last list opt typ
+        while [ "$1" ]; do case "$1" in
+            --) while [ "$1" ]; do shift; fnd="$fnd${fnd:+ }$1";done;;
+            -*) opt=${1:1}; while [ "$opt" ]; do case ${opt:0:1} in
+                    c) fnd="^$PWD $fnd";;
+                    e) echo=1;;
+                    h) echo "${_Z_CMD:-z} [-cehlrtx] args" >&2; return;;
+                    l) list=1;;
+                    r) typ="rank";;
+                    t) typ="recent";;
+                    x) sed -i -e "\:^${PWD}|.*:d" "$datafile";;
+                esac; opt=${opt:1}; done;;
+             *) fnd="$fnd${fnd:+ }$1";;
+        esac; last=$1; [ "$#" -gt 0 ] && shift; done
+        [ "$fnd" -a "$fnd" != "^$PWD " ] || list=1
+
+        # if we hit enter on a completion just go there
+        case "$last" in
+            # completions will always start with /
+            /*) [ -z "$list" -a -d "$last" ] && builtin cd "$last" && return;;
+        esac
+
+        # no file yet
+        [ -f "$datafile" ] || return
+
+        local cd
+        cd="$( < <( _z_dirs ) awk -v t="$(date +%s)" -v list="$list" -v typ="$typ" -v q="$fnd" -F"|" '
+            function frecent(rank, time) {
+                # relate frequency and time
+                dx = t - time
+                if( dx < 3600 ) return rank * 4
+                if( dx < 86400 ) return rank * 2
+                if( dx < 604800 ) return rank / 2
+                return rank / 4
+            }
+            function output(matches, best_match, common) {
+                # list or return the desired directory
+                if( list ) {
+                    cmd = "sort -n >&2"
+                    for( x in matches ) {
+                        if( matches[x] ) {
+                            printf "%-10s %s\n", matches[x], x | cmd
+                        }
+                    }
+                    if( common ) {
+                        printf "%-10s %s\n", "common:", common > "/dev/stderr"
+                    }
+                } else {
+                    if( common ) best_match = common
+                    print best_match
+                }
+            }
+            function common(matches) {
+                # find the common root of a list of matches, if it exists
+                for( x in matches ) {
+                    if( matches[x] && (!short || length(x) < length(short)) ) {
+                        short = x
+                    }
+                }
+                if( short == "/" ) return
+                for( x in matches ) if( matches[x] && index(x, short) != 1 ) {
+                    return
+                }
+                return short
+            }
+            BEGIN {
+                gsub(" ", ".*", q)
+                hi_rank = ihi_rank = -9999999999
+            }
+            {
+                if( typ == "rank" ) {
+                    rank = $2
+                } else if( typ == "recent" ) {
+                    rank = $3 - t
+                } else rank = frecent($2, $3)
+                if( $1 ~ q ) {
+                    matches[$1] = rank
+                } else if( tolower($1) ~ tolower(q) ) imatches[$1] = rank
+                if( matches[$1] && matches[$1] > hi_rank ) {
+                    best_match = $1
+                    hi_rank = matches[$1]
+                } else if( imatches[$1] && imatches[$1] > ihi_rank ) {
+                    ibest_match = $1
+                    ihi_rank = imatches[$1]
+                }
+            }
+            END {
+                # prefer case sensitive
+                if( best_match ) {
+                    output(matches, best_match, common(matches))
+                } else if( ibest_match ) {
+                    output(imatches, ibest_match, common(imatches))
+                }
+            }
+        ')"
+
+        [ $? -eq 0 ] && [ "$cd" ] && {
+          if [ "$echo" ]; then echo "$cd"; else builtin cd "$cd"; fi
+        }
+    fi
+}
+
+alias ${_Z_CMD:-z}='_z 2>&1'
+
+[ "$_Z_NO_RESOLVE_SYMLINKS" ] || _Z_RESOLVE_SYMLINKS="-P"
+
+if type compctl >/dev/null 2>&1; then
+    # zsh
+    [ "$_Z_NO_PROMPT_COMMAND" ] || {
+        # populate directory list, avoid clobbering any other precmds.
+        if [ "$_Z_NO_RESOLVE_SYMLINKS" ]; then
+            _z_precmd() {
+                (_z --add "${PWD:a}" &)
+            }
+        else
+            _z_precmd() {
+                (_z --add "${PWD:A}" &)
+            }
+        fi
+        [[ -n "${precmd_functions[(r)_z_precmd]}" ]] || {
+            precmd_functions[$(($#precmd_functions+1))]=_z_precmd
+        }
+    }
+    _z_zsh_tab_completion() {
+        # tab completion
+        local compl
+        read -l compl
+        reply=(${(f)"$(_z --complete "$compl")"})
+    }
+    compctl -U -K _z_zsh_tab_completion _z
+elif type complete >/dev/null 2>&1; then
+    # bash
+    # tab completion
+    complete -o filenames -C '_z --complete "$COMP_LINE"' ${_Z_CMD:-z}
+    [ "$_Z_NO_PROMPT_COMMAND" ] || {
+        # populate directory list. avoid clobbering other PROMPT_COMMANDs.
+        grep "_z --add" <<< "$PROMPT_COMMAND" >/dev/null || {
+            PROMPT_COMMAND="$PROMPT_COMMAND"$'\n''(_z --add "$(command pwd '$_Z_RESOLVE_SYMLINKS' 2>/dev/null)" 2>/dev/null &);'
+        }
+    }
+fi
+cite 'about-alias'
+about-alias 'the silver searcher (ag) aliases'
+
+## Summary for args to less:
+# less(1)
+#   -M (-M or --LONG-PROMPT) Prompt very verbosely
+#   -I (-I or --IGNORE-CASE) Searches with '/' ignore case
+#   -R (-R or --RAW-CONTROL-CHARS) For handling ANSI colors
+#   -F (-F or --quit-if-one-screen) Auto exit if <1 screen
+#   -X (-X or --no-init) Disable termcap init & deinit
+
+alias ag='ag --smart-case --pager="less -MIRFX"'
