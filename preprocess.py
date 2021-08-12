@@ -25,19 +25,32 @@ if Path(DATASETCLEAR).exists():
 Path(DATASETCLEAR).mkdir()
 
 
-def StripComment(strSrcCode):
+NORMALCOMMENT=";[^\r\n]*|^#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''"
+CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
 
-    return strSrcCode
+fnMap={"css": CSSCOMMENT, "normal":NORMALCOMMENT}
+
+def StripComment(strSrcCode,strType,fnMap):
+    if strType in fnMap:
+        strPattern=fnMap[strType]
+    else:
+        strPattern=fnMap["normal"]
+
+    pattern1=re.compile(strPattern,re.M|re.I|re.DOTALL)
+    result=re.sub(pattern1, '', strSrcCode)
+    result=re.sub(r'\n{2,}', '\n', result)
+    return result
 
 
 def GetKeyWordSerial(strSrcCode):
 
     return strSrcCode
 
-def ProcessSrcFile(src,dst):
+def ProcessSrcFile(src,dst,typename):
+    global fnMap
     with open(src,encoding="utf-8") as f:
         srccontent=f.read()
-        srccontent=StripComment(srccontent)
+        srccontent=StripComment(srccontent,typename,fnMap)
         with open(dst,mode="w",encoding="utf-8") as nf:
             alllines=GetKeyWordSerial(srccontent)
             nf.write(alllines)
@@ -52,7 +65,7 @@ def DoPreprocess():
         
             newfile=Path(DATASETCLEAR)/dir/oldfile.name
 
-            ProcessSrcFile(oldfile,newfile)
+            ProcessSrcFile(oldfile,newfile,dir)
 
 
 
