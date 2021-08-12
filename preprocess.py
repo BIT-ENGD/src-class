@@ -25,7 +25,7 @@ if Path(DATASETCLEAR).exists():
 Path(DATASETCLEAR).mkdir()
 
 
-NORMALCOMMENT=";[^\r\n]*|^#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''"
+NORMALCOMMENT=";[^\r\n]*|#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''|\"\"\".*?\"\"\""
 CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
 
 fnMap={"css": CSSCOMMENT, "normal":NORMALCOMMENT}
@@ -38,7 +38,9 @@ def StripComment(strSrcCode,strType,fnMap):
 
     pattern1=re.compile(strPattern,re.M|re.I|re.DOTALL)
     result=re.sub(pattern1, '', strSrcCode)
-    result=re.sub(r'\n{2,}', '\n', result)
+    result=result.replace(r'\r', '')
+    result=re.sub(r'\n+', '\n', result)
+    
     return result
 
 
