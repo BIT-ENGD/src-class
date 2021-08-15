@@ -77,3 +77,8 @@ cr = re.compile(r'<[^>]*>.*?</[^>]*>')
 s = 'adffd<img>sdafdsf</img>'
 print(cr.search(s))
 '''
+
+
+lines=["abc\n"]
+lines=list(map(lambda x:x.replace("\n",""),lines))
+print(lines )
