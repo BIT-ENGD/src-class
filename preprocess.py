@@ -6,7 +6,7 @@ import re
 
 DATASETDIR="data_language_all"
 
-DATASETCLEAR=DATASETDIR.replace("all","clear")
+DATASETCLEAR=DATASETDIR.replace("all","clean")
 
 srcdir=Path(DATASETDIR)
 
@@ -25,10 +25,23 @@ if Path(DATASETCLEAR).exists():
 Path(DATASETCLEAR).mkdir()
 
 
+# strip comment from a source file.
 NORMALCOMMENT=";[^\r\n]*|#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''|\"\"\".*?\"\"\""
 CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
+OCAMLCOMMENT="\(\*.*?\*\)"
 
-fnMap={"css": CSSCOMMENT, "normal":NORMALCOMMENT}
+fnMap={"css": CSSCOMMENT, "normal":NORMALCOMMENT,"OCaml":OCAMLCOMMENT}
+
+def StripHTML(strSrcCode):
+    #dr = re.compile(r"<[^>]+>|<[\w\s]+>.*?</[\w]+>|<[^<]*?>",re.I)
+    dr=re.compile("<\s*script\s*[a-z=/\"]*>(.*?)</\s*script\s*>",re.S|re.I)
+    so= dr.findall(strSrcCode)
+    if so != None:
+         return "\n".join(so)
+    else:
+        dr=re.compile(r'<[^>]*>.*?</[^>]*>|<[^>z]+>|<[\w\s]+>.*?</[\w]+>|<[^<]*?>',re.I|re.S)
+        dr=  dr.sub("",strSrcCode)
+    return dr
 
 def StripComment(strSrcCode,strType,fnMap):
     if strType in fnMap:
@@ -36,30 +49,47 @@ def StripComment(strSrcCode,strType,fnMap):
     else:
         strPattern=fnMap["normal"]
 
+    if strType == "ASP":
+       strSrcCode= StripHTML(strSrcCode)
+
+    
+
     pattern1=re.compile(strPattern,re.M|re.I|re.DOTALL)
     result=re.sub(pattern1, '', strSrcCode)
     result=result.replace(r'\r', '')
     result=re.sub(r'\n+', '\n', result)
+    result=re.sub(r'^\n+', '', result)
     
     return result
 
 
+def StripString(strSrcCode,strType):
+    strPattern="\".*?\"|'.*?'"
+    pattern1=re.compile(strPattern,re.I)
+    result=re.sub(pattern1, 'STRSTUFF', strSrcCode)
+    return result
+
 def GetKeyWordSerial(strSrcCode):
+    strPattern="[\w]+|[\"\"!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~\"\"\]"
+    pattern1=re.compile(strPattern,re.I)
+    result=pattern1.findall(strSrcCode)
+    return result
 
-    return strSrcCode
-
-def ProcessSrcFile(src,dst,typename):
-    global fnMap
+def ProcessSrcFile(src,dst,typename,fnMap):
     with open(src,encoding="utf-8") as f:
+        if(src.name == "ASP_2.txt"):
+            print("asp1")
         srccontent=f.read()
+        srccontent=StripString(srccontent,typename)
         srccontent=StripComment(srccontent,typename,fnMap)
+        
         with open(dst,mode="w",encoding="utf-8") as nf:
             alllines=GetKeyWordSerial(srccontent)
-            nf.write(alllines)
+            nf.write("\n".join(alllines))
 
         
 
-def DoPreprocess():
+def DoPreprocess(fnMap):
     for dir in SOURCETYPE:
         newdir= Path(DATASETCLEAR)/dir
         newdir.mkdir()
@@ -67,9 +97,9 @@ def DoPreprocess():
         
             newfile=Path(DATASETCLEAR)/dir/oldfile.name
 
-            ProcessSrcFile(oldfile,newfile,dir)
+            ProcessSrcFile(oldfile,newfile,dir,fnMap)
 
 
 
 if __name__ == "__main__" :
-    DoPreprocess()
+    DoPreprocess(fnMap)
