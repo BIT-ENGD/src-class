@@ -6,6 +6,7 @@ from torch.utils.data import Dataset,DataLoader
 import torch.optim as optim
 from pathlib import Path
 import os
+from torch.utils.tensorboard import SummaryWriter
 
 DATASETDIR="data_language_clean"
 BATCH_SIZE=256
@@ -14,7 +15,7 @@ CLASS_NUM=0
 FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
-EPOCH_NUM=500
+EPOCH_NUM=2000
 MAX_TOKEN=200
 SEQUENCE_LEN=MAX_TOKEN
 FILTER_NUM=6
@@ -157,9 +158,10 @@ def do_train(ds_src,WORDLIST):
     device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
     model = TextCNN(VOCAB_SIZE,EMBED_DIM,CLASS_NUM).to(device)
     criterion = nn.CrossEntropyLoss().to(device)
-    optimizer =optim.Adam(model.parameters(),lr=1e-3)
+    optimizer =optim.Adam(model.parameters(),lr=5e-4)
     loader=DataLoader(dataset=ds_src,batch_size=BATCH_SIZE,shuffle=True,num_workers=0)
     loss = torch.Tensor([0.0]).float()
+    writer = SummaryWriter("runs/lstm")
     for epoch in range(EPOCH_NUM):
         
         for batch_x,batch_y in loader:
@@ -173,6 +175,7 @@ def do_train(ds_src,WORDLIST):
             batch_x=batch_x.transpose(1,0)
             pred=model(batch_x)
             loss = criterion(pred,batch_y)
+            writer.add_scalar('loss', loss, epoch)
             if (epoch + 1) % 1000 == 0:
                 print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
 
