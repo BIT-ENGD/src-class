@@ -60,8 +60,8 @@ class BuildSrcData(Dataset):
                     self.y_data.append(label)
                     
         
-        
-
+        self.y_data=torch.tensor(self.y_data)
+  
 
     def __len__(self):
         return len(self.y_data)
@@ -171,9 +171,9 @@ def do_train(ds_src,WORDLIST):
             for item in batch_x:
                 line=[ WORDLIST[key] for key in item]
                 new_batch_x.append(line)
-                   
-            batch_x,batch_y = torch.tensor(new_batch_x).to(device), torch.tensor(batch_y,dtype=torch.int32).to(device)
-            batch_x=batch_x.transpose(1,0)
+            batch_x=torch.tensor(new_batch_x)
+            batch_x=batch_x.transpose(1,0).to(device)
+            batch_y=batch_y.to(device)
             pred=model(batch_x)
             loss = criterion(pred,batch_y)
             writer.add_scalar('loss', loss, epoch)
