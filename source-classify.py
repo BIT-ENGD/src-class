@@ -55,7 +55,8 @@ class BuildSrcData(Dataset):
                         lines=lines[:MAX_TOKEN]
 
                     self.x_data.append(lines)
-                    label=self.allcat[dir]
+                    label=[0]*len(self.allcat)
+                    label[self.allcat[dir]]=1
                     self.y_data.append(label)
                     
         
@@ -171,7 +172,7 @@ def do_train(ds_src,WORDLIST):
                 line=[ WORDLIST[key] for key in item]
                 new_batch_x.append(line)
                    
-            batch_x,batch_y = torch.tensor(new_batch_x).to(device), torch.tensor(batch_y).to(device)
+            batch_x,batch_y = torch.tensor(new_batch_x).to(device), torch.tensor(batch_y,dtype=torch.int32).to(device)
             batch_x=batch_x.transpose(1,0)
             pred=model(batch_x)
             loss = criterion(pred,batch_y)
