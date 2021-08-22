@@ -7,7 +7,11 @@ import torch.optim as optim
 from pathlib import Path
 import os
 from torch.utils.tensorboard import SummaryWriter
-
+import copy 
+from torchsummaryX import summary as summaryx
+import shutil
+import onnx 
+import pickle as pk
 DATASETDIR="data_language_clean"
 BATCH_SIZE=256
 EMBED_DIM=128
@@ -15,16 +19,19 @@ CLASS_NUM=0
 FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
-EPOCH_NUM=2000
+EPOCH_NUM=500
 MAX_TOKEN=200
 SEQUENCE_LEN=MAX_TOKEN
-FILTER_NUM=6
-
+FILTER_NUM=3
 DROPOUT=0.5
+MODEL_NAME="src_cat.pth"
+ONNX_MODEL_PATH="src_cat.onnx"
 
 VOCAB.add("")
 
 def strip_chinese(strs):
+   # if strs.find("STRSTUFF") > -1 and len(strs)>8:
+   #     print(strs)
     for _char in strs:
         if '\u4e00' <= _char <= '\u9fa5':
             return ""
@@ -38,11 +45,11 @@ class BuildSrcData(Dataset):
         self.y_data=[]
         for id,dir in enumerate(Path(DataDir).iterdir()):
             self.allcat[str(dir).split(os.sep)[-1]]=id
-        
+         
         for dir in self.allcat:
             for file in (Path(DataDir)/dir).iterdir():
                 with open(file,"r",encoding="utf-8") as f:
-                    lines= f.readlines()
+                    lines= f.readlines()  
                     lines=list(map(lambda x:x.replace("\n",""),lines))
                     lines=list(map(strip_chinese,lines))
                     while '' in lines:
@@ -55,12 +62,13 @@ class BuildSrcData(Dataset):
                         lines=lines[:MAX_TOKEN]
 
                     self.x_data.append(lines)
-                    label=[0]*len(self.allcat)
-                    label[self.allcat[dir]]=1
-                    self.y_data.append(label)
+                    self.y_data.append(self.allcat[dir])
                     
         
         self.y_data=torch.tensor(self.y_data)
+
+        with open("allcat.dat","wb") as fl:
+            pk.dump(self.allcat,fl)
   
 
     def __len__(self):
@@ -153,24 +161,51 @@ class TextCNN(nn.Module):
         output = self.fc(flatten)
         return output
 
+def ExportModel(model,sentence,newmodelpath):
+    torch.onnx.export(model,               # model being run
+                 sentence,                         # model input (or a tuple for multiple inputs)
+                  newmodelpath,   # where to save the model (can be a file or file-like object)
+                  export_params=True,        # store the trained parameter weights inside the model file
+                  opset_version=10,          # the ONNX version to export the model to
+                  do_constant_folding=True,  # whether to execute constant folding for optimization
+                  input_names = ['W'],   # the model's input names
+                  output_names = ['fc'], # the model's output names
+                  dynamic_axes={'W' : {0:"batch_size"},"fc":{0:"batch_size_output"}}  # variable lenght axes
+                                )
+    onnx_model=onnx.load(newmodelpath)
+    onnx.checker.check_model(onnx_model)
+    
 def do_train(ds_src,WORDLIST): 
     VOCAB_SIZE=len(WORDLIST) # 
     CLASS_NUM =  ds_src.getnumclass()
     device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
     model = TextCNN(VOCAB_SIZE,EMBED_DIM,CLASS_NUM).to(device)
+    print(model)
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer =optim.Adam(model.parameters(),lr=5e-4)
     loader=DataLoader(dataset=ds_src,batch_size=BATCH_SIZE,shuffle=True,num_workers=0)
     loss = torch.Tensor([0.0]).float()
+    min_loss = torch.Tensor([10.0]).float().to(device)
+
+    shutil.rmtree("runs/lstm")
     writer = SummaryWriter("runs/lstm")
+
+    input_size = (1,200)
+    x_sample = torch.zeros(input_size, dtype=torch.long, device=torch.device('cuda'))
+    print(summaryx(model,x_sample))
+    lastsentence=[]
+    best_model=model
     for epoch in range(EPOCH_NUM):
         
         for batch_x,batch_y in loader:
+
+            model.train()
             line=[]
             new_batch_x=[]
             for item in batch_x:
                 line=[ WORDLIST[key] for key in item]
                 new_batch_x.append(line)
+
             batch_x=torch.tensor(new_batch_x)
             batch_x=batch_x.transpose(1,0).to(device)
             batch_y=batch_y.to(device)
@@ -180,13 +215,36 @@ def do_train(ds_src,WORDLIST):
             if (epoch + 1) % 1000 == 0:
                 print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
 
+            if min_loss > loss:
+                min_loss =loss
+                best_model=copy.deepcopy(model)
+                lastsentence=batch_x[0]
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+        
+    
+  
+    if min_loss <10:
+        # 
+        torch.save(best_model,MODEL_NAME)
+        test_sentence=torch.randint(0,46,(1,200))
+        writer.add_graph(model, test_sentence.to(device))
+        ExportModel(best_model,test_sentence.to(device),ONNX_MODEL_PATH)
+        new_pred=best_model(torch.unsqueeze(lastsentence,0))
+        newclass=torch.argmax(new_pred)
+        print("ok,newclass:",newclass)
+
+
+    
+
 
 if __name__ == "__main__":
     ds_src=BuildSrcData(DATASETDIR,VOCAB)
   
     WORDLIST={key:i for i,key in enumerate(VOCAB)}
-    
+    with open("vocab.dat","wb") as fl:
+            pk.dump(WORDLIST,fl)
+  
     do_train(ds_src,WORDLIST)
