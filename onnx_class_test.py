@@ -3,9 +3,9 @@ import onnx
 import pickle as pk
 import numpy as np
 
-ONNX_MODEL_PATH="src_cat_best.onnx"
+ONNX_MODEL_PATH="src_cat.onnx"
 
-MAX_TOKEN=200
+MAX_TOKEN=600
 
 onnx_model=onnx.load(ONNX_MODEL_PATH)
 onnx.checker.check_model(onnx_model)
@@ -33,6 +33,7 @@ def DoSrcClass(srcfile,ort_session,WORDLIST):
     with open(srcfile,"r",encoding="utf-8") as f:
                     lines= f.readlines()  
                     lines=list(map(lambda x:x.replace("\n",""),lines))
+                    lines=list(map(lambda x:x.replace("\t",""),lines))
                     lines=list(map(strip_chinese,lines))
                     while '' in lines:
                         lines.remove('')

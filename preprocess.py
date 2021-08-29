@@ -33,7 +33,7 @@ OCAMLCOMMENT="\(\*.*?\*\)"
 fnMap={"css": CSSCOMMENT, "normal":NORMALCOMMENT,"OCaml":OCAMLCOMMENT}
 
 def StripHTML(strSrcCode):
-    #dr = re.compile(r"<[^>]+>|<[\w\s]+>.*?</[\w]+>|<[^<]*?>",re.I)
+
     dr=re.compile("<\s*script\s*[a-z=/\"]*>(.*?)</\s*script\s*>",re.S|re.I)
     so= dr.findall(strSrcCode)
     if so != None:
@@ -52,6 +52,7 @@ def StripComment(strSrcCode,strType,fnMap):
     if strType == "ASP":
        strSrcCode= StripHTML(strSrcCode)
 
+
     
 
     pattern1=re.compile(strPattern,re.M|re.I|re.DOTALL)
@@ -64,21 +65,23 @@ def StripComment(strSrcCode,strType,fnMap):
 
 
 def StripString(strSrcCode,strType):
+    dr = re.compile(r"\"\"",re.I)
+    strSrcCode=dr.sub("",strSrcCode)
     strPattern="\".*?\"|'.*?'"
     pattern1=re.compile(strPattern,re.I)
-    result=re.sub(pattern1, 'STRSTUFF', strSrcCode)
+    result=re.sub(pattern1, ' STRSTUFF ', strSrcCode)
     return result
 
 def GetKeyWordSerial(strSrcCode):
-    strPattern="[\w]+|[\"\"!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~\"\"\]"
+    strPattern=r"([A-Za-z_]\w*\b|[!\#\$%\&\*\+:\-\./<=>\?@\\\^_\|\~]+|[ \t\(\),;\{\}\[\]`\"'])"
     pattern1=re.compile(strPattern,re.I)
     result=pattern1.findall(strSrcCode)
     return result
 
 def ProcessSrcFile(src,dst,typename,fnMap):
     with open(src,encoding="utf-8") as f:
-        if(src.name == "ASP_2.txt"):
-            print("asp1")
+        if(src.name == "csharp_557.txt"):
+            print("csharp")
         srccontent=f.read()
         srccontent=StripString(srccontent,typename)
         srccontent=StripComment(srccontent,typename,fnMap)

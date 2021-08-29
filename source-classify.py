@@ -6,10 +6,9 @@ from torch.utils.data import Dataset,DataLoader
 import torch.optim as optim
 from pathlib import Path
 import os
-from torch.utils.tensorboard import SummaryWriter
+from  traininfo import TrainInfo
 import copy 
 from torchsummaryX import summary as summaryx
-import shutil
 import onnx 
 import pickle as pk
 DATASETDIR="data_language_clean"
@@ -20,18 +19,20 @@ FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
 EPOCH_NUM=500
-MAX_TOKEN=200
+MAX_TOKEN=600
 SEQUENCE_LEN=MAX_TOKEN
 FILTER_NUM=3
 DROPOUT=0.5
 MODEL_NAME="src_cat.pth"
 ONNX_MODEL_PATH="src_cat.onnx"
 
+DATASET_FILE="ds.dat"
+VOCAB_FILE="vocab.dat"
 VOCAB.add("")
 
 def strip_chinese(strs):
-   # if strs.find("STRSTUFF") > -1 and len(strs)>8:
-   #     print(strs)
+    if strs.find("STRSTUFF") > -1 and len(strs)>8:
+        print(strs)
     for _char in strs:
         if '\u4e00' <= _char <= '\u9fa5':
             return ""
@@ -52,9 +53,14 @@ class BuildSrcData(Dataset):
                     lines= f.readlines()  
                     lines=list(map(lambda x:x.replace("\n",""),lines))
                     lines=list(map(strip_chinese,lines))
-                    while '' in lines:
+                    while ''  in lines:
                         lines.remove('')
+                        
+                    while  ' ' in lines:
+                        lines.remove(' ')
                     VOCAB.update(lines)
+
+                 
                     nLines=len(lines)
                     if  nLines <MAX_TOKEN :
                         lines.extend([""]*(MAX_TOKEN-nLines))
@@ -187,10 +193,11 @@ def do_train(ds_src,WORDLIST):
     loss = torch.Tensor([0.0]).float()
     min_loss = torch.Tensor([10.0]).float().to(device)
 
-    shutil.rmtree("runs/lstm")
-    writer = SummaryWriter("runs/lstm")
+# traininfo
+    TrainInfoObj=TrainInfo()
+  
 
-    input_size = (1,200)
+    input_size = (1,SEQUENCE_LEN)
     x_sample = torch.zeros(input_size, dtype=torch.long, device=torch.device('cuda'))
     print(summaryx(model,x_sample))
     lastsentence=[]
@@ -211,7 +218,7 @@ def do_train(ds_src,WORDLIST):
             batch_y=batch_y.to(device)
             pred=model(batch_x)
             loss = criterion(pred,batch_y)
-            writer.add_scalar('loss', loss, epoch)
+            TrainInfoObj.add_scalar('loss', loss, epoch)
             if (epoch + 1) % 1000 == 0:
                 print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
 
@@ -229,8 +236,8 @@ def do_train(ds_src,WORDLIST):
     if min_loss <10:
         # 
         torch.save(best_model,MODEL_NAME)
-        test_sentence=torch.randint(0,46,(1,200))
-        writer.add_graph(model, test_sentence.to(device))
+        test_sentence=torch.randint(0,46,(1,SEQUENCE_LEN))
+        TrainInfoObj.add_graph(model, test_sentence.to(device))
         ExportModel(best_model,test_sentence.to(device),ONNX_MODEL_PATH)
         new_pred=best_model(torch.unsqueeze(lastsentence,0))
         newclass=torch.argmax(new_pred)
@@ -241,10 +248,21 @@ def do_train(ds_src,WORDLIST):
 
 
 if __name__ == "__main__":
-    ds_src=BuildSrcData(DATASETDIR,VOCAB)
+
+    if os.path.exists(DATASET_FILE):
+        with open(DATASET_FILE,"rb") as f:
+           ds_src=pk.load(f)
+    else:
+        ds_src=BuildSrcData(DATASETDIR,VOCAB)
+        with open(DATASET_FILE,"wb") as f:
+           pk.dump(ds_src,f)
   
-    WORDLIST={key:i for i,key in enumerate(VOCAB)}
-    with open("vocab.dat","wb") as fl:
+    if os.path.exists(VOCAB_FILE):
+        with open(VOCAB_FILE,"rb") as f:
+            WORDLIST=pk.load(f)
+    else:
+        WORDLIST={key:i for i,key in enumerate(VOCAB)}
+        with open("vocab.dat","wb") as fl:
             pk.dump(WORDLIST,fl)
   
     do_train(ds_src,WORDLIST)
