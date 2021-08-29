@@ -19,7 +19,7 @@ FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
 EPOCH_NUM=500
-MAX_TOKEN=600
+MAX_TOKEN=400
 SEQUENCE_LEN=MAX_TOKEN
 FILTER_NUM=3
 DROPOUT=0.5
@@ -53,21 +53,19 @@ class BuildSrcData(Dataset):
                     lines= f.readlines()  
                     lines=list(map(lambda x:x.replace("\n",""),lines))
                     lines=list(map(strip_chinese,lines))
-                    while ''  in lines:
-                        lines.remove('')
-                        
-                    while  ' ' in lines:
-                        lines.remove(' ')
-                    VOCAB.update(lines)
+
+                    newlines=[token   for token in lines if token != '' and token !=' ']
+       
+                    VOCAB.update(newlines)
 
                  
-                    nLines=len(lines)
+                    nLines=len(newlines)
                     if  nLines <MAX_TOKEN :
-                        lines.extend([""]*(MAX_TOKEN-nLines))
+                        newlines.extend([""]*(MAX_TOKEN-nLines))
                     else:
-                        lines=lines[:MAX_TOKEN]
+                        newlines=newlines[:MAX_TOKEN]
 
-                    self.x_data.append(lines)
+                    self.x_data.append(newlines)
                     self.y_data.append(self.allcat[dir])
                     
         
@@ -187,11 +185,11 @@ def do_train(ds_src,WORDLIST):
     device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
     model = TextCNN(VOCAB_SIZE,EMBED_DIM,CLASS_NUM).to(device)
     print(model)
-    criterion = nn.CrossEntropyLoss().to(device)
-    optimizer =optim.Adam(model.parameters(),lr=5e-4)
-    loader=DataLoader(dataset=ds_src,batch_size=BATCH_SIZE,shuffle=True,num_workers=0)
-    loss = torch.Tensor([0.0]).float()
-    min_loss = torch.Tensor([10.0]).float().to(device)
+    criterion   = nn.CrossEntropyLoss().to(device)
+    optimizer   = optim.Adam(model.parameters(),lr=5e-4)
+    loader      = DataLoader(dataset=ds_src,batch_size=BATCH_SIZE,shuffle=True,num_workers=0)
+    loss        = torch.Tensor([0.0]).float()
+    min_loss    = torch.Tensor([10.0]).float().to(device)
 
 # traininfo
     TrainInfoObj=TrainInfo()
@@ -209,7 +207,7 @@ def do_train(ds_src,WORDLIST):
             model.train()
             line=[]
             new_batch_x=[]
-            for item in batch_x:
+            for item in batch_x: 
                 line=[ WORDLIST[key] for key in item]
                 new_batch_x.append(line)
 

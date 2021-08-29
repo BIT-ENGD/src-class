@@ -5,7 +5,7 @@ import numpy as np
 
 ONNX_MODEL_PATH="src_cat.onnx"
 
-MAX_TOKEN=600
+MAX_TOKEN=400
 
 onnx_model=onnx.load(ONNX_MODEL_PATH)
 onnx.checker.check_model(onnx_model)
@@ -35,9 +35,9 @@ def DoSrcClass(srcfile,ort_session,WORDLIST):
                     lines=list(map(lambda x:x.replace("\n",""),lines))
                     lines=list(map(lambda x:x.replace("\t",""),lines))
                     lines=list(map(strip_chinese,lines))
-                    while '' in lines:
-                        lines.remove('')
-               
+                    newlines=[token   for token in lines if token != '' and token !=' ']
+                    lines=newlines
+                              
                     nLines=len(lines)
                     if  nLines <MAX_TOKEN :
                         lines.extend([""]*(MAX_TOKEN-nLines))
