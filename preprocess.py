@@ -73,7 +73,7 @@ def StripString(strSrcCode,strType):
     return result
 
 def GetKeyWordSerial(strSrcCode):
-    strPattern=r"([A-Za-z_]\w*\b|[!\#\$%\&\*\+:\-\./<=>\?@\\\^_\|\~]+|[ \t\(\),;\{\}\[\]`\"'])"
+    strPattern=r"([A-Za-z0-9_]\w*\b|[!\#\$%\&\*\+:\-\./<=>\?@\\\^_\|\~]+|[ \t\(\),;\{\}\[\]`\"'])"
     pattern1=re.compile(strPattern,re.I)
     result=pattern1.findall(strSrcCode)
     return result
