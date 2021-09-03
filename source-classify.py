@@ -179,14 +179,20 @@ def ExportModel(model,sentence,newmodelpath):
     onnx_model=onnx.load(newmodelpath)
     onnx.checker.check_model(onnx_model)
 
+# cov | max pooling | conv| max pooling | cov | max pooling | full connect | dropout | full connect
 
 class TextCNNEx(nn.Module):
     def __init__(self,vocab_size,Embedding_size,num_classs):
         super(TextCNNEx, self).__init__()
         self.W = nn.Embedding(vocab_size, embedding_dim=Embedding_size)
         out_channel = FILTER_NUM
-        self.conv = nn.Sequential(
+        self.conv1 = nn.Sequential(
                     nn.Conv2d(1, out_channel, (2, Embedding_size)),#卷积核大小为2*Embedding_size
+                    nn.ReLU(),
+                    nn.MaxPool2d((SEQUENCE_LEN-1,1)),
+        )
+        self.conv2 = nn.Sequential(
+                    nn.Conv2d(out_channel, out_channel, (2, Embedding_size)),#卷积核大小为2*Embedding_size
                     nn.ReLU(),
                     nn.MaxPool2d((SEQUENCE_LEN-1,1)),
         )
@@ -197,7 +203,8 @@ class TextCNNEx(nn.Module):
         batch_size = X.shape[0]
         embedding_X = self.W(X) # [batch_size, sequence_length, embedding_size]
         embedding_X = embedding_X.unsqueeze(1) # add channel(=1) [batch, channel(=1), sequence_length, embedding_size]
-        conved = self.conv(embedding_X)# [batch_size, output_channel, 1, 1]
+        conved = self.conv1(embedding_X)# [batch_size, output_channel, 1, 1]
+        conved = self.conv2(conved)# [batch_size, output_channel, 1, 1]
         conved = self.dropout(conved)
         flatten = conved.view(batch_size, -1)# [batch_size, output_channel*1*1]
         output = self.fc(flatten)
