@@ -1,8 +1,9 @@
 import onnxruntime as ORT
 import onnx 
 import pickle as pk
-import numpy as np
-
+import numpy as np 
+from preprocess import OBSCCPrepro 
+import os
 ONNX_MODEL_PATH="src_cat.onnx"
 
 MAX_TOKEN=400
@@ -28,25 +29,33 @@ def strip_chinese(strs):
             return ""
     return strs
 
-def DoSrcClass(srcfile,ort_session,WORDLIST):
+def DoSrcClass(srcdir,ort_session,WORDLIST):
     
-    with open(srcfile,"r",encoding="utf-8") as f:
-                    lines= f.readlines()  
-                    lines=list(map(lambda x:x.replace("\n",""),lines))
-                    lines=list(map(lambda x:x.replace("\t",""),lines))
-                    lines=list(map(strip_chinese,lines))
-                    newlines=[token   for token in lines if token != '' and token !=' ']
-                    lines=newlines
-                              
-                    nLines=len(lines)
-                    if  nLines <MAX_TOKEN :
-                        lines.extend([""]*(MAX_TOKEN-nLines))
-                    else:
-                        lines=lines[:MAX_TOKEN]
+    preporoObj=OBSCCPrepro("","",False)
+    RESULT={}
+    if not os.path.exists(srcdir):
+        return RESULT
 
-    newlines=[ WORDLIST[key] for key in lines]
-                
-    return DoInference(newlines,ort_session)
+    for file in os.listdir(srcdir):
+
+        preporoObj.ProcessSrcFile(srcdir+os.sep+file,"test.txt","")
+        with open(file,"r",encoding="utf-8") as f:
+                        lines= f.readlines()  
+                        lines=list(map(lambda x:x.replace("\n",""),lines))
+                        lines=list(map(lambda x:x.replace("\t",""),lines))
+                        lines=list(map(strip_chinese,lines))
+                        newlines=[token   for token in lines if token != '' and token !=' ']
+                        lines=newlines
+                                
+                        nLines=len(lines)
+                        if  nLines <MAX_TOKEN :
+                            lines.extend([""]*(MAX_TOKEN-nLines))
+                        else:
+                            lines=lines[:MAX_TOKEN]
+
+                        newlines=[ WORDLIST[key] for key in lines]
+                        RESULT[file]=     DoInference(newlines,ort_session)       
+        return RESULT
               
 
 
@@ -61,9 +70,10 @@ if __name__ == "__main__":
         WORDLIST=pk.load(f)
     
     print(WORDLIST["import"])
-    catid=DoSrcClass("test.txt",ort_session ,WORDLIST  )
+    catid=DoSrcClass("test",ort_session ,WORDLIST  )
 
     CATDICT={val:key  for key,val in  CATDICT.items()}
     
-   
-    print("the class is ",CATDICT[catid])
+    if len(catid)>0:
+        for key,val in catid.items():
+         print("{} the class is {}".format(key,CATDICT[val]))
