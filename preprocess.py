@@ -10,6 +10,13 @@ import os
 class OBSCCPrepro(object):
     def __init__(self,srcdatapath,dstdatapath,processdir=True):
         self.srcdir=Path(srcdatapath)
+
+                # strip comment from a source file.
+        self.NORMALCOMMENT=";[^\r\n]*|#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''|\"\"\".*?\"\"\""
+        self.CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
+        self.OCAMLCOMMENT="\(\*.*?\*\)"
+
+        self.fnMap={"css":self.CSSCOMMENT, "normal":self.NORMALCOMMENT,"OCaml":self.OCAMLCOMMENT}
         if not processdir:
             return 
         self.SOURCETYPE=[]
@@ -22,12 +29,7 @@ class OBSCCPrepro(object):
             shutil.rmtree(dstdatapath)
         Path(dstdatapath).mkdir()
 
-        # strip comment from a source file.
-        self.NORMALCOMMENT=";[^\r\n]*|#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''|\"\"\".*?\"\"\""
-        self.CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
-        self.OCAMLCOMMENT="\(\*.*?\*\)"
 
-        self.fnMap={"css":self.CSSCOMMENT, "normal":self.NORMALCOMMENT,"OCaml":self.OCAMLCOMMENT}
 
     def StripHTML(self,strSrcCode):
 

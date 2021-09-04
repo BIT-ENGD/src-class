@@ -36,10 +36,11 @@ def DoSrcClass(srcdir,ort_session,WORDLIST):
     if not os.path.exists(srcdir):
         return RESULT
 
+    dstfile="test.txt"
     for file in os.listdir(srcdir):
-
-        preporoObj.ProcessSrcFile(srcdir+os.sep+file,"test.txt","")
-        with open(file,"r",encoding="utf-8") as f:
+        srcfile=srcdir+os.sep+file
+        preporoObj.ProcessSrcFile(srcfile,dstfile,"")
+        with open(dstfile,"r",encoding="utf-8") as f:
                         lines= f.readlines()  
                         lines=list(map(lambda x:x.replace("\n",""),lines))
                         lines=list(map(lambda x:x.replace("\t",""),lines))
@@ -53,9 +54,11 @@ def DoSrcClass(srcdir,ort_session,WORDLIST):
                         else:
                             lines=lines[:MAX_TOKEN]
 
-                        newlines=[ WORDLIST[key] for key in lines]
+                        newlines=[ WORDLIST[key] if  key in WORDLIST.keys() else 0 for key in lines ]
+
                         RESULT[file]=     DoInference(newlines,ort_session)       
-        return RESULT
+    
+    return RESULT
               
 
 
