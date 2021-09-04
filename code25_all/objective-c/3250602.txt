@@ -1,0 +1,190 @@
+extern NSString * const GMAP_USERLOCATION_CHANGED; 
+
+@interface MyAppDelegate : NSObject <UIApplicationDelegate> {
+    CLLocationManager *locationManager;
+    CLLocation *userLocation;
+}
+@property (nonatomic, retain) CLLocationManager *locationManager;
+@property (nonatomic, retain) CLLocation *userLocation;
+@end
+
+@implementation MyAppDelegate
+
+NSString * const GMAP_USERLOCATION_CHANGED = @"gMapUserLocationChanged"; 
+@synthesize locationManager, userLocation;
+
+- (void)applicationDidFinishLaunching:(UIApplication *)application
+{    
+    userLocation = nil;
+    [[self locationManager] startUpdatingLocation];
+
+    [window addSubview:tabBarController.view];
+    [window makeKeyAndVisible];
+}
+
+#pragma mark -
+#pragma mark Core Location delegate
+- (CLLocationManager *)locationManager 
+{
+    if (locationManager != nil) 
+ {
+        return locationManager;
+    }
+
+    locationManager = [[CLLocationManager alloc] init];
+    locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters;
+    locationManager.delegate = self;
+
+    return locationManager; 
+}
+
+- (void)locationManager:(CLLocationManager *)manager
+     didUpdateToLocation:(CLLocation *)newLocation
+                   fromLocation:(CLLocation *)oldLocation 
+{
+ self.userLocation = newLocation;
+ // send notification to defaulcenter
+ NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+ [nc postNotificationName:GMAP_USERLOCATION_CHANGED object:self.userLocation];
+}
+
+
+- (void)dealloc {
+    [window release];
+    [locationManager release];
+    [userLocation release];
+
+    [super dealloc];
+}
+
+@end
+
+@interface MyAnnotation : MKPinAnnotationView<MKAnnotation>
+{
+ double longitude;
+ double latitude;
+ NSString *title;
+ NSString *subtitle;
+
+}
+
+@property (nonatomic, retain) NSString *title;
+@property (nonatomic, retain) NSString *subtitle;
+@property double longitude;
+@property double latitude;
+@end
+
+#import "MyAnnotation.h"
+#import "MyAppDelegate.h"
+
+@implementation MyAnnotation
+
+@synthesize title, subtitle;
+@synthesize longitude;
+@synthesize latitude;
+
+-(id)initWithAnnotation:(id <MKAnnotation>)annotation reuseIdentifier:(NSString *)reuseIdentifier
+{
+ self = [super initWithAnnotation:annotation reuseIdentifier:reuseIdentifier];
+ if (self != nil) 
+ {
+  NSLog(@"add observer");
+  NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc addObserver:self selector:@selector(receivedNewUserLocation:) name:GMAP_USERLOCATION_CHANGED object:nil];
+ }
+ return self;
+}
+
+- (void)setTitleAndSubtitle 
+{
+ [self setTitleAndSubtitle:nil];
+}
+
+- (id)setTitleAndSubtitle:(CLLocation*)userLocation
+{
+ CLLocationDistance dist = -1;
+
+ if(userLocation)
+ {
+  CLLocation *poiLoc = [[CLLocation alloc] initWithLatitude:self.latitude longitude:self.longitude];
+  dist = [userLocation distanceFromLocation:poiLoc] / 1000;
+  NSLog(@"distance is now %.f", dist);
+ }
+
+ title = @"the Title of the poi!";
+
+ subtitle = [NSString stringWithFormat:@"Distance: %@", 
+    dist > -1 ? [NSString stringWithFormat:@"%.2f km", dist] : @"-"
+    ];
+
+ return self;
+}
+
+- (void)receivedNewUserLocation:(NSNotification *)userLocationNotification
+{
+ CLLocation *userlocation = (CLLocation*)[userLocationNotification object];
+ [self setTitleAndSubtitle:userlocation];
+}
+
+- (CLLocationCoordinate2D)coordinate;
+{
+    CLLocationCoordinate2D theCoordinate;
+    theCoordinate.latitude = latitude;
+    theCoordinate.longitude = longitude;
+    return theCoordinate; 
+}
+
+- (NSString *)title
+{
+    return title;
+}
+
+- (NSString *)subtitle
+{
+    return subtitle;
+}
+
+- (void)dealloc
+{ 
+    [title release];
+    [subtitle release];
+
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc removeObserver:self];
+
+    [super dealloc];
+}
+@end
+
+- (MKAnnotationView *)mapView:(MKMapView *)theMapView viewForAnnotation:(id <MKAnnotation>)annotation
+{
+    // if it's the user location, just return nil.
+    if ([annotation isKindOfClass:[MKUserLocation class]])
+        return nil;
+
+    MyAnnotation *annotationView = nil;
+    MyAnnotation* myAnnotation = (MyAnnotation *)annotation;
+    // try to dequeue an existing pin view first
+    NSString* identifier = @"CustomMapAnnotation";
+    MyAnnotation *customPinView = (MyAnnotation *)[self.mapView dequeueReusableAnnotationViewWithIdentifier:identifier];
+
+
+    if(nil == customPinView) 
+    {
+ // if an existing pin view was not available, create one
+ customPinView = [[[MyAnnotation alloc]
+    initWithAnnotation:myAnnotation 
+    reuseIdentifier:identifier] 
+    autorelease];
+
+ customPinView.animatesDrop = YES;
+ customPinView.canShowCallout = YES;
+    }
+
+    annotationView = customPinView;
+    [annotationView setEnabled:YES];
+    [annotationView setCanShowCallout:YES];
+
+    return annotationView;
+}
+

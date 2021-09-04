@@ -1,0 +1,67 @@
+import System.Environment (getArgs)
+import Database.HDBC
+import Database.HDBC.Sqlite3
+import Text.Regex.Posix
+import qualified Data.ByteString.Char8 as B
+
+getFrom bstr =
+  bstr =~ "From:.+@.+\\.(fr|com).?" :: B.ByteString
+
+getTo bstr =
+  bstr =~ "To:.+@.+\\.(fr|com).?" :: B.ByteString
+
+getSubject bstr =
+  bstr =~ "Subject:.+" :: B.ByteString
+
+main = do
+  --[dbPath, rawMail] <- getArgs
+  bstr <- B.getContents
+  conn <- connectSqlite3 "bmsg.db"
+  let
+    sqNomDest  = toSql $ getTo bstr
+    sqNomExped = toSql $ getFrom bstr
+  -- begin of the problematic part
+
+  -- I make a query to know if the entry if already present
+  qdbefore <- quickQuery' conn "SELECT d_id FROM dest WHERE maildest LIKE ?" [sqNomDest]
+  qebefore <- quickQuery' conn "SELECT e_id FROM exped WHERE mailexped LIKE ?" [sqNomExped]
+  -- then if not I insert it and else I return an arbitrary Int
+  case qdbefore of --my check is probably wrong since that snippet always go to return 0
+    [[SqlNull]] -> run conn "INSERT INTO dest(maildest) VALUES(?)" [sqNomDest] --unique on the column constraint so if I ran it alone on something already present it would raise an exeption
+    _           -> return 0
+  case qebefore of
+    [[SqlNull]] -> run conn "INSERT INTO exped(mailexped) VALUES(?)" [sqNomExped] --same here for the constraint
+    _           -> return 0
+  commit conn
+  --end of the problematic part
+
+  [[qd]] <- quickQuery' conn "SELECT d_id FROM dest WHERE maildest LIKE ?" [sqNomDest]
+  [[qe]] <- quickQuery' conn "SELECT e_id FROM exped WHERE mailexped LIKE ?" [sqNomExped]
+  run conn "INSERT INTO mails(d_id, e_id, sujet, mail) VALUES (?, ?, ?, ?)" [qd, qe, toSql $ getSubject bstr, toSql bstr]
+  commit conn
+  disconnect conn
+
+
+-- CREATE TABLE dest
+-- (
+-- d_id INTEGER PRIMARY KEY,
+-- maildest VARCHAR(64) NOT NULL UNIQUE
+-- );
+
+-- CREATE TABLE exped
+-- (
+-- e_id INTEGER PRIMARY KEY,
+-- mailexped VARCHAR(64) NOT NULL UNIQUE
+-- );
+
+-- CREATE TABLE mails
+-- (
+-- m_id    INTEGER PRIMARY KEY,
+-- d_id    INTEGER NOT NULL,
+-- e_id    INTEGER NOT NULL,
+-- sujet   VARCHAR(128),
+-- mail    TEXT NOT NULL,
+-- CONSTRAINT fk_dest FOREIGN KEY (d_id) REFERENCES dest(d_id),
+-- CONSTRAINT fk_exped FOREIGN KEY (e_id) REFERENCES exped(e_id)
+-- );
+

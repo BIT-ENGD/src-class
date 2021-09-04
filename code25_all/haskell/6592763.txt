@@ -1,0 +1,157 @@
+import Control.Applicative
+import Control.Monad.Error
+import Data.Char
+import Data.Either
+import Data.List
+import Data.Maybe
+import Data.Time.Format
+import Data.Time.LocalTime
+import System.Console.GetOpt
+import System.Directory
+import System.Environment
+import System.FilePath
+import System.Locale
+import System.IO.Error
+import Text.Printf
+
+import Album.Utils
+import Album.Exif
+import Album.Error
+
+-- -----------------------------------------------------------------------
+-- Main
+
+main = do
+  r <- try main0
+  case r of
+    Left err -> do
+      printf "Error type:     %s\n" $ (show $ ioeGetErrorType err)
+      printf "Error string:   %s\n" $ (ioeGetErrorString err)
+      printf "Error filename: %s\n" $ (maybe "None" id $ ioeGetFileName err)
+      printf "Error handle:   %s\n" $ (maybe "None" show $ ioeGetHandle err)
+    Right _  -> return ()
+
+-- Process arguments
+main0 = do
+  args <- getArgs
+  case processArgs args desc of
+    (True, _, usage) -> showUsage usage
+    (False, (flags, fns, []), usage) -> do
+      rv <- runErrorT $ main1 flags fns
+      either (\e -> showErrs [show e] usage) (const $ return ()) rv
+    (False, (_, _, errs), usage) -> showErrs errs usage
+  where
+    desc = "Rename and catalog media.\n" ++
+           "Usage: album -n <albumname> <options> <media files>\n"
+
+-- Sanity check
+main1 flags fns = do
+
+    -- Check name
+    albName <- maybe (throwError AlbumNameError) return $ albumName flags
+
+    -- Check for duplicate media
+    let dups = nub $ fns \\ nub fns
+    unless (null dups) $ throwError $ MediaDuplicateError dups
+
+    -- Check for valid filenames
+    (haves, havenots) <- liftIO $ filesExist fns
+    unless (null havenots) $ throwError $ MediaNotFoundError havenots
+    when (null haves)      $ throwError MediaNotSpecifiedError
+
+    -- Check exiftool existence
+    tool0 <- liftIO $ findExecutable "exiftool"
+    tool  <- maybe (throwError ExifToolNotFoundError) return tool0
+
+    -- Get EXIF attributes
+    exifs0 <- liftIO $ getExifs tool fns
+    exifs  <- either (throwError . ExifParseError) return exifs0
+
+    -- Check for exiftool errors
+    let bads = findExifs "ExifTool:Error" exifs
+    unless (null bads) $ throwError $ MediaBadError $ map fst bads
+
+    -- Check for timestamps
+    let infos0 = map (\(n,e) -> (n, exifToDateTime e)) exifs
+    let nodates = filter (isNothing . snd) infos0
+    unless (null nodates) $ throwError $ MediaDateTimeTagError $ map fst nodates
+
+    let infos = map (\(n,Just dt) -> (n,dt)) infos0
+    main2 albName infos
+
+-- Do renames
+main2 albName infos = do
+
+    -- Album folder name
+    let mints     = minimum $ map snd infos
+    let mintsiso  = formatTime defaultTimeLocale "%Y%m%d" mints
+    let albFolder = printf "%s - %s" mintsiso albName
+
+    -- Get list of existing media
+    albExist <- liftIO $ doesDirectoryExist albFolder
+    (albCreate, existing) <- case albExist of
+        False -> return (True, [])
+        True -> do
+            e <- liftIO $ filter ((/= ".") . nub) <$> getDirectoryContents albFolder
+            return (False, e)
+
+    -- Rename list
+    let rens0 = mediaNames albName infos existing
+    let rens1 = map (\(a,b) -> (a, combine albFolder b)) rens0
+    let len = maximum $ map (length . fst) rens1
+
+    if albCreate
+      then do
+        liftIO $ printf "Creating folder: %s\n" albFolder
+        liftIO $ createDirectory albFolder
+      else 
+        return ()
+
+    forM_ rens1 $ \(oldf, newf) -> do
+        liftIO $ printf "%*s >>> %s\n" len oldf newf
+        liftIO $ renameFile oldf newf
+
+    return ()
+
+showErrs errs usage = do
+    putStrLn $ concatMap ("Error: " ++ ) errs
+    return ()
+
+showUsage usage = do
+    putStrLn usage
+    return ()
+
+-- -----------------------------------------------------------------------
+-- Rename
+
+mediaNames albName infos existing = go existing (map cands infos)
+    where
+    go es [] = []
+    go es ((fn,cs):css) = let p = unused cs es in (fn,p):go (p:es) css
+    unused cs es = fromJust $ find (`notElem` es) cs
+    cands (fn,dt) = (fn, map (++ ext) (pref:alts))
+        where
+        pref  = printf "%s - %s" (ft dt) albName
+        ft dt = formatTime defaultTimeLocale "%Y%m%dT%H%M%S" dt
+        alts  = map (printf "%s (%02d)" pref) ([1..] :: [Int])
+        ext   = map toLower (takeExtension fn)
+
+-- -----------------------------------------------------------------------
+-- Arguments
+
+data Option = OptionAlbumName String
+            | OptionHelp
+            deriving (Eq, Show)
+
+processArgs args desc = (elem OptionHelp flags, opts, usage)
+  where
+    opts@(flags, fns, errs)  = getOpt RequireOrder conf args
+    usage = usageInfo desc conf
+    conf  = [
+      Option "n" ["name"] (ReqArg OptionAlbumName "NAME") "Album name",
+      Option "h" ["help"] (NoArg OptionHelp) "Help"]
+
+albumName (OptionAlbumName n:xs) = Just n
+albumName (x:xs)                 = albumName xs
+albumName []                     = Nothing
+

@@ -1,0 +1,60 @@
+server = BaseHTTPServer.HTTPServer(('', 8081), SIMSAPIServerHandler)
+server.serve_forever()
+
+def SvcStop(self):
+    self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+    exit(0)
+
+class SIMSAPIServerHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            reportTuple = self.path.partition("/")
+            if len(reportTuple) < 3:
+                return
+            if reportTuple[2] == "":
+                return
+            os.system("C:\\Programs\\SIMSAPI\\runCommandReporter.bat " + reportTuple[2])
+            f = open("C:\\Programs\\SIMSAPI\\out.xml", "rb")
+            self.send_response(200)
+            self.send_header('Content-type', "application/xml")
+            self.end_headers()
+            self.wfile.write(f.read())
+            f.close()
+            # The output from CommandReporter is simply dumped to out.xml, which we read, write to the user, then remove.
+            os.unlink("C:\\Programs\\SIMSAPI\\out.xml")
+            return
+        except IOError:
+            self.send_error(404,'File Not Found: %s' % self.path)
+
+
+
+class SIMSAPI(win32serviceutil.ServiceFramework):
+    _svc_name_ = "SIMSAPI"
+    _svc_display_name_ = "A simple web server"
+    _svc_description_ = "Serves XML data produced by SIMS CommandReporter"
+
+    def __init__(self, args):
+        win32serviceutil.ServiceFramework.__init__(self, args)
+        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)           
+
+    def SvcStop(self):
+            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+            exit(0)
+
+    def SvcDoRun(self):
+        import servicemanager
+        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,servicemanager.PYS_SERVICE_STARTED,(self._svc_name_, '')) 
+
+        self.timeout = 3000
+
+        while 1:
+            server = BaseHTTPServer.HTTPServer(('', 8081), SIMSAPIServerHandler)
+            server.serve_forever()
+
+def ctrlHandler(ctrlType):
+    return True
+
+if __name__ == '__main__':
+    win32api.SetConsoleCtrlHandler(ctrlHandler, True)
+    win32serviceutil.HandleCommandLine(SIMSAPI)
+

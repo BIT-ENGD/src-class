@@ -1,0 +1,100 @@
+sub
+sub
+sub showcaseViewsSubData {
+    my ($api_call, $stat_section, $idsite, $prev_date, $last_of_month, $params, $subtable) = @_;
+
+    return unless ($subtable);
+
+    my %sub_params = %{ clone ($params) };
+    $sub_params{'idSubtable'} = $subtable->{'idsubdatatable'};
+
+    # $data contains views for each primary showcase page
+    my $data = &fetchStatsData($api_call, \%sub_params);
+
+    foreach my $visit_group (@$data) {
+
+        # ignore product pages
+        next if ($visit_group->{'url'} && $visit_group->{'url'} =~ /\/products?\//);
+
+        # if ($visit_group->{'url'} && $visit_group->{'url'} =~ /inthenews|pressreleases|downloads/) {
+        if ($visit_group->{'idsubdatatable'}) {
+            &showcaseViewsSubData($api_call, $stat_section, $idsite, $prev_date, $last_of_month, $params, $visit_group);
+            next;
+        }
+
+        my $division_name;
+
+        if ($visit_group->{'url'}) {
+            my $showcase_id = $visit_group->{'url'};
+            $showcase_id =~ s/^.*?\/(\d+)\/.*$/$1/;
+
+            $division_by_showcase_id_sth->execute($showcase_id);
+            ($division_name) = $division_by_showcase_id_sth->fetchrow_array();
+
+        } else {
+            $visit_group->{'orig_label'} = $visit_group->{'label'};
+            $visit_group->{'label'} =~ s/-/%/g;
+            $visit_group->{'label'} =~ s|^/||g;
+            $visit_group->{'label'} .= '%';
+            $division_sth->execute($visit_group->{'label'});
+            ($division_name) = $division_sth->fetchrow_array();
+        }
+
+        if ($division_name) {
+
+            ## no idea why this is nb_hits, and not nb_actions, like every other method
+            my @data_value = ( { 'nb_actions' => ($visit_group->{'nb_hits'} || $visit_group->{'nb_visits'}), 'label' => $division_name } );
+            &updateCompanyStats($idsite, 'showcase', $prev_date, \@data_value);
+        }
+    }
+    return 1;
+}
+
+sub researchViewsSubData {
+    my ($api_call, $stat_section, $idsite, $prev_date, $last_of_month, $params, $subtable) = @_;
+
+    return unless ($subtable);
+
+    my %sub_params = %{ clone ($params) };
+    $sub_params{'idSubtable'} = $subtable->{'idsubdatatable'};
+
+    # $data contains views for each primary showcase page
+    my $data = &fetchStatsData($api_call, \%sub_params);
+
+    if (ref $data ne 'ARRAY') {
+        carp "$api_call returned something not an array!";
+        return 0;
+    }
+
+    foreach my $visit_group (@$data) {
+        # if ($visit_group->{'url'} && $visit_group->{'url'} =~ /inthenews|pressreleases|downloads/) {
+        if ($visit_group->{'idsubdatatable'}) {
+            &researchViewsSubData($api_call, $stat_section, $idsite, $prev_date, $last_of_month, $params, $visit_group);
+            next;
+        }
+
+        my $division_name;
+
+        if ($visit_group->{'url'}) {
+            my $tag_id = $visit_group->{'url'};
+            $tag_id =~ s/^.*?\/(\d+)\/.*$/$1/;
+
+            next if ($tag_id !~ /^\d+$/);
+
+            $division_by_tag_id_sth->execute(int($tag_id), int($idsite));
+            ($division_name) = $division_by_tag_id_sth->fetchrow_array();
+
+        } else {
+            carp Dumper($visit_group);
+        }
+
+        if ($division_name) {
+            ## no idea why this is nb_hits, and not nb_actions, like every other method
+            my @data_value = ( { 'nb_actions' => ($visit_group->{'nb_hits'} || $visit_group->{'nb_visits'}), 'label' => $division_name } );
+
+            &updateCompanyStats($idsite, 'research', $prev_date, \@data_value);
+        }
+    }
+    return 1;
+}
+

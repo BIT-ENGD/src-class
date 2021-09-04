@@ -1,0 +1,158 @@
+library("survival")
+library("timereg")
+data(sTRACE)
+
+# Basic cox regression    
+surv <- with(sTRACE, Surv(time/365,status==9))
+fit1 <- coxph(surv~age+sex+diabetes+chf+vf, data=sTRACE)
+x <- cbind(exp(coef(fit1)), exp(confint(fit1)))
+test <- apply(x, 1, FUN=function(x){
+    x <- round(x, 1)
+    txt <- paste(x[1], " (95% CI ", min(x[2:3]), "-", max(x[2:3]), ")", sep="")
+    return(txt)
+})
+test
+
+> test
+                   age                    sex               diabetes 
+"1.1 (95% CI 1.1-1.1)" "1.4 (95% CI 1.1-1.9)"   "1.5 (95% CI 1-2.2)" 
+                   chf                     vf 
+"2.1 (95% CI 1.6-2.8)" "2.3 (95% CI 1.4-3.8)" 
+
+                       Adjusted             Unadjusted
+     age "1.1 (95% CI 1.1-1.1)" "1.1 (95% CI 1.1-1.1)"
+
+fit2 <- coxph(surv~age, data=sTRACE)
+x <- cbind(exp(coef(fit2)), exp(confint(fit2)))
+test <- apply(x, 1, FUN=function(x){
+    x <- round(x, 1)
+    txt <- paste(x[1], " (95% CI ", min(x[2:3]), "-", max(x[2:3]), ")", sep="")
+    return(txt)
+})
+test
+
+print_adjusted_and_unadjusted <- function(fit, digits=2){
+    # Just a prettifier for the output an alternative could be:
+    # paste(round(x[,1],1), " (95% CI ", min(round(x[,2:3])), "-", max(round(x[,2:3])), ")", sep="")  
+    get_coef_and_ci <- function(fit){
+        # Just to make sure that it gives 1.0 and 
+        # not 1 if digits = 1, in cases where a 
+        # adding another decimal that is used
+        # since everyone is so hyped about p-val < 0.05
+        add_zero_to_var <- function(x){
+            ret <- round(as.double(x), digits)
+            if (x == 1){
+                ret <- round(x, digits+1)
+                if (ret == 1){
+                    ret <- paste("1.", paste(rep("0", digits), collapse=""), sep="")
+                }
+            }else if(nchar(as.character(x)) < digits + 2){
+                add_zeros <- digits + 2 - nchar(as.character(x))
+                ret <- paste(x, paste(rep("0", add_zeros), collapse=""), sep="")
+            }
+            return(ret)
+        }
+
+        # Get coefficients and conf. interval
+        my_coefficients <- coef(fit)
+        ci <- confint(fit)
+
+        # Use the exp() if logit or cox regression
+        if ("coxph" %in% class(fit) ||
+            ("glm" %in% class(fit) &&
+            fit$family$link == "logit")){
+            my_coefficients <- exp(my_coefficients)
+            ci <- exp(ci)
+        }
+
+        if (length(my_coefficients) > 1){
+            my_coefficients <- tapply(my_coefficients, 1:length(my_coefficients), FUN = add_zero_to_var)
+        }else{
+            my_coefficients <- add_zero_to_var(my_coefficients)
+        }
+
+        ci <- apply(ci, 1, FUN=function(x){
+                ci <- round(x, digits)
+                for(i in 1:2){
+                    ci[i] <- add_zero_to_var(ci[i])
+                }
+                return(paste(ci[1], "-", ci[2], sep=""))
+            })
+        ret_val <- cbind(my_coefficients, ci)
+        colnames(ret_val) <- c("", "2.5% - 97.5%")
+        rownames(ret_val) <- names(coef(fit))
+        return(ret_val)
+    }
+
+    # Extract all the term names
+    all.terms <- terms(fit) 
+    var_names <- attr(all.terms, 'term.labels')
+
+    # Skip variables consisting of
+    # functions such as spline, strata variables
+    regex_for_unwanted_vars <- "^(strat[a]{0,1}|ns|rcs|bs|pspline)[(]"
+    skip_variables <- grep(regex_for_unwanted_vars, var_names)
+
+    # Get the adjusted variables
+    adjusted <- get_coef_and_ci(fit)
+    # When using splines, rcs in cox regression this shows a little different
+
+    # Remove all the splines, rcs etc
+    rn <- rownames(adjusted)
+    remove_1 <- grep("(\'{1,}|[[][0-9]+[]]|[)][0-9]+)$", rn)
+    remove_2 <- grep("^(strat[a]{0,1}|ns|rcs|bs)[(]", rn)
+    adjusted <- adjusted[-union(remove_1, remove_2), ]
+    if ("cph" %in% class(fit)){
+        remove_3 <- grep("^rcs[(]", var_names)
+        adjusted <- adjusted[-remove_3, ]
+    }
+
+    unadjusted <- c() 
+    for(variable in var_names[-skip_variables]){
+        interaction_variable <- length(grep(":", variable)) > 0
+
+        # If it's an interaction variable the
+        # interacting parts have to be included  
+        if (interaction_variable){
+            variable <- paste(paste(unlist(strsplit(variable, ":")), sep="", collapse=" + "), variable, sep=" + ")
+        }
+
+        # Run the same fit but with only one variable
+        fit_only1 <- update(fit, paste(".~", variable))
+
+        # Get the coefficients processed with some advanced 
+        # round part()
+        new_vars <- get_coef_and_ci(fit_only1)
+
+        # If interaction then we should only keep the 
+        # interaction part - the other variables are
+        # always included by default and need therefore
+        # to be removed
+        if (interaction_variable){
+            new_vars <- new_vars[grep("[*:]", rownames(new_vars)),]
+        }
+
+        # Add them to the previous
+        unadjusted <- rbind(unadjusted, new_vars)
+    }
+
+    # If regression contains (Intercept) 
+    # this is meaningless for the comparison
+    # of adjusted and unadjusted values 
+    if ("(Intercept)" %in% rownames(unadjusted)){
+        unadjusted <- unadjusted[rownames(unadjusted) != "(Intercept)", ]
+        unadjusted <- rbind(c("-", "-"), unadjusted)
+        rownames(unadjusted)[1] <- "(Intercept)"
+    }
+
+    both <- cbind(unadjusted, adjusted)
+    colnames(both) <- c("Unadjusted", "95% CI", "Adjusted", "95% CI")
+    return(both)
+}
+
+    Unadjusted 95% CI      Adjusted 95% CI     
+age "0.74"     "0.68-0.81" "0.69"   "0.62-0.76"
+....
+
+xtable(print_adjusted_and_unadjusted(fit.oa.base.model), align="lrcrc")
+

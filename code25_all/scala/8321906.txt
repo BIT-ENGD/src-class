@@ -1,0 +1,72 @@
+Seq
+object RichSeq {
+  implicit def toRichSeq[T](s: Seq[T]) = new RichSeq[T](s)
+}
+
+class RichSeq[T](s: Seq[T]) {
+
+  import RichSeq._
+
+  def cartesian(ss: Seq[Seq[T]]): Seq[Seq[T]] = {
+
+    ss.toList match {
+      case Nil        => Seq(s)
+      case s2 :: Nil  => {
+        for (e <- s) yield s2.map(e2 => Seq(e, e2))
+      }.flatten
+      case s2 :: tail => {
+        for (e <- s) yield s2.cartesian(tail).map(seq => e +: seq)
+      }.flatten
+    }
+  }
+}
+
+object RichSeq {
+  implicit def toRichSeq[T](s: Seq[T]) = new RichSeq(s) 
+}
+
+class RichSeq[T](s: Seq[T]) {
+
+  def lazyCartesian(ss: Seq[Seq[T]]): Iterator[Seq[T]] = new Iterator[Seq[T]] {
+
+    private[this] val seqs = s +: ss
+
+    private[this] var indexes = Array.fill(seqs.length)(0)
+
+    private[this] val counts = Vector(seqs.map(_.length - 1): _*)
+
+    private[this] var current = 0
+
+    def next(): Seq[T] = {
+      val buffer = ArrayBuffer.empty[T]
+      if (current != 0) {
+        throw new NoSuchElementException("no more elements to traverse")
+      }
+      val newIndexes = ArrayBuffer.empty[Int]
+      var inside = 0
+      for ((index, i) <- indexes.zipWithIndex) {
+        buffer.append(seqs(i)(index))
+        newIndexes.append(index)
+        if ((0 to i).forall(ind => newIndexes(ind) == counts(ind))) {
+          inside = inside + 1
+        }
+      }
+      current = inside
+      if (current < seqs.length) {
+        for (i <- (0 to current).reverse) {
+          if ((0 to i).forall(ind => newIndexes(ind) == counts(ind))) {
+            newIndexes(i) = 0
+          } else if (newIndexes(i) < counts(i)) {
+            newIndexes(i) = newIndexes(i) + 1
+          }
+        }
+        current = 0
+        indexes = newIndexes.toArray
+      }
+      buffer.result()
+    }
+
+    def hasNext: Boolean = current != seqs.length
+  }
+}
+

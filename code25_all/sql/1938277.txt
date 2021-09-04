@@ -1,0 +1,80 @@
+-- Function: dbo.sp_acc_createaccount(character varying, integer, integer, character varying, character varying, character varying, character varying)
+
+-- DROP FUNCTION dbo.sp_acc_createaccount(character varying, integer, integer, character varying, character varying, character varying, character varying);
+
+CREATE OR REPLACE FUNCTION dbo.sp_acc_createaccount(IN in_orgmgrtype character varying, INOUT in_parentid integer, IN in_levelid integer, IN in_name character varying, IN in_phone character varying, IN in_webpage character varying, IN in_owner character varying, OUT out_accountid integer)
+  RETURNS record AS
+$BODY$
+
+DECLARE 
+
+    l_CoID int;
+    l_CurrID int;
+    l_OrgMgrId int;
+
+    errmsg varchar(250);
+
+BEGIN
+
+    IF in_ParentID = -1 THEN
+
+      errmsg := 'execute sp_Acc_GetCompanyIDForUser failed';
+      l_CoID := dbo.sp_Acc_GetCompanyIDForUser(in_user);
+
+      IF l_CoID = -2 THEN
+         RAISE EXCEPTION 'execute sp_Acc_GetCompanyIDForUser failed';
+      END IF;
+
+      errmsg := 'execute sp_Acc_GetOrgMgrIDForCompany failed';
+      l_OrgMgrID := dbo.sp_Acc_GetOrgMgrIDForCompany(in_OrgMgrType, l_CoID);
+
+      IF l_OrgMgrID = -2 THEN
+         RAISE EXCEPTION 'execute sp_Acc_GetOrgMgrIDForCompany failed';
+      END IF;
+
+      in_ParentID := l_OrgMgrID;
+
+    ELSE
+      errmsg := 'Select orgmgrid failed';
+
+      SELECT OrgMgrID INTO l_CurrID
+        FROM dbo.OrgMgr
+       WHERE Name = in_Name
+         AND ParentID = in_ParentID;
+
+    END IF;
+
+    -- if not, add it
+    IF l_CurrID IS NULL THEN
+      errmsg := 'Insert into orgmgr(account creation) failed';
+
+      INSERT INTO dbo.OrgMgr
+          (ParentID, LevelID, Name, PrimaryPhone, WebPage, Owner)
+      VALUES 
+          (in_ParentID, in_LevelID, in_Name, in_Phone, in_WebPage, in_Owner);
+
+      out_AccountID := currval('dbo.OrgMgr_accountid_seq');
+
+    ELSE
+      out_AccountID := -1;
+    END IF;
+
+    COMMIT;
+
+EXCEPTION 
+
+    WHEN RAISE_EXCEPTION THEN
+        out_AccountID := 99;
+        RAISE NOTICE 'ERROR : %',errmsg;
+    WHEN OTHERS THEN
+        out_AccountID := 99;
+        RAISE EXCEPTION 'ERROR : %',errmsg;
+
+END
+
+$BODY$
+  LANGUAGE 'plpgsql' VOLATILE
+  COST 100;
+ALTER FUNCTION dbo.sp_acc_createaccount(character varying, integer, integer, character varying, character varying, character varying, character varying) OWNER TO postgres;
+
+ERROR:  SPI_execute_plan failed executing query "ROLLBACK": SPI_ERROR_TRANSACTION

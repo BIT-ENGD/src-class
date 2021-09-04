@@ -1,0 +1,81 @@
+Pendulum.hs:43:27:
+    No instance for (Num [Double]) arising from a use of `rk4'
+    Possible fix: add an instance declaration for (Num [Double])
+    In the first argument of `iterate', namely `(rk4 fs h)'
+    In the expression: iterate (rk4 fs h) initial
+    In an equation for `result': result = iterate (rk4 fs h) initial
+Failed, modules loaded: none.
+
+rk4  :: (Fractional b, Num [b]) => [[b] -> [b] -> b] -> b -> [[b]] -> [[b]]
+
+module Pendulum where
+import Data.List
+
+{-
+  The simple pendulum
+
+  This is system which obeys the following equation.
+
+  $ \frac{d^2 \theta}{dt^2} + \frac{g}{L}\theta = 0 $
+
+  where g is the acceleration due to gravity, L the length of the pendulum and theta
+  the angular displacement of the pendulum
+
+  By observation you could see thar for small angles the solution for simple harmonic osscilator could be used,
+  but for large angles a numerical solution is required.
+
+  This simulation uses the Runge Kutta 4th Order Method to solve the ODE.
+
+-}
+
+data PhysicalParam = PhysicalParam { pMass   :: Double -- kg   Pendulum mass
+                                   , pLength :: Double -- m    Pendulum length
+                                   }
+data PendulumState = PendulumState { omega   :: Double -- rad/s Angular Velocity
+                                   , theta   :: Double -- rad   Angular Displacement
+                                   , time    :: Double -- s     Time
+                                   }
+type Time = Double
+type TIncrement = Double
+
+list2State :: [[Double]] -> PendulumState
+list2State [xs, ys]  = PendulumState { theta = (ys !! 0)
+                                     , omega = (ys !! 1)
+                                     , time  = (xs !! 0)
+                                     }
+
+state2List :: PendulumState -> [[Double]]
+state2List state = [[time state],[theta state, omega state ]]
+
+
+--pendulum :: PhysicalParam -> PendulumState -> Time -> TIncrement -> [PendulumState]
+pendulum physicalParam initState time dt = result -- map list2State result
+  where result = iterate (rk4 fs h) initial
+        omegaDerivative pp state = adg * sin (theta state) / (pLength pp)
+        thetaDerivative pp state = omega state
+        fs   = [(\xs ys -> omegaDerivative physicalParam (list2State [xs, ys]))
+               ,(\xs ys -> thetaDerivative physicalParam (list2State [xs, ys]))
+               ]
+        initial  = state2List initState
+        h   = dt
+        adg = 9.81 -- m/s
+
+--rk4 :: Floating a => [ [a] -> [a] -> a ] -> a -> [[a]] -> [[a]]
+rk4 fs h [xs, ys] = [xs', ys']
+  where xs' = map (+h) xs
+        ys' = ys + map (*(h/6.0)) (k1 + (map (*2.0) k2) + (map (*2.0) k3) + k4)
+          where k1 = [f (xs)              (ys)                     | f <- fs]
+                k2 = [f (map (+0.5*h) xs) (ys + map (*(0.5*h)) k1) | f <- fs]
+                k3 = [f (map (+0.5*h) xs) (ys + map (*(0.5*h)) k2) | f <- fs]
+                k4 = [f (map (+1.0*h) xs) (ys + map (*(1.0*h)) k3) | f <- fs]
+
+physParam = PhysicalParam { pMass = 1.0, pLength = 0.1 }
+
+-- Initial Conditions
+initState = PendulumState { omega = 1.0, theta   = 1.0, time = 0.0 }
+
+dt = 1.0/100   -- time increment
+simTime = 30.0 -- simulation time
+
+simulatedStates = pendulum physParam initState simTime dt
+

@@ -1,0 +1,53 @@
+require 'net/ldap'
+require 'pp'
+
+class User < ActiveRecord::Base
+  validates_presence_of :name, :login, :email
+
+  # This method is resonsible for populating the User table with the
+  # login, name, and email of anybody who might be using the system.
+  def self.import_all
+    # initialization stuff. set bind_dn, bind_pass, ldap_host, base_dn and filter
+
+    ldap = Net::LDAP.new
+    ldap.host = ldap_host
+    ldap.auth bind_dn, bind_pass
+    ldap.bind
+
+    begin
+      # Build the list
+      records = records_updated = new_records = 0
+      ldap.search(:base => base_dn, :filter => filter ) do |entry|
+        name = entry.givenName.to_s.strip + " " + entry.sn.to_s.strip
+        login = entry.name.to_s.strip
+        email = login + "@txstate.edu"
+        user = User.find_or_initialize_by_login :name => name, :login => login, :email => email
+        if user.name != name
+          user.name = name
+          user.save
+          logger.info( "Updated: " + email )
+          records_updated = records_updated + 1
+        elsif user.new_record?
+          user.save
+          new_records = new_records + 1
+        else
+          # update timestamp so that we can delete old records later
+          user.touch
+        end
+        records = records + 1
+      end
+
+      # delete records that haven't been updated for 7 days
+      records_deleted = User.destroy_all( ["updated_at < ?", Date.today - 7 ] ).size
+
+      logger.info( "LDAP Import Complete: " + Time.now.to_s )
+      logger.info( "Total Records Processed: " + records.to_s )
+      logger.info( "New Records: " + new_records.to_s )
+      logger.info( "Updated Records: " + records_updated.to_s ) 
+      logger.info( "Deleted Records: " + records_deleted.to_s )
+
+    end
+
+  end
+end
+

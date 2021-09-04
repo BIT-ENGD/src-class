@@ -1,0 +1,148 @@
+DECLARE @new_collation varchar(128),
+  @conflict_collation varchar(128),
+  @cmd_holder varchar(2000),
+  @cmd_complete varchar(2000),
+  @schema varchar(128),
+  @table_name varchar(128),
+  @constraints_name varchar(128),
+  @column_name varchar(128),
+  @definition varchar(256),
+  @data_type varchar(128),
+  @type varchar(5),
+  @length varchar(4),
+  @nullability varchar(8),
+  @db_name varchar(10)
+
+SET @new_collation = 'SQL_Latin1_General_CP1_CI_AS'
+SET @conflict_collation = 'French_CI_AS'
+
+CREATE TABLE #LIST_CONSTRAINT(
+  constraints_name VARCHAR(128),
+  table_name VARCHAR(128),
+  definition VARCHAR(256),
+  type VARCHAR(10))
+
+INSERT INTO #LIST_CONSTRAINT 
+SELECT c.name AS constraints_name, o.name AS table_name, definition, 'CH' AS type
+FROM sys.check_constraints c
+INNER JOIN sysobjects o ON id = parent_object_id
+
+INSERT INTO #LIST_CONSTRAINT 
+SELECT i.name AS index_name, o.name AS table_name, c.name AS field_name, 'UQ' AS type
+FROM sys.indexes i 
+INNER JOIN sys.index_columns ic 
+  ON i.object_id = ic.object_id and i.index_id = ic.index_id
+INNER JOIN sys.columns c 
+  ON ic.object_id = c.object_id and ic.column_id = c.column_id
+INNER JOIN sys.objects o 
+  ON i.object_id = o.object_id
+WHERE is_unique_constraint = 1
+
+SET @cmd_holder = 'ALTER TABLE $table_name DROP CONSTRAINT $constraints_name'
+
+DECLARE column_cursor 
+CURSOR FOR SELECT constraints_name, table_name FROM  #LIST_CONSTRAINT GROUP BY constraints_name, table_name
+OPEN column_cursor
+FETCH NEXT FROM column_cursor INTO @constraints_name, @table_name
+
+WHILE @@Fetch_Status = 0
+  BEGIN
+    SELECT  @cmd_complete = @cmd_holder,
+            @cmd_complete = Replace(@cmd_complete, '$table_name', '[' + @table_name +']'),
+            @cmd_complete = Replace(@cmd_complete, '$constraints_name', @constraints_name)
+
+    --PRINT @cmd_complete
+    EXEC(@cmd_complete)
+    FETCH NEXT FROM column_cursor INTO @constraints_name, @table_name
+  END
+CLOSE column_cursor
+DEALLOCATE column_cursor
+
+SELECT @db_name = DB_NAME()
+EXEC('ALTER DATABASE ' + @db_name + ' COLLATE ' + @new_collation)  
+
+SET @cmd_holder = 'ALTER TABLE $schema.$table_name ALTER COLUMN $column_name $data_type($length) COLLATE $new_collation $nullability'
+
+DECLARE column_cursor CURSOR
+  FOR SELECT  table_schema,
+              table_name,
+              column_name,
+              data_type,
+              CASE WHEN character_maximum_length = -1 THEN 'max'
+                   ELSE Convert(varchar(4), character_maximum_length)
+              END As length,
+              CASE WHEN is_nullable = 'YES' THEN 'NULL'
+                   ELSE 'NOT NULL'
+              END As nullability
+      FROM    information_schema.columns
+      INNER JOIN sysobjects ON name = table_name
+      WHERE  collation_name = @conflict_collation AND xtype = 'U'
+       AND table_name NOT IN ('dtproperties', 'Exotics', 'ContractAccountsBalance', 'TechnicalParameters', 'SavingProducts', 'GeneralParameters')
+OPEN column_cursor
+
+FETCH NEXT FROM column_cursor INTO @schema, @table_name, @column_name, @data_type, @length, @nullability
+
+WHILE @@Fetch_Status = 0
+  BEGIN
+    SELECT  @cmd_complete = @cmd_holder,
+            @cmd_complete = Replace(@cmd_complete, '$schema', @schema),
+            @cmd_complete = Replace(@cmd_complete, '$table_name', '[' + @table_name +']'),
+            @cmd_complete = Replace(@cmd_complete, '$column_name', '[' + @column_name +']'),
+            @cmd_complete = Replace(@cmd_complete, '$data_type', @data_type),
+            @cmd_complete = Replace(@cmd_complete, '$length', @length),
+            @cmd_complete = Replace(@cmd_complete, '$new_collation', @new_collation),
+            @cmd_complete = Replace(@cmd_complete, '$nullability', @nullability),
+            @cmd_complete = Replace(@cmd_complete, 'text(*)', 'text')
+
+    --PRINT @cmd_complete
+    EXEC(@cmd_complete)
+
+    FETCH NEXT FROM column_cursor INTO @schema, @table_name, @column_name, @data_type, @length, @nullability
+  END
+CLOSE column_cursor
+DEALLOCATE column_cursor
+
+DECLARE @name_constraints VARCHAR(128)
+
+DECLARE column_cursor 
+CURSOR FOR SELECT constraints_name, table_name, definition, [type] FROM  #LIST_CONSTRAINT
+OPEN column_cursor
+FETCH NEXT FROM column_cursor INTO @constraints_name, @table_name, @definition, @type
+
+WHILE @@Fetch_Status = 0
+  BEGIN
+    IF @type = 'CH'
+    SET @cmd_holder = 'ALTER TABLE $table_name WITH NOCHECK ADD CONSTRAINT $constraints_name CHECK NOT FOR REPLICATION $definition ALTER TABLE $table_name CHECK CONSTRAINT $constraints_name'
+
+    IF @type = 'UQ'
+    BEGIN
+      SET @cmd_holder = 'ALTER TABLE $table_name ADD CONSTRAINT $constraints_name UNIQUE NONCLUSTERED ($definition) WITH( STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)'
+
+      SET @definition = '';
+
+      SELECT @definition = @definition + definition + ', '
+      FROM #LIST_CONSTRAINT
+      WHERE constraints_name = @constraints_name
+
+      SELECT @definition = SUBSTRING(@definition, 1, LEN(@definition) - 1)         
+    END
+
+
+    SELECT  @cmd_complete = @cmd_holder,
+            @cmd_complete = Replace(@cmd_complete, '$table_name', '[' + @table_name +']'),
+            @cmd_complete = Replace(@cmd_complete, '$constraints_name', @constraints_name),
+            @cmd_complete = Replace(@cmd_complete, '$definition', @definition)
+
+    --PRINT @cmd_complete
+    IF (@name_constraints <> @constraints_name)
+      EXEC(@cmd_complete)
+
+    SET @name_constraints = @constraints_name
+
+    FETCH NEXT FROM column_cursor INTO @constraints_name, @table_name, @definition, @type
+  END
+CLOSE column_cursor
+DEALLOCATE column_cursor
+
+DROP TABLE #LIST_CONSTRAINT
+

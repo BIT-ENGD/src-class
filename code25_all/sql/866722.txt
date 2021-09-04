@@ -1,0 +1,619 @@
+FOR EACH @LVL_NUM < @MAX_LVL:
+INSERT INTO ALLOCS
+SELECT 'OUT', *
+FROM BALANCES(@LVL_NUM)
+INNER JOIN ALLOCN_SUMRY(@LVL_NUM)
+
+INSERT INTO ALLOCS
+SELECT 'IN', *
+FROM BALANCES(@LVL_NUM)
+INNER JOIN ALLOCNS(@LVL_NUM)
+INNER JOIN ALLOCN_SUMRY(@LVL_NUM)
+
+ALLOCS
+BALANCES(@LVL_NUM)
+ALLOCS
+@LVL_NUM
+ALOCNS(@LVL_NUM)
+BALANCES(@LVL_NUM)
+ALOCN_SUMRY(@LVL_NUM)
+ALOCNS(@LVL_NUM)
+BALANCES
+ALLOCNS / ALLOCN_SUMRY
+OUT
+IN
+SUMRY
+ALLOCN
+ALLOCS
+ALLOCNS
+@LVL_NUM = 6
+ALLOCS
+@LVL_NUM IN (2, 4)
+/****** Object:  UserDefinedFunction [MISProcess].[udf_MR_BALANCES_STAT_UNI]    Script Date: 05/14/2009 22:16:09 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE FUNCTION [MISProcess].[udf_MR_BALANCES_STAT_UNI] (
+     @DATA_DT_ID int
+    ,@LVL_NUM int
+    )
+RETURNS TABLE
+--    WITH SCHEMABINDING
+AS 
+RETURN
+    (
+     SELECT AB.YYMM_ID
+           ,AB.BUS_UNIT_ID
+           ,AB.BUS_UNIT_PROD_LINE_CD
+--                   ,AB.ALOCN_SRC_CD
+           ,AB.ALOCN_SRC_PROD_LINE_CD
+           ,CASE WHEN ORIG_ALSRC.ALOCN_TYPE_CD = 'C'
+                      AND ORIG_ALSRC.RETN_IND = 'Y' THEN AB.ORIG_ALOCN_SRC_CD
+                 ELSE AB.BUS_UNIT_ID
+            END AS ORIG_ALOCN_SRC_CD
+           ,CASE WHEN BUPALSRC.COLLAPSE_IND = 'Y'
+                 THEN BUPLNTM.ALOCN_LINE_ITEM_NUM
+                 ELSE AB.LINE_ITEM_NUM
+            END AS ALOCN_LINE_ITEM_NUM
+           ,SUM(BUPLNTM.ALOCN_SIGN_IND * AB.ANULZD_ACTL_BAL) AS ANULZD_ACTL_BAL
+     FROM   MISWork.vwMR_BALANCES AS AB
+     INNER JOIN MISProcess.LKP_BUPLNTM AS BUPLNTM
+            ON BUPLNTM.DATA_DT_ID = @DATA_DT_ID
+               AND BUPLNTM.LINE_ITEM_NUM = AB.LINE_ITEM_NUM
+               AND BUPLNTM.ALOCN_LINE_ITEM_NUM <> 0
+     INNER JOIN [MISProcess].[udf_MR_ALSRC](@DATA_DT_ID, @LVL_NUM) AS BUPALSRC
+            ON BUPALSRC.ALOCN_SRC_CD = AB.BUS_UNIT_ID
+     INNER JOIN [MISProcess].LKP_BUPALSRC AS ORIG_ALSRC
+            ON ORIG_ALSRC.DATA_DT_ID = @DATA_DT_ID
+               AND ORIG_ALSRC.ALOCN_SRC_CD = AB.ORIG_ALOCN_SRC_CD
+     GROUP BY AB.YYMM_ID
+           ,AB.BUS_UNIT_ID
+           ,AB.BUS_UNIT_PROD_LINE_CD
+--                   ,AB.ALOCN_SRC_CD
+           ,AB.ALOCN_SRC_PROD_LINE_CD
+           ,CASE WHEN ORIG_ALSRC.ALOCN_TYPE_CD = 'C'
+                      AND ORIG_ALSRC.RETN_IND = 'Y' THEN AB.ORIG_ALOCN_SRC_CD
+                 ELSE AB.BUS_UNIT_ID
+            END
+           ,CASE WHEN BUPALSRC.COLLAPSE_IND = 'Y'
+                 THEN BUPLNTM.ALOCN_LINE_ITEM_NUM
+                 ELSE AB.LINE_ITEM_NUM
+            END
+    )
+
+/****** Object:  UserDefinedFunction [MISProcess].[udf_MR_ALOCNS_STAT_UNI]    Script Date: 05/14/2009 22:16:16 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE FUNCTION [MISProcess].[udf_MR_ALOCNS_STAT_UNI] (
+     @DATA_DT_ID int
+    ,@LVL_NUM int
+    )
+RETURNS TABLE
+--    WITH SCHEMABINDING
+AS 
+RETURN
+    (
+     SELECT BALANCES.YYMM_ID
+           ,BS.ALOCN_SRC_CD AS BUS_UNIT_ID
+           ,BS.PROD_LINE_CD AS BUS_UNIT_PROD_LINE_CD
+           ,BALANCES.BUS_UNIT_ID AS ALOCN_SRC_CD
+           ,BALANCES.BUS_UNIT_PROD_LINE_CD AS ALOCN_SRC_PROD_LINE_CD
+           ,BALANCES.ORIG_ALOCN_SRC_CD
+           ,BALANCES.ALOCN_LINE_ITEM_NUM
+           ,SUM(BS.ACCT_STATS_CNT) AS ACCT_STATS_CNT
+     FROM   [MISProcess].[udf_MR_BALANCES_STAT_UNI](@DATA_DT_ID, @LVL_NUM) AS BALANCES
+     INNER JOIN [MISProcess].[udf_MR_ALSRC](@DATA_DT_ID, @LVL_NUM) AS BUPALSRC
+            ON BUPALSRC.ALOCN_SRC_CD = BALANCES.BUS_UNIT_ID
+     INNER JOIN MISProcess.LKP_PRODLINE AS PRODLINE
+            ON PRODLINE.DATA_DT_ID = @DATA_DT_ID
+               AND PRODLINE.PROD_LINE_CD = BALANCES.BUS_UNIT_PROD_LINE_CD
+     INNER JOIN PUASFIN.FocusResults.BS AS BS
+            ON BS.YYMM_ID = BALANCES.YYMM_ID
+               AND BS.ALOCN_BASE_CD = BUPALSRC.ALOCN_BASE_CD
+               AND BS.ALOCN_SRC_CD <> BALANCES.BUS_UNIT_ID
+               AND (
+                    PRODLINE.GENRC_PROD_LINE_IND = 'Y'
+                    OR BS.PROD_LINE_CD = BALANCES.BUS_UNIT_PROD_LINE_CD
+                   )
+     INNER JOIN [MISProcess].[udf_MR_ALSRC](@DATA_DT_ID, 0) AS DEST_BUP_ALSRC
+            ON DEST_BUP_ALSRC.ALOCN_SRC_CD = BS.ALOCN_SRC_CD
+               AND DEST_BUP_ALSRC.ALOCN_LVL_NUM > @LVL_NUM
+     LEFT JOIN [MISProcess].[udf_MR_BLOCK_STD_COST_PCT](@DATA_DT_ID) AS BLOCK_STD_COST_PCT
+            ON BLOCK_STD_COST_PCT.FROM_ALOCN_SRC_CD = BALANCES.BUS_UNIT_ID
+     LEFT JOIN [MISProcess].[udf_MR_BLOCK_NOT](@DATA_DT_ID) AS BLOCK_NOT
+            ON BLOCK_NOT.ALOCN_SRC_CD = BALANCES.BUS_UNIT_ID
+     LEFT JOIN [MISProcess].[udf_MR_BLOCK](@DATA_DT_ID) AS BLOCK
+            ON BLOCK_NOT.ALOCN_SRC_CD IS NULL
+               AND BLOCK.FROM_ALOCN_SRC_CD = BALANCES.BUS_UNIT_ID
+               AND (
+                    BLOCK.FROM_PROD_LINE_CD IS NULL
+                    OR BLOCK.FROM_PROD_LINE_CD = BALANCES.BUS_UNIT_PROD_LINE_CD
+                   )
+     LEFT JOIN [MISProcess].[udf_MR_BLOCK_ALOCN_PAIRS](@DATA_DT_ID, @LVL_NUM)
+            AS BLOCK_ALOCN_PAIRS
+            ON BLOCK_NOT.ALOCN_SRC_CD IS NOT NULL
+               AND BLOCK_ALOCN_PAIRS.FROM_ALOCN_SRC_CD = BALANCES.BUS_UNIT_ID
+               AND BLOCK_ALOCN_PAIRS.TO_ALOCN_SRC_CD = BS.ALOCN_SRC_CD
+     WHERE  BLOCK_ALOCN_PAIRS.TO_ALOCN_SRC_CD IS NULL
+            AND BLOCK_STD_COST_PCT.FROM_ALOCN_SRC_CD IS NULL
+            AND (
+                 BLOCK.TO_ALOCN_SRC_CD IS NULL
+                 OR BLOCK.TO_ALOCN_SRC_CD = BS.ALOCN_SRC_CD
+                )
+            AND (
+                 BLOCK.TO_PROD_LINE_CD IS NULL
+                 OR BLOCK.TO_PROD_LINE_CD = BS.PROD_LINE_CD
+                )
+            AND (
+                 BLOCK.YEAR_NUM IS NULL
+                 OR BLOCK.YEAR_NUM = BALANCES.YYMM_ID / 10000
+                )
+            AND (
+                 BLOCK.MTH_NUM IS NULL
+                 OR BLOCK.MTH_NUM = (BALANCES.YYMM_ID / 100) % 100
+                )
+            AND (
+                 BLOCK.TO_DIV_NUM IS NULL
+                 OR BLOCK.TO_DIV_NUM = DEST_BUP_ALSRC.DIV_NUM
+                )
+            AND (
+                 BLOCK.TO_GRP_NUM IS NULL
+                 OR BLOCK.TO_GRP_NUM = DEST_BUP_ALSRC.DIV_GRP
+                )
+            AND (
+                 BLOCK.TO_REGN_GRP_NM IS NULL
+                 OR BLOCK.TO_REGN_GRP_NM = DEST_BUP_ALSRC.REGN_GRP_NM
+                )
+            AND (
+                 BLOCK.TO_REGN_NM IS NULL
+                 OR BLOCK.TO_REGN_NM = DEST_BUP_ALSRC.REGN_NM
+                )
+            AND (
+                 BLOCK.TO_ARENA_NM IS NULL
+                 OR BLOCK.TO_ARENA_NM = DEST_BUP_ALSRC.ARENA_NM
+                )
+            AND (
+                 BLOCK.TO_SUB_REGN_NM IS NULL
+                 OR BLOCK.TO_SUB_REGN_NM = DEST_BUP_ALSRC.SUB_REGN_NM
+                )
+            AND (
+                 BLOCK.TO_SUB_ARENA_NM IS NULL
+                 OR BLOCK.TO_SUB_ARENA_NM = DEST_BUP_ALSRC.SUB_ARENA_NM
+                )
+     GROUP BY BALANCES.YYMM_ID
+           ,BS.ALOCN_SRC_CD
+           ,BS.PROD_LINE_CD
+           ,BALANCES.BUS_UNIT_ID
+           ,BALANCES.BUS_UNIT_PROD_LINE_CD
+           ,BALANCES.ORIG_ALOCN_SRC_CD
+           ,BALANCES.ALOCN_LINE_ITEM_NUM
+    )
+
+/****** Object:  UserDefinedFunction [MISProcess].[udf_MR_ALOCN_SUMRY_STAT_UNI]    Script Date: 05/14/2009 22:16:28 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE FUNCTION [MISProcess].[udf_MR_ALOCN_SUMRY_STAT_UNI] (
+     @DATA_DT_ID int
+    ,@LVL_NUM int
+    )
+RETURNS TABLE
+--    WITH SCHEMABINDING
+AS 
+RETURN
+    (
+     SELECT YYMM_ID
+           ,ALOCN_SRC_CD
+           ,ALOCN_SRC_PROD_LINE_CD
+           ,ORIG_ALOCN_SRC_CD
+           ,ALOCN_LINE_ITEM_NUM
+           ,SUM(ACCT_STATS_CNT) AS ACCT_STATS_CNT
+     FROM   [MISProcess].[udf_MR_ALOCNS_STAT_UNI](@DATA_DT_ID, @LVL_NUM) AS ALOCNS
+     GROUP BY YYMM_ID
+           ,ALOCN_SRC_CD
+           ,ALOCN_SRC_PROD_LINE_CD
+           ,ORIG_ALOCN_SRC_CD
+           ,ALOCN_LINE_ITEM_NUM
+    )
+
+USE PCAPFIN
+
+DECLARE @DATA_DT_ID_use AS int
+DECLARE @MinLevel AS int
+DECLARE @MaxLevel AS int
+DECLARE @TestEveryLevel AS bit
+DECLARE @TestFinal AS bit
+
+SET @DATA_DT_ID_use = 20090331
+SET @MinLevel = 6
+SET @MaxLevel = 6
+SET @TestEveryLevel = 0
+SET @TestFinal = 1
+
+--DECLARE @BALANCES TABLE (
+--     METHOD_TXT varchar(12) NOT NULL
+--    ,YYMM_ID int NOT NULL
+--    ,BUS_UNIT_ID varchar(6) NOT NULL
+--    ,BUS_UNIT_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ALOCN_SRC_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ORIG_ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_LINE_ITEM_NUM int NOT NULL
+--    ,ANULZD_ACTL_BAL money
+--    )
+--
+--DECLARE @ALOCNS TABLE (
+--     METHOD_TXT varchar(12) NOT NULL
+--    ,YYMM_ID int NOT NULL
+--    ,BUS_UNIT_ID varchar(6) NOT NULL
+--    ,BUS_UNIT_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_SRC_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ORIG_ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_LINE_ITEM_NUM int NOT NULL
+--    ,ACCT_STATS_CNT money
+--    )
+--
+--DECLARE @ALOCN_SUMRY TABLE (
+--     METHOD_TXT varchar(12) NOT NULL
+--    ,YYMM_ID int NOT NULL
+--    ,ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_SRC_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ORIG_ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_LINE_ITEM_NUM int NOT NULL
+--    ,ACCT_STATS_CNT money
+--    )
+
+--IF OBJECT_ID('tempdb..#BALANCES') IS NOT NULL 
+--    DROP TABLE #BALANCES
+--
+--CREATE TABLE #BALANCES (
+--     METHOD_TXT varchar(12) NOT NULL
+--    ,YYMM_ID int NOT NULL
+--    ,BUS_UNIT_ID varchar(6) NOT NULL
+--    ,BUS_UNIT_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ALOCN_SRC_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ORIG_ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_LINE_ITEM_NUM int NOT NULL
+--    ,ANULZD_ACTL_BAL money
+--    ,CONSTRAINT [PK_BALANCES] PRIMARY KEY CLUSTERED ([METHOD_TXT] ASC, [YYMM_ID] ASC, [BUS_UNIT_ID] ASC, [BUS_UNIT_PROD_LINE_CD] ASC, [ALOCN_SRC_PROD_LINE_CD] ASC, [ORIG_ALOCN_SRC_CD] ASC, [ALOCN_LINE_ITEM_NUM] ASC)
+--        WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF,
+--              IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
+--              ALLOW_PAGE_LOCKS = ON)
+--    )
+--
+--IF OBJECT_ID('tempdb..#ALOCN_SUMRY') IS NOT NULL 
+--    DROP TABLE #ALOCNS
+--
+--CREATE TABLE #ALOCNS (
+--     METHOD_TXT varchar(12) NOT NULL
+--    ,YYMM_ID int NOT NULL
+--    ,BUS_UNIT_ID varchar(6) NOT NULL
+--    ,BUS_UNIT_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_SRC_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ORIG_ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_LINE_ITEM_NUM int NOT NULL
+--    ,ACCT_STATS_CNT money
+--    ,CONSTRAINT [PK_ALOCNS] PRIMARY KEY CLUSTERED ([METHOD_TXT] ASC, YYMM_ID ASC, BUS_UNIT_ID ASC, BUS_UNIT_PROD_LINE_CD ASC, ALOCN_SRC_CD ASC, ALOCN_SRC_PROD_LINE_CD ASC, ORIG_ALOCN_SRC_CD ASC, ALOCN_LINE_ITEM_NUM ASC)
+--        WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF,
+--              IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
+--              ALLOW_PAGE_LOCKS = ON)
+--    )
+--
+--IF OBJECT_ID('tempdb..#ALOCN_SUMRY') IS NOT NULL 
+--    DROP TABLE #ALOCN_SUMRY
+--CREATE TABLE #ALOCN_SUMRY (
+--     METHOD_TXT varchar(12) NOT NULL
+--    ,YYMM_ID int NOT NULL
+--    ,ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_SRC_PROD_LINE_CD varchar(4) NOT NULL
+--    ,ORIG_ALOCN_SRC_CD varchar(6) NOT NULL
+--    ,ALOCN_LINE_ITEM_NUM int NOT NULL
+--    ,ACCT_STATS_CNT money
+--    ,CONSTRAINT [PK_ALOCN_SUMRY] PRIMARY KEY CLUSTERED ([METHOD_TXT] ASC, YYMM_ID ASC, ALOCN_SRC_CD ASC, ALOCN_SRC_PROD_LINE_CD ASC, ORIG_ALOCN_SRC_CD ASC, ALOCN_LINE_ITEM_NUM ASC)
+--        WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF,
+--              IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
+--              ALLOW_PAGE_LOCKS = ON)
+--    )
+
+SET @MinLevel = (
+                 SELECT MIN(BUPALSRC.ALOCN_LVL_NUM)
+                 FROM   MISProcess.LKP_BUPALSRC AS BUPALSRC
+                 WHERE  BUPALSRC.DATA_DT_ID = @DATA_DT_ID_use
+                        AND BUPALSRC.ALOCN_LVL_NUM >= @MinLevel
+                )
+
+DECLARE @Restart AS bit
+IF @MinLevel > (
+                SELECT  MIN(BUPALSRC.ALOCN_LVL_NUM)
+                FROM    MISProcess.LKP_BUPALSRC AS BUPALSRC
+                WHERE   BUPALSRC.DATA_DT_ID = @DATA_DT_ID_use
+               ) 
+    SET @Restart = 0
+ELSE 
+    SET @Restart = 1
+
+DECLARE @subset_criteria AS varchar(max)
+
+SET NOCOUNT ON
+
+IF @Restart = 1 
+    BEGIN
+        RAISERROR ('Restarting process', 10, 1) WITH NOWAIT
+--        TRUNCATE TABLE MISWork.AB
+        DELETE FROM MISWork.AB
+
+        INSERT  INTO MISWork.AB (
+                 YYMM_ID
+                ,BUS_UNIT_ID
+                ,BUS_UNIT_PROD_LINE_CD
+                ,ALOCN_SRC_CD
+                ,ALOCN_SRC_PROD_LINE_CD
+                ,ORIG_ALOCN_SRC_CD
+                ,LINE_ITEM_NUM
+                ,BAL_ORIGTN_IND
+                ,ANULZD_ACTL_BAL
+                ,ACCT_STATS_CNT
+                ,LVL_NUM
+                ,METHOD_TXT
+                )
+                SELECT  YYMM_ID
+                       ,ALOCN_SRC_CD AS BUS_UNIT_ID
+                       ,PROD_LINE_CD AS BUS_UNIT_PROD_LINE_CD
+                       ,ALOCN_SRC_CD
+                       ,PROD_LINE_CD AS ALOCN_SRC_PROD_LINE_CD
+                       ,ALOCN_SRC_CD AS ORIG_ALOCN_SRC_CD
+                       ,LINE_ITEM_NUM
+                       ,'D' AS BAL_ORIGTN_IND
+                       ,FIN_ALOCN_AMT AS ANULZD_ACTL_BAL
+                       ,0.0 AS ACCT_STATS_CNT
+                       ,0 AS LVL_NUM
+                       ,'D-INIT' AS METHOD_TXT
+    --        FROM    MISProcess.FIN_FTP
+                FROM    PUASFIN.FocusResults.BUPALLGE
+    END
+ELSE 
+    BEGIN
+        DELETE  FROM MISWork.AB
+        WHERE   LVL_NUM >= @MinLevel
+    END
+
+DECLARE @LVL_NUM AS int
+SET @LVL_NUM = @MinLevel
+WHILE @LVL_NUM <= @MaxLevel
+    BEGIN
+        DECLARE @LevelStart AS varchar(50)
+        SET @LevelStart = 'Level:' + CONVERT(varchar, @LVL_NUM)
+        RAISERROR (@LevelStart, 10, 1) WITH NOWAIT
+
+        RAISERROR ('STD_COST_PCT allocations - No D - B records', 10, 1) WITH NOWAIT
+        -- STD_COST_PCT allocations - No D - B records
+        INSERT  INTO MISWork.AB (
+                 YYMM_ID
+                ,BUS_UNIT_ID
+                ,BUS_UNIT_PROD_LINE_CD
+                ,ALOCN_SRC_CD
+                ,ALOCN_SRC_PROD_LINE_CD
+                ,ORIG_ALOCN_SRC_CD
+                ,LINE_ITEM_NUM
+                ,BAL_ORIGTN_IND
+                ,ANULZD_ACTL_BAL
+                ,ACCT_STATS_CNT
+                ,LVL_NUM
+                ,METHOD_TXT
+                )
+                SELECT  ALOCNS.YYMM_ID
+                       ,ALOCNS.BUS_UNIT_ID
+                       ,ALOCNS.BUS_UNIT_PROD_LINE_CD
+                       ,ALOCNS.BUS_UNIT_ID AS ALOCN_SRC_CD
+                       ,ALOCNS.BUS_UNIT_PROD_LINE_CD AS ALOCN_SRC_PROD_LINE_CD
+                       ,ALOCNS.BUS_UNIT_ID AS ORIG_ALOCN_SRC_CD
+                       ,ALOCNS.LINE_ITEM_NUM
+                       ,'B' AS BAL_ORIGTN_IND
+                       ,-1.0 * ROUND(ALOCNS.ANULZD_ACTL_BAL, 2) AS ANULZD_ACTL_BAL
+                       ,ROUND(ALOCNS.ACCT_STATS_CNT, 2) AS ACCT_STATS_CNT
+                       ,@LVL_NUM AS LVL_NUM
+                       ,'NO-D-B' AS METHOD_TXT
+                FROM    [MISProcess].[udf_MR_ALOCNS_STD_COST_PCT_NO_D](@DATA_DT_ID_use, @LVL_NUM)
+                        AS ALOCNS
+
+        RAISERROR ('STD_COST_PCT allocations - No D - A records', 10, 1) WITH NOWAIT
+        -- STD_COST_PCT allocations - No D - A records
+        INSERT  INTO MISWork.AB (
+                 YYMM_ID
+                ,BUS_UNIT_ID
+                ,BUS_UNIT_PROD_LINE_CD
+                ,ALOCN_SRC_CD
+                ,ALOCN_SRC_PROD_LINE_CD
+                ,ORIG_ALOCN_SRC_CD
+                ,LINE_ITEM_NUM
+                ,BAL_ORIGTN_IND
+                ,ANULZD_ACTL_BAL
+                ,ACCT_STATS_CNT
+                ,LVL_NUM
+                ,METHOD_TXT
+                )
+                SELECT  ALOCNS.YYMM_ID
+                       ,BLOCK.TO_ALOCN_SRC_CD AS BUS_UNIT_ID
+                       ,ALOCNS.ALOCN_SRC_PROD_LINE_CD AS BUS_UNIT_PROD_LINE_CD
+                       ,ALOCNS.ALOCN_SRC_CD
+                       ,ALOCNS.BUS_UNIT_PROD_LINE_CD AS ALOCN_SRC_PROD_LINE_CD
+                       ,ALOCNS.ORIG_ALOCN_SRC_CD
+                       ,ALOCNS.LINE_ITEM_NUM
+                       ,'A' AS BAL_ORIGTN_IND
+                       ,ROUND(ALOCNS.ANULZD_ACTL_BAL, 2) AS ANULZD_ACTL_BAL
+                       ,ROUND(ALOCNS.ACCT_STATS_CNT, 2) AS ACCT_STATS_CNT
+                       ,@LVL_NUM AS LVL_NUM
+                       ,'NO-D-A' AS METHOD_TXT
+                FROM    [MISProcess].[udf_MR_ALOCNS_STD_COST_PCT_NO_D](@DATA_DT_ID_use, @LVL_NUM)
+                        AS ALOCNS
+                INNER JOIN MISProcess.LKP_BLOCK AS BLOCK
+                        -- TODO: Can this be moved into the udf above?
+                            ON BLOCK.DATA_DT_ID = @DATA_DT_ID_use
+                               AND BLOCK.FROM_ALOCN_SRC_CD = ALOCNS.BUS_UNIT_ID
+
+        RAISERROR ('STD_COST_PCT allocations - B records', 10, 1) WITH NOWAIT
+
+        -- STD_COST_PCT allocations - B records
+        INSERT  INTO MISWork.AB (
+                 YYMM_ID
+                ,BUS_UNIT_ID
+                ,BUS_UNIT_PROD_LINE_CD
+                ,ALOCN_SRC_CD
+                ,ALOCN_SRC_PROD_LINE_CD
+                ,ORIG_ALOCN_SRC_CD
+                ,LINE_ITEM_NUM
+                ,BAL_ORIGTN_IND
+                ,ANULZD_ACTL_BAL
+                ,ACCT_STATS_CNT
+                ,LVL_NUM
+                ,METHOD_TXT
+                )
+                SELECT  ALOCNS.YYMM_ID
+                       ,ALOCNS.BUS_UNIT_ID
+                       ,ALOCNS.BUS_UNIT_PROD_LINE_CD
+                       ,ALOCNS.ALOCN_SRC_CD
+                       ,ALOCNS.BUS_UNIT_PROD_LINE_CD AS ALOCN_SRC_PROD_LINE_CD
+                       ,ALOCNS.ORIG_ALOCN_SRC_CD
+                       ,ALOCNS.LINE_ITEM_NUM
+                       ,'B' AS BAL_ORIGTN_IND
+                       ,-1.0 * ROUND(ALOCNS.ANULZD_ACTL_BAL * RATIOS.RATIO, 2) AS ANULZD_ACTL_BAL
+                       ,ROUND(ALOCNS.ACCT_STATS_CNT, 2) AS ACCT_STATS_CNT
+                       ,@LVL_NUM AS LVL_NUM
+                       ,'STD-B' AS METHOD_TXT
+                FROM    [MISProcess].[udf_MR_ALOCNS_STD_COST_PCT](@DATA_DT_ID_use, @LVL_NUM)
+                        AS ALOCNS
+                INNER JOIN [MISProcess].[udf_MR_RATIOS_STD_COST_PCT](@DATA_DT_ID_use, @LVL_NUM)
+                        AS RATIOS
+                        ON RATIOS.YYMM_ID = ALOCNS.YYMM_ID
+                           AND RATIOS.BUS_UNIT_ID = ALOCNS.BUS_UNIT_ID
+                           AND RATIOS.LINE_ITEM_NUM = ALOCNS.LINE_ITEM_NUM
+
+        RAISERROR ('STD_COST_PCT allocations - A records', 10, 1) WITH NOWAIT
+
+        -- STD_COST_PCT allocations - A records
+        ;
+        WITH    CORRECTED_ALOCNS
+                  AS (
+                      SELECT    ALOCNS.YYMM_ID
+                               ,ALOCNS.BUS_UNIT_ID
+                               ,ALOCNS.BUS_UNIT_PROD_LINE_CD
+                               ,ALOCNS.ALOCN_SRC_CD
+                               ,ALOCNS.ALOCN_SRC_PROD_LINE_CD
+                               ,ALOCNS.ORIG_ALOCN_SRC_CD
+                               ,ALOCNS.LINE_ITEM_NUM
+                               ,ALOCNS.ANULZD_ACTL_BAL * RATIOS.RATIO AS ANULZD_ACTL_BAL
+                               ,CASE WHEN RATIOS.RATIO <> 1.0
+                                     THEN RATIOS.RATIO
+                                     ELSE ALOCNS.ACCT_STATS_CNT
+                                END AS ACCT_STATS_CNT
+                      FROM      [MISProcess].[udf_MR_CORR_ALOCNS_STD_COST_PCT](@DATA_DT_ID_use, @LVL_NUM)
+                                AS ALOCNS
+                      INNER JOIN [MISProcess].[udf_MR_RATIOS_STD_COST_PCT](@DATA_DT_ID_use, @LVL_NUM)
+                                AS RATIOS
+                                ON RATIOS.YYMM_ID = ALOCNS.YYMM_ID
+                                   AND RATIOS.BUS_UNIT_ID = ALOCNS.ALOCN_SRC_CD
+                                   AND RATIOS.LINE_ITEM_NUM = ALOCNS.LINE_ITEM_NUM
+                     ),
+                ROUNDED_ALOCNS
+                  AS (
+                      SELECT    YYMM_ID
+                               ,BUS_UNIT_ID
+                               ,BUS_UNIT_PROD_LINE_CD
+                               ,ALOCN_SRC_CD
+                               ,ALOCN_SRC_PROD_LINE_CD
+                               ,ORIG_ALOCN_SRC_CD
+                               ,LINE_ITEM_NUM
+                               ,CASE WHEN ABS(ANULZD_ACTL_BAL) < 0.05 THEN 0.0
+                                     WHEN ABS(ANULZD_ACTL_BAL) > 0.05
+                                          AND ABS(ANULZD_ACTL_BAL) < 0.10
+                                     THEN 0.10 * SIGN(ANULZD_ACTL_BAL)
+                                     ELSE ANULZD_ACTL_BAL
+                                END AS ANULZD_ACTL_BAL
+                               ,ACCT_STATS_CNT
+                      FROM      CORRECTED_ALOCNS
+                     )
+            INSERT  INTO MISWork.AB (
+                     YYMM_ID
+                    ,BUS_UNIT_ID
+                    ,BUS_UNIT_PROD_LINE_CD
+                    ,ALOCN_SRC_CD
+                    ,ALOCN_SRC_PROD_LINE_CD
+                    ,ORIG_ALOCN_SRC_CD
+                    ,LINE_ITEM_NUM
+                    ,BAL_ORIGTN_IND
+                    ,ANULZD_ACTL_BAL
+                    ,ACCT_STATS_CNT
+                    ,LVL_NUM
+                    ,METHOD_TXT
+                    )
+                    SELECT  YYMM_ID
+                           ,BUS_UNIT_ID
+                           ,BUS_UNIT_PROD_LINE_CD
+                           ,ALOCN_SRC_CD
+                           ,ALOCN_SRC_PROD_LINE_CD
+                           ,ORIG_ALOCN_SRC_CD
+                           ,LINE_ITEM_NUM
+                           ,'A' AS BAL_ORIGTN_IND
+                           ,ROUND(ANULZD_ACTL_BAL, 2) AS ANULZD_ACTL_BAL
+                           ,ROUND(ACCT_STATS_CNT, 2) AS ACCT_STATS_CNT
+                           ,@LVL_NUM AS LVL_NUM
+                           ,'STD-A' AS METHOD_TXT
+                    FROM    ROUNDED_ALOCNS
+                    WHERE   ANULZD_ACTL_BAL <> 0.0
+                            OR ACCT_STATS_CNT <> 0.0
+
+        RAISERROR ('COLLAPSE, BLOCK 100 ALOCN_PCT - B records', 10, 1) WITH NOWAIT
+
+        -- COLLAPSE, BLOCK 100% ALOCN_PCT - B records
+        INSERT  INTO MISWork.AB (
+                 YYMM_ID
+                ,BUS_UNIT_ID
+                ,BUS_UNIT_PROD_LINE_CD
+                ,ALOCN_SRC_CD
+                ,ALOCN_SRC_PROD_LINE_CD
+                ,ORIG_ALOCN_SRC_CD
+                ,LINE_ITEM_NUM
+                ,BAL_ORIGTN_IND
+                ,ANULZD_ACTL_BAL
+                ,ACCT_STATS_CNT
+                ,LVL_NUM
+                ,METHOD_TXT
+                )
+                SELECT  BALANCES.YYMM_ID
+                       ,BALANCES.BUS_UNIT_ID
+                       ,BALANCES.BUS_UNIT_PROD_LINE_CD
+                       ,BALANCES.BUS_UNIT_ID AS ALOCN_SRC_CD
+                       ,BALANCES.BUS_UNIT_PROD_LINE_CD AS ALOCN_SRC_PROD_LINE_CD
+                       ,BALANCES.ORIG_ALOCN_SRC_CD
+                       ,BALANCES.ALOCN_LINE_ITEM_NUM AS LINE_ITEM_NUM
+                       ,'B' AS BAL_ORIGTN_IND
+                       ,-1.0 * BALANCES.ANULZD_ACTL_BAL
+                       ,ALOCN_SUMRY.ACCT_STATS_CNT
+                       ,@LVL_NUM AS LVL_NUM
+                       ,'BLOCK-100' AS METHOD_TXT
+                FROM    [MISProcess].[udf_MR_BALANCES_BLOCK_100_PCT](@DATA_DT_ID_use, @LVL_NUM)
+                        AS BALANCES
+                INNER JOIN [MISProcess].[udf_MR_ALOCN_SUMRY_BLOCK_100_PCT](@DATA_DT_ID_use, @LVL_NUM)
+                        AS ALOCN_SUMRY
+                        ON ALOCN_SUMRY.YYMM_ID = BALANCES.YYMM_ID
+                           AND ALOCN_SUMRY.BUS_UNIT_ID = BALANCES.BUS_UNIT_ID
+                           AND ALOCN_SUMRY.BUS_UNIT_PROD_LINE_CD = BALANCES.BUS_UNIT_PROD_LINE_CD
+                           AND ALOCN_SUMRY.ALOCN_SRC_CD = BALANCES.ALOCN_SRC_CD
+                           AND ALOCN_SUMRY.ALOCN_SRC_PROD_LINE_CD = BALANCES.ALOCN_SRC_PROD_LINE_CD
+                           AND ALOCN_SUMRY.ORIG_ALOCN_SRC_CD = BALANCES.ORIG_ALOCN_SRC_CD
+
+        RAISERROR ('COLLAPSE, BLOCK 100 ALOCN_PCT - A records', 10, 1) WITH NOWAIT
+
+        -- COLLAPSE, BLOCK 100% ALOCN_PCT - A records
+        INSERT  INTO MISWork.AB (
+                 YYMM_ID
+                ,BUS_UNIT_ID
+                ,BUS_UNIT_PROD_LINE_CD
+                ,ALOCN_SRC_CD
+                ,ALOCN_SRC_PROD_LINE_CD
+

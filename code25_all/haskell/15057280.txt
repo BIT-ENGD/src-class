@@ -1,0 +1,355 @@
+ops = [("+", (+)), ("-", (-)), ("*", (*)), ("/", (/))]
+
+Ambiguous type variable `a0' in the constraints:
+  (Fractional a0) arising from a use of `/' at new2.hs:1:50-52
+  (Integral a0) arising from a use of `mod' at new2.hs:1:65-67
+  (Num a0) arising from a use of `+' at new2.hs:1:14-16
+Possible cause: the monomorphism restriction...
+
+findOp op = fromJust $ lookup op ops
+
+import Data.Maybe
+
+ops = [("+", (+)), ("-", (-)), ("*", (*)), ("/", (/))]
+
+parseLex a = fst $ head a
+findOp op = fromJust $ lookup op ops
+
+calculate str accum op memory multiplication
+  | operand1 /= "" && nextOp == "" = show (op accum (read operand1) + memory)
+  | nextOp == "+" || nextOp == "-" = 
+      calculate tailLex (op accum (read operand1) + memory) (findOp nextOp) 0 False
+  | nextOp == "*" || nextOp == "/" =
+      if multiplication 
+         then calculate tailLex (op accum (read operand1)) (findOp nextOp) memory True
+         else calculate tailLex (read operand1) (findOp nextOp) accum True
+  | otherwise = "Parse error. operand1: " ++ operand1 ++ " nextOp: " ++ nextOp
+ where lexemes = head $ lex str
+       operand1 = fst lexemes
+       nextOp = parseLex $ lex $ snd lexemes
+       tailLex = tail $ snd lexemes
+
+main :: IO ()
+main = do
+  str <- getLine
+  case parseLex $ lex str of
+    "quit"    -> do putStrLn ""; return ()
+    ""        -> main
+    otherwise -> do
+      putStrLn (calculate str 0 (+) 0 False)
+      main
+
+import Data.Maybe
+import Data.List
+import Data.List.Split
+import Text.Regex.Posix
+import System.Console.ANSI
+
+ops :: [([Char], Float -> Float -> Float)]
+ops = [ ("+", (+)) 
+       ,("-", (-)) 
+       ,("*", (*)) 
+       ,("/", (/)) 
+       ,("**", (**))
+       ,("^", (**))
+       ,("^^", (**)) 
+       ,("logbase", (logBase))
+       ,("div", (div'))
+       ,("mod", (mod')) 
+       ,("%", (mod'))
+       ,("rem", (rem'))
+       ,("max", (max))
+       ,("min", (min))]
+
+unaryOps :: [([Char], Float -> Float)]
+unaryOps = [ ("abs", (abs))
+            ,("sqrt", (sqrt))
+            ,("floor", (floor'))
+            ,("ceil", (ceiling'))
+            ,("round", (round'))
+            ,("log", (log))
+            ,("cos", (cos))
+            ,("sin", (sin))
+            ,("tan", (tan))
+            ,("asin", (asin))
+            ,("acos", (acos))
+            ,("atan", (atan))
+            ,("exp", (exp))
+            ,("!", (factorial)) ]
+
+opsPrecedence :: [([Char], Integer)]
+opsPrecedence = [ ("+", 1) 
+                 ,("-", 1) 
+                 ,("*", 2) 
+                 ,("/", 2) 
+                 ,("**", 3) 
+                 ,("^", 3)
+                 ,("^^", 3) 
+                 ,("logbase", 3)
+                 ,("div", 4) 
+                 ,("mod", 4) 
+                 ,("%", 4) 
+                 ,("rem", 4)
+                 ,("max", 4)
+                 ,("min", 4)                 
+                 ,("abs", 7)
+                 ,("sqrt", 7)
+                 ,("floor", 7)
+                 ,("ceil", 7)
+                 ,("round", 7) 
+                 ,("log", 7)
+                 ,("cos", 7)
+                 ,("sin", 7)
+                 ,("tan", 7)
+                 ,("asin", 7)
+                 ,("acos", 7)
+                 ,("atan", 7)
+                 ,("exp", 7)
+                 ,("!", 7) ]            
+
+floor' :: Float -> Float
+floor' a = fromIntegral $ floor a
+
+ceiling' :: Float -> Float
+ceiling' a = fromIntegral $ ceiling a
+
+mod' :: Float -> Float -> Float
+mod' a b = a - b * floor' (a / b)
+
+div' :: (Num b, RealFrac a) => a -> a -> b
+div' a b = fromIntegral $ truncate (a / b)
+
+rem' :: Float -> Float -> Float
+rem' a b = a - (fromIntegral (truncate (a / b)) * b)
+
+round' :: Float -> Float
+round' a = fromIntegral $ round a
+
+factorial :: Float -> Float
+factorial n = foldl (*) 1 [1..n]
+
+{-Op Detection and Lookup-}
+
+isOp :: [Char] -> Bool
+isOp op = case lookup op ops of
+            Just _  -> True
+            Nothing -> False
+
+isUnaryOp :: [Char] -> Bool
+isUnaryOp op = case lookup op unaryOps of
+                 Just _  -> True
+                 Nothing -> False
+
+opPrecedence :: [Char] -> [([Char],[Char])] -> Integer
+opPrecedence op env
+  | not (null $ isInEnv op env) = 6
+  | otherwise               = fromJust $ lookup op opsPrecedence
+
+findOp :: [Char] -> Float -> Float -> Float
+findOp op = fromJust $ lookup op ops
+
+findUnaryOp :: [Char] -> Float -> Float
+findUnaryOp op = fromJust $ lookup op unaryOps
+
+{-String Parsing Functions-}
+
+trim :: [Char] -> [Char]
+trim str = dropWhile (==' ') (reverse $ dropWhile (==' ') (reverse str))
+
+fstLex :: [Char] -> [Char]
+fstLex a = fst $ head (lex a)
+
+sndLex :: [Char] -> [Char]
+sndLex a = snd $ head (lex a)
+
+lexWords :: [Char] -> [[Char]] 
+lexWords xs =
+  lexWords' xs []
+    where lexWords' ys temp
+            | null ys   = temp
+            | otherwise = let word = fstLex ys
+                          in lexWords' (trim $ sndLex ys) (temp ++ [word])
+
+{-Mathematical Expression Parsing Functions-}
+
+toPostfix :: [Char] -> [([Char],[Char])] -> [[Char]]
+toPostfix expression env = toPostfix' expression [] [] "" env
+  where toPostfix' expression stack result previous env
+          | null expression && null stack                              = result
+          | null expression && not (null stack)                        = result ++ stack
+          | ch == ","                                                  = toPostfix' right stack result ch env
+          | ch == "("                                                  = toPostfix' right (ch:stack) result ch env
+          | ch == ")"                                                  =
+              let popped = takeWhile (/="(") stack
+              in toPostfix' right (drop (length popped + 1) stack) (result ++ popped) ch env
+          | not (null $ isInEnv ch env) 
+            && (length $ words $ fst $ head (isInEnv ch env)) == 1     =
+              let variable = head $ isInEnv ch env
+              in toPostfix' (snd variable ++ " " ++ right) stack result ch env
+          | (null $ isInEnv ch env) && not (isOp ch || isUnaryOp ch)   = 
+              if take 1 ch =~ "(^[a-zA-Z_])"
+                 then words ("Parse error : not in scope, " ++ "'" ++ ch ++ "'")
+                 else let number = reads ch :: [(Double, String)]
+                      in if not (null number) && (null $ snd $ head number)
+                            then toPostfix' right stack (result ++ [ch]) ch env
+                            else words ("Parse error : " ++ "'" ++ ch ++ "'")
+          | otherwise                                                  =
+              if null result && ch == "-" || (isOp previous || isUnaryOp previous) && ch == "-"
+                 then let negative = '-' : (fstLex right)
+                          right' = sndLex right
+                      in toPostfix' right' stack (result ++ [negative]) (fstLex right) env
+                 else toPostfix' right (ch : (drop (length popped') stack)) (result ++ popped') ch env
+         where ch = fstLex expression
+               right = trim (sndLex expression)
+               popped' = popStack ch stack
+                  where popStack ch stack'
+                          | null stack' = []
+                          | head stack' /= "(" && opPrecedence ch env <= opPrecedence (head stack') env=
+                              take 1 stack' ++ popStack ch (drop 1 stack')
+                          | otherwise  = []
+
+evaluate :: [Char] -> [[Char]] -> [Char]
+evaluate op operands = 
+  let operand1 = head operands
+      operand1' = reads operand1 :: [(Double, String)]
+      errorMsg = "Parse error in evaluation."
+  in if not (null operand1') && null (snd $ head operand1')
+        then case length operands of
+               1         -> show (findUnaryOp op (read operand1))
+               otherwise -> let operand2 = head (drop 1 operands)
+                                operand2' = reads operand2 :: [(Double, String)]
+                            in if not (null operand2') && null (snd $ head operand2')
+                                  then show (findOp op (read operand1) (read operand2))
+                                  else errorMsg
+     else errorMsg
+
+evalDef :: ([Char],[Char]) -> [[Char]] -> [([Char],[Char])] -> [Char]
+evalDef def args env = 
+  evalPostfix (toPostfix (replaceParams (drop 1 $ words (fst def)) args (snd def) "") env) env
+    where replaceParams params values exp temp
+            | length params /= length values = "Parse error : function parameters do not match."
+            | null exp                       = init temp
+            | otherwise                      = 
+                let word = fstLex exp
+                    replaced = if elem word params
+                                  then temp++ values!!(fromJust $ elemIndex word params) ++ " " 
+                                  else temp++ word ++ " " 
+                in  replaceParams params values (drop (length word) (trim exp)) replaced
+
+evalPostfix :: [[Char]] -> [([Char],[Char])] -> [Char]
+evalPostfix postfix env
+  | elem "error" postfix = unwords postfix
+  | otherwise = head $ evalPostfix' postfix [] env
+      where evalPostfix' postfix stack env
+              | null postfix = stack
+              | null (isInEnv (head postfix) env) && not (isOp (head postfix) || isUnaryOp (head postfix)) 
+                             = evalPostfix' (drop 1 postfix) (head postfix : stack) env
+              | otherwise    =
+                  let op = head postfix
+                      numOperands = if isOp op 
+                                       then 2
+                                       else if isUnaryOp op
+                                               then 1
+                                               else let def = isInEnv op env
+                                                    in length (words $ fst $ head def) - 1
+                  in if length stack >= numOperands
+                        then let retVal = 
+                                   if isOp op || isUnaryOp op
+                                      then evaluate op (reverse $ take numOperands stack)
+                                      else let def = isInEnv op env
+                                           in evalDef (head def) (reverse $ take numOperands stack) env
+                             in if not (isInfixOf "error" retVal)
+                                   then evalPostfix' (drop 1 postfix) (retVal : drop numOperands stack) env
+                                   else [retVal]
+                        else ["Parse error."]
+
+{-Environment Setting Functions-}
+
+isInEnv :: [Char] -> [([Char],[Char])] -> [([Char],[Char])]
+isInEnv first []     = []
+isInEnv first (x:xs)
+  | fstLex first == fstLex (fst x) = [x]
+  | otherwise                      = isInEnv first xs
+
+setEnv :: [Char] -> ([Char], [Char])
+setEnv str =
+  if elem '=' str 
+     then let nameAndParams = let function = takeWhile (/='=') str
+                              in unwords $ filter (\x -> x/="(" && x/="," && x/=")") (lexWords function)
+              expression = unwords $ lexWords (tail (dropWhile (/='=') str))
+          in if not (null nameAndParams)
+                then if fstLex nameAndParams =~ "(^[a-zA-Z_])"
+                        then (nameAndParams, expression)
+                        else ("error", "Parse error : illegal first character in variable name.")
+                else ("error", "Parse error : null variable name.")
+     else ("error", "Parse error.")
+
+declare :: [Char] -> [([Char], [Char])] -> IO ()
+declare str env =
+  let which = if str =~ "(^ *[a-zA-z_][a-zA-Z0-9_]* *=)" :: Bool
+                 then "var"
+                 else "def"
+      declarationList = case which of
+                          "var" -> splitOn "," str
+                          "def" -> [str]
+  in declare' declarationList env which
+    where declare' [] _ _           = mainLoop env 
+          declare' (x:xs) env which =
+            let result = setEnv x
+            in if fst result /= "error"
+                  then let match = isInEnv (fst result) env
+                           env' = if not (null match)
+                                         then deleteBy (\x -> (==head match)) (head match) env 
+                                         else env
+                           newList = if not (null $ snd result)
+                                        then (result : env')
+                                        else env'
+                       in case which of
+                            "def"     -> mainLoop newList
+                            otherwise -> if null xs 
+                                            then mainLoop newList
+                                            else declare' xs newList which
+                  else do putStrLn $ snd result
+                          mainLoop env
+
+{-Main Calculation Function-}
+
+calculate :: [Char] -> [([Char],[Char])] -> [Char]
+calculate str env = 
+  evalPostfix (toPostfix str env) env
+
+helpContents = "\nTo declare variables, type:\n[var] VARIABLE_NAME = VALUE [, more variable declarations..]\n"
+               ++ "Functions and partial functions may be assigned to variables.\n\n"
+               ++ "To declare functions, type:\n"
+               ++ "FUNCTION_NAME VARIABLE_1 [variable_2..] = EXPRESSION\n\n"
+               ++ "Supported math functions:\n"
+               ++ "+, -, *, /, ^, **, ^^\n"
+               ++ "sqrt, exp, log, logbase BASE OPERAND\n"
+               ++ "abs, div, mod, %, rem, floor, ceil, round\n"
+               ++ "pi, sin, cos, tan, asin, acos, atan\n"
+               ++ "! (factorial), min, max and parentheses: ()\n\n"
+               ++ "Type env to see a list of environment variables\nand functions. Type cls to clear screen, quit to quit\n" 
+
+main :: IO ()
+main = do putStrLn "calc v2.0 (c) 2013 Diagonal Productions\nPlease enter an expression:\n"
+          mainLoop [("pi", show pi), ("min a b", "min a b"), ("max a b", "max a b")]
+
+mainLoop :: [([Char], [Char])] -> IO ()
+mainLoop env = do
+  str <- getLine
+  if elem '=' str
+     then declare str env
+     else case fstLex str of
+          "quit"    -> do putStrLn ""; return ()
+          ""        -> mainLoop env
+          "env"     -> do putStrLn ("\nEnvironment:\n" ++ show env ++ "\n")
+                          mainLoop env
+          "cls"     -> do clearScreen
+                          setCursorPosition 0 0
+                          mainLoop env
+          "help"    -> do putStrLn helpContents
+                          mainLoop env
+          otherwise -> do
+            putStrLn $ calculate str env
+            mainLoop env
+

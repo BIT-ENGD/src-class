@@ -1,0 +1,258 @@
+    interval_union <- function(df){   # for data frame
+
+    df <- interval_clean(df)
+    if(is.empty(df)){
+        return(as.data.frame(NULL))
+    } else {
+
+        if(is.POSIXct(df[,1])) {
+            dated <- TRUE
+            df <- colwise(as.numeric)(df)
+        } else {
+            dated <- FALSE
+        }
+        M <- as.matrix(df)
+
+        o <- order(c(M[, 1], M[, 2])) 
+        n <- cumsum( rep(c(1, -1), each=nrow(M))[o]) 
+        startPos <- c(TRUE, n[-1]==1 & n[-length(n)]==0) 
+        endPos <- c(FALSE, n[-1]==0 & n[-length(n)]==1) 
+
+        M <- M[o] 
+
+        if(dated == TRUE) {
+            df2 <- colwise(mkDateTime)(as.data.frame(cbind(M[startPos], M[endPos])), from.s = TRUE)
+        } else {
+            df2 <- as.data.frame(cbind(M[startPos], M[endPos]))
+        }
+        colnames(df2) <- colnames(df)
+
+        # print(df2)
+        return(df2)
+
+    }
+
+
+}
+
+
+union_1_1 <- function(test, ref){
+    names(ref) <- names(test)
+    tmp <- interval_union(as.data.frame(rbind(test, ref)))
+    return(tmp)
+}
+
+
+union_1_n <- function(test, ref){
+    return(union_1_1(test, ref))
+}
+
+
+union_n_n <- function(test, ref){
+    testnn <- adply(.data = test, 1, union_1_n, ref, .expand = FALSE)
+    return(testnn)
+}
+
+ref_interval_union <- function(df, ref){
+
+    tmp0 <- adply(df, 1, union_1_1, ref, .expand = FALSE) # set to FALSE to keep ID
+    return(tmp0)                
+}
+
+interval_intersect <- function(df){
+    # adapted from : http://r.789695.n4.nabble.com/Union-Intersect-two-continuous-sets-td4224545.html
+    M <- as.matrix(df)
+
+    L <- max(M[, 1])
+    R <- min(M[, 2]) 
+
+    Inew <- if (L <= R) c(L, R) else c() 
+
+    if (!is.empty(Inew)){
+        df2 <- t(as.data.frame(Inew)) 
+        colnames(df2) <- colnames(df)
+        rownames(df2) <- NULL
+    } else {
+        df2 <- NULL
+    }
+
+    return(as.data.frame(df2))
+
+}
+
+
+
+ref_interval_intersect <- function(df, ref){
+
+    tmpfun <- function(a, b){
+
+        names(b) <- names(a)
+        tmp <- interval_intersect(as.data.frame(rbind(a, b)))
+        return(tmp)
+    }
+
+    tmp0 <- adply(df, 1, tmpfun, ref, .expand = FALSE) # [,3:4]
+    #if(!is.empty(tmp0)) colnames(tmp0) <- colnames(df)
+    return(tmp0)                
+}
+
+
+int_1_1 <- function(test, ref){
+
+    te <- as.vector(test)
+    re <- as.vector(ref)
+    names(re) <- names(te)
+    tmp0 <- c(max(te[1, 1], re[1, 1]), min(te[1, 2], re[1, 2]))
+
+    if(tmp0[1]>tmp0[2]) tmp0 <- NULL   # inverse of a correct interval --> VOID
+
+    if(!is.empty(tmp0)){
+        tmp1 <- colwise(mkDateTime)(as.data.frame(t(as.data.frame(tmp0))))
+        colnames(tmp1) <- colnames(test)
+    } else {
+        tmp1 <- data.frame(NULL)
+    }
+
+    return(tmp1)
+
+}
+
+
+int_1_n <- function(test, ref){
+
+    test1 <- adply(.data = ref, 1, int_1_1, test = test, .expand = FALSE)
+
+    if(is.empty(test1)){
+        return(data.frame(NULL))
+    } else {
+
+        testn <- interval_union(test1[,2:3])    
+        return(testn)
+    }
+
+}
+
+
+int_n_n <- function(test, ref){
+
+    testnn <- adply(.data = test, 1, int_1_n, ref, .expand = FALSE)
+    # return(testnn[,2:3])  # return interval set without index (1st column)
+    return(testnn)          # return interval set with index (1st column) --> usefull to go with merge to keep metadata going alon g with interval description
+}
+
+
+int_intersect <- function(df, ref){
+
+    mycols <- colnames(df)
+    df$X1 <- 1:nrow(df)
+    test <- df[, 1:2]
+    tmp <- int_n_n(test, ref)
+
+    intersection <- merge(tmp, df, by = "X1", suffixes = c("", "init"))
+    return(intersection[,mycols])   
+
+}
+
+excl_1_1 <- function(test, ref){
+    te <- as.vector(test)
+    re <- as.vector(ref)
+    names(re) <- names(te)
+
+
+    if(te[1] < re[1]){          # Lower Bound
+        if(te[2] > re[1]){          # overlap
+            x <- unlist(c(te[1], re[1]))
+        } else {                    # no overlap
+            x <- unlist(c(te[1], te[2]))
+        }
+    } else {                    # test > ref on lower bound side
+        x <- NULL
+    }
+
+    if(te[2] > re[2]){          # Upper Bound
+        if(te[1] < re[2]){          # overlap
+            y <- unlist(c(re[2], te[2]))    
+        } else {                    # no overlap
+            y <- unlist(c(te[1], te[2]))
+        }
+    } else {                    # test < ref on upper bound side
+        y <- NULL
+    }
+
+    if(is.empty(x) & is.empty(y)){
+        tmp0 <- NULL
+        tmp1 <- tmp0
+    } else {
+
+        tmp0 <- as.data.frame(rbind(x, y))
+        colnames(tmp0) <- colnames(test)
+        tmp1 <- interval_union(tmp0)    
+
+    }
+
+    return(tmp1)    
+
+}
+
+
+
+excl_1_n <- function(test, ref){
+
+
+    testn0 <- adply(.data = ref, 1, excl_1_1, test = test, .expand=FALSE)
+
+    # boucle pour intersecter successivement les intervalles sets, pour gérer les intervalles disjoints (identifiés par X1, col1)
+
+    tmp <- range(testn0)
+    names(tmp) <- colnames(testn0)[2:3]
+    tmp <- as.data.frame(t(tmp))
+
+    for(i in unique(testn0[,1])){
+        tmp <- int_n_n(tmp, testn0[testn0[,1]==i, 2:3])
+    }
+    return(tmp)
+
+}
+
+incl_1_1 <- function(test, ref){
+    te <- as.vector(test)
+    re <- as.vector(ref)
+    if(te[1] >= re[1] & te[2] <= re[2]){ return(TRUE) } else { return(FALSE) }
+}
+
+
+incl_1_n <- function(test, ref){
+    testn <- adply(.data = ref, 1, incl_1_1, test = test)
+    return(any(testn[,ncol(testn)]))
+}
+
+incl_n_n <- function(test, ref){
+
+    testnn <- aaply(.data = test, 1, incl_1_n, ref, .expand = FALSE)
+    names(testnn) <- NULL
+    return(testnn)
+}
+
+flat_incl_n_n <- function(test, ref){
+
+    ref <- interval_union(ref)
+    return(incl_n_n(test, ref))
+
+}
+
+
+# testing for a vector, instead of an interval set
+incl_x_1 <- function(x, ref){
+
+    test <- (x>=ref[1,1] & x<ref[1,2])
+    return(test)
+
+}
+
+incl_x_n <- function(x, ref){
+
+    test <- any(x>=ref[,1] & x<ref[,2])
+    return(test)
+
+}
+

@@ -1,0 +1,26 @@
+module SimpleGenerators
+
+type 'a gen        = unit -> 'a
+type producer      = unit gen
+type consumer      = exn -> unit  (* consumer will project into specific exception *)
+type 'a transducer = 'a gen -> 'a gen 
+
+let yield_handler : (exn -> unit) ref = 
+    ref (fun _ -> failwith "yield handler is not set")
+
+let iterate (gen : producer) (consumer : consumer) : unit = 
+    let oldh = !yield_handler in
+    let rec newh x =
+        try 
+            yield_handler := oldh
+            consumer x
+            yield_handler := newh
+        with e -> yield_handler := newh; raise e
+    in
+    try
+        yield_handler := newh
+        let r = gen () in
+        yield_handler := oldh
+        r
+    with e -> yield_handler := oldh; raise e
+

@@ -1,0 +1,41 @@
+require 'gst'
+
+main_loop = GLib::MainLoop.new
+
+pipeline = Gst::Pipeline.new "audio-player"
+source   = Gst::ElementFactory.make "filesrc",      "file-source"
+source.location = "/usr/share/sounds/gnome/default/alerts/bark.ogg"
+decoder  = Gst::ElementFactory.make "decodebin",    "decoder"
+conv     = Gst::ElementFactory.make "audioconvert", "converter"
+sink     = Gst::ElementFactory.make "alsasink",     "output"
+
+pipeline.add source, decoder, conv, sink
+source >> decoder
+conv >> sink
+
+decoder.signal_connect "pad-added" do |element, pad, data|
+  pad >> conv['sink']
+end
+
+pipeline.bus.add_watch do |bus, message|
+  puts "Message: #{message.inspect}"
+  case message.type
+  when Gst::Message::Type::ERROR
+    puts message.structure["debug"]
+    main_loop.quit
+  when Gst::Message::Type::EOS
+    puts 'End of stream'
+    main_loop.quit
+  end
+end
+
+pipeline.play
+
+begin
+  puts 'Running main loop'
+  main_loop.run
+ensure
+  puts 'Shutting down main loop'
+  pipeline.stop
+end
+

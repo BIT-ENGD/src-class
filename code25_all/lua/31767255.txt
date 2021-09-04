@@ -1,0 +1,76 @@
+local list = redis.call('lrange', KEYS[1], 0, -1)
+local target = tonumber(ARGV[1])
+local startIndex = tonumber(ARGV[2])
+local len = #list
+local endIndex = len
+
+--Handle negative startIndex
+if startIndex < 0 then
+    startIndex = len+startIndex
+end
+
+--If the third argument is provided, get the endIndex from it
+if #ARGV > 2 then
+    local arg = tonumber(ARGV[3])
+    if arg >= 0 then
+        if arg < endIndex then
+            endIndex = arg
+        end
+    else
+        if len+arg >= 0 then
+            endIndex = len+arg
+        else
+            endIndex = 0
+        end
+    end
+end
+
+--An array containing the elements which will be copied
+local targeted_elements = {}
+
+--Fill elements from the list
+for i=1, (endIndex-startIndex+1) do
+    targeted_elements[i] = list[startIndex+i]
+end
+
+--Make sure no additional elements are pushed to the end of array in case of range overflow
+local target_end = #targeted_elements
+
+if target + target_end > len then
+    target_end = len-target
+end
+
+--replace all the changed elements of the list in redis
+for i=1, target_end do
+    redis.call('lset', KEYS[1], target+(i-1), targeted_elements[i])
+end
+
+convert [1, 2, 3, 4, 5]
+[4, 5, 3, 4, 5]
+copyWithin(0, 3)
+LRANGE MyList 0 -1
+> [1, 2, 3, 4, 5]
+
+EVALSHA "sha1 of script" 1 MyList 0 3
+(basically the same as `[1, 2, 3, 4, 5].copyWithin(0, 3)`)
+> nil
+
+LRANGE MyList 0 -1
+> [4, 5, 3, 4, 5]
+
+convert [1, 2, 3, 4, 5]
+[4, 2, 3, 4, 5]
+copyWithin(0, 3, 4)
+LRANGE MyList 0 -1
+> [1, 2, 3, 4, 5]
+
+EVALSHA "sha1 of script" 1 MyList 0 3 4
+(basically the same as `[1, 2, 3, 4, 5].copyWithin(0, 3, 4)`)
+> nil
+
+LRANGE MyList 0 -1
+> [4, 5, 3, 4, 5]
+
+targeted_elements
+{4, 5}
+{4}

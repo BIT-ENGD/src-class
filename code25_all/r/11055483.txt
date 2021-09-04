@@ -1,0 +1,93 @@
+#Grab our list of filenames
+filenames <- list.files(path = ".", pattern='^.*\\.csv$')
+#Read.csv function
+my.read.csv <- function(fnam) { read.csv(fnam, header=FALSE, skip=1, sep=';', col.names=c('ID','tweet','author','local.time','extra'), colClasses=rep('character', 5))}
+#Read all the files into one data.frame
+my.df <- do.call("rbind", lapply(filenames, my.read.csv)) length(my.df[,1])
+#Remove the duplicate tweets
+my.new.df <- my.df[!duplicated(paste(my.df$tweet, my.df$author)),]
+length(my.new.df[,1])
+#Write new dataframe as a .csv file
+write.csv(my.new.df, file =paste("Dataset", ".csv"))
+
+tweet                                                         author    local.time
+2012-06-05 00:01:45 @A (A1):  Cruijff z'n (...)#bureausport.  A (A1)    05-06-12 00:01
+2012-06-05 00:01:41 @B (B1):  Welterusten #BureauSport        B (B1)    05-06-12 00:01
+2012-06-05 00:01:38 @C (C1):  Echt (...) #bureausport         C (C1)    05-06-12 00:01
+2012-06-05 00:01:38 @D (D1):  LOL. #bureausport               D (D1)    05-06-12 00:01
+
+,"ID","tweet","author","local.time","extra"
+1,"2012-06-05 00:01:45 @A (A1):  Cruijff z'n (...)#bureausport.","@A (A1)","05-06-12 00:01"
+2,"2012-06-05 00:01:41 @B (B1):  Welterusten #BureauSport","@B (B1)","05-06-12 00:01"
+3,"2012-06-05 00:01:38 @C (C1):  Echt (...) #bureausport","Aliceislovely (Alice Luyben)","05-06-12 00:01"
+4,"2012-06-05 00:01:38 @D (D1):  LOL. #bureausport","@D (D1)","05-06-12 00:01"
+
+library(XML)   # htmlTreeParse
+
+twitter.search <- "Keyword"
+
+QUERY <- URLencode(twitter.search)
+
+# Set time loop (in seconds)
+d_time = 300
+number_of_times = 3000
+
+for(i in 1:number_of_times){
+
+tweets <- NULL
+tweet.count <- 0
+page <- 1
+read.more <- TRUE
+
+while (read.more)
+{
+# construct Twitter search URL
+URL <- paste('http://search.twitter.com/search.atom?q=',QUERY,'&rpp=100&page=', page, sep='')
+# fetch remote URL and parse
+XML <- htmlTreeParse(URL, useInternal=TRUE, error = function(...){})
+
+# Extract list of "entry" nodes
+entry     <- getNodeSet(XML, "//entry")
+
+read.more <- (length(entry) > 0)
+if (read.more)
+{
+for (i in 1:length(entry))
+{
+subdoc     <- xmlDoc(entry[[i]])   # put entry in separate object to manipulate
+
+published  <- unlist(xpathApply(subdoc, "//published", xmlValue))
+
+published  <- gsub("Z"," ", gsub("T"," ",published) )
+
+# Convert from GMT to central time
+time.gmt   <- as.POSIXct(published,"GMT")
+local.time <- format(time.gmt, tz="Europe/Amsterdam")
+
+title  <- unlist(xpathApply(subdoc, "//title", xmlValue))
+
+author <- unlist(xpathApply(subdoc, "//author/name",  xmlValue))
+
+tweet  <-  paste(local.time, " @", author, ":  ", title, sep="")
+
+entry.frame <- data.frame(tweet, author, local.time, stringsAsFactors=FALSE)
+tweet.count <- tweet.count + 1
+rownames(entry.frame) <- tweet.count
+tweets <- rbind(tweets, entry.frame)
+}
+page <- page + 1
+read.more <- (page <= 15)   # Seems to be 15 page limit
+}
+}
+
+names(tweets)
+
+# top 15 tweeters
+#sort(table(tweets$author),decreasing=TRUE)[1:15]
+
+write.table(tweets, file=paste("Twitts - ", format(Sys.time(), "%a %b %d %H_%M_%S %Y"), ".csv"), sep = ";")
+
+Sys.sleep(d_time)
+
+} # end if
+

@@ -1,0 +1,31 @@
+class Record {
+
+  @OneToOne(cascade = { CascadeType.MERGE, CascadeType.PERSIST, CascadeType.REMOVE }, fetch = FetchType.LAZY, optional = true)
+  @JoinTable(name = "latest_history_join_view", joinColumns = { @JoinColumn(name = "record_id") }, inverseJoinColumns = { @JoinColumn(name = "history_id") })
+  @AccessType("field")
+  public History getLatestHistory() { ... }
+}
+
+StringBuffer sb = new StringBuffer();
+sb.append("select {r.*}, {latestHistory.*}");
+sb.append(" from record r");
+sb.append(" left join latest_history_join_view lh on lh.record_id = r.record_id");
+sb.append(" left join history latestHistory on latestHistory.history_id = lh.history_id");
+SQLQuery query = session.createSQLQuery(sb.toString());
+query.addEntity("r", Record.class).addJoin("latestHistory", "r.latestHistory");
+
+select 
+   r.record_id, r.name..., 
+   r_1.history_id,  --this part is wrong; there is no such alias r_1 
+   latestHistory.history_id, latestHistory.update_date, ...
+ from record r
+ left join latest_history_join_view lh on lh.record_id = r.record_id
+ left join history latestHistory on latestHistory.history_id = lh.history_id
+
+select {r.*}, {latestHistory.*} -> SQL error, generates a wrong column name "r_1.history_id"
+select {r.*}, {anyOtherEntityAssociatedToR.*} -> wrong column name (as above)
+select {r.*}, {r.history_id}, {latestHistory.*} -> hibernate error, r has no history_id column
+select r.*, lh.history_id as history_id -> this works (though hackish), but doesn't accomplish the join
+select r.*, lh.history_id as history_id, latestHistory.* -> appears correct, but results in column name collisions
+select r.*, {latestHistory.*} -> error when hibernate looks for a nonexistent column in the result set (this happens if there is any alias at all in the select list)
+

@@ -1,0 +1,98 @@
+- (void)getDataWithContext:(NSManagedObjectContext *)context
+{
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+    NSError *parseError = nil;
+
+    [UIApplication sharedApplication].networkActivityIndicatorVisible = YES;
+
+    XMLReader *xmlReader = [[[XMLReader alloc] initWithContext:context]autorelease];
+    [xmlReader parseXMLFileAtURL:[NSURL URLWithString:@"http://example.com/rss.xml"] parseError:&parseError];
+    [pool release];
+
+    [UIApplication sharedApplication].networkActivityIndicatorVisible = NO;
+}
+
+if ([self isDataSourceAvailable] == NO) {
+    UIAlertView *noConnection = [[[UIAlertView alloc] initWithTitle:@"Connection Unavailable" message:@"The connection to the database is unavailable. The information displayed may be outdated." delegate:self cancelButtonTitle:@"OK" otherButtonTitles:nil] autorelease];
+    [noConnection show];
+}
+else{
+    [NSThread detachNewThreadSelector:@selector(getDatawithContext:) toTarget:self withObject:context];
+}
+
+- (IBAction)loadData: (id) sender{
+    BroadwayAppDelegate *appDelegate = (BroadwayAppDelegate *) [[UIApplication sharedApplication] delegate];
+
+    checkDate = [NSPredicate predicateWithFormat: @"date <= %@",
+                        [NSDate date]];
+    if ( [self.showsSegmentedControl selectedSegmentIndex] == UISegmentedControlNoSegment || 
+            [self.showsSegmentedControl selectedSegmentIndex] == 0){
+        self.listContent = [CoreDataHelper searchObjectsInContext :@"Entry" :self.checkDate :@"title" :YES :appDelegate.managedObjectContext];
+    }
+    else if ([self.showsSegmentedControl selectedSegmentIndex] == 1){
+        self.listContent = [CoreDataHelper searchObjectsInContext :@"Entry" :self.checkDate :@"startDate" :NO :appDelegate.managedObjectContext];
+    }
+    else if ([self.showsSegmentedControl selectedSegmentIndex] == 2){
+        self.listContent = [CoreDataHelper searchObjectsInContext :@"Entry" :self.checkDate :@"endDate" :YES :appDelegate.managedObjectContext];
+    }
+    else if ([self.showsSegmentedControl selectedSegmentIndex] == 3){
+        self.listContent = [CoreDataHelper searchObjectsInContext :@"Entry" :self.checkDate :@"type" :YES :appDelegate.managedObjectContext];
+    }
+
+    // create a filtered list that will contain products for the search results table.
+    self.filteredContent = [NSMutableArray arrayWithCapacity:[self.listContent count]];
+
+    // restore search settings if they were saved in didReceiveMemoryWarning.
+    if (self.savedSearchTerm)
+    {
+        [self.searchDisplayController setActive:self.searchWasActive];
+        [self.searchDisplayController.searchBar setSelectedScopeButtonIndex:self.savedScopeButtonIndex];
+        [self.searchDisplayController.searchBar setText:savedSearchTerm];
+
+        self.savedSearchTerm = nil;
+    }
+
+    NSError *error;
+    [appDelegate.managedObjectContext save:&error];
+
+
+    [self.tableView reloadData];
+
+}
+
+ - (void)viewDidLoad {
+     [super viewDidLoad];
+     [self loadData:nil];
+     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(threadExited) name:@"NSThreadWillExitNotification" object:nil];
+
+     dateFormatter = [[NSDateFormatter alloc]init];
+     [dateFormatter setDateStyle: NSDateFormatterMediumStyle];
+     self.title = @"Entries";
+
+ }
+
+- (void)threadExited{
+    [self loadData:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSThread detachNewThreadSelector:@selector(loadImages) toTarget:self withObject:nil];
+}
+- (void) loadImages{
+
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+    AppDelegate *appDelegate = (AppDelegate *)[[UIApplication sharedApplication] delegate];
+    NSArray *coreDataEntries = [CoreDataHelper getObjectsFromContext:@"Entry" :@"title" :NO :appDelegate.managedObjectContext];
+    [UIApplication sharedApplication].networkActivityIndicatorVisible = YES;
+    for (Entry *s in coreDataEntries){
+        if (s.image == nil) {
+            NSString *URLString = [[Entry imageURLFromLink:s.link withExtension:@".jpg"]absoluteString];
+            NSURL *imageURL = [NSURL URLWithString:URLString];
+            NSData *imageData = [NSData dataWithContentsOfURL:imageURL];
+            s.image = [UIImage imageWithData:imageData];
+        }
+    }
+    [UIApplication sharedApplication].networkActivityIndicatorVisible = NO;
+    [self.tableView reloadData];
+    [pool release];
+}
+

@@ -1,0 +1,75 @@
+    const std::string sql_insert =
+      "INSERT INTO EventsLog "
+      "(Sec, uSec, DeviceId, PmuId, EventId, Error, Msg) "
+      "VALUES (%ld, %ld, %ld, %d, %ld, %d, %Q)";
+
+    const std::string sql_create =
+      "CREATE TABLE IF NOT EXISTS EventsLog("
+      "Id INTEGER PRIMARY KEY AUTOINCREMENT, "
+      "Sec INTEGER NOT NULL, "
+      "uSec INTEGER NOT NULL, "
+      "DeviceId INTEGER NOT NULL, "
+      "PmuId INTEGER NOT NULL, "
+      "EventId INTEGER NOT NULL, "
+      "Error INTEGER NOT NULL, "
+      "Msg TEXT"
+      ")";
+
+std::string construct_sql_query
+    (const ELMessageData & data)
+    {
+      std::string query = "";
+
+      ptime jan1st1970 = ptime(date(1970,1,1));
+      ptime now = boost::posix_time::microsec_clock::universal_time();
+      time_duration delta = now - jan1st1970;
+      TimeVal time((uint32)delta.total_seconds(),
+                   (uint32)now.time_of_day().fractional_seconds());
+
+      char * const sql = sqlite3_mprintf(sql_insert.c_str(),
+                                         time.tv_sec,
+                                         time.tv_usec,
+                                         data.getDeviceId(),
+                                         data.getPmuId(),
+                                         data.getEventId(),
+                                         (data.getIsError() ? 1 : 0),
+                                          data.getExMsg().c_str());
+      if(sql == NULL)
+        post_event(EvIOError("Failed to create the SQL command",
+                             "StLoggingEvents::_construct_sql_query"));
+
+      query = std::string(sql);
+      sqlite3_free(sql);
+
+      return query;
+    } // construct_sql_query
+
+ while(true)
+    {
+      m_exchange_obj->wait(); // wait for the semaphore to be raised
+  const std::string sql = construct_sql_query
+    (m_exchange_obj->receive());
+
+  char ** err = NULL;
+
+  const int rc = sqlite3_exec(m_db_handle,
+                              sql.c_str(),
+                              NULL,
+                              NULL,
+                              err);
+  sqlite3_free(err);
+
+  if(rc != SQLITE_OK)
+  {
+    LERR_ << "Error while inserting into the database";
+    LERR_ << "Last SQL Query : ";
+    LERR_ << sql;
+  }
+  else
+  {
+    LDBG_ << "Event logged...";
+    LDBG_ << "Sqlite3 memory usage : "
+          << sqlite3_memory_used();
+  }
+}
+

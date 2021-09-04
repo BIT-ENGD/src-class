@@ -1,0 +1,155 @@
+listenForPackets
+broadcastMessage
+recvMessage
+NSString *recvMessage;
+
+if (label.text != recvMessage)
+    label.text = recvMessage
+
+-(void)broadcastMessage { // (NSString*)msg {
+    msg = @"From_Master";
+
+    NSLog(@"broadcastMessage - Stage 1");
+    mc_ttl = 15; // number of node hops the message is allowed to travel across the network
+    // define the port we will be using
+    mc_port = MYPORT;
+
+    // create a socket for sending to the multicast address
+    if ((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+        NSLog(@"ERROR: broadcastMessage - socket() failed");
+        return;
+    }
+
+    memset(&mc_addr, 0, sizeof(mc_addr));
+    mc_addr.sin_family      = AF_INET;
+    mc_addr.sin_addr.s_addr = inet_addr(GROUP_ADDRESS);
+    mc_addr.sin_port        = htons(MYPORT);
+
+    NSLog(@"broadcastMessage - Stage 2");
+
+// set the TTL (time to live/hop count) for the send
+    if ((setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, &mc_ttl, sizeof(mc_ttl))) < 0) {
+        NSLog(@"ERROR: broadcastMessage - setsockopt() failed");
+        return;
+    }   
+
+    NSLog(@"broadcastMessage - Stage 3");
+
+    // clear send buffer
+    memset(send_str, 0, sizeof(send_str));
+
+    // convert the message to a C string to send
+    [msg getCString:send_str maxLength:MAX_LEN encoding:NSASCIIStringEncoding];
+
+    //while (fgets(send_str, MAX_LEN, stdin)) {
+    NSLog(@"broadcastMessage - Stage 4");
+    NSLog(@"Message =");
+    printf(send_str);
+
+    // send string to multicast address
+    if ((sendto(sock, send_str, sizeof(send_str), 0, (struct sockaddr *)&mc_addr, sizeof(mc_addr))) < 0) {
+        NSLog(@"ERROR: broadcastMessage - sendto() sent incorrect number of bytes");
+        //return;
+    }
+    NSLog(@"Sent Message -");
+    printf(send_str);
+    NSLog(@"broadcastMessage - Stage 5");
+
+    // clear send buffer
+    memset(send_str, 0, sizeof(send_str));
+    NSLog(@"broadcastMessage - Stage 6 - Complete");
+    close(sock);
+}
+
+-(void)listenForPackets {
+    listeningFlag_on = 1; // allows reuse of the same socket
+
+    NSLog(@"listenForPackets - Stage 1");
+    if ((listeningSock = socket(AF_INET, SOCK_DGRAM,IPPROTO_UDP)) < 0) {
+        NSLog(@"ERROR: listenForPackets - socket() failed");
+        return;
+            // make the method return an int instead of void and use this statement to check for errors
+    }
+
+    NSLog(@"listenForPackets - Stage 2");
+
+    // set reuse port to on to allow multiple binds per host
+    if ((setsockopt(listeningSock, SOL_SOCKET, SO_REUSEADDR, &listeningFlag_on, sizeof(listeningFlag_on))) < 0) {
+        NSLog(@"ERROR: listenForPackets - setsockopt() Reuse failed");
+        return;
+            // make the method return an int instead of void and use this statement to check for errors
+    }
+
+    // construct a multicast address structure after erasing anything in the listeningmc_addr structure
+    memset(&listeningmc_addr, 0, sizeof(listeningmc_addr));
+    listeningmc_addr.sin_family      = AF_INET;
+    listeningmc_addr.sin_addr.s_addr = htonl(INADDR_ANY); // different from sender
+    listeningmc_addr.sin_port        = htons(MYPORT);
+
+    // bind multicast address to socket
+    if ((bind(listeningSock, (struct sockaddr *)&listeningmc_addr, sizeof(listeningmc_addr))) < 0) {
+        NSLog(@"ERROR: listenForPackets - bind() failed");
+        perror("Bind() -");
+        return;                         // make the method return an int instead of void and use this statement to check for errors
+    }
+
+    //*********************************************************************************
+
+    NSString *ipAddress = [[NSString alloc] initWithString:self.getIPAddress];
+    const char *tmp = [ipAddress UTF8String];
+    listeningMc_addr_str = tmp;
+
+    printf("%s\n", listeningMc_addr_str);
+
+    listeningMc_req.imr_multiaddr.s_addr = inet_addr(GROUP_ADDRESS);
+    listeningMc_req.imr_interface.s_addr = htonl(INADDR_ANY);
+    // send an ADD MEMBERSHIP message via setsockopt
+    if ((setsockopt(listeningSock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &listeningMc_req, sizeof(listeningMc_req))) < 0) {
+        NSLog(@"ERROR: listenForPackets - setsockopt() failed");
+        int err = errno;
+        NSLog(@"errno - %i", err);
+        NSLog(@"Error = %s", strerror(err));
+        perror("ERROR");
+        return;                         // make the method return an int instead of void and use this statement to check for errors
+    }
+
+    NSLog(@"listenForPackets - Stage 3");
+    for (;;) {          // loop forever
+
+        // clear the receive buffers & structs
+        memset(listeningRecv_str, 0, sizeof(listeningRecv_str));
+        listeningFrom_len = sizeof(listeningFrom_addr);
+        memset(&listeningFrom_addr, 0, listeningFrom_len);
+
+        NSLog(@"Test #1 Complete");
+        //msgStatus.text = @"Waiting...";
+
+        // block waiting to receive a packet
+        listeningFrom_len = sizeof(listeningmc_addr);
+        if ((listeningRecv_len = recvfrom(listeningSock, listeningRecv_str, MAX_LEN, 0, (struct sockaddr*)&listeningmc_addr, &listeningFrom_len)) < 0) {
+            NSLog(@"ERROR: listenForPackets - recvfrom() failed");
+            return;                     // make the method return an int instead of void and use this statement to check for errors
+        }
+        NSLog(@"Test #2 Complete - Received a Message =");
+        NSLog(@"listenForPackets - Stage 4");
+
+        // listeningRecv_str
+    **tmpString = [[NSString alloc] initWithCString:listeningRecv_str encoding:NSASCIIStringEncoding];
+            NSLog(@"Message Received =");
+            NSLog(tmpString);
+            recvMessage = tmpString;**
+        //}
+        // received string
+        printf("Received %d bytes from %s: ", listeningRecv_len, inet_ntoa(listeningFrom_addr.sin_addr));
+        printf("%s", listeningRecv_str);
+        //}
+    }
+    // send a DROP MEMBERSHIP message via setsockopt
+    if ((setsockopt(listeningSock, IPPROTO_IP, IP_DROP_MEMBERSHIP, (void*) &listeningMc_req, sizeof(listeningMc_req))) < 0) {
+        NSLog(@"ERROR: listenForPackets - setsockopt() drop membership failed");
+        //return 1;                         // make the method return an int instead of void and use this statement to check for errors
+    }
+    close(listeningSock);
+    NSLog(@"listenForPackets - Stage 5 - Complete");
+}
+

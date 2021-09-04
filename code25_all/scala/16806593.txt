@@ -1,0 +1,200 @@
+case class MyFriend(id: Pk[Long]= NotAssigned,user_Id:Option[Long],friend_Id:Option[Long],is_accepted:Boolean)
+object MyFriend{
+  /**
+   * parse a Myfreind from a ResultSet.
+   */
+  val simple ={
+    get[Pk[Long]]("myfriend.id") ~
+    get[Option[Long]]("myfriend.user_Id")~
+    get[Option[Long]]("myfriend.friend_Id")~
+    get[Boolean]("myfriend.is_accepted") map{
+      case id ~ user_Id ~ friend_Id ~ is_accepted => MyFriend(id, user_Id,friend_Id,is_accepted)
+    }
+   }
+
+
+ /**
+   * Parse a MyFriend from a userProfile
+   */
+  val withUserProfile =MyFriend.simple ~ (UserProfile.simple ?) map{
+    case myfriend  ~ userprofile => (myfriend, userprofile)
+  }
+  /**
+   * create a new MyFriend.
+   *
+   * @param myfriend 
+   */
+  def insert(myFriend: MyFriend): Long = {
+    DB.withConnection { implicit connection =>
+      SQL(
+        """
+          insert into MY_FRIEND(USER_ID,FRIEND_ID,IS_ACCEPTED) values (
+            {user_Id}, {friend_Id},{is_accepted}
+          )
+        """).on(
+          'user_Id -> myFriend.user_Id,
+          'friend_Id -> myFriend.friend_Id,
+          'is_accepted -> myFriend.is_accepted
+          ).executeUpdate()
+    }
+  }
+
+
+/**
+   * Update a MyFriend
+   *
+   * @param  MyFriend
+   */
+  def update(myFriend:MyFriend)={
+  DB.withConnection{ implicit connection =>
+    SQL(
+        """
+        update MY_FRIEND
+        set FRIEND_ID = {friend_Id}, IS_ACCEPTED={is_accepted} where USER_ID={use_id}
+        """).on(
+          'user_Id -> myFriend.user_Id,
+          'friend_Id -> myFriend.friend_Id,
+          'is_accepted -> myFriend.is_accepted
+          ).executeUpdate()
+
+  }
+
+}
+/**
+   * Find myfriendId Via userprofile
+   */
+  def authenticate(myFriend: MyFriend) = {
+    DB.withConnection { implicit connection =>
+      val myFriendFound = SQL(
+        """
+          select * from MY_FRIEND 
+          where USER_ID = {user_Id} and FRIEND_ID={friend_Id}
+        """).on(
+          'user_Id -> myFriend.user_Id,
+          'friend_Id ->myFriend.friend_Id
+          ).as(MyFriend.simple.singleOpt)
+      myFriendFound
+    }
+  }
+
+case class UserProfile(id: Pk[Long] = NotAssigned, useraccountid: Option[Long], name: String, date_of_birth: Date, gender: String, image: String,status:String)
+
+object UserProfile{
+
+  /**
+   * Parse a UserProfile from a ResultSet
+   */
+  val simple = {
+    get[Pk[Long]]("user_profile.id") ~
+      get[Option[Long]]("user_profile.user_account_id") ~
+      get[String]("user_profile.name") ~
+      get[Date]("user_profile.date_of_birth") ~
+      get[String]("user_profile.gender") ~
+      get[String]("user_profile.image") ~
+      get[String]("user_profile.status") map {
+        case id ~ user_account_id ~ name ~ date_of_birth ~ gender ~ image ~ status =>
+          UserProfile(id, user_account_id, name, date_of_birth, gender, image,status )
+      }
+  }
+ /**
+   * Parse a userProfile from a MyFriend
+   */
+  val withMyFriend =UserProfile.simple ~ (MyFriend.simple ?) map{
+    case userprofile  ~ myfriend  => (userprofile, myfriend)
+  }
+/**
+   * Find MyFriend With MyFriend Detail
+   */
+
+  def myFriend(user_Id:Long) = {
+    DB.withConnection { implicit connection =>
+      val myFriend = SQL(
+        """
+          select * from MY_FRIEND
+          where USER_ID = {user_id}
+        """).on(
+          'user_Id -> user_Id).as(MyFriend.simple.singleOpt)
+      myFriend
+    }
+  }
+  /**
+   * Authonticate
+   */
+  def authenticate(userprofile: UserProfile) = {
+    DB.withConnection { implicit connection =>
+      val userProfileFound = SQL(
+        """
+          select * from USER_PROFILE 
+          where ID = (id}
+        """).on(
+          'Id -> userprofile.id
+          ).as(UserProfile.simple.singleOpt)
+      userProfileFound
+    }
+  }
+
+val userprofile:UserProfile=null
+        val myfriend:MyFriend=null
+
+   def authenticateFriend = Action { implicit request =>
+            val alert: Alert = new Alert("", "")
+            Common.setAlert(alert)
+            myFriendForm.bindFromRequest.fold(
+            errors => BadRequest(views.html.myFriend(errors,userprofile,myfriend)),
+        myFriend => {
+            val myfriendOpt = MyFriend.authenticate(myFriend)
+        myfriendOpt match {
+
+       case Some(authmyfriend: MyFriend) =>
+            val userSession = request.session + ("myFriendId" -> authmyfriend.id.toString)
+            val friendSession=request.session + ("userProfileId" -> userprofile.id.toString)
+            val myFriendOpt = MyFriend.userProfile(authmyfriend.id.get)
+       myFriendOpt match {
+       case None => Ok(views.html.myFriend(Application.myFriendForm, userprofile,myfriend)).withSession(userSession)
+       case Some(userProfileFound: UserProfile) =>
+            val myFriendFormWithDetails = Application.myFriendForm.fill(userProfileFound)
+            Ok(views.html.myFriend(myFriendFormWithDetails,userprofile,authmyfriend)).withSession(userSession)
+
+            }
+
+          }
+      })
+
+  }
+
+     def createMyFriend = Action { implicit request =>
+   if (request.session.get("userId") == None) {
+      Results.Redirect("/")
+    }
+   else {
+        val myfriends:MyFriend=null
+        val userprofileId = request.session.get("myFriendId").get.toLong//userProfileId
+        val userprofile = UserProfile.findUserByAccountId(userprofileId).get
+        println(userprofile)
+        val myfriendId = request.session.get("userProfileId").get.toLong//myFriendId
+        val myfriend = MyFriend.friendidByUserIsAccepted(myfriendId,true)
+        println(myfriend)
+        myFriendForm.bindFromRequest.fold(
+        errors => BadRequest(views.html.myFriend(errors, userprofile,myfriends)),
+   myFriend => {
+          println("errors")
+          val myFriendOpt = UserProfile.myFriend(userprofile.id.get)
+          println(myFriendOpt)
+   myFriendOpt match {
+   case None =>
+          val updatedMyFriend = MyFriend(NotAssigned,
+          Option(userprofileId), Option(myfriendId),myFriend.is_accepted)
+          MyFriend.insert(updatedMyFriend)
+          val alert: Alert = new Alert("success", " MyFriend Saved")
+          Common.setAlert(alert)
+          }
+          Results.Redirect("/myFriend")
+        })  
+        }
+    }        
+
+def myFriend = Action { implicit request =>
+
+   Ok(views.html.myFriend(Application.myFriendForm,userprofile,myfriend))
+    }
+

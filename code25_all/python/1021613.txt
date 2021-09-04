@@ -1,0 +1,70 @@
+stop
+import daemon, signal
+from multiprocessing import Process, cpu_count, JoinableQueue
+from http import httpserv
+from worker import work
+
+class Manager:
+    """
+    This manager starts the http server processes and worker
+    processes, creates the input/output queues that keep the processes
+    work together nicely.
+    """
+    def __init__(self):
+        self.NUMBER_OF_PROCESSES = cpu_count()
+
+    def start(self):
+        self.i_queue = JoinableQueue()
+        self.o_queue = JoinableQueue()
+
+        # Create worker processes
+        self.workers = [Process(target=work,
+                                args=(self.i_queue, self.o_queue))
+                        for i in range(self.NUMBER_OF_PROCESSES)]
+        for w in self.workers:
+            w.daemon = True
+            w.start()
+
+        # Create the http server process
+        self.http = Process(target=httpserv, args=(self.i_queue, self.o_queue))
+        self.http.daemon = True
+        self.http.start()
+
+        # Keep the current process from returning
+        self.running = True
+        while self.running:
+            time.sleep(1)
+
+    def stop(self):
+        print "quiting ..."
+
+        # Stop accepting new requests from users
+        os.kill(self.http.pid, signal.SIGINT)
+
+        # Waiting for all requests in output queue to be delivered
+        self.o_queue.join()
+
+        # Put sentinel None to input queue to signal worker processes
+        # to terminate
+        self.i_queue.put(None)
+        for w in self.workers:
+            w.join()
+        self.i_queue.join()
+
+        # Let main process return
+        self.running = False
+
+
+import daemon
+
+manager = Manager()
+context = daemon.DaemonContext()
+context.signal_map = {
+        signal.SIGHUP: lambda signum, frame: manager.stop(),
+        }
+
+context.open()
+manager.start()
+
+stop
+os.kill(pid, signal.SIGHUP)

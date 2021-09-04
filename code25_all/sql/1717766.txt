@@ -1,0 +1,152 @@
+SELECT MIN(temp), MAX(temp), AVG(temp) FROM samples GROUP BY time;
+
++------+------+------+
+| time   | source  | temp |
++------+------+------+
+|    1 | a    |   20 | 
+|    1 | b    |   18 | 
+|    1 | c    |   23 | 
+|    2 | b    |   21 | 
+|    2 | c    |   20 | 
+|    2 | a    |   18 | 
+|    3 | a    |   16 | 
+|    3 | c    |   13 | 
+|    4 | c    |   15 | 
+|    4 | a    |    4 | 
+|    4 | b    |   31 | 
+|    5 | b    |   10 | 
+|    5 | c    |   16 | 
+|    5 | a    |   22 | 
+|    6 | a    |   18 | 
+|    6 | b    |   17 | 
+|    7 | a    |   20 | 
+|    7 | b    |   19 | 
++------+------+------+
+INSERT INTO samples (time, source, temp) VALUES (1, 'a', 20), (1, 'b', 18), (1, 'c', 23), (2, 'b', 21), (2, 'c', 20), (2, 'a', 18), (3, 'a', 16), (3, 'c', 13), (4, 'c', 15), (4, 'a', 4), (4, 'b', 31), (5, 'b', 10), (5, 'c', 16), (5, 'a', 22), (6, 'a', 18), (6, 'b', 17), (7, 'a', 20), (7, 'b', 19);
+
++------+------+------+
+| time   | source  | temp |
++------+------+------+
+|    1 | a    |   20 | 
+|    1 | b    |   18 | 
+|    1 | c    |   23 | 
+|    2 | b    |   21 | 
+|    2 | c    |   20 | 
+|    2 | a    |   18 | 
+|    3 | a    |   16 | 
+|    3 | b    |   21 | 
+|    3 | c    |   13 | 
+|    4 | c    |   15 | 
+|    4 | a    |    4 | 
+|    4 | b    |   31 | 
+|    5 | b    |   10 | 
+|    5 | c    |   16 | 
+|    5 | a    |   22 | 
+|    6 | a    |   18 | 
+|    6 | b    |   17 | 
+|    6 | c    |   16 | 
+|    7 | a    |   20 | 
+|    7 | b    |   19 | 
+|    7 | c    |   16 | 
++------+------+------+
+
+SELECT s.dt as sdt, s.mac, ss.temp, MAX(ss.dt) as maxdt FROM (SELECT DISTINCT dt FROM samples) AS s CROSS JOIN samples AS ss WHERE s.dt >= ss.dt GROUP BY sdt, mac HAVING maxdt <= s.dt ORDER BY sdt ASC, maxdt ASC;
+
++------+------+------+-------+
+| sdt  | mac  | temp | maxdt |
++------+------+------+-------+
+|    1 | a    |   20 |     1 | 
+|    1 | c    |   23 |     1 | 
+|    1 | b    |   18 |     1 | 
+|    2 | a    |   20 |     2 | 
+|    2 | c    |   23 |     2 | 
+|    2 | b    |   18 |     2 | 
+|    3 | b    |   18 |     2 | 
+|    3 | a    |   20 |     3 | 
+|    3 | c    |   23 |     3 | 
+|    4 | a    |   20 |     4 | 
+|    4 | c    |   23 |     4 | 
+|    4 | b    |   18 |     4 | 
+|    5 | a    |   20 |     5 | 
+|    5 | c    |   23 |     5 | 
+|    5 | b    |   18 |     5 | 
+|    6 | c    |   23 |     5 | 
+|    6 | a    |   20 |     6 | 
+|    6 | b    |   18 |     6 | 
+|    7 | c    |   23 |     5 | 
+|    7 | b    |   18 |     7 | 
+|    7 | a    |   20 |     7 | 
++------+------+------+-------+
+
+FULL JOIN
+UNION
+-- Unify the original samples with the missing values that we've calculated
+(
+  SELECT time, source, temp
+  FROM samples
+)
+UNION
+( -- Pull all the time/source combinations that we are missing from the sample set, along with the temp
+  -- from the last sampled interval for the same time/source combination if we do not have one
+  SELECT  a.time, a.source, (SELECT t2.temp FROM samples AS t2 WHERE t2.time < a.time AND t2.source = a.source ORDER BY t2.time DESC LIMIT 1) AS temp
+  FROM    
+  ( -- All values we want to get should be a cross of time/temp
+    SELECT t1.time, s1.source
+    FROM
+    (SELECT DISTINCT time FROM samples) AS t1
+    CROSS JOIN
+    (SELECT DISTINCT source FROM samples) AS s1
+  ) AS a
+  LEFT JOIN samples s
+  ON a.time = s.time
+  AND a.source = s.source
+  WHERE s.source IS NULL
+)
+ORDER BY time, source;
+
+EXPLAIN
++----+--------------------+------------+------+---------------+------+---------+------+------+-----------------------------+
+| id | select_type        | table      | type | possible_keys | key  | key_len | ref  | rows | Extra                       |
++----+--------------------+------------+------+---------------+------+---------+------+------+-----------------------------+
+|  1 | PRIMARY            | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 |                             | 
+|  2 | UNION              | <derived4> | ALL  | NULL          | NULL | NULL    | NULL |   21 |                             | 
+|  2 | UNION              | s          | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using where                 | 
+|  4 | DERIVED            | <derived6> | ALL  | NULL          | NULL | NULL    | NULL |    3 |                             | 
+|  4 | DERIVED            | <derived5> | ALL  | NULL          | NULL | NULL    | NULL |    7 |                             | 
+|  6 | DERIVED            | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using temporary             | 
+|  5 | DERIVED            | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using temporary             | 
+|  3 | DEPENDENT SUBQUERY | t2         | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using where; Using filesort | 
+| NULL | UNION RESULT       | <union1,2> | ALL  | NULL          | NULL | NULL    | NULL | NULL | Using filesort              | 
++----+--------------------+------------+------+---------------+------+---------+------+------+-----------------------------+
+
+SELECT T.time, S.source,
+  COALESCE(
+    D.temp,
+    (
+      SELECT temp FROM samples
+      WHERE source = S.source AND time = (
+        SELECT MAX(time)
+        FROM samples
+        WHERE
+          source = S.source
+          AND time < T.time
+      )
+    )
+  ) AS temp
+FROM (SELECT DISTINCT time FROM samples) AS T
+CROSS JOIN (SELECT DISTINCT source FROM samples) AS S
+  LEFT JOIN samples AS D
+ON D.source = S.source AND D.time = T.time
+
++----+--------------------+------------+------+---------------+------+---------+------+------+-----------------+
+| id | select_type        | table      | type | possible_keys | key  | key_len | ref  | rows | Extra           |
++----+--------------------+------------+------+---------------+------+---------+------+------+-----------------+
+|  1 | PRIMARY            | <derived5> | ALL  | NULL          | NULL | NULL    | NULL |    3 |                 | 
+|  1 | PRIMARY            | <derived4> | ALL  | NULL          | NULL | NULL    | NULL |    7 |                 | 
+|  1 | PRIMARY            | D          | ALL  | NULL          | NULL | NULL    | NULL |   18 |                 | 
+|  5 | DERIVED            | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using temporary | 
+|  4 | DERIVED            | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using temporary | 
+|  2 | DEPENDENT SUBQUERY | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using where     | 
+|  3 | DEPENDENT SUBQUERY | temp       | ALL  | NULL          | NULL | NULL    | NULL |   18 | Using where     | 
++----+--------------------+------------+------+---------------+------+---------+------+------+-----------------+
+

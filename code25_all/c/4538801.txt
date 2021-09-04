@@ -1,0 +1,206 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <dirent.h>
+#include <string.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <pwd.h>
+
+/* THIS IS AN EXTRACT FROM A LARGER FILE
+ THERE MAY BE TO MUCH INCLUDE STATEMENTS
+ */
+
+struct Directory {
+    DIR *handle;
+    const char *filename;
+};
+typedef struct Directory Directory;
+
+int DirectoryCreate(const char *n, Directory *d) {
+    DIR *dh;
+    char *str;
+
+    dh = opendir(n);
+    if(dh == NULL) {
+        return -1;
+    }
+
+    d->handle = dh;
+    str = malloc(strlen(n) + 1);
+    if(str == NULL) {
+        errno = ENOMEM;
+        closedir(d->handle);
+        return -1;
+    }
+    strcpy(str, n);
+    d->filename = (const char *)str;
+    return 0;
+}
+
+void DirectoryFree(Directory *s) {
+    if(s->handle) {
+        closedir(s->handle);
+    }
+    if(s->filename) {
+        free((void *)s->filename);
+    }
+}
+
+void FreeDirectoryArray(Directory *array, size_t size) {
+    register size_t i;
+    for(i = 0; i < size; i++) {
+        DirectoryFree(&(array[i]));
+    }
+
+    free(array);
+}
+
+Directory *ReadFolders = NULL;
+size_t ReadFoldersSize = 0;
+const char *ReadFolderFilename = NULL;
+const char *ReadNextRecursiveItemInFolder(const char *folder) {
+    struct dirent *entry;
+    struct stat fileStatus;
+    int status;
+    mode_t mode;
+    const char *newFilename;
+    char *fullName;
+    char *ptr;
+    size_t strLen;
+
+    if(folder == NULL && ReadFolders == NULL) {
+        errno = 0;
+        return NULL;
+    }
+
+    if(folder != NULL) {
+        /* free the previous directory list */
+        FreeDirectoryArray(ReadFolders, ReadFoldersSize);
+        ReadFolders = NULL;
+        ReadFoldersSize = 0;
+
+        /* open the new directory */
+        ReadFolders = (Directory *)realloc(ReadFolders, sizeof(Directory));
+        ReadFoldersSize++;
+        status = DirectoryCreate(folder, ReadFolders);
+        if(status != 0) {
+            FreeDirectoryArray(ReadFolders, ReadFoldersSize-1);
+            ReadFolders = NULL;
+            return NULL;
+        }
+    }
+
+    entry = readdir(ReadFolders[ReadFoldersSize - 1].handle);
+    /* If NULL, go to previous folder */
+    if(entry == NULL) {
+        DirectoryFree(&(ReadFolders[ReadFoldersSize - 1]));
+        --ReadFoldersSize;
+
+        /* if it's empty, we've reached the end */
+        if(ReadFoldersSize == 0) {
+            free(ReadFolders);
+            ReadFolders = NULL;
+            errno = 0;
+            return NULL;
+        }
+
+        newFilename = ReadNextRecursiveItemInFolder(NULL);
+        return newFilename;
+    }
+    /* Make sure the entry name is not . or .. */
+    if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+        newFilename = ReadNextRecursiveItemInFolder(NULL);
+        return newFilename;
+    }
+
+    /* we've got an entry, now construct the full path */
+    strLen = 
+        strlen(ReadFolders[ReadFoldersSize - 1].filename) +
+        1 +
+        strlen(entry->d_name);
+    fullName = malloc(strLen + 1);
+    ptr = fullName;
+    strcpy(ptr, ReadFolders[ReadFoldersSize - 1].filename);
+    ptr += strlen(ReadFolders[ReadFoldersSize - 1].filename);
+    strcpy(ptr, "/");
+    ptr++;
+    strcpy(ptr, entry->d_name);
+    newFilename = fullName;
+
+    /* no recurse on symbolic links */
+    status = lstat(newFilename, &fileStatus);
+    if(status != 0) {
+        FreeDirectoryArray(ReadFolders, ReadFoldersSize);
+        ReadFolders = NULL;
+        ReadFoldersSize = 0;
+        return NULL;
+    }
+
+    mode = fileStatus.st_mode;
+    /* if not readable for file or not searchable for folder, get next */
+    /* if folder and not link, recursively continue */
+    /* else  return the new name */
+    if((((mode & S_IFDIR) == S_IFDIR) && (mode & S_IXUSR) != S_IXUSR) || 
+        (mode & S_IRUSR) != S_IRUSR) {
+        free((void *)newFilename);
+        newFilename = ReadNextRecursiveItemInFolder(NULL);
+        return newFilename;
+
+    } else if((mode & S_IFDIR) && (mode & S_IFLNK) != S_IFLNK) {
+        ReadFolders = realloc(ReadFolders, ReadFoldersSize + 1);
+        ReadFoldersSize++;
+        errno = 0;
+        status = DirectoryCreate(newFilename, &(ReadFolders[ReadFoldersSize - 1]));
+        if(status != 0) {
+            FreeDirectoryArray(ReadFolders, ReadFoldersSize - 1);
+            ReadFolders = NULL;
+            ReadFoldersSize = 0;
+            return NULL;
+        }
+
+        if(newFilename != ReadFolderFilename) {
+            free((void *)ReadFolderFilename);
+            ReadFolderFilename = newFilename;
+        }
+
+    } else {
+        if(newFilename != ReadFolderFilename) {
+            free((void *)ReadFolderFilename);
+            ReadFolderFilename = newFilename;
+        }
+        errno = 0;
+    }
+
+    return ReadFolderFilename;
+}
+
+int main() {
+    const char *filename = "/Users/";
+    const char *entry;
+
+    while(1) {
+        entry = ReadNextRecursiveItemInFolder(filename);
+        filename = NULL;
+        if(entry == NULL) {
+            if(errno == 0) {
+                printf("End reached\n");
+            } else {
+                printf("Error: %s\n", strerror(errno));
+            }
+            break;
+        }
+
+        printf("Entry: %s\n", entry);
+    }
+
+    return 0;
+}
+
+ReadFolders
+Directory
+ReadFoldersSize
+Directory
+ReadFolderFilename

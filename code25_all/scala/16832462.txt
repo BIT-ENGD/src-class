@@ -1,0 +1,107 @@
+def createBooking = Action(parse.json) {
+    implicit request => {
+      request.body.validate[Booking].map {
+        case (booking) => {
+          Logger.info("" + booking)
+          Ok("ONLY TEST")
+        }
+      }.recoverTotal {
+        e => BadRequest("Detected error:" + JsError.toFlatJson(e))
+      }
+    }
+  }
+
+package models.booking
+
+import java.util.UUID
+import org.joda.time.{DateTime}
+import play.api.libs.functional.syntax._
+import play.api.libs.json._
+
+case class Booking (bookingId: UUID,
+                            rId: Long,
+                            creationTime: DateTime,
+                            user: User,
+                            dateTime: BookingTime,
+                            numOfGuest: Int,
+                            status: BookingState.BookingState) {
+
+  def accepted(): Booking = {
+    this.copy(status = BookingState.ACCEPTED)
+  }
+
+  def sent(): Booking = {
+    this.copy(status = BookingState.SENT)
+  }
+
+  def denied(): Booking = {
+    this.copy(status = BookingState.DENIED)
+  }
+
+  def denyWithNewTimeSuggestion(): Booking = {
+    this.copy(status = BookingState.DENIED_NEW_TIME_SUGGESTED)
+  }
+
+  def timeout(): Booking = {
+    this.copy(status = BookingState.TIMED_OUT)
+  }
+
+  def sendOnOpening(): Booking = {
+    this.copy(status = BookingState.ON_HOLD)
+  }
+}
+
+object Booking {
+
+  implicit object UUIDFormat extends Format[UUID] {
+    def writes(uuid: UUID): JsValue = JsString(uuid.toString())
+    def reads(json: JsValue): JsResult[UUID] = json match {
+      case JsString(x) => JsSuccess(UUID.fromString(x))
+      case _ => JsError("Expected UUID as JsString")
+    }
+  }
+
+  val pattern = "yyyy-M-dd"
+  implicit val dateFormat =
+    Format[DateTime](Reads.jodaDateReads(pattern), Writes.jodaDateWrites(pattern))
+
+  import utils.EnumUtils.enumReads
+  implicit val bookingStateReads = enumReads(BookingState)
+
+  import play.api.libs.json.Reads._
+  implicit val bookingReads: Reads[Booking] = (
+    (__ \ "bookingId").read[UUID] and
+      (__ \ "rId").read[Long] and
+      (__ \ "creationTime").read[DateTime] and
+      (__ \ "user").read[User] and
+      (__ \ "dateTime").read[BookingTime] and
+      (__ \ "numOfGuest").read[Int] and
+      (__ \ "status").read[BookingState.BookingState]
+    )(Booking.apply _)
+
+  import utils.EnumUtils.enumWrites
+
+  import play.api.libs.json.Writes._
+  implicit val bookingWrites: Writes[Booking] = (
+    (__ \ "bookingId").write[UUID] and
+      (__ \ "rId").write[Long] and
+      (__ \ "creationTime").write[DateTime] and
+      (__ \ "user").write[User] and
+      (__ \ "dateTime").write[BookingTime] and
+      (__ \ "numOfGuest").write[Int] and
+      (__ \ "status").write[BookingState.BookingState]
+    )(unlift(Booking.unapply))
+}
+
+object BookingState extends Enumeration {
+  type BookingState = Value
+  val NEW = Value("NEW")
+  val SENT = Value("SENT")
+  val ACCEPTED = Value("ACCEPTED")
+  val DENIED = Value("DENIED")
+  val DENIED_NEW_TIME_SUGGESTED = Value("DENIED_NEW_TIME_SUGGESTED")
+  val TIMED_OUT = Value("TIMED_OUT")
+  val ON_HOLD = Value("ON_HOLD")
+}
+
+customBookingReads

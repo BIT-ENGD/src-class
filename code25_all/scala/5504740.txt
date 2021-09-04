@@ -1,0 +1,99 @@
+import java.io._
+import java.util.concurrent._
+import scala.actors.Actor
+import scala.io.Source
+import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.atomic.AtomicLong
+
+case class FileSystemObject(path:File)
+case class FileContent(content:String)
+
+case object Stop
+case object Processed
+
+class ResultAcumulator extends Actor {
+
+    var results:List[String] = Nil
+    var finished = false
+
+    def act() = {
+        loop {
+            react {
+                case FileContent(content) => {
+                    results ::= content
+                }
+                case Stop => {
+                    finished = true;
+                    exit
+                }
+            }
+        }
+    }
+}
+
+class FileSystemReader(accumulator:Actor) extends Actor {
+    def act() = {
+        loop {
+            react {
+                case FileSystemObject(path) => {
+                    if(path.isFile) {
+                        accumulator ! FileContent(path.toString)
+                        sender ! Processed
+                    }
+                }
+                case Stop => exit
+            }
+        }
+    }
+}
+
+class FileSystemProducer(start:File,acumulator:Actor,reader:Actor) extends Actor {
+    var totalFilesProcessed = 0
+
+    def act() = {
+        val files = start.listFiles
+        files.foreach{ f =>
+            (reader ! FileSystemObject(f))
+        }
+        loop {
+            react {
+                case Processed => {
+                    totalFilesProcessed += 1
+                    if(totalFilesProcessed == files.length) {
+                        reader ! Stop
+                        acumulator ! Stop
+                        Xo.decrementLatch
+                    }
+                }
+            }
+        }
+
+    }
+}
+object Xo {
+
+     var latch = new CountDownLatch(1)
+
+     def decrementLatch = latch.countDown
+
+     def main(args : Array[String]) = {
+
+         val acumulator = new ResultAcumulator
+         val fsReader = new FileSystemReader(acumulator)
+         val producer = new FileSystemProducer(new File("d:/rails/a"),acumulator,fsReader)
+
+         acumulator.start
+         fsReader.start
+         producer.start
+
+         latch.await
+
+         acumulator.results.foreach(println)
+
+     }
+}
+
+files.foreach{ f =>
+    (reader ! FileSystemObject(f))
+}
+

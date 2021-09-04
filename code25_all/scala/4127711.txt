@@ -1,0 +1,50 @@
+actor {
+  val range = (0L to total by limit)
+  val latch = new CountDownLatch(range.length)
+  range.foreach { offset =>
+    actor {
+      doExpensiveStuff(offset,limit)
+      latch.countDown
+    }
+  }
+  latch.await
+}
+
+import testing._
+import java.util.concurrent._
+import actors.Futures._
+
+val count = 100000
+val poolSize = 4
+val numRuns = 100
+
+val ActorTest = new Benchmark {
+  def run = {
+    (1 to count).map(i => future {
+      i * i
+    }).foreach(_())
+  }
+}
+
+val ThreadPoolTest = new Benchmark {
+  def run = {
+    val queue = new LinkedBlockingQueue[Runnable]
+    val pool = new ThreadPoolExecutor(
+          poolSize, poolSize, 1, TimeUnit.SECONDS, queue)
+    val latch = new CountDownLatch(count)
+    (1 to count).map(i => pool.execute(new Runnable {
+      override def run = {
+        i * i
+        latch.countDown
+      }
+    }))
+    latch.await
+  }
+}
+
+List(ActorTest,ThreadPoolTest).map { b =>
+  b.runBenchmark(numRuns).sum.toDouble / numRuns
+}
+
+// List[Double] = List(545.45, 44.35)
+

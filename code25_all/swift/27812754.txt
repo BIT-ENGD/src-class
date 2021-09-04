@@ -1,0 +1,252 @@
+ import UIKit
+ import CoreText
+
+class DataViewController: UIViewController,UITextViewDelegate, UIGestureRecognizerDelegate{
+
+
+@IBAction func nextPage() {
+    let pageController = self.parentViewController as? UIPageViewController
+    let modeController = pageController?.dataSource as? ModelController
+    if let controller = modeController?.pageViewController(pageController!, viewControllerAfterViewController: pageController?.viewControllers[0] as UIViewController) {
+        pageController?.setViewControllers([controller], direction: UIPageViewControllerNavigationDirection.Forward, animated: false, completion: nil)
+    }
+
+}
+
+@IBOutlet weak var dataLabel: UILabel!
+
+@IBOutlet weak var textView: UITextView!
+
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+    if let url = NSBundle.mainBundle().URLForResource("data", withExtension: "rtf") {
+        let attributedString = NSMutableAttributedString(fileURL : url, options:nil, documentAttributes: nil, error: nil)
+        attributedString?.addAttribute(NSUnderlineStyleAttributeName, value: 18, range: NSMakeRange(0,12))
+        attributedString?.addAttribute(NSUnderlineColorAttributeName, value: UIColor.redColor(), range: NSMakeRange(0,12))
+
+        textView.attributedText = attributedString
+    }
+
+    textView.layoutIfNeeded()
+
+}
+
+var offset:Int = 0
+
+var startCharacherIndex:Int {
+    return textView.layoutManager.characterIndexForPoint(CGPoint(x: 0, y: textView.contentOffset.y), inTextContainer: textView.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+}
+
+var prevCharacherIndex:Int {
+    var y = textView.contentOffset.y - textView.bounds.height
+    y = y < 0 ? 0 : y
+    return textView.layoutManager.characterIndexForPoint(CGPoint(x: 0, y: y), inTextContainer: textView.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+}
+
+var nextCharacherIndex:Int {
+    return textView.layoutManager.characterIndexForPoint(CGPoint(x: textView.bounds.width - 1, y: textView.contentOffset.y + textView.bounds.height - 1), inTextContainer: textView.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+}
+
+override func didReceiveMemoryWarning() {
+    super.didReceiveMemoryWarning()
+    // Dispose of any resources that can be recreated.
+}
+
+override func viewWillAppear(animated: Bool) {
+    super.viewWillAppear(animated)
+    scrollIndex()
+
+    //scrollIndex()
+    //println("textView.contentOffset.y:\(textView.contentOffset.y)")
+}
+
+
+func scrollIndex(){
+    if textView == nil{    return   }
+
+    var range:NSRange = NSMakeRange(offset, 0)
+    let glyphRange = textView.layoutManager.glyphRangeForCharacterRange(NSMakeRange(offset, 0), actualCharacterRange: &range)
+
+    let rect = textView.layoutManager.boundingRectForGlyphRange(glyphRange, inTextContainer: textView.textContainer)
+
+    textView.setContentOffset(CGPoint(x: 0, y: rect.minY), animated: false)
+}
+
+
+var isScrollToEnd:Bool{
+
+    let count = textView.attributedText?.length ?? 0
+    return nextCharacherIndex == count - 1
+   }
+
+
+}
+
+  import UIKit
+
+ class RootViewController: UIViewController, UIPageViewControllerDelegate,  
+  UIGestureRecognizerDelegate {
+
+var pageViewController: UIPageViewController?
+lazy var pageAnimationFinished:Bool = true
+
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+    pageAnimationFinished = true
+
+    self.pageViewController = UIPageViewController(transitionStyle: .PageCurl, navigationOrientation: .Horizontal, options: nil)
+    self.view.gestureRecognizers = self.pageViewController!.gestureRecognizers
+
+    for gesRecog in self.pageViewController!.gestureRecognizers{
+        if (gesRecog is UIPanGestureRecognizer){
+          (gesRecog as UIPanGestureRecognizer).delegate = self
+            break
+        }
+    }
+
+
+
+    self.modelController.createCacheController(self.storyboard!)
+
+    let startingViewController: DataViewController = self.modelController.viewControllerAtIndex(self.storyboard!,offset: 0)!
+    let viewControllers: NSArray = [startingViewController]
+    self.pageViewController!.setViewControllers(viewControllers, direction: .Forward, animated: false, completion: {done in })
+
+    self.pageViewController!.dataSource = self.modelController
+
+    self.addChildViewController(self.pageViewController!)
+    self.view.addSubview(self.pageViewController!.view)
+
+    // Set the page view controller's bounds using an inset rect so that self's view is visible around the edges of the pages.
+    var pageViewRect = self.view.bounds
+    if UIDevice.currentDevice().userInterfaceIdiom == .Pad {
+        pageViewRect = CGRectInset(pageViewRect, 40.0, 40.0)
+    }
+    self.pageViewController!.view.frame = pageViewRect
+
+    self.pageViewController!.didMoveToParentViewController(self)
+
+
+    // Add the page view controller's gesture recognizers to the book view controller's view so that the gestures are started more easily.
+}
+
+
+
+
+func pageViewController(pageViewController: UIPageViewController, didFinishAnimating finished: Bool, previousViewControllers: [AnyObject], transitionCompleted completed: Bool) {
+    if(completed || finished){
+        pageAnimationFinished = false
+    }
+}
+
+
+func gestureRecognizer(gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOfGestureRecognizer otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    //println("1:\(gestureRecognizer) \n2:\(otherGestureRecognizer)")
+    return false
+}
+
+
+override func didReceiveMemoryWarning() {
+    super.didReceiveMemoryWarning()
+    // Dispose of any resources that can be recreated.
+}
+
+var modelController: ModelController {
+    // Return the model controller object, creating it if necessary.
+    // In more complex implementations, the model controller may be passed to the view controller.
+    if _modelController == nil {
+        _modelController = ModelController()
+    }
+    return _modelController!
+}
+
+
+var _modelController: ModelController? = nil
+
+// MARK: - UIPageViewController delegate methods
+
+func pageViewController(pageViewController: UIPageViewController, spineLocationForInterfaceOrientation orientation: UIInterfaceOrientation) -> UIPageViewControllerSpineLocation {
+    //if (orientation == .Portrait) || (orientation == .PortraitUpsideDown) || (UIDevice.currentDevice().userInterfaceIdiom == .Phone) {
+        // In portrait orientation or on iPhone: Set the spine position to "min" and the page view controller's view controllers array to contain just one view controller. Setting the spine position to 'UIPageViewControllerSpineLocationMid' in landscape orientation sets the doubleSided property to YES, so set it to NO here.
+        let currentViewController = self.pageViewController!.viewControllers[0] as UIViewController
+        let viewControllers: NSArray = [currentViewController]
+        self.pageViewController!.setViewControllers(viewControllers, direction: .Forward, animated: true, completion: {done in })
+
+        self.pageViewController!.doubleSided = false
+        return .Min
+    //}
+
+    // In landscape orientation: Set set the spine location to "mid" and the page view controller's view controllers array to contain two view controllers. If the current page is even, set it to contain the current and next view controllers; if it is odd, set the array to contain the previous and current view controllers.
+    //let currentViewController = self.pageViewController!.viewControllers[0] as DataViewController
+    //var viewControllers: NSArray
+
+    //let indexOfCurrentViewController = currentViewController.index  //self.modelController.indexOfViewController(currentViewController)
+    //if (indexOfCurrentViewController == 0) || (indexOfCurrentViewController % 2 == 0) {
+      //  let nextViewController = self.modelController.pageViewController(self.pageViewController!, viewControllerAfterViewController: currentViewController)
+        //viewControllers = [currentViewController, nextViewController!]
+    //} else {
+        //let previousViewController = self.modelController.pageViewController(self.pageViewController!, viewControllerBeforeViewController: currentViewController)
+        //viewControllers = [previousViewController!, currentViewController]
+    //}
+    //self.pageViewController!.setViewControllers(viewControllers, direction: .Forward, animated: true, completion: {done in })
+
+    //return .Mid
+}
+
+func pageViewController(pageViewController: UIPageViewController, willTransitionToViewControllers pendingViewControllers: [AnyObject]) {
+    pageAnimationFinished = false
+}
+
+//modelController.swift
+
+
+    class ModelController: NSObject, UIPageViewControllerDataSource {
+
+    // var pageData = NSArray()
+    lazy var controllers:[DataViewController] = []
+
+
+override init() {
+    super.init()
+}
+
+
+func createCacheController(storyboard: UIStoryboard) {
+    controllers = [];
+    for i in 0..<2 {
+        let controller = storyboard.instantiateViewControllerWithIdentifier("DataViewController") as DataViewController
+        controllers.append(controller)
+    }
+
+}
+
+func viewControllerAtIndex(storyboard: UIStoryboard, offset: Int) -> DataViewController? {
+
+    println(" offset:\(offset)")
+    let controller = controllers.removeAtIndex(0)
+    controllers.append(controller)
+    controller.offset = offset
+    return controller
+
+}
+
+
+// MARK: - Page View Controller Data Source
+func pageViewController(pageViewController: UIPageViewController, viewControllerBeforeViewController viewController: UIViewController) -> UIViewController? {
+    let controller = viewController as DataViewController
+    if controller.offset == 0 {
+        return nil
+    }
+    return self.viewControllerAtIndex(viewController.storyboard!, offset: controller.prevCharacherIndex)
+}
+func pageViewController(pageViewController: UIPageViewController, viewControllerAfterViewController viewController: UIViewController) -> UIViewController? {
+    let controller = viewController as DataViewController
+    if controller.isScrollToEnd{
+        return nil
+    }
+
+    return self.viewControllerAtIndex(viewController.storyboard!, offset: controller.nextCharacherIndex)
+}
+

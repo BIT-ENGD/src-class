@@ -1,0 +1,90 @@
+set idleTime to (do shell script "ioreg -c IOHIDSystem | perl -ane 'if (/Idle/) {$idle=(pop @F)/1000000000; print $idle,\"\";last}'") 
+set initIdleTime to idleTime repeat while idleTime ≥ initIdleTime   
+set idleTime to (do shell script "ioreg -c IOHIDSystem | perl -ane 'if (/Idle/) {$idle=(pop @F)/1000000000; print $idle,\"\";last}'") 
+end repeat
+
+#!/bin/bash
+
+# -- guns
+# 
+# Purge inactive memory with rapid i/o
+# 
+# 26 November 2007
+# 'killall $command' is still printing to the terminal
+
+# declare variables before= after= memPurged= pageSize= pagesPurged= AvailMem= timeout=5 # in seconds command="du /" 
+
+showUsage="Usage: $(basename $0) [-h] [-t seconds] [-c "command"]"
+
+function printError()  { echo >&2 $showUsage echo >&2  echo >&2 "See '$(basename $0) -h' for more details." }
+
+function printHelp()  { echo "Purge inactive memory with rapid i/o." echo  echo $showUsage echo  echo "Supported Options" echo "-----------------" echo "-t{seconds}tSet the amount of time for the command to run. Default" echo "ttis 5 seconds." echo "-c{"command"}tSet the command to run. Default is 'du /'" echo "-httDisplay this help and exit" }
+
+function getMemFree() {
+# the "$3-0" bit is a dirty way to chop the period at the end vm_stat | awk '/Pages free/ {intMemFree=$3-0; print intMemFree}' }
+
+function getPageSize() { vm_stat | awk '/page size/ {print $8}' }
+
+# 
+# Main
+# 
+
+while getopts ":ht:c:" option; do case $option in h ) printHelp; exit;; t ) timeout=$OPTARG;; c ) command=$OPTARG;; ?) echo >&2 "Invalid option!n"; printError; exit 3 esac done shift $(($OPTIND-1))
+
+before=$(getMemFree)
+
+purge
+
+# set variables after=$(getMemFree) let pagesPurged=$after-$before pageSize=$(getPageSize)
+
+
+
+
+    # calculate and print let memPurged=($pagesPurged * $pageSize / 2**20) 
+let availMem=($after * $pageSize / 2**20) printf "%d MB purged." $memPurged 
+say $availMem
+
+#!/usr/bin/python
+
+import subprocess
+import re
+
+# Get process info
+ps = subprocess.Popen(['ps', '-caxm', '-orss,comm'], stdout=subprocess.PIPE).communicate()[0]
+vm = subprocess.Popen(['vm_stat'], stdout=subprocess.PIPE).communicate()[0]
+
+# Iterate processes
+processLines = ps.split('\n')
+sep = re.compile('[\s]+')
+rssTotal = 0 # kB
+for row in range(1,len(processLines)):
+    rowText = processLines[row].strip()
+    rowElements = sep.split(rowText)
+    try:
+        rss = float(rowElements[0]) * 1024
+    except:
+        rss = 0 # ignore...
+    rssTotal += rss
+
+# Process vm_stat
+vmLines = vm.split('\n')
+sep = re.compile(':[\s]+')
+vmStats = {}
+for row in range(1,len(vmLines)-2):
+    rowText = vmLines[row].strip()
+    rowElements = sep.split(rowText)
+    vmStats[(rowElements[0])] = int(rowElements[1].strip('\.')) * 4096
+
+print '%d' % ( vmStats["Pages free"]/1024/1024 )
+
+#!/bin/bash
+
+mf=$(perl ~/scripts/py/memfree.py)
+
+if [ "$mf" -lt 2000 ]
+then
+sh2 ~/scripts/memclean.sh
+else
+exit
+fi
+

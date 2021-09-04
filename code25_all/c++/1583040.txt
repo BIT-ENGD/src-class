@@ -1,0 +1,114 @@
+DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE;
+HANDLE hFile = ::CreateFile(strTempFile.c_str(), GENERIC_WRITE, dwShareMode, &sa, CREATE_NEW, dwFlagsAndAttributes, NULL);
+
+int CIHExplorerDoc::OpenFile(std::string strFileName, bool bIsFullPath) {
+    std::string strFullFilePath;
+    if(bIsFullPath) {
+        strFullFilePath = strFileName;
+        strFileName = IHawk::RemovePath(strFileName);
+    }else {
+        strFullFilePath = m_strDirectory + strFileName;
+    }
+
+    if(!HasEncryptionFileExtension(strFullFilePath)) {
+        LaunchFile(strFullFilePath);
+    }else {
+        //it's an encrypted file, so open it and copy unencrypted file to temp.
+        IHawk::EncryptedFileHandle hEncryptedFile(strFullFilePath.c_str(), true, theApp.GetKeyServer());
+        if(hEncryptedFile.IsValid()) {
+            std::string strTempFile = g_strTempFolder + IHawk::ChangeFileExtension(strFileName, "");
+
+            //TODO: Determine what the LPSECURITY_ATTRIBUTES should be.
+
+            SECURITY_ATTRIBUTES sa;
+            SECURITY_DESCRIPTOR sd;
+
+            if(!InitializeSecurityDescriptor(&sd,SECURITY_DESCRIPTOR_REVISION)) {
+                DWORD dwLastError = ::GetLastError();
+                LOG4CPLUS_ERROR(m_Logger, "Cannot launch file '" << strFullFilePath << "'.  Failed to initialize security descriptor.  GetLastError=" << dwLastError);
+                return dwLastError;
+            }
+
+            if(!SetSecurityDescriptorDacl(
+                &sd,    // A pointer to the SECURITY_DESCRIPTOR structure to which the function adds the DACL
+                TRUE,   // presence of a DACL in the security descriptor
+                NULL,   // allows all access to the object
+                FALSE   // DACL has been explicitly specified by a user
+            )) 
+            {
+                DWORD dwLastError = ::GetLastError();
+                LOG4CPLUS_ERROR(m_Logger, "Cannot launch file '" << strFullFilePath << "'.  Failed to set security descriptor DACL.  GetLastError=" << dwLastError);
+                return dwLastError;
+            }
+
+            if(!SetSecurityDescriptorGroup(
+                &sd,    // A pointer to the SECURITY_DESCRIPTOR structure whose primary group is set by this function
+                NULL,   // no primary group
+                FALSE   // Indicates whether the primary group information was derived from a default mechanism
+            ))
+            {
+                DWORD dwLastError = ::GetLastError();
+                LOG4CPLUS_ERROR(m_Logger, "Cannot launch file '" << strFullFilePath << "'.  Failed to set security descriptor primary group.  GetLastError=" << dwLastError);
+                return dwLastError;
+            }
+
+            if(!SetSecurityDescriptorOwner(
+                &sd,    // A pointer to the SECURITY_DESCRIPTOR structure whose owner is set by this function.
+                NULL,   // If this parameter is NULL, the function clears the security descriptor's owner information. This marks the security descriptor as having no owner.
+                FALSE   // Indicates whether the owner information is derived from a default mechanism.
+            ))
+            {
+                DWORD dwLastError = ::GetLastError();
+                LOG4CPLUS_ERROR(m_Logger, "Cannot launch file '" << strFullFilePath << "'.  Failed to set security descriptor owner information.  GetLastError=" << dwLastError);
+                return dwLastError;
+            }
+
+            if(!SetSecurityDescriptorSacl(
+                &sd,    // A pointer to the SECURITY_DESCRIPTOR structure to which the function adds the SACL
+                FALSE,  // the security descriptor does not contain a SACL
+                NULL,   // security descriptor has a NULL SACL
+                FALSE   // A pointer to a flag that is set to the value of the SE_SACL_DEFAULTED flag in the SECURITY_DESCRIPTOR_CONTROL structure if a SACL exists for the security descriptor
+            ))
+            {
+                DWORD dwLastError = ::GetLastError();
+                LOG4CPLUS_ERROR(m_Logger, "Cannot launch file '" << strFullFilePath << "'.  Failed to set security descriptor SACL.  GetLastError=" << dwLastError);
+                return dwLastError;
+            }
+
+            sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+            sa.lpSecurityDescriptor = &sd;
+            sa.bInheritHandle = TRUE;
+
+            DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+//          DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL;
+            DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE;
+            HANDLE hFile = ::CreateFile(strTempFile.c_str(), GENERIC_WRITE, dwShareMode, &sa, CREATE_NEW, dwFlagsAndAttributes, NULL);
+
+            //verify we created the file.
+            if(hFile == INVALID_HANDLE_VALUE) {
+                DWORD dwLastError = ::GetLastError();
+                return dwLastError;
+            }
+
+            //copy to temp
+            char buffer[64*1024];
+            size_t nBytesRead = hEncryptedFile.Read(buffer, sizeof(buffer));
+            while(nBytesRead) {
+                DWORD numBytesWritten;
+                if(!::WriteFile(hFile, buffer, nBytesRead, &numBytesWritten, (LPOVERLAPPED) NULL)) {
+                    DWORD dwLastError = ::GetLastError();
+                    LOG4CPLUS_ERROR(m_Logger, "Failed to write file to %TEMP% folder.  GetLastError=" << dwLastError);
+                    return dwLastError;
+                }
+                nBytesRead = hEncryptedFile.Read(buffer, sizeof(buffer));
+            }
+            hEncryptedFile.Close();
+
+            //execute the file from temp.
+            LaunchFile(strTempFile);
+        }
+    }
+    return 0;
+}
+

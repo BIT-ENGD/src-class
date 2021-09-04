@@ -1,0 +1,87 @@
+package test
+
+import scala.actors.{OutputChannel, AbstractActor, Actor} , Actor._
+import scala.actors.remote.RemoteActor , RemoteActor._
+
+
+object ActorTestA{
+  def main(args :Array[String]) {
+    RemoteActor.classLoader = getClass().getClassLoader()
+    println("Start A")
+    val a = new A().start
+    println("Fin A")
+  }
+}
+
+object ActorTestB{
+  def main(args :Array[String]) {
+    RemoteActor.classLoader = getClass().getClassLoader()
+    println("Start B")
+    val b = new B().start
+    b !? 'start
+    println("Fin B")
+  }
+}
+
+case class M1(sendRef :AbstractActor, m2 :M2)
+case class M2(v1:String, v2 :String, sendRef :AbstractActor)
+case class M3(m2 :M2)
+
+object A { val portToUse = 20000 }
+class A extends Actor {
+  alive(A.portToUse)
+  register('A, this)
+  val proxy = select(actors.remote.Node("localhost", A.portToUse), 'A)
+
+  def act = { 
+    loop { react {
+      case M1(sendRef, m2) =>
+        println("A receives M1")
+        sendRef ! M3(m2)
+        self ! 'exit
+      case 'exit => 
+        println("A exits")
+        exit
+      case any => println("Unknown Msg: "+any)
+    } } 
+  }
+}
+
+
+class B extends Actor {
+  val portToUse = 20001 
+  alive(portToUse)
+  register('B, this)
+  val proxy = select(actors.remote.Node("localhost", portToUse), 'B)
+
+  var resultTo :OutputChannel[Any] = _
+  def act = { 
+    loop { react {
+      case 'start => 
+        println("B starts")
+        val a = select(actors.remote.Node("localhost", A.portToUse), 'A)
+        a ! M1(proxy, M2("some","val", proxy))
+        resultTo = sender
+      case M3(M2(v1,v2,sendRef))=>
+        println("B receives M3")
+        resultTo ! sendRef
+        self ! 'exit
+      case 'exit => 
+        println("B exits")
+        exit
+      case any => println("Unknown Msg: "+any)
+    } } 
+  }
+}
+
+Start A
+Fin A
+A receives M1
+A exits
+
+Start B
+B starts
+B receives M3
+B exits
+Fin B
+

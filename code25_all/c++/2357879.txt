@@ -1,0 +1,60 @@
+#include "precompiled.h"
+
+typedef IDirect3D9* (STDMETHODCALLTYPE* Direct3DCreate9_t)(UINT SDKVersion);
+Direct3DCreate9_t RealDirect3DCreate9 = NULL;
+
+typedef HRESULT (STDMETHODCALLTYPE* CreateDevice_t)(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
+    DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters,
+    IDirect3DDevice9** ppReturnedDeviceInterface);
+CreateDevice_t RealD3D9CreateDevice = NULL;
+
+HRESULT STDMETHODCALLTYPE HookedD3D9CreateDevice(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
+    DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters,
+    IDirect3DDevice9** ppReturnedDeviceInterface)
+{
+    // this call makes it jump to HookedDirect3DCreate9 and crashes. i'm doing something wrong
+    HRESULT ret = RealD3D9CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags,
+        pPresentationParameters, ppReturnedDeviceInterface);
+
+    return ret;
+}
+
+IDirect3D9* STDMETHODCALLTYPE HookedDirect3DCreate9(UINT SDKVersion)
+{
+    MessageBox(0, L"Creating d3d", L"", 0);
+
+    IDirect3D9* d3d = RealDirect3DCreate9(SDKVersion);
+
+    UINT_PTR* pVTable = (UINT_PTR*)(*((UINT_PTR*)d3d));
+    RealD3D9CreateDevice = (CreateDevice_t)pVTable[16];
+
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)RealD3D9CreateDevice, HookedD3D9CreateDevice);
+    if (DetourTransactionCommit() != ERROR_SUCCESS)
+    {
+        MessageBox(0, L"failed to create createdev hook", L"", 0);
+    }
+
+    return d3d;
+}
+
+bool APIENTRY DllMain(HINSTANCE hModule, DWORD fdwReason, LPVOID lpReserved)
+{
+    if (fdwReason == DLL_PROCESS_ATTACH)
+    {
+        MessageBox(0, L"", L"", 0);
+
+        RealDirect3DCreate9 = (Direct3DCreate9_t)GetProcAddress(GetModuleHandle(L"d3d9.dll"), "Direct3DCreate9");
+
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)RealDirect3DCreate9, HookedDirect3DCreate9);
+        DetourTransactionCommit();
+    }
+
+    // TODO detach hooks
+
+    return true;
+}
+

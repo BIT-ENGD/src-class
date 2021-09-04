@@ -1,0 +1,98 @@
+private static Collection<string> GetDirectReportsInternal(string userDN, out long elapsedTime)
+{
+    Collection<string> result = new Collection<string>();
+    Collection<string> reports = new Collection<string>();
+
+    Stopwatch sw = new Stopwatch();
+    sw.Start();
+
+    long allSubElapsed = 0;
+    string principalname = string.Empty;
+
+    using (DirectoryEntry directoryEntry = new DirectoryEntry(string.Format("LDAP://{0}",userDN)))
+    {
+        using (DirectorySearcher ds = new DirectorySearcher(directoryEntry))
+        {
+            ds.SearchScope = SearchScope.Subtree;
+            ds.PropertiesToLoad.Clear();
+            ds.PropertiesToLoad.Add("directReports");
+            ds.PropertiesToLoad.Add("userPrincipalName");
+            ds.PageSize = 10;
+            ds.ServerPageTimeLimit = TimeSpan.FromSeconds(2);
+            SearchResult sr = ds.FindOne();
+            if (sr != null)
+            {
+                principalname = (string)sr.Properties["userPrincipalName"][0];
+                foreach (string s in sr.Properties["directReports"])
+                {
+                    reports.Add(s);
+                }
+            }
+        }
+    }
+
+    if (!string.IsNullOrEmpty(principalname))
+    {
+        result.Add(principalname);
+    }
+
+    foreach (string s in reports)
+    {
+        long subElapsed = 0;
+        Collection<string> subResult = GetDirectReportsInternal(s, out subElapsed);
+        allSubElapsed += subElapsed;
+
+        foreach (string s2 in subResult)
+        {
+        result.Add(s2);
+        }
+    }
+
+
+
+    sw.Stop();
+    elapsedTime = sw.ElapsedMilliseconds + allSubElapsed;
+    return result;
+}
+
+private static Collection<string> GetDirectReportsInternal(string ldapBase, string userDN, out long elapsedTime)
+{
+    Collection<string> result = new Collection<string>();
+
+    Stopwatch sw = new Stopwatch();
+    sw.Start();
+    string principalname = string.Empty;
+
+    using (DirectoryEntry directoryEntry = new DirectoryEntry(ldapBase))
+    {
+        using (DirectorySearcher ds = new DirectorySearcher(directoryEntry))
+        {
+            ds.SearchScope = SearchScope.Subtree;
+            ds.PropertiesToLoad.Clear();
+            ds.PropertiesToLoad.Add("userPrincipalName");
+            ds.PropertiesToLoad.Add("distinguishedName");
+            ds.PageSize = 10;
+            ds.ServerPageTimeLimit = TimeSpan.FromSeconds(2);
+            ds.Filter = string.Format("(&(objectCategory=user)(manager={0}))",userDN);
+
+            using (SearchResultCollection src = ds.FindAll())
+            {
+                Collection<string> tmp = null;
+                long subElapsed = 0;
+                foreach (SearchResult sr in src)
+                {
+                    result.Add((string)sr.Properties["userPrincipalName"][0]);
+                    tmp = GetDirectReportsInternal(ldapBase, (string)sr.Properties["distinguishedName"][0], out subElapsed);
+                    foreach (string s in tmp)
+                    {
+                    result.Add(s);
+                    }
+                }
+            }
+          }
+        }
+    sw.Stop();
+    elapsedTime = sw.ElapsedMilliseconds;
+    return result;
+}
+

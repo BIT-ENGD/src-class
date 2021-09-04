@@ -1,0 +1,66 @@
+use threads ('exit' => 'threads_only');
+use threads::shared;
+my @descrip;
+share(@descrip);
+
+my $lock;
+share($lock);
+
+URL:foreach my $url(@unique_urls) {
+        #skip blank urls
+        if(!$url) { next URL; }#if
+
+        #find description
+        my $thread = threads->create(\&findCompanyDescription, $PREV_COMPANY, $PREV_BASE_URL, $url);
+
+#while a description has not been found and there are still active threads, keep looking
+#there may be a better way to do this, but this seems to work for me
+while(!@descrip && threads->list() != 0) {;}
+
+#kill all threads, write output, read in next batch of urls
+my @threads = threads->list();
+foreach(@threads) { print("detaching\n"); $_->kill('KILL')->detach(); }#foreach
+
+sub findCompanyDescription {
+    my($company_full, $base_url, $url) = @_;
+    my($descrip, $raw_meta, $raw) = '';
+    my @company;
+
+    $SIG{'KILL'} = sub { alarm(0); threads->exit(); };
+
+    eval {
+        local $SIG{ALRM} = sub { die("alarm\n") }; # NB: \n required
+        alarm(5);
+
+        use Perl::Unsafe::Signals;
+        UNSAFE_SIGNALS {
+
+            while($company) {
+            my @matches = ($content =~ m!.*<([\w\d]+).*?>\s*about\s+$company[\w\s\-_]*<.*?>(?:<.*?>|\s)*(.*?)</\1.*?>!sig);
+
+            MATCH:for(my $ndx=1; $ndx<@matches; $ndx+=2) {
+            ($raw, $descrip) = &filterResult($matches[$ndx], $company_full);
+
+            if($descrip) {
+                $company = undef;
+                last(MATCH);
+            }#if
+        }#for
+
+        #reduce the company name and try again
+        $company = &reduceCompanyName($company);
+
+        }#while
+
+        alarm(0);
+         };#unsafe_signals
+    };#eval 
+
+    if($@) {
+        if($@ eq "alarm\n" && $DEBUG) { print("\nWebpage Timeout [].\n"); }#if
+    }#if
+
+    if($descrip) { lock($lock); {
+       @descrip = ($PREV_ID, $company_full, $base_url, $url, 1, $raw, $descrip); } 
+    }#if
+

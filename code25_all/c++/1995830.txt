@@ -1,0 +1,200 @@
+void encryptHelper(const char*,int);
+void decryptHelper(const char*,int);
+
+inline void blowfish(unsigned char *data, int data_len, char* key, int enc)
+{
+    //  hash the key first! 
+    unsigned char obuf[20];
+    bzero(obuf,20);
+    SHA1((const unsigned char*)key, strlen(key), obuf);
+
+    BF_KEY bfkey;
+    int keySize = strlen(key);
+    BF_set_key(&bfkey, 16, (const unsigned char*)obuf);
+
+    unsigned char ivec[8];
+    memset(ivec, 0, 8);
+
+    unsigned char out[1024];// = (unsigned char*) malloc(1024);
+    bzero(out,1024);
+    int num = 0;
+    BF_cfb64_encrypt(data, out, data_len, &bfkey, ivec, &num, enc);
+
+    data=out;
+
+    //memcpy(data, out, data_len);
+    //free(out);
+}
+void MyFrame::encryptHelper(char* orig, int inlength)
+{
+char *pb=(char*)(std::string((passInput->GetValue()).mb_str()).c_str());
+blowfish((unsigned char*)orig, inlength, pb, DES_ENCRYPT);
+}
+
+void MyFrame::decryptHelper(char* orig, int inlength)
+{
+char *pb=(char*)(std::string((passInput->GetValue()).mb_str()).c_str());
+blowfish((unsigned char*)orig, inlength, pb, DES_DECRYPT);
+}
+
+
+int MyFrame::send_file(int fd)
+{
+
+char rec[10];
+struct stat stat_buf;
+fstat (fd, &stat_buf);  
+int size=stat_buf.st_size;
+
+int remSize=size;
+
+int value=0;
+
+while(size > 0)
+{
+    char buffer[1030];
+    bzero(buffer,1030);
+    bzero(rec,10);
+    int n;
+    if(size>=1024)
+    {
+        value+=1024;
+        n=read(fd, buffer, 1024);
+
+        // encrypt is necessary
+        if(encButtonOn->GetValue()) encryptHelper(buffer,1024);
+
+        // Send a chunk of data
+        n=send(sockFile_, buffer, 1024, 0 );
+
+        // Wait for an acknowledgement
+        n = recv(sockFile_, rec, 10, 0 );
+    }
+    else // reamining file bytes
+    {
+        value+=size;
+        n=read(fd, buffer, size);
+        if(encButtonOn->GetValue()) encryptHelper(buffer,size);
+        buffer[size]='\0';
+        n=send(sockFile_,buffer, size, 0 );
+        n=recv(sockFile_, rec, 10, 0 );
+    }
+
+    MyFooEvent event( 0, 992 );
+    double firstBit = (double)value/remSize;
+    firstBit=firstBit*100.0;
+    event.adouble=firstBit;     
+    wxPostEvent (this, event);  
+
+
+    size -= 1024;
+
+}
+
+// Send a completion string
+int n = send(sockFile_, "COMP",strlen("COMP"), 0 );
+char buf[10];
+bzero(buf,10);
+// Receive an acknowledgemnt
+n = recv(sockFile_, buf, 10, 0 );
+
+return(0);
+ }
+
+ int MyFrame::receive_file()
+ {
+
+// receive file size and send ack
+char sizeBuffer[50];
+bzero(sizeBuffer,50);
+int n;
+//read(This->sockpw,buffer,bufferSize);
+n=read(sockFile_, sizeBuffer, 50);
+n=send(sockFile_,"OK", strlen("OK"), 0 );
+
+int size = atoi(sizeBuffer);
+
+//std::cout<<size<<std::endl;
+
+// receive file name and send ack
+char saveName[256];
+bzero(saveName,256);
+n=read(sockFile_, saveName, 256);
+
+n=send(sockFile_,"OK",strlen("OK"), 0 );
+
+//std::cout<<saveName_<<std::endl;
+
+// start file writing process to local disk
+// decrypt first if necessary
+std::cout<<arraySize(saveName)<<std::endl;
+std::cout<<strlen(saveName)<<std::endl;
+if(encButtonOn->GetValue()) decryptHelper(saveName,strlen(saveName));
+ofstream outFile(saveName,ios::out|ios::binary|ios::app);
+
+// vars for status gauge
+int remSize=size;
+int value=0;
+
+while(size > 0)
+{       
+    // buffer for storing incoming data
+    char buf[1030];
+    bzero(buf,1030);
+    if(size>=1024)
+    {
+
+        value+=1024; // for status gauge
+
+        // receive chunk of data
+        n=recv(sockFile_, buf, 1024, 0 );
+
+        // decrypt if necessary
+        if(encButtonOn->GetValue()) decryptHelper(buf,1024);
+
+        // write chunk of data to disk
+        outFile.write(buf,1024);
+
+        // send acknowledgement
+        n = send(sockFile_, "OK", strlen("OK"), 0 );
+
+    }
+    else
+    {
+        value+=size;
+        n=recv(sockFile_, buf, size, 0 );
+        if(encButtonOn->GetValue()) decryptHelper(buf,size);
+        buf[size]='\0';
+        outFile.write(buf,size);
+        n = send(sockFile_, "OK", strlen("OK"), 0 );
+    }
+
+    // Update status gauge
+    MyFooEvent event( 0, 992 );
+    double firstBit = (double)value/remSize;
+    firstBit=firstBit*100.0;
+    event.adouble=firstBit;
+    wxPostEvent (this, event);  
+
+    size -= 1024;
+
+}
+
+outFile.close();
+
+// Receive 'COMP' and send acknowledgement
+// ---------------------------------------
+char buf[10];
+bzero(buf,10);
+n = recv(sockFile_, buf, 10, 0 );
+n = send(sockFile_,  "OK", strlen("OK"), 0 );
+std::cout<<"File received..."<<std::endl;
+
+// Display image event
+MyFooEvent eventF( 0, 995 );
+eventF.SetText(wxString(saveName, wxConvUTF8));
+wxPostEvent (this, eventF);     
+
+return(0);
+ }
+

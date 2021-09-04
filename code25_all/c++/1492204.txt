@@ -1,0 +1,220 @@
+template<class U, class V, class W> 
+class S
+{
+//... implementations 
+};
+
+U
+V
+W
+typedef boost::mpl::vector<U0, U1> u_types;
+typedef boost::mpl::vector<V0, V1, V2, V3, V4> u_types;
+typedef boost::mpl::vector<W0, W1, W2, W3, W4> w_types;
+
+typedef boost::mpl::vector<
+    S<U0,V0,W0>, 
+    S<U0,V0,W1>,
+    // ...
+    S<U1,V4,W4>,
+    > s_types;
+
+boost::mpl::for_each<s_types>(test_func).
+
+s_types
+namespace wrapper
+{
+  template <int Uidx, int Vidx, int Widx> 
+  struct S_Wrapper
+  {
+    typedef S<Uidx, Vidx, Widx> type;
+
+    S_Wrapper() // auto test in the ctor
+    {
+      cout << "test result = " << test(type());
+    }
+
+    // test with S<Uidx, Vidx, Widx>
+    static bool test(type t)
+    {
+      // implementations
+    }
+
+    // get stuck here, 
+    S_Wrapper<Uidx-1, Vidx, Widx> s; // temp varible to invoke recursive-ness
+    // what else to complete all recursive path?
+  };
+
+  // specializations       
+  template <0, 0, 0> 
+  struct S_Wrapper
+  {
+    typedef S<0, 0, 0> type;
+
+    // test with S<Uidx, Vidx, Widx>
+    //
+    static bool test(type t)
+    {
+      // implementations
+    }  
+  };
+
+  // get stuck here, too
+  // what other specializations are ?
+  // other specializations
+}
+
+wrapper::S_Wrapper< 
+  mpl::size<u_types>::type::value, 
+  mpl::size<v_types>::type::value, 
+  mpl::size<w_types>::type::value
+> s; 
+
+Combine
+typedef Combine<
+            u_types,
+            v_types,
+            w_type,
+            print_typeid
+        >::Generate<> base_generator_type;
+base_generator_type::Run();
+
+// example test implementation
+struct print_typeid
+{
+    template<
+        class U, 
+        class V, 
+        class W
+    >
+    static void run()
+    {
+        // print the typeinfo
+        std::cout 
+            <<  total_recursions << ":"
+            << typeid(U).name() << ","
+            << typeid(V).name() << ","
+            << typeid(W).name()
+            << std::endl;  
+    }            
+}; 
+
+// solution implemented in one wrapper class
+namespace argument_combination
+{
+    using boost::is_same;
+    using boost::mpl::begin;
+    using boost::mpl::end;
+    using boost::mpl::next;        
+    using boost::mpl::if_;  
+    using boost::mpl::deref;    
+
+    unsigned int total_recursions = 0;
+
+    struct end_of_recursion_tag 
+    {
+        static void Run()
+        {
+            std::cout << "end of " 
+                 << total_recursions 
+                 << " recursions\n"
+                ;
+        }
+    };
+
+    template <
+        class UTypes,    // Forward Sequence, e.g. boost::mpl::vector
+        class VTypes,    // Forward Sequence, e.g. boost::mpl::vector
+        class WTypes,    // Forward Sequence, e.g. boost::mpl::vector
+        class TestFunc  // class type that has a nested templated run() member function
+    >
+    struct Combine
+    {
+        // forward declaration
+        template <
+            class UIterator,
+            class VIterator,
+            class WIterator 
+        >   
+        class Generate;
+
+        // this class implements recursion body 
+        template <
+            class UIterator,
+            class VIterator,
+            class WIterator
+        >            
+        struct Next
+        {
+            // u_begin is not necessary ;)
+            // it would be cheaper not to pre-declare all of them since we force evaluation
+            // however this dramatically increase the readability
+            typedef typename begin<VTypes>::type v_begin;
+            typedef typename begin<WTypes>::type w_begin;
+
+            typedef typename end<UTypes>::type u_end;
+            typedef typename end<VTypes>::type v_end;
+            typedef typename end<WTypes>::type w_end;
+
+            typedef typename next<UIterator>::type u_next;
+            typedef typename next<VIterator>::type v_next;
+            typedef typename next<WIterator>::type w_next;
+
+            typedef typename if_< is_same<typename w_next, w_end>,
+                                typename if_< is_same<v_next, v_end>,
+                                    typename if_< is_same<u_next, u_end>,
+                                        end_of_recursion_tag,
+                                        Generate< 
+                                            u_next, 
+                                            v_begin, 
+                                            w_begin 
+                                        >
+                                    >::type,
+                                    Generate< 
+                                        UIterator, 
+                                        v_next,
+                                        w_begin 
+                                    >
+                                >::type,
+                                Generate< 
+                                    UIterator, 
+                                    VIterator, 
+                                    w_next
+                                    >
+                            >::type type;
+        };
+
+        //  this class run test on generated types in thos round and go to next*/
+        template <
+            class UIterator = typename begin<UTypes>::type,
+            class VIterator = typename begin<VTypes>::type,
+            class WIterator = typename begin<WTypes>::type
+        >
+        struct Generate
+        {
+            //  generate <<next>> target type         
+            typedef typename Next<
+                    UIterator, 
+                    VIterator, 
+                    WIterator 
+                >::type next_type;
+
+            static void Run()
+            {
+                // increment recursion counter                
+                ++total_recursions;
+
+                // test on the generated types of this round of recursion
+                TestFunc::run<
+                     typename deref<UIterator>::type,
+                     typename deref<VIterator>::type,
+                     typename deref<WIterator>::type
+                 >();
+
+                // go to the next round of recursion
+                next_type::Run();
+            }
+        };
+    };
+
+}//  namespace argument_combination
+

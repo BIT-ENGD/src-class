@@ -1,0 +1,73 @@
+import Control.Monad
+import Control.Monad.IO.Class
+import Control.Applicative
+import System.Environment
+import System.Directory
+import System.FilePath
+import qualified Data.List as L
+import qualified Data.ByteString.Char8 as B
+import qualified Data.Iteratee as I
+import Data.Iteratee.Iteratee
+import qualified Data.Iteratee.Char as EC
+import qualified Data.Iteratee.IO.Fd as EIO
+import qualified Data.Iteratee.ListLike as EL
+
+
+getValidContents :: FilePath -> IO [String]
+getValidContents path =
+    filter (`notElem` [".", "..",".git", ".svn",".metadata",".idea",".project",".gitignore",".settings",".hsproject",".dist-scion",".dist-buildwrapper"])
+    <$> getDirectoryContents path
+
+isSearchableDir :: FilePath -> IO Bool
+isSearchableDir dir = doesDirectoryExist dir
+    -- (&&) <$> doesDirectoryExist dir
+    --     <*> (searchable <$> getPermissions dir)
+
+
+doesFileExistAndFilter :: FilePath -> IO Bool
+doesFileExistAndFilter dir =
+    (&&) <$> doesFileExist dir
+         <*> return (snd (splitExtension dir) == ".java" || snd (splitExtension dir) == ".mora")
+
+
+printI :: Iteratee [B.ByteString] IO ()
+printI = do
+    mx <- EL.tryHead
+    case mx of
+         Nothing -> return ()
+         Just l -> do
+             liftIO . B.putStrLn $ l
+             printI
+
+
+firstLineE :: Enumeratee [FilePath] [B.ByteString] IO ()
+firstLineE = mapChunksM $ \filenames -> do
+    forM filenames $ \filename -> do
+        i <- EIO.enumFile 1024 filename $ joinI $ ((mapChunks B.pack) ><> EC.enumLinesBS) EL.head
+        result <- run i
+        return result
+
+enumDir :: FilePath -> Enumerator [FilePath] IO b
+enumDir dir iter = runIter iter idoneM onCont
+    where
+        onCont k Nothing = do
+            (files, dirs) <- liftIO getFilesDirs
+            if null dirs
+                then return $ k (Chunk files)
+                else walk dirs $ k (Chunk files)
+        walk dirs = foldr1 (>>>) $ map enumDir dirs
+        getFilesDirs = do
+            cnts <- map (dir </>) <$> getValidContents dir
+            (,) <$> filterM doesFileExist  cnts
+                <*> filterM isSearchableDir cnts
+
+allFirstLines :: FilePath -> IO ()
+allFirstLines dir = do
+    i' <- enumDir dir $ joinI $ firstLineE printI
+    run i'
+
+
+main = do
+    dir:_ <- getArgs
+    allFirstLines dir
+

@@ -1,0 +1,278 @@
+//###################################### INVERTER.C (main)   
+#include <semaphore.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <sys/time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <math.h>
+#include <errno.h>
+#include <unistd.h>
+
+#include "timeprofiler.h"
+#include "ppmtools.h"
+
+//Global vars:
+int shmids[4], shmPixelId, *total_lines, *processed_lines, *next_line, *buf_vars;
+//To share unnamed semaphores between processes, they must be allocated in a shared memory.
+mem_struct *sh_mm;
+//unnamed semaphores
+sem_t *mutex1, *mutex2, *mutex3, *sem_remaining_lines;
+//struct that will hold the image in shared memory
+image_struct *image;
+pid_t *workersPID;
+header *h;
+
+int main(int argc, char *argv[]) {
+    int i, j, k, cur = 0, id;
+    pixel *row;
+    double start, stop, startms, stopms;
+
+    if (argc < 3) {
+        printf("Incorrect usage.\nPlease use \"./invert input_filename.ppm output_filename.ppm\"\n");
+        return -1;
+    }
+    //BLOCK ALL SIGNAL
+    sigset_t block_ctrlc;
+    sigfillset(&block_ctrlc);
+    sigdelset(&block_ctrlc, SIGINT);
+    sigprocmask(SIG_BLOCK, &block_ctrlc, NULL);
+
+    //start timer
+    start = getCurrentTimeMicro();
+    startms = getCurrentTimeMili();
+
+    printf("Opening input file [%s]\n", argv[1]);
+    FILE *fpin = fopen(argv[1], "r");
+    if (fpin == NULL) {
+        printf("Could not open input file\n");
+        return -1;
+    }
+
+    printf("Opening output file [%s]\n", argv[2]);
+    FILE *fpout = fopen(argv[2], "w");
+    if (fpout == NULL) {
+        printf("Could not open output file\n");
+        return -1;
+    }
+
+    printf("Getting header\n");
+    h = getImageHeader(fpin);
+    if (h == NULL) {
+        printf("Error getting header from file\n");
+        return -1;
+    }
+    printf("Got file Header: %s - %u x %u - %u\n", h->type, h->width, h->height, h->depth);
+
+    printf("Saving header to output file\n");
+    if (writeImageHeader(h, fpout) == -1) {
+        printf("Could not write to output file\n");
+        return -1;
+    }
+
+    init();
+    printf("After init...\n");
+    //alloc mem space for one row (width * size of one pixel struct)
+    row = (pixel *) malloc(h->width * sizeof (pixel));
+
+    printf("Starting work\n");
+    for (i = 0; i < h->height; i++) {
+        printf("Reading row... \n");
+        if (getImageRow(h->width, row, fpin) == -1) {
+            printf("Error while reading row\n");
+        }
+        printf("Got row %d || \n", (i + 1));
+        for (j = cur, k = 0; j < cur + h->width; j++, k++) {
+            image->pixel_data[j].red = row[k].red;
+            image->pixel_data[j].blue = row[k].blue;
+            image->pixel_data[j].green = row[k].green;
+        }
+        cur += h->width;
+    }
+
+    /*Creates workers*/
+    workersPID = (pid_t*) malloc(sizeof (pid_t) *((NUM_WORKERS)));
+    for (i = 0; i < NUM_WORKERS; i++) {
+        id = fork();
+        if (id == -1) {
+            printf("Error creating worker no %d\n", i);
+            return (EXIT_FAILURE);
+        } else if (id == 0) {
+            workersPID[i] = getpid();
+            printf("Launching son with pid %d\n", getpid());
+            worker(i);
+        }
+    }
+    cur = 0;
+    sem_wait(mutex2);
+
+    /*Writes the invert image on the output file*/
+    for (i = 0; i < h->height; i++) {
+        for (j = cur, k = 0; j < cur + h->width; j++, k++) {
+            row[k].red = image->pixel_data[j].red;
+            row[k].blue = image->pixel_data[j].blue;
+            row[k].green = image->pixel_data[j].green;
+        }
+        cur += h->width;
+        printf("Saving row... \n");
+        if (writeRow(h->width, row, fpout) == -1) {
+            printf("Error while writing row\n");
+        }
+        printf("Done\n");
+    }
+
+    printf("Cleaning up...\n");
+    //clean up row
+    free(row);
+    //clean up header
+    free(h);
+
+    printf("Closing file pointers.\n");
+    fclose(fpin);
+    fclose(fpout);
+    //stop timer
+    stop = getCurrentTimeMicro();
+    stopms = getCurrentTimeMili();
+
+    for (i = 0; i < NUM_WORKERS; i++) {
+        if (workersPID[i]) {
+            kill(workersPID[i], SIGTERM); 
+            waitpid(workersPID[i], NULL, 0);
+        }
+    }
+    terminate();
+    printTimeElapsed(start, stop, "microseconds");
+    printTimeElapsed(startms, stopms, "miliseconds");
+    printf("Done!\n");
+
+    return 0;
+}
+
+void init() {
+
+    //create shared memory to hold the source image:
+    if ((shmids[0] = shmget(IPC_PRIVATE, sizeof (image_struct), IPC_CREAT | 0700)) == -1) {
+        printf("shmget to allocate image struct failed. Errno returned:  %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    image = (image_struct*) shmat(shmids[0], NULL, 0);
+
+    //shared memory to allocate the pointer to pointer pixel_data
+    if ((shmids[1] = shmget(IPC_PRIVATE, h->width * h->height * sizeof (pixel), IPC_CREAT | 0700)) == -1) {
+        printf("shmget to allocate pixel_data array failed. Errno returned: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    image->pixel_data = (pixel*) shmat(shmids[1], NULL, 0);
+
+    /*Shared Memory segment for 3 integers*/
+    if ((shmids[2] = shmget(IPC_PRIVATE, 3 * sizeof (int), IPC_CREAT | 0700)) == -1) {
+        printf("shmget to allocate the 3 integers failed. Errno returned;  %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    buf_vars = (int*) shmat(shmids[2], NULL, 0);
+    total_lines = &buf_vars[0];
+    processed_lines = &buf_vars[1];
+    next_line = &buf_vars[2];
+
+    *processed_lines = *next_line = 0;
+    *total_lines = h->height;
+
+    if ((shmids[3] = shmget(IPC_PRIVATE, sizeof (mem_struct), IPC_CREAT | 0700)) == -1) {
+        printf("shmget to allocate mem_Struct for semaphores failed. Errno returned %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    sh_mm = (mem_struct*) shmat(shmids[3], NULL, 0);
+    if (sem_init(&sh_mm->mutex1, 1, 1) == -1) {
+        printf("Error initializing semaphore mutex1.Errno returned: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    mutex1 = &sh_mm->mutex1;
+
+    if (sem_init(&sh_mm->mutex2, 1, 0) == -1) {
+        printf("Error initializing semaphore mutex2.Errno returned: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    mutex2 = &sh_mm->mutex2;
+
+    if (sem_init(&sh_mm->mutex3, 1, 1) == -1) {
+        printf("Error initializing semaphore mutex3.Errno returned: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    mutex3 = &sh_mm->mutex3;
+
+    if (sem_init(&sh_mm->sem_remaining_lines, 1, h->height) == -1) {
+        printf("Error initializing semaphore sem_remaining_lines.Errno returned: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    sem_remaining_lines = &sh_mm->sem_remaining_lines;
+}
+
+/*Worker process*/
+void worker(int id) {
+    int i, k, cur = 0;
+    pixel *row;
+    //Block all signals, except SIGINT and SIGKILL which are handled
+    sigset_t block_ctrlc;
+    sigfillset(&block_ctrlc);
+    sigdelset(&block_ctrlc, SIGINT);
+    sigdelset(&block_ctrlc, SIGTERM);
+    sigprocmask(SIG_BLOCK, &block_ctrlc, NULL);
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
+    while (sem_wait(sem_remaining_lines)!= -1) { //if there are still lines to read, go on
+        sem_wait(mutex3);
+        cur = *next_line; //current image's line
+        *next_line += h->width; //refreshs line for the next worker
+        sem_post(mutex3);
+        row = (pixel *) malloc(h->width * sizeof (pixel));
+        for (i = cur, k = 0; i < cur + h->width; i++, k++) {
+            row[k].red = image->pixel_data[i].red;
+            row[k].blue = image->pixel_data[i].blue;
+            row[k].green = image->pixel_data[i].green;
+        }
+        //printf("% - Inverting row... \n",id);
+        invertRow(h->width, row); //invert 
+        //printf("Done || \n");
+        for (i = cur, k = 0; i < cur + h->width; i++, k++) {
+            image->pixel_data[i].red = row[k].red;
+            image->pixel_data[i].blue = row[k].blue;
+            image->pixel_data[i].green = row[k].green;
+        }
+        sem_wait(mutex1);
+        *processed_lines += 1; //increases the number of inverted lines
+        if (*processed_lines == *total_lines) { //check if it reaches last line
+            sem_post(mutex2); //if so, wakes the master telling that is ready
+        }
+        sem_post(mutex1);
+    }
+    //printf("Son %d is exiting\n",id);
+    exit(0);
+}
+
+void handle_signal(int signum) {
+    if(signum == SIGINT)
+        signal(SIGINT, handle_signal);
+    else
+        signal(SIGTERM, handle_signal);
+    exit(0);
+}
+
+void terminate() {
+    int i;
+    //close semaphores
+    sem_destroy(mutex1);
+    sem_destroy(mutex2);
+    sem_destroy(mutex3);
+    sem_destroy(sem_remaining_lines);
+
+    //cleans up shared memory = removes shared memory segments
+    for (i = 0; i < 4; i++) {
+        shmctl(shmids[i], IPC_RMID, NULL);
+    }
+
+}
+

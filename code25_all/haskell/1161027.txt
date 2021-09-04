@@ -1,0 +1,74 @@
+Glasgow Haskell Compiler, Version 6.10.4, for Haskell 98, stage 2 booted by GHC version 6.10.1
+{-# LANGUAGE FlexibleContexts #-}
+
+module UPSO where
+
+import Control.Monad(forM,forM_)
+import Control.Monad.ST.Lazy (ST,runST)
+import Data.Array.MArray (MArray, Ix, getBounds, newArray, readArray, writeArray)
+import Data.Array.ST (STArray,STUArray)
+
+minmax xs@(x:_) = foldr (\x (l,u) -> (min x l,max x u)) (x,x) xs
+
+modify a i f = do
+    x <- readArray a i
+    writeArray a i (f x)
+
+increment a i = modify a i (+1)
+decrement a i = modify a i (\x -> x - 1)
+
+uniquePermutationsM t 0 = return $! [[]]
+uniquePermutationsM t pos = do
+    (l,u) <- getBounds t
+    perms <- forM [l..u] (\d -> do
+         count <- readArray t d -- t[d]
+        if count == 0
+            then return $! []
+            else do
+                decrement t d
+                pss <- uniquePermutationsM t (pos-1)
+                increment t d
+                return $! (map (d:) pss)
+        )
+    return $! (concat perms)
+
+mkArray :: (Int,Int) -> (ST s) (STArray s Int Int)    
+mkArray bounds = newArray bounds 0 
+
+uniquePermutationsST ::  [Int] -> ST s [[Int]]
+uniquePermutationsST xs = do
+    let bounds@(l,u) = (minmax xs) 
+    t <- mkArray  bounds
+    forM_ xs (increment t)
+    pos <- sum `fmap` mapM (readArray t) [l..u]
+    uniquePermutationsM t pos
+
+uniquePermutations xs = runST (uniquePermutationsST xs)
+
+mkArray :: (Int,Int) -> (ST s) (STUArray s Int Int)    
+mkArray bounds = newArray bounds 0 
+
+uniquePermutationsST ::  [Int] -> ST s [[Int]]
+uniquePermutationsST xs = do
+    let bounds@(l,u) = (minmax xs) 
+    t <- mkArray  bounds
+    forM_ xs (increment t)
+    pos <- sum `fmap` mapM (readArray t) [l..u]
+    uniquePermutationsM t pos
+
+uniquePermutations xs = runST (uniquePermutationsST xs)
+
+Could not deduce (MArray (STUArray s) Int (ST s))
+  from the context ()
+  arising from a use of 'newArray' at UPSO.hs:35:17-33
+Possible fix:
+  add (MArray (STUArray s) Int (ST s)) to the context of
+    the type signature for 'mkArray'
+  or add an instance declaration for (MArray (STUArray s) Int (ST s))
+In the expression: newArray bounds 0
+In the definition of 'mkArray': mkArray bounds = newArray bounds 0
+
+Could not deduce (MArray (STUArray s) Int (ST s))
+  from the context ()
+  arising from a use of 'increment' at UPSO.hs:41:14-24
+

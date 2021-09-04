@@ -1,0 +1,36 @@
+<<loop>>
+{-# LANGUAGE ScopedTypeVariables #-}
+
+import Reactive.Banana
+import Reactive.Banana.Frameworks
+
+import Control.Arrow
+import Control.Concurrent
+import Control.Monad
+import Control.Monad.Fix
+
+counter :: Bool -> Event t Int -> Behavior t Bool -> (Behavior t Int, Event t (Bool -> Bool))
+counter b input active = (result, whenE ((b/=) <$> active) (fmap (const not) input))
+    where result = accumB 0 (fmap (+) evt')
+          evt' = whenE ((b==) <$> active) input
+
+alternater :: Event t Int -> Behavior t Bool -> (Behavior t (Bool, (Int, Int)), Event t (Bool -> Bool))
+alternater input active = ((,) <$> active <*> ((,) <$> fst t1 <*> fst t2), snd t1 `union` snd t2)
+    where t1 = counter True input active
+          t2 = counter False input active
+
+main :: IO ()
+main = do
+    (inputHandler, fireInput) <- newAddHandler
+    let network :: forall t . Frameworks t => Moment t ()
+        network = do
+            eInput <- fromAddHandler inputHandler
+            let ui :: Behavior t (Bool, (Int, Int)) -> Moment t (Behavior t (Bool, (Int, Int)))
+                ui b = do
+                    let (behavior, evt) = alternater eInput (fst <$> b)
+                    return $ stepper id (fmap (***id) evt) <*> behavior
+            output <- changes =<< mfix ui
+            reactimate $ putStrLn . show <$> output
+    forkIO $ actuate =<< compile network
+    forever $ getLine >>= fireInput . read
+

@@ -1,0 +1,1 @@
+(global-set-key (kbd "RET") 'newline-and-indent)

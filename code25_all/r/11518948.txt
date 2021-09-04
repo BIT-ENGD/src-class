@@ -1,0 +1,103 @@
+#************************************************************#
+#Quantile Regression.
+qr.regress <- function(y,x){
+beta <- c(rq(y~x,tau)$coefficients[1],rq(y~x,tau)$coefficients[2])
+beta
+}
+
+#Threshold Estimation with one independent variable + constant.
+joint_thresh <- function(y,x,q){
+n=nrow(y)
+k=ncol(x)
+e=y-x%*%rq(y~x,tau)$coefficients[2]-rq(y~x,tau)$coefficients[1]
+s0 <- det(t(e)%*%e)    
+n1 <- round(.05*n)+k
+n2 <- round(.95*n)-k
+qs <- sort(q)
+qs <- qs[n1:n2]
+qs <- as.matrix(unique(qs))
+qn <- nrow(qs)
+sn <- matrix(0,qn,1)
+for (r in 1:qn){
+   d <- (q<=qs[r])
+  xx <- (x)*(d%*%matrix(1,1,k))
+  xx <- xx-x%*%rq(xx~x,tau)$coefficients[2]-rq(xx~x,tau)$coefficients[1]
+  ex <- e-xx%*%rq(e~xx,tau)$coefficients[2]-rq(e~xx,tau)$coefficients[1]
+  exw <- ex*(tau-(ex<0))
+  sn[r] <- sum(exw)   
+}
+r <- which.min(sn)
+smin <- sn[r] 
+qhat <- qs[r]
+d <- (q<=qhat)
+x1 <- x*(d%*%matrix(1,1,k))
+x2 <- x*((1-d)%*%matrix(1,1,k))
+beta1 <- rq(y~x1,tau)$coefficients[2]
+beta2 <- rq(y~x2,tau)$coefficients[2]
+yhat <- x1%*%beta1+x2%*%beta2
+list(yhat=yhat,qhat=qhat)
+}
+
+#Threshold Estimation with two independent variables + constant.
+joint_thresh_2 <- function(y,x,q){
+n <- nrow(y)
+k <- ncol(x)
+e=y-x[,1]%*%t(rq(y~x-1,tau)$coefficients[3])-x[,2]%*%t(rq(y~x-1,tau)$coefficients[2])-x[,3]%*%t(rq(y~x-1,tau)$coefficients[3])
+s0 <- det(t(e)%*%e)    
+n1 <- round(.05*n)+k
+n2 <- round(.95*n)-k
+qs <- sort(q)
+qs <- qs[n1:n2]
+qs <- as.matrix(unique(qs))
+qn <- nrow(qs)
+sn <- matrix(0,qn,1)
+for (r in 1:qn){
+  d <- (q<=qs[r])
+  xx <- (x)*(d%*%matrix(1,1,k))
+  xx <- xx[,1]-x%*%rq(x[,1]~xx-1,tau)$coefficients
+  ex <- e-xx%*%qr.regress(e,xx)[2]-xx%*%qr.regress(e,xx)[1]
+  exw <- ex*(tau-(ex<0))
+  sn[r] <- sum(exw)  
+}
+r <- which.min(sn)
+smin <- sn[r]
+qhat <- qs[r]
+d <- (q<=qhat)
+x1 <- x*(d%*%matrix(1,1,k))
+x2 <- x*((1-d)%*%matrix(1,1,k))
+beta1 <- rq(y~x1-1,tau)$coefficients[1]
+beta2 <- rq(y~x2-1,tau)$coefficients[3]
+c1 <- rq(y~x1-1,tau)$coefficients[2]
+c2 <- rq(y~x2-1,tau)$coefficients[2]
+yhat <- x1[,1]%*%t(beta1)+x2[,3]%*%t(beta2)+c1+c2
+list(yhat=yhat,qhat=qhat)
+}
+
+#Threshold Reduced-form eqn. 
+tau=0.50
+
+stqr_thresh_loop <- function(n,reps){
+qhat=as.vector(reps)
+rhohat=as.vector(reps)
+kx <- 1 
+sig <- matrix(c(1,0.5,0.5,1),2,2)  
+x<- matrix(rnorm(n*kx),n,kx)
+q <- matrix(rnorm(n),n,1) 
+z2 <- cbind(matrix(1,n,1),q)
+for(i in 1:reps){
+e <- matrix(rnorm(n*2,quantile(rnorm(n),tau),1),n,2)%*%chol(sig)
+z1=0.5+0.5*x*(q<=0)+1*x*(q>0)+e[,2] 
+y=0.5+1*z1*(q<=1)+1.5*z1*(q>1)+1*z2[,2]+e[,1]
+    out1 <-  joint_thresh(y=z1,x=x,q=q)
+    z1hat<- out1$yhat
+    rhohat[i] <- out1$qhat
+zhat <- cbind(z1hat,z2)
+
+out2 <- joint_thresh_2(y=y,x=zhat,q=q)
+qhat[i] <- out2$qhat
+        } #Close for loop.
+list(rhohat=rhohat,qhat=qhat)
+}
+
+#************************************************************#
+

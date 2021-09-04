@@ -1,0 +1,47 @@
+class SpinLock
+{
+   int *lockValue;
+   SpinLock(int *value) : lockValue(value) { }
+
+   void Lock() {
+      while(InterlockedCompareExchange((volatile LONG*)lockValue, 1, 0) != 0) {
+          WaitABit();
+      }
+   }
+
+   void Unlock() { InterlockedExchange((volatile LONG*)lockValue, 0); }
+};
+
+static const int THREADS = 2;
+HANDLE completedEvents[THREADS];
+int value = 0;
+int lock = 0; // Global.
+
+DWORD WINAPI TestThread(void *param) {
+    HANDLE completed = (HANDLE)param;
+    SpinLock testLock(&lock);
+
+    for(int i = 0;i < 1000*20; i++) {
+        for(int j = 0;j < 10*10; j++) {
+            // Add something to the variable.
+            testLock.Lock();
+            value += j;
+            testLock.Unlock();
+        }
+    }
+    SetEvent(completed);
+}
+
+int main() {
+   for(int i = 0; i < THREADS; i++) {
+        completedEvents[i] = CreateEvent(NULL, true, false, NULL);
+   }
+   for(int i = 0; i < THREADS; i++) {
+        DWORD id;
+        CreateThread(NULL, 0, TestThread, completedEvents[i], 0, &id);
+   }
+
+   WaitForMultipleObjects(THREADS, completedEvents, true, INFINITE);
+   cout<<value;
+}
+

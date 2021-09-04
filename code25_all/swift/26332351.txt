@@ -1,0 +1,65 @@
+func addOrUpdateGenericPassword(password: String, withService service: String, andAccount account: String, withAccessibility accessibility: SecurityAccessibility) -> ReturnStatus
+{
+    var sacObject: SecAccessControlRef
+    var accessFlag: CFStringRef = kSecAttrAccessibleWhenUnlocked
+
+    switch accessibility
+    {
+    case SecurityAccessibility.AccessibleAfterFirstUnlock:
+        accessFlag = kSecAttrAccessibleAfterFirstUnlock
+    case SecurityAccessibility.AccessibleAfterFirstUnlockThisDeviceOnly:
+        accessFlag = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    case SecurityAccessibility.AccessibleWhenUnlocked:
+        accessFlag = kSecAttrAccessibleWhenUnlocked
+    case SecurityAccessibility.AccessibleWhenUnlockedThisDeviceOnly:
+        accessFlag = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    }
+
+    if touchIDEnabled
+    {
+        sacObject = SecAccessControlCreateWithFlags(kCFAllocatorDefault, accessFlag, .USerPresence, nil).takeRetainedValue()
+    }
+    else
+    {
+        sacObject = SecAccessControlCreateWithFlags(kCFAllocatorDefault, accessFlag, nil, nil).takeRetainedValue()
+    }
+
+    var dataFromString: NSData = password.dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: false)!
+    var secKeys: [AnyObject] = [kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData, kSecAttrAccessControl]
+    var secValues: [AnyObject] = [kSecClassGenericPassword, service, account, dataFromString, sacObject]
+    var update = NSDictionary(objects: secValues, forKeys: secKeys)
+
+    // attempt to get the value first to determine if it exists
+    let (currentValue, rStatus) = getGenericPasswordWith(service, andAccount: account)
+    if rStatus == ReturnStatus.errSecSuccess
+    {
+        // Item already exists, so do an Update
+        // We need to build a query for the existing value here instead of using the one we built for updating
+        var query = buildQueryValueForLookupWith(service, andAccount: account)
+        var status = SecItemUpdate(query, update)
+        return getReturnStatusCodeForOSStatusCode(status)
+    }
+    else if rStatus == ReturnStatus.errSecItemNotFound
+    {
+        // Item does not exist so add it
+        var status = SecItemAdd(update, nil)
+        return getReturnStatusCodeForOSStatusCode(status)
+    }
+    else
+    {
+        // some other error occured and we dont know what is going on!
+        println("Unknown errr occured when checking if item already exists.  Status = \(returnStatusCodeToString(rStatus))")
+        return ReturnStatus.errSecUnknownError
+    }
+}
+func buildQueryValueForLookupWith(service: String, andAccount account: String) -> NSDictionary
+{
+    var secKeys: NSArray = [kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData]
+    var secValues: [AnyObject] = [kSecClassGenericPassword, service, account, true]
+    var query = NSDictionary(objects: secValues, forKeys: secKeys)
+
+    return query
+}
+
+var status = keychain.addOrUpdateGenericPassword(value!, withService: "healthBIT.lastSync", andAccount: key, withAccessibility: KeychainToolkit.SecurityAccessibility.AccessibleWhenUnlocked)
+

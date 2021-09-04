@@ -1,0 +1,259 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <string.h>
+
+#define LISTEN_Q 20
+#define MSG_SIZE 1024
+
+struct userlist {
+    int sockfd;
+    struct sockaddr addr;
+
+    struct userlist *next;
+};
+
+int main(int argc, char *argv[])    {
+    // declare.
+    int listFD, newFD, fdmax, i, j, bytesrecvd;
+    char msg[MSG_SIZE], ipv4[INET_ADDRSTRLEN];
+    struct addrinfo hints, *srvrAI;
+    struct sockaddr_storage newAddr;
+    struct userlist *users, *uptr, *utemp;
+    socklen_t newAddrLen;
+    fd_set master_set, read_set;
+
+    // clear sets
+    FD_ZERO(&master_set);
+    FD_ZERO(&read_set);
+
+    // create a user list
+    users = (struct userlist *)malloc(sizeof(struct userlist));
+    users->sockfd = -1;
+    //users->addr = NULL;
+    users->next = NULL;
+
+    // clear hints
+    memset(&hints, 0, sizeof hints);
+
+    // prep hints
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    // get srver info
+    if(getaddrinfo("localhost", argv[1], &hints, &srvrAI) != 0) {
+        perror("* ERROR | getaddrinfo()\n");
+        exit(1);
+    }
+
+    // get a socket
+    if((listFD = socket(srvrAI->ai_family, srvrAI->ai_socktype, srvrAI->ai_protocol)) == -1)    {
+        perror("* ERROR | socket()\n");
+        exit(1);    
+    }
+
+    // bind socket
+    bind(listFD, srvrAI->ai_addr, srvrAI->ai_addrlen);
+
+    // listen on socket
+    if(listen(listFD, LISTEN_Q) == -1)  {
+        perror("* ERROR | listen()\n");
+        exit(1);            
+    }
+
+    // add listfd to master_set
+    FD_SET(listFD, &master_set);
+
+    // initialize fdmax
+    fdmax = listFD;
+
+    while(1)    {
+        // equate
+        read_set = master_set;
+
+        // run select
+        if(select(fdmax+1, &read_set, NULL, NULL, NULL) == -1)  {
+            perror("* ERROR | select()\n");
+            exit(1);            
+        }
+
+        // query all sockets
+        for(i = 0; i <= fdmax; i++) {
+            if(FD_ISSET(i, &read_set))  { // found active sockfd
+                if(i == listFD) { // new connection
+                    // accept
+                    newAddrLen = sizeof newAddr;
+                    if((newFD = accept(listFD, (struct sockaddr *)&newAddr, &newAddrLen)) == -1)    {
+                        perror("* ERROR | select()\n");
+                        exit(1);            
+                    }
+
+                    // resolve ip
+                    if(inet_ntop(AF_INET, &(((struct sockaddr_in *)&newAddr)->sin_addr), ipv4, INET_ADDRSTRLEN) == -1)  {
+                        perror("* ERROR | inet_ntop()");
+                        exit(1);
+                    }
+                    fprintf(stdout, "* Client Connected | %s\n", ipv4);
+
+                    // add to master list
+                    FD_SET(newFD, &master_set);
+
+                    // create new userlist component
+                    utemp = (struct userlist*)malloc(sizeof(struct userlist));
+                    utemp->next = NULL;
+                    utemp->sockfd = newFD;
+                    utemp->addr = *((struct sockaddr *)&newAddr);
+
+                    // iterate to last node
+                    for(uptr = users; uptr->next != NULL; uptr = uptr->next)    {
+                    }
+
+                    // add
+                    uptr->next = utemp;
+
+                    // update fdmax
+                    if(newFD > fdmax)
+                        fdmax = newFD;                  
+                }
+                else    {   // existing sockfd transmitting data
+                    // read
+                    if((bytesrecvd = recv(i, msg, MSG_SIZE, 0)) == -1)  {
+                        perror("* ERROR | recv()\n");
+                        exit(1);
+                    }
+                    msg[bytesrecvd] = '\0';
+
+                    // find out who sent?
+                    for(uptr = users; uptr->next != NULL; uptr = uptr->next)    {
+                        if(i == uptr->sockfd)
+                            break;
+                    }
+
+                    // resolve ip
+                    if(inet_ntop(AF_INET, &(((struct sockaddr_in *)&(uptr->addr))->sin_addr), ipv4, INET_ADDRSTRLEN) == -1) {
+                        perror("* ERROR | inet_ntop()");
+                        exit(1);
+                    }
+
+                    // print
+                    fprintf(stdout, "%s\n", msg);
+
+                    // send to all
+                    for(j = 0; j <= fdmax; j++) {
+                        if(FD_ISSET(j, &master_set))    {
+                            if(send(j, msg, strlen(msg), 0) == -1)
+                                perror("* ERROR | send()");
+                        }
+                    }
+                } // handle read from client
+            } // end select result handle
+        } // end looping fds
+    } // end while
+
+    return 0;
+}
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <string.h>
+
+#define MSG_SIZE 1024
+
+int main(int argc, char *argv[])    {
+    // declare.
+    int newFD, bytesrecvd, fdmax;
+    char msg[MSG_SIZE];
+    fd_set master_set, read_set;
+    struct addrinfo hints, *srvrAI;
+
+    // clear sets
+    FD_ZERO(&master_set);
+    FD_ZERO(&read_set);
+
+    // clear hints
+    memset(&hints, 0, sizeof hints);
+
+    // prep hints
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    // get srver info
+    if(getaddrinfo(argv[1], argv[2], &hints, &srvrAI) != 0) {
+        perror("* ERROR | getaddrinfo()\n");
+        exit(1);
+    }
+
+    // get a socket
+    if((newFD = socket(srvrAI->ai_family, srvrAI->ai_socktype, srvrAI->ai_protocol)) == -1) {
+        perror("* ERROR | socket()\n");
+        exit(1);    
+    }
+
+    // connect to server
+    if(connect(newFD, srvrAI->ai_addr, srvrAI->ai_addrlen) == -1)   {
+        perror("* ERROR | connect()\n");
+        exit(1);    
+    }
+
+    // add to master, and add keyboard
+    FD_SET(newFD, &master_set);
+    FD_SET(STDIN_FILENO, &master_set);
+
+    // initialize fdmax
+    if(newFD > STDIN_FILENO)
+        fdmax = newFD;
+    else
+        fdmax = STDIN_FILENO;
+
+    while(1)    {
+        // equate
+        read_set = master_set;
+
+        if(select(fdmax+1, &read_set, NULL, NULL, NULL) == -1)  {
+            perror("* ERROR | select()");
+            exit(1);
+        }
+
+        // check server
+        if(FD_ISSET(newFD, &read_set))  {
+            // read data
+            if((bytesrecvd = recv(newFD, msg, MSG_SIZE, 0)) < 0 )   {
+                perror("* ERROR | recv()");
+                exit(1);
+            }
+            msg[bytesrecvd] = '\0';
+
+            // print
+            fprintf(stdout, "%s\n", msg);
+        }
+
+        // check keyboard
+        if(FD_ISSET(STDIN_FILENO, &read_set))   {
+            // read data from stdin
+            if((bytesrecvd = read(STDIN_FILENO, msg, MSG_SIZE)) < 0)    {
+                perror("* ERROR | read()");
+                exit(1);
+            }
+            msg[bytesrecvd] = '\0';
+
+
+            // send
+            if((send(newFD, msg, bytesrecvd, 0)) == -1) {
+                perror("* ERROR | send()");
+                exit(1);
+            }
+        }
+    }
+
+    return 0;
+}
+

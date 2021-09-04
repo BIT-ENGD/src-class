@@ -1,0 +1,115 @@
+def month_end(request):
+    """
+    A simple view that will generate a month end report as a PDF response.
+
+    """
+    current_date = datetime.now()
+    context = {}
+    context['month'] = current_date.month
+    context['year'] = current_date.year   
+    context['company'] = 3
+
+    if request.method == 'POST':        
+        context['form'] = MonthEndForm(user=request.user, data=request.POST)
+
+        if context['form'].is_valid():             
+            #from reportlab.pdfgen import canvas
+            #import ho.pisa as pisa
+
+            context['month_no'] = int(context['form'].cleaned_data['month'])
+            context['company'] = context['form'].cleaned_data['company']
+            context['year'] = context['form'].cleaned_data['year']
+            context['month'] = datetime(context['year'], context['month_no'], 1).strftime('%B')
+
+            sql = '''SELECT "campaign_provider"."originator" as originator, "campaign_provider"."cost", 
+                        "campaign_receivedmessage"."network_id", 
+                        COUNT("campaign_provider"."originator") AS "originator_count",
+                        "shortcode_network"."network"
+                    FROM "campaign_receivedmessage" 
+                        LEFT OUTER JOIN "shortcode_network" ON ("shortcode_network"."id" = "campaign_receivedmessage"."network_id")
+                        LEFT OUTER JOIN "campaign_provider" ON ("campaign_receivedmessage"."provider_id" = "campaign_provider"."id") 
+                    WHERE ("campaign_provider"."company_id" = %s  
+                    AND EXTRACT('month' FROM "campaign_receivedmessage"."date_received") = %s)        
+                    GROUP BY "campaign_provider"."originator", "campaign_provider"."cost", "campaign_receivedmessage"."network_id", "shortcode_network"."network"
+                    ORDER BY "campaign_provider"."originator", "campaign_receivedmessage"."network_id" ASC
+                    ''' % (context['company'].id, context['month_no'])            
+
+            context['rec_messages']= []            
+            cursor = connection.cursor()
+            cursor.execute(sql)
+            data = cursor.fetchall()
+            for row in data:
+                dict = {}
+                desc = cursor.description
+                for (name, value) in zip(desc, row) :
+                    dict[name[0]] = value           
+                try:
+                    dict['share'] = RevenueShare.objects.get(company=context['company'], priceband=dict['cost'], network=dict['network_id']).customer_share
+                    dict['revenue'] = dict['originator_count'] * dict['share']
+                except:
+                    dict['share'] = 0
+                    dict['revenue'] = 0  
+                context['rec_messages'].append(dict)
+
+            #context['rec_messages'] = ReceivedMessage.objects.filter(provider__company__id=context['company'].id, date_received__month=context['month_no'], date_received__year=context['year']).values('provider__originator', 'provider__cost', 'network').annotate(originator_count=Count('provider__originator')).order_by('provider__originator')
+            context['ret_messages'] = SentMessage.objects.filter(campaign__providers__company__id=context['company'].id, date_sent__month=context['month_no'], date_sent__year=context['year']).values('campaign__title').annotate(campaign_count=Count('campaign__title')).order_by('campaign__title')
+            context['revenue_share'] = RevenueShare.objects.filter(company=context['company'].id)
+            context['total_rec'] = 0
+            context['total_ret'] = 0
+            context['total_value'] = 0
+            context['total_cost'] = 0
+
+            context['queries'] = connection.queries
+
+            for message in context['rec_messages']:
+                context['total_rec'] += message['originator_count']
+                context['total_value'] += message['revenue']
+
+            for message in context['ret_messages']:
+                message['price'] = 0.175
+                message['cost'] = message['campaign_count'] * message['price']
+                context['total_ret'] += message['campaign_count']                
+                context['total_cost'] += message['cost']
+
+            context['total'] = context['total_value'] - context['total_cost']
+            context['loaded_report'] = "yes"
+
+            data.append((context['data']))
+            data.append(('Orginator', 'cost', 'network_id', 'originator_count', 'network'))
+
+
+            file_name = '%s' % ('reports')
+
+            return generate_csv(file_name, data)
+
+           #template_data = render_to_string('reports/month_end_pdf.html', RequestContext(request, context))
+
+            #csv_data = StringIO.StringIO()    
+            #csv_data.seek()
+
+            #simple_report = ExcelReport()34
+            #simple_report.addSheet("TestSimple")
+            #simple_report.writeReport(csv_data)
+
+            #response = HttpResponse(simple_report.writeReport(),mimetype='application/ms-excel')
+            #response['Content-Disposition'] = 'attachment; filename=simple_test.xls'
+
+           #return response
+            return render_to_response('reports/month_end.html', RequestContext(request, context))
+            #return render_to_response('reports/rfm_models.html', RequestContext(request, context))
+
+            #template_data = render_to_string('reports/month_end_pdf.html', RequestContext(request, context))
+
+            #pdf_data = StringIO.StringIO()    
+            #pisa.CreatePDF(template_data, pdf_data, link_callback=fetch_resources)
+            #pdf_data.seek(0)
+
+            #response =  HttpResponse(pdf_data, mimetype='application/pdf')
+            #response['Content-Disposition'] = 'attachment; filename=%s_%s_%s.pdf' % (context['company'].name.lower().replace(' ', '_'), context['month'].lower()[:3], context['year'])
+
+
+    if 'form' not in context.keys():
+        context['form'] = MonthEndForm(user=request.user, data=context)
+
+    return render_to_response('reports/month_end.html', RequestContext(request, context))
+

@@ -1,0 +1,71 @@
+fib 0 = 0
+fib 1 = 1
+fib n = fib (n-2) + fib (n-1)
+
+data R x y where
+  -- Category
+  Id       :: R a a
+  Comp     :: R b c    -> R a b          -> R a c
+  -- Arrow
+  Arr      :: (a -> b) -> R a b
+  Split    :: R b c    -> R b' c'        -> R (b,b') (c,c')
+  Cache    :: (a -> a -> Bool) -> R a a
+  -- ArrowChoice
+  Choice   :: R b c -> R b' c' -> R (Either b b') (Either c c')
+  -- ArrowLoop
+  Loop     :: R (b, d) (c, d)  -> R b c
+  -- ArrowApply
+  Apply    :: R (R b c, b) c
+
+fib' :: (ArrowChoice r, ArrowLoop r) => r Int Int
+fib' = proc x -> do
+  rec fibz <- proc n -> case n of
+                          0  -> returnA -< 0
+                          1  -> returnA -< 1
+                          n' -> do l <- fibz -< (n'-2)
+                                   r <- fibz -< (n'-1)
+                                   returnA -< (l+r)
+  fibz -<< x
+
+fib'' :: (ArrowChoice r, ArrowLoop r, ArrowApply r) => r Int Int
+fib'' = proc x -> do
+  let fibz = proc n -> case n of
+                          0  -> returnA -< 0
+                          1  -> returnA -< 1
+                          n' -> do l <- fibz -< (n'-2)
+                                   r <- fibz -< (n'-1)
+                                   returnA -< (l+r)
+  fibz -<< x
+
+app
+fib
+app
+fib
+fib :: (ArrowChoice r, ArrowLoop r, ArrowApply r) => r Int Int
+fib
+  = (arr
+       (\ n ->
+          case n of
+              0 -> Left ()
+              1 -> Right (Left ())
+              n' -> Right (Right n'))
+       >>>
+       (arr (\ () -> 0) |||
+          (arr (\ () -> 1) |||
+             (arr (\ n' -> (n', n')) >>>
+                (first ( arr (\ n' -> app (fib, n' - 2))) >>>
+                   arr (\ (l, n') -> (n', l)))
+                  >>>
+                  (first (arr (\ n' -> app (fib, n' - 1))) >>>
+                     arr (\ (r, l) -> (l + r)))))))                                 
+
+fib :: (ArrowChoice r, ArrowLoop r, ArrowApply r) => r Int Int
+fib  = proc n ->
+   case n of
+     0  -> returnA -< 0
+     1  -> returnA -< 1
+     n' -> 
+           do l <- fib -<< (n'-2)
+              r <- fib -<< (n'-1)
+              returnA -< (l+r)
+

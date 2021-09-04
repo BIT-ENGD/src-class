@@ -1,0 +1,168 @@
+import UIKit
+import AVFoundation
+
+    class DEZCamPreviewView: UIView {
+
+    var session: AVCaptureSession! {
+        get {
+            return (self.layer as AVCaptureVideoPreviewLayer).session
+        }
+
+        set {
+            (self.layer as AVCaptureVideoPreviewLayer).session = newValue
+        }
+    }
+
+    override class func layerClass() -> AnyClass {
+        return AVCaptureVideoPreviewLayer.self
+    }
+
+}
+
+import UIKit
+import AVFoundation
+import AssetsLibrary
+
+class DEZCamViewController: UIViewController {
+
+// Store the note to send back it's image.
+var note: Note?
+
+@IBOutlet weak var captureButton: UIButton!
+@IBOutlet weak var previewView: DEZCamPreviewView!
+// Session management.
+var sessionQueue: dispatch_queue_t! // Communicate with the session and other session objects on this queue.
+var session: AVCaptureSession!
+var videoDeviceInput: AVCaptureDeviceInput!
+var stillImageOutput: AVCaptureStillImageOutput!
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+
+    self.session = AVCaptureSession()
+
+    // Setup the preview view
+    self.previewView.session = session
+
+    self.sessionQueue = dispatch_queue_create("session queue", DISPATCH_QUEUE_SERIAL)
+
+    dispatch_async(sessionQueue) {
+        //self.backgroundRecordingID = UIBackgroundTaskInvalid
+
+        var error: NSError?
+
+        let videoDevice: AVCaptureDevice = DEZCamViewController.deviceWithMediaType(AVMediaTypeVideo, preferringPosition: .Back)
+
+        let videoDeviceInput: AVCaptureDeviceInput = AVCaptureDeviceInput(device: videoDevice, error: &error)
+
+        if let error = error {
+            println(error.localizedDescription)
+        }
+
+        if self.session.canAddInput(videoDeviceInput) {
+            self.session.addInput(videoDeviceInput)
+            self.videoDeviceInput = videoDeviceInput
+
+            dispatch_async(dispatch_get_main_queue()) {
+                // Why are we dispatching this to the main queue?
+                // Because AVCaptureVideoPreviewLayer is the backing layer for AVCamPreviewView and 
+                // UIView can only be manipulated on main thread.
+                // Note: As an exception to the above rule, it is not necessary to serialize video 
+                // orientation changes on the AVCaptureVideoPreviewLayer’s connection with other 
+                // session manipulation.
+                let avLayer = (self.previewView.layer as AVCaptureVideoPreviewLayer)
+                let connection = avLayer.connection
+                let orientation = AVCaptureVideoOrientation(rawValue: self.interfaceOrientation.rawValue)!
+                connection.videoOrientation = orientation
+            }
+        }
+
+        if let error = error {
+            println(error.localizedDescription)
+        }
+
+        let stillImageOutput = AVCaptureStillImageOutput()
+        if self.session.canAddOutput(stillImageOutput) {
+            stillImageOutput.outputSettings[AVVideoCodecKey] = AVVideoCodecJPEG
+            self.session.addOutput(stillImageOutput)
+            self.stillImageOutput = stillImageOutput
+        }
+    }
+}
+
+override func viewWillAppear(animated: Bool) {
+    dispatch_async(self.sessionQueue) {
+        self.session.startRunning()
+        // NEW CODE HERE
+        self.captureButton.enabled = true
+    }
+}
+
+override func viewWillDisappear(animated: Bool) {
+    dispatch_async(self.sessionQueue) {
+        self.session.stopRunning()
+        println("CAM-CONTROLLER: inside viewWillDisappear -- session stop called")
+    }
+}
+
+override func didReceiveMemoryWarning() {
+    super.didReceiveMemoryWarning()
+    // Dispose of any resources that can be recreated.
+}
+
+
+@IBAction func captureImageNow(sender: UIButton) {
+    dispatch_async(self.sessionQueue) {
+        println("CAM-CONTROLLER: inside captureImageNow")
+
+       // Capture a still image.
+        self.stillImageOutput.captureStillImageAsynchronouslyFromConnection(self.stillImageOutput.connectionWithMediaType(AVMediaTypeVideo))
+            { (imageDataSampleBuffer, error) -> Void in
+
+            if let imageDataSampleBuffer = imageDataSampleBuffer {
+                println("inside closure")
+                let imageData = AVCaptureStillImageOutput.jpegStillImageNSDataRepresentation(imageDataSampleBuffer)
+                println("got image data:")
+                if let image = UIImage(data: imageData) {
+                    println("CAM-CONTROLLER: inside captureImageNow -- set the image: \(image)")
+                    // Save the image
+                    self.note?.noteImage = image
+
+                    self.navigationController?.popViewControllerAnimated(true)
+
+                }
+            }
+        }
+    }
+
+}
+    class func deviceWithMediaType(mediaType: NSString, preferringPosition position: AVCaptureDevicePosition) -> AVCaptureDevice {
+    let devices = AVCaptureDevice.devicesWithMediaType(mediaType) as [AVCaptureDevice]
+    var captureDevice = devices[0]
+
+    for device in devices {
+        if device.position == position {
+            captureDevice = device
+            break
+        }
+    }
+
+    return captureDevice;
+}
+    // MARK: - Navigation
+
+
+override func prepareForSegue(segue: UIStoryboardSegue, sender: AnyObject?) {
+    // Get the new view controller using segue.destinationViewController.
+    // Pass the selected object to the new view controller.
+    if segue.identifier == "goBackToNoteSegue" {
+        let controller = segue.destinationViewController as DEZAddNoteViewController
+        if let strongNote = self.note {
+            controller.existingNote = strongNote
+        }
+    }
+}
+
+
+}
+

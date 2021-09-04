@@ -1,0 +1,99 @@
+curl   -F   "action=uploadfile"   -F   "file=@/root/tmp/test.txt"   http://172.16.1.51:80/uploadfile
+
+    2016/10/28 14:37:34 [error] 6877#0: *135 lua entry thread aborted: runtime error: /usr/local/openresty/nginx/conf/lua/savefile.lua:10: attempt to index local 'form' (a nil value)
+stack traceback:
+
+ package.path = '/usr/local/share/lua/5.1/?.lua;/usr/local/openresty/lualib/resty/?.lua;'
+    package.cpath = '/usr/local/lib/lua/5.1/?.so;'
+
+    local upload = require "upload"
+
+    local chunk_size = 4096
+    local form = upload:new(chunk_size)
+    local file
+    local filelen=0
+    form:set_timeout(0) -- 1 sec
+    local filename
+
+    function get_filename(res)
+        local filename = ngx.re.match(res,'(.+)filename="(.+)"(.*)')
+        if filename then
+            return filename[2]
+        end
+    end
+
+    local osfilepath = "/usr/local/openresty/nginx/html/"
+    local i=0
+    while true do
+        local typ, res, err = form:read()
+        if not typ then
+            ngx.say("failed to read: ", err)
+            return
+        end
+
+       local time=os.time()
+       --local str=os.date("%x",time)
+       local str= (string.gsub(os.date("%x",time), "/", "-"))
+       local newpath=osfilepath .. str .. "/"
+       local dfile = io.open(newpath, "w+")
+       if not dfile then
+                  ngx.say("dfile--"..newpath)
+                 local md="mkdir "
+                 local mdpath=md .. newpath
+                  os.execute(mdpath)
+        else
+               dfile:close()
+        end
+        if typ == "header" then
+            if res[1] ~= "Content-Type" then
+                filename = get_filename(res[2])
+                if filename then
+                    i=i+1
+                    filepath = newpath  .. filename
+                    file = io.open(filepath,"w+")
+                    if not file then
+                      ngx.say("failed to open file ")
+                        return
+                    end
+                else
+                end
+            end
+        elseif typ == "body" then
+            if file then
+                filelen= filelen + tonumber(string.len(res))
+                file:write(res)
+            else
+            end
+        elseif typ == "part_end" then
+            if file then
+                file:close()
+                file = nil
+                ngx.say("file upload success")
+            end
+        elseif typ == "eof" then
+            break
+        else
+        end
+    end
+    if i==0 then
+        ngx.say("please upload at least one file!")
+        return
+    end
+
+location /uploadfile  
+{  
+   content_by_lua_file 'conf/lua/savefile.lua';  
+} 
+
+<html>
+<head>
+<body>
+<form method="post"action="http://172.16.1.51:80/uploadfile" enctype=”multipart/form-data”>
+         <input type="text" name="desc">
+         <input type="file" name="pic">
+         <input type="submit" value="上传">
+ </form>
+</body>
+</head>
+</html>
+

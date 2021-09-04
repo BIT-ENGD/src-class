@@ -1,0 +1,131 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+module Syntax where
+
+import Data.Data
+import Data.Text
+
+data Expr = Iden Text
+          | Num Integer
+          | AntiIden Text
+            deriving (Eq,Show,Data,Typeable)
+
+
+---------------------
+
+module Parser where
+
+import Control.Applicative
+import Control.Monad.Identity
+import qualified Data.Text as T
+import Text.Parsec hiding (many, optional, (<|>), string, label)
+import Text.Parsec.Language
+import qualified Text.Parsec.Token as P
+import Text.Parsec.Text ()
+
+import Syntax
+
+parseExpr :: T.Text -> Either ParseError Expr
+parseExpr s =
+  runParser expr () "" s
+
+expr :: ParsecT T.Text () Identity Expr
+expr =
+  whiteSpace >> choice
+  [do
+   _ <- char '$'
+   AntiIden <$> identifier
+  ,Num <$> natural
+  ,Iden <$> identifier
+  ]
+
+identifier :: ParsecT T.Text () Identity T.Text
+identifier = T.pack <$> P.identifier lexer
+
+natural :: ParsecT T.Text () Identity Integer
+natural = P.natural lexer
+
+lexer :: P.GenTokenParser T.Text () Identity
+lexer = P.makeTokenParser langDef
+
+whiteSpace :: ParsecT T.Text () Identity ()
+whiteSpace = P.whiteSpace lexer
+
+langDef :: GenLanguageDef T.Text st Identity
+langDef = P.LanguageDef
+               { P.commentStart   = "{-"
+               , P.commentEnd     = "-}"
+               , P.commentLine    = "--"
+               , P.nestedComments = True
+               , P.identStart     = letter <|> char '_'
+               , P.identLetter    = alphaNum <|> oneOf "_"
+               , P.opStart        = P.opLetter langDef
+               , P.opLetter       = oneOf "+-*/<>="
+               , P.reservedOpNames= []
+               , P.reservedNames  = []
+               , P.caseSensitive  = False
+               }
+
+
+-------------------
+
+
+module Quasi where
+
+import Language.Haskell.TH.Quote
+import Language.Haskell.TH
+import Data.Generics
+import qualified Data.Text as T
+
+import Syntax
+import Parser (parseExpr)
+
+expr :: QuasiQuoter
+expr = QuasiQuoter {quoteExp = prs
+                   ,quotePat = undefined
+                   ,quoteType = undefined
+                   ,quoteDec = undefined}
+  where
+    prs :: String -> Q Exp
+    prs s = p s
+            >>= dataToExpQ (const Nothing
+                            `extQ` antiExpE
+                           )
+    p s = either (fail . show) return (parseExpr $ T.pack s)
+
+antiExpE :: Expr -> Maybe ExpQ
+antiExpE v = fmap varE (antiExp v)
+
+antiExp :: Expr -> Maybe Name
+antiExp (AntiIden v) = Just $ mkName $ T.unpack v
+antiExp _ = Nothing
+
+----------------------------
+
+-- test.hs:
+
+{-# LANGUAGE QuasiQuotes #-}
+
+import Syntax
+import Quasi
+
+test,test1,test2 :: Expr
+
+-- works
+test = [expr| 1234 |]
+
+-- works
+test1 = let stuff = Num 42
+        in [expr| $stuff |]
+
+-- doesn't work
+test2 = [expr| test |]
+
+main :: IO ()
+main = putStrLn $ show test2
+
+handleText :: T.Text -> Maybe ExpQ
+handleText x =
+    -- convert the text to a string literal
+    -- and wrap it with T.pack
+    Just $ appE (varE 'T.pack) $ litE $ StringL $ T.unpack x
+

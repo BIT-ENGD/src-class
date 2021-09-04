@@ -1,0 +1,64 @@
+class EchoServer extends Actor {
+  private var connections = 0
+
+  def act() {
+    val serverSocket = new ServerSocket(6789)
+
+    val echoServer = self
+    actor { while (true) echoServer ! ("Connected", serverSocket.accept) }
+
+    while (true) {
+      receive {
+        case ("Connected", connectionSocket: Socket) =>
+          connections += 1
+          (new ConnectionHandler(this, connectionSocket)).start
+        case "Disconnected" =>
+          connections -= 1
+      }
+    }
+  }
+}
+
+class ConnectionHandler(server: EchoServer, connectionSocket: Socket)
+    extends Actor {
+
+  def act() {
+    for (input <- getInputStream; output <- getOutputStream) {
+      val handler = self
+      actor {
+        var continue = true
+        while (continue) {
+          try {
+            val req = input.readLine
+            if (req != null) handler ! ("Request", req)
+            else continue = false
+          } catch {
+            case e: IOException => continue = false
+          }
+        }
+
+        handler ! "Disconnected"
+      }
+
+      var connected = true
+      while (connected) {
+        receive {
+          case ("Request", req: String) =>
+            try {
+              output.writeBytes(req + "\n")
+            } catch {
+              case e: IOException => connected = false
+            }
+          case "Disconnected" =>
+            connected = false
+        }
+      }
+    }
+
+    close()
+    server ! "Disconnected"
+  }
+
+  // code for getInputStream(), getOutputStream() and close() methods
+}
+

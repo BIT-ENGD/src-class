@@ -1,0 +1,52 @@
+aeson
+attoparsec
+conduit
+conduit-http
+conduit-attoparsec
+ParseError {errorContexts = ["demandInput"], errorMessage = "not enough bytes", errorPosition = 1:1}
+
+sinkParser
+j <- CA.sinkParser json
+
+{-# LANGUAGE OverloadedStrings #-}
+
+module Main where
+
+import Control.Applicative
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.Conduit.Attoparsec as CA
+import Data.Aeson
+import Data.Conduit
+import Data.Conduit.Binary
+import Control.Monad.IO.Class
+
+data MyMessage = MyMessage String deriving (Show)
+
+parseMessage :: (MonadIO m, MonadResource m) => Conduit B.ByteString m B.ByteString
+parseMessage = do
+    j <- CA.sinkParser json
+    let msg = fromJSON j :: Result MyMessage
+    yield $ case msg of
+        Success r -> B8.pack $ show r
+        Error   s -> error s
+    parseMessage
+
+main :: IO ()
+main =
+    runResourceT $ do
+        sourceFile "./input.json" $$ parseMessage =$ sinkFile "./out.txt"
+
+instance FromJSON MyMessage where
+    parseJSON j =
+        case j of
+        (Object o) -> MyMessage <$> o .: "text"
+        _          -> fail $ "Expected Object - " ++ show j
+
+{"text":"abc"}
+{"text":"123"}
+
+out: ParseError {errorContexts = ["demandInput"], errorMessage = "not enough bytes", errorPosition = 3:1}
+
+MyMessage "abc"MyMessage "123"
+

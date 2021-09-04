@@ -1,0 +1,44 @@
+abc $$FOO$$ cba
+(?=(\$\$|\z))
+import scala.util.parsing.combinator.RegexParsers
+
+object PlaceholderParser extends RegexParsers {
+  sealed abstract class Element
+  case class Text(text: String) extends Element
+  case class Placeholder(key: String) extends Element
+
+  override def skipWhitespace = false
+
+  def parseElements(text: String): List[Element] = parseAll(elements, text) match {
+    case Success(es, _) => es
+    case NoSuccess(msg, _) => error("Could not parse: [%s]. Error: %s".format(text, msg))
+  }
+
+  def parseElementsOpt(text: String): ParseResult[List[Element]] = parseAll(elements, text)
+
+  lazy val elements: Parser[List[Element]] = rep(element)
+  lazy val element: Parser[Element] = placeholder ||| text
+  lazy val text: Parser[Text] = """(?ims).+?(?=(\$\$|\z))""".r ^^ Text.apply
+  lazy val placeholder: Parser[Placeholder] = delimiter ~> """[\w. ]+""".r <~ delimiter ^^ Placeholder.apply
+  lazy val delimiter: Parser[String] = literal("$$")
+}
+
+
+import org.junit.{Assert, Test}
+
+class PlaceholderParserTest {
+  @Test
+  def parse1 = check("a quick brown $$FOX$$ jumped over the lazy $$DOG$$")(Text("a quick brown "), Placeholder("FOX"), Text(" jumped over the lazy "), Placeholder("DOG"))
+
+  @Test
+  def parse2 = check("a quick brown $$FOX$$!")(Text("a quick brown "), Placeholder("FOX"), Text("!"))
+
+  @Test
+  def parse3 = check("a quick brown $$FOX$$!\n!")(Text("a quick brown "), Placeholder("FOX"), Text("!\n!"))
+
+  @Test
+  def parse4 = check("a quick brown $$F.O X$$")(Text("a quick brown "), Placeholder("F.O X"))
+
+  def check(text: String)(expected: Element*) = Assert.assertEquals(expected.toList, parseElements(text))
+}
+

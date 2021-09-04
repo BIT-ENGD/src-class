@@ -1,0 +1,86 @@
+OracleDataAdapter.Fill()
+using Oracle.DataAccess.Client;
+
+...
+
+public DataTable ExecuteExternalQuery(string connectionString, string providerName, string queryText)
+{
+    DbConnection connection = null;
+    DbCommand selectCommand = null;
+    DbDataAdapter adapter = null;
+
+    switch (providerName)
+    {
+        case "System.Data.OracleClient":
+        case "Oracle.DataAccess.Client":
+            connection = new OracleConnection(connectionString);
+            selectCommand = connection.CreateCommand();
+            adapter = new OracleDataAdapter((OracleCommand)selectCommand);
+            break;
+        ...
+    }
+
+    DataTable table = null;
+    try
+    {
+        connection.Open();
+
+        selectCommand.CommandText = queryText;
+        selectCommand.CommandTimeout = 300000;
+        selectCommand.CommandType = CommandType.Text;
+
+        table = new DataTable("result");
+        table.Locale = CultureInfo.CurrentCulture;
+        adapter.Fill(table);
+    }
+    finally
+    {
+        adapter.Dispose();
+
+        if (connection.State != ConnectionState.Closed)
+        {
+            connection.Close();
+        }
+    }
+
+    return table;
+}
+
+with
+  trouble_calls as
+  (
+    select
+      work_order_number,
+      account_number,
+      date_entered
+    from
+      work_orders
+    where
+      date_entered >= sysdate - (15 + 31)  -- Use the index to limit the number of rows scanned
+     and
+      wo_status not in ('Cancelled')
+     and
+      wo_type = 'Trouble Call'
+  )
+select
+  account_number,
+  work_order_number,
+  date_entered
+from
+  trouble_calls wo
+where
+  wo.icoms_date >= sysdate - 15
+ and
+  (
+    select
+      count(*)
+    from
+      trouble_calls repeat
+    where
+      wo.account_number = repeat.account_number
+     and
+      wo.work_order_number <> repeat.work_order_number
+     and
+      wo.date_entered - repeat.date_entered between 0 and 30
+  ) >= 1
+

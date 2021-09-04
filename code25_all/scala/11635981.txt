@@ -1,0 +1,174 @@
+Foo
+A(a1~U-1).B(b1-1) -> A(a1~P) + B(b1)
+
+-1
+asInstanceOf
+asInstanceOf
+case class Rule(
+  reactants: Seq[ReactantGraph], // The starting monomers and edges
+  producedMonomers: Seq[ProducedMonomer] // Only new monomers go here
+) {
+  // Example method that shows different monomers being combined and down-cast
+  def combineIntoOneGraph: Graph = {
+    val all_monomers = reactants.flatMap(_.monomers) ++ producedMonomers
+    GraphClass(all_monomers)
+  }
+}
+
+GraphClass
+ProducedMonomer
+Reactant
+Rule
+collect
+Monomer
+ReactantMonomer
+case class GraphClass[
+  +MonomerType <: Monomer
+](
+  monomers: Seq[MonomerType]
+) {
+  // Methods that demonstrate the need for a manifest on MonomerClass
+  def justTheProductMonomers: Seq[ProductMonomer] = {
+    monomers.collect{
+      case x if isProductMonomer(x) => x.asInstanceOf[ProductMonomer]
+    }
+  }
+  def isProductMonomer(monomer: Monomer): Boolean = (
+    monomer.manifest <:< manifest[ProductStateSite]
+  )
+}
+
+// The most generic Graph
+type Graph = GraphClass[Monomer]
+// Anything allowed in a reactant
+type ReactantGraph = GraphClass[ReactantMonomer]
+// Anything allowed in a product, which I sometimes extract from a Rule
+type ProductGraph = GraphClass[ProductMonomer]
+
+MonomerClass
+ConsumedMonomer
+StaticStateSite
+collect
+Manifest
+case class MonomerClass[
+  +StateSiteType <: StateSite : Manifest
+](
+  stateSites: Seq[StateSiteType]
+) {
+  type MyType = MonomerClass[StateSiteType]
+  def manifest = implicitly[Manifest[_ <: StateSiteType]]
+
+  // Method that demonstrates the need for implicit evidence
+  // This is where it gets bad
+  def replaceSiteWithIntersection[A >: StateSiteType <: ReactantStateSite](
+    thisSite: A, // This is a member of this.stateSites
+    monomer: ReactantMonomer
+  )(
+    // Only the sites on ReactantMonomers have the Observed property
+    implicit evidence: MyType <:< ReactantMonomer
+  ): MyType = {
+    val new_this = evidence(this) // implicit evidence usually needs some help
+    monomer.stateSites.find(_.name == thisSite.name) match {
+      case Some(otherSite) => 
+        val newSites = stateSites map {
+          case `thisSite` => (
+            thisSite.asInstanceOf[StateSiteType with ReactantStateSite]
+            .createIntersection(otherSite).asInstanceOf[StateSiteType]
+          )
+          case other => other
+        }
+        copy(stateSites = newSites)
+      case None => this
+    }
+  }
+}
+
+type Monomer = MonomerClass[StateSite]
+type ReactantMonomer = MonomerClass[ReactantStateSite]
+type ProductMonomer = MonomerClass[ProductStateSite]
+type ConsumedMonomer = MonomerClass[ConsumedStateSite]
+type ProducedMonomer = MonomerClass[ProducedStateSite]
+type StaticMonomer = MonomerClass[StaticStateSite]
+
+StateSite
+String
+MyType
+trait StateSite {
+  type MyType <: StateSite 
+  def name: String
+}
+trait ReactantStateSite extends StateSite {
+  type MyType <: ReactantStateSite
+  def observed: Seq[String]
+  def stateCopy(observed: Seq[String]): MyType
+  def createIntersection(otherSite: ReactantStateSite): MyType = {
+    val newStates = observed.intersect(otherSite.observed)
+    stateCopy(newStates)
+  }
+}
+trait ProductStateSite extends StateSite
+trait ConservedStateSite extends ReactantStateSite with ProductStateSite 
+case class ConsumedStateSite(name: String, consumed: Seq[String]) 
+  extends ReactantStateSite {
+  type MyType = ConsumedStateSite
+  def observed = consumed
+  def stateCopy(observed: Seq[String]) = copy(consumed = observed)
+}
+case class ProducedStateSite(name: String, Produced: String)
+  extends ProductStateSite 
+case class ChangedStateSite(
+  name: String, 
+  consumed: Seq[String], 
+  Produced: String
+)
+  extends ConservedStateSite {
+  type MyType = ChangedStateSite
+  def observed = consumed
+  def stateCopy(observed: Seq[String]) = copy(consumed = observed)
+}
+case class StaticStateSite(name: String, static: Seq[String])
+  extends ConservedStateSite {
+  type MyType = StaticStateSite
+  def observed = static
+  def stateCopy(observed: Seq[String]) = copy(static = observed)
+}
+
+MonomerClass.replaceSiteWithIntersection
+asInstanceOf
+replaceSiteWithIntersection
+asInstanceOf
+MonomerClass
+case class MonomerClass[+StateSiteType <: StateSite/* : Manifest*/](
+  stateSites: Seq[StateSiteType]) {
+  type MyType = MonomerClass[StateSiteType]
+  //def manifest = implicitly[Manifest[_ <: StateSiteType]]
+
+  def replaceSiteWithIntersection[A <: ReactantStateSite { type MyType = A }]
+    (thisSite: A, otherMonomer: ReactantMonomer)
+    (implicit ev: this.type <:< MonomerClass[A])
+  : MonomerClass[A] = {
+    val new_this = ev(this)
+
+    otherMonomer.stateSites.find(_.name == thisSite.name) match {
+      case Some(otherSite) =>
+        val newSites = new_this.stateSites map {
+          case `thisSite` => thisSite.createIntersection(otherSite)
+          case other      => other
+        }
+        copy(stateSites = newSites)
+      case None => new_this // This throws an exception in the real program
+    }
+  }
+
+  // Example method that calls the previous method
+  def replaceSomeSiteOnThisOtherMonomer(otherMonomer: ReactantMonomer)
+      (implicit ev: MyType <:< ReactantMonomer): MyType = {
+    // Find a state that is a current member of this.stateSites
+    // Obviously, a more sophisticated means of selection is actually used
+    val thisSite = ev(this).stateSites(0)
+
+    // I can't get this to compile even with asInstanceOf
+    replaceSiteWithIntersection(thisSite, otherMonomer)
+  }
+}
+

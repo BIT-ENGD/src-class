@@ -1,0 +1,179 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use DB_File;
+use File::Spec;
+use Digest::MD5;
+
+my $path_pref = '/usr/local/bin';
+my $base = '/var/backup/test';
+
+my $find = "$base/find.txt";
+my $files = "$base/files.txt";
+
+my $db_duplicate_file = "$base/duplicate.db";
+my $db_duplicate_count_file = "$base/duplicate_count.db";
+my $db_unique_file = "$base/unique.db";
+my $db_master_copy_file = "$base/master_copy.db";
+my $db_other_copy_file = "$base/other_copy.db";
+
+open (FIND, "< $find");
+open (FILES, "> $files");
+
+print "Extracting non-zero files from:\n\t$find\n";
+my $total_files = 0;
+while (my $path = <FIND>) {
+  chomp($path);
+  next if ($path =~ /^\s*$/);
+  if (-f $path && -s $path) {
+    print FILES "$path\n";
+    $total_files++;
+    printf "\r$total_files";
+  }
+}
+
+close(FIND);
+close(FILES);
+open (FILES, "< $files");
+
+sub compare {
+  my ($key1, $key2) = @_;
+  $key1 cmp $key2;
+}
+
+$DB_BTREE->{'compare'} = \&compare;
+
+my %duplicate_count = ();
+
+tie %duplicate_count, "DB_File", $db_duplicate_count_file, O_RDWR|O_CREAT, 0666, $DB_BTREE
+     or die "Cannot open $db_duplicate_count_file: $!\n";
+
+my %unique = ();
+
+tie %unique, "DB_File", $db_unique_file, O_RDWR|O_CREAT, 0666, $DB_BTREE
+     or die "Cannot open $db_unique_file: $!\n";
+
+my %master_copy = ();
+
+tie %master_copy, "DB_File", $db_master_copy_file, O_RDWR|O_CREAT, 0666, $DB_BTREE
+     or die "Cannot open $db_master_copy_file: $!\n";
+
+my %other_copy = ();
+
+tie %other_copy, "DB_File", $db_other_copy_file, O_RDWR|O_CREAT, 0666, $DB_BTREE
+     or die "Cannot open $db_other_copy_file: $!\n";
+
+print "\nFinding duplicate filenames and calculating their MD5 digests\n";
+
+my $file_counter = 0;
+my $percent_complete = 0;
+
+while (my $path = <FILES>) {
+
+  $file_counter++;
+
+  # remove trailing whitespace
+  chomp($path);
+
+  # extract filename from path
+  my ($vol,$dir,$filename) = File::Spec->splitpath($path);
+
+  # calculate the file's MD5 digest
+  open(FILE, $path) or die "Can't open $path: $!";
+  binmode(FILE);
+  my $md5digest = Digest::MD5->new->addfile(*FILE)->hexdigest;
+  close(FILE);
+
+  # filename not stored as duplicate
+  if (!exists($duplicate_count{$filename})) {
+    # assume unique
+    $unique{$md5digest} = $path;
+    # which implies 0 duplicates
+    $duplicate_count{$filename} = 0;
+  }
+  # filename already found
+  else {
+    # delete unique record
+    delete($unique{$md5digest});
+    # second duplicate
+    if ($duplicate_count{$filename}) {
+      $duplicate_count{$filename}++;
+    }
+    # first duplicate
+    else {
+      $duplicate_count{$filename} = 1;
+    }
+    # the master copy is already assigned
+    if (exists($master_copy{$md5digest})) {
+      # the current path matches $path_pref, so becomes our new master copy
+      if ($path =~ qq|^$path_pref|) {
+        $master_copy{$md5digest} = $path;
+      }
+      else {
+        # this one is a secondary copy
+        $other_copy{$path} = $md5digest;
+        # store with path as key, as there are duplicate digests
+      }
+    }
+    # assume this is the master copy
+    else {
+      $master_copy{$md5digest} = $path;
+    }
+  }
+  $percent_complete = int(($file_counter/$total_files)*100);
+  printf("\rProgress: $percent_complete %%");
+}
+
+close(FILES);    
+
+# Write out data to text files for debugging
+
+open (UNIQUE, "> $base/unique.txt");
+open (UNIQUE_MD5, "> $base/unique_md5.txt");
+
+print "\n\nUnique files: ",scalar keys %unique,"\n";
+
+foreach my $key (keys %unique) {
+  print UNIQUE "$key\t", $unique{$key}, "\n";
+  print UNIQUE_MD5 "$key\n";
+}
+
+close UNIQUE;
+close UNIQUE_MD5;
+
+open (MASTER, "> $base/master_copy.txt");
+open (MASTER_MD5, "> $base/master_copy_md5.txt");
+
+print "Master copies: ",scalar keys %master_copy,"\n";
+
+foreach my $key (keys %master_copy) {
+  print MASTER "$key\t", $master_copy{$key}, "\n";
+  print MASTER_MD5 "$key\n";
+}
+
+close MASTER;
+close MASTER_MD5;
+
+open (OTHER, "> $base/other_copy.txt");
+open (OTHER_MD5, "> $base/other_copy_md5.txt");
+
+print "Other copies: ",scalar keys %other_copy,"\n";
+
+foreach my $key (keys %other_copy) {
+  print OTHER $other_copy{$key}, "\t$key\n";
+  print OTHER_MD5 "$other_copy{$key}\n";
+}
+
+close OTHER;
+close OTHER_MD5;
+
+print "\n";
+
+untie %duplicate_count;
+untie %unique;
+untie %master_copy;
+untie %other_copy;
+
+print "\n";
+

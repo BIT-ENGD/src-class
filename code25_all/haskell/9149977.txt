@@ -1,0 +1,62 @@
+EntityBuilderT
+ReaderT
+data EntityBuilderState = ...
+
+newtype EntityBuilderT m a = EntityBuilderT (ReaderT EntityBuilderState m a)
+
+withNewSource :: (Monad m) => String -> EntityBuilderT m a -> EntityBuilderT m a
+withNewSource itemId builder = ...
+
+f :: MaybeT (EntityBuilderT m) a
+
+withNewSource
+f
+monad-control
+   Couldn't match type `IO' with `EntityBuilderT m0'
+    When using functional dependencies to combine
+      MonadBaseControl IO IO,
+        arising from the dependency `m -> b'
+        in the instance declaration in `Control.Monad.Trans.Control'
+      MonadBaseControl (EntityBuilderT m0) IO,
+        arising from a use of `control'
+    In the expression: control
+    In the expression: control $ \ run -> withNewSource itemId (run m)
+
+{-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving,
+             MultiParamTypeClasses, TypeFamilies, UndecidableInstances #-}
+
+import Control.Applicative (Applicative)
+import Control.Monad (liftM)
+import Control.Monad.Base
+import Control.Monad.Trans (MonadTrans)
+import Control.Monad.Trans.Control
+import Control.Monad.Trans.Maybe (MaybeT)
+import Control.Monad.Trans.Reader (ReaderT, withReaderT)
+
+
+data EntityBuilderState
+
+newtype EntityBuilderT m a = EntityBuilderT { unEB :: ReaderT EntityBuilderState m a }
+  deriving (Applicative, Functor, Monad, MonadTrans)
+
+instance MonadBase b m => MonadBase b (EntityBuilderT m) where
+    liftBase = liftBaseDefault
+
+instance MonadTransControl EntityBuilderT where
+    newtype StT EntityBuilderT a = StEB { unStEB :: StT (ReaderT EntityBuilderState) a }
+    liftWith f = EntityBuilderT $ liftWith $ \run ->
+                   f $ liftM StEB . run . unEB
+    restoreT = EntityBuilderT . restoreT . liftM unStEB
+
+instance MonadBaseControl b m => MonadBaseControl b (EntityBuilderT m) where
+    newtype StM (EntityBuilderT m) a = StMT { unStMT :: ComposeSt EntityBuilderT m a }
+    liftBaseWith = defaultLiftBaseWith StMT
+    restoreM     = defaultRestoreM   unStMT
+
+
+withNewSource :: (Monad m) => String -> EntityBuilderT m a -> EntityBuilderT m a
+withNewSource itemId (EntityBuilderT m) = EntityBuilderT (withReaderT undefined m)
+
+withNewSource' :: String -> MaybeT (EntityBuilderT IO) a -> MaybeT (EntityBuilderT IO) a
+withNewSource' itemId m = control $ \run -> withNewSource itemId (run m)
+

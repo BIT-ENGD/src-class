@@ -1,0 +1,81 @@
+#!/usr/bin/python
+
+import time
+import socket
+import asyncore
+
+
+# in seconds
+UPDATE_PERIOD = 4.0
+
+class Channel(asyncore.dispatcher):
+
+    def __init__(self, sock, sck_map):
+        asyncore.dispatcher.__init__(self, sock=sock, map=sck_map)
+        self.last_update = 0.0  # should update immediately
+        self.send_buf = ''
+        self.recv_buf = ''
+
+    def writable(self):
+        return len(self.send_buf) > 0
+
+    def handle_write(self):
+        nbytes = self.send(self.send_buf)
+        self.send_buf = self.send_buf[nbytes:]
+
+    def handle_read(self):
+        print 'read'
+        print 'recv:', self.recv(4096)
+
+    def handle_close(self):
+        print 'close'
+        self.close()
+
+    # added for variable timeout
+    def update(self):
+        if time.time() >= self.next_update():
+            self.send_buf += 'hello %f\n'%(time.time())
+            self.last_update = time.time()
+
+    def next_update(self):
+        return self.last_update + UPDATE_PERIOD
+
+
+class Server(asyncore.dispatcher):
+
+    def __init__(self, port, sck_map):
+        asyncore.dispatcher.__init__(self, map=sck_map)
+        self.port = port
+        self.sck_map = sck_map
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.bind( ("", port))
+        self.listen(16)
+        print "listening on port", self.port
+
+    def handle_accept(self):
+        (conn, addr) = self.accept()
+        Channel(sock=conn, sck_map=self.sck_map)
+
+    # added for variable timeout
+    def update(self):
+        pass
+
+    def next_update(self):
+        return None
+
+
+sck_map = {}
+
+server = Server(9090, sck_map)
+while True:
+    next_update = time.time() + 30.0
+    for c in sck_map.values():
+        c.update()  # <-- fill write buffers
+        n = c.next_update()
+        #print 'n:',n
+        if n is not None:
+            next_update = min(next_update, n)
+    _timeout = max(0.1, next_update - time.time())
+
+    asyncore.loop(timeout=_timeout, count=1, map=sck_map)
+

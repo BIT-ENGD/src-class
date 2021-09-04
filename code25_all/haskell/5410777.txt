@@ -1,0 +1,49 @@
+import System
+import qualified Data.ByteString.Lazy as BL
+import Data.Word
+
+fold_tailrec :: (a -> b -> a) -> a -> [b] -> a
+fold_tailrec _ acc [] =
+    acc
+fold_tailrec foldFun acc (x : xs) =
+    fold_tailrec foldFun (foldFun acc x) xs
+
+fold_tailrec' :: (a -> b -> a) -> a -> [b] -> a
+fold_tailrec' _ acc [] =
+    acc
+fold_tailrec' foldFun acc (x : xs) =
+    let forceEval = fold_tailrec' foldFun (foldFun acc x) xs in
+    seq forceEval forceEval
+
+main :: IO ()
+main =
+    do
+        args <- System.getArgs
+        let filename = head args
+        byteString <- BL.readFile filename
+        let wordsList = BL.unpack byteString
+        -- wordsList is supposed to be lazy (bufferized)
+        let bytesCount = fold_tailrec (\acc word -> acc + 1) 0 wordsList
+        print ("Total bytes in " ++ filename ++ ": " 
+               ++ (show bytesCount))
+
+$ ls -l toto
+-rwxrwxrwx 1 root root 5455108 2011-03-23 19:08 toto
+$ ghc --make -O Test.hs
+[1 of 1] Compiling Main             ( Test.hs, Test.o )
+Linking Test ...
+$ ./Test toto
+Stack space overflow: current size 8388608 bytes.
+Use `+RTS -Ksize -RTS' to increase it.
+$ ./Test toto +RTS -K50M -RTS
+Stack space overflow: current size 50000000 bytes.
+Use `+RTS -Ksize -RTS' to increase it.
+$ ./Test toto +RTS -K500M -RTS
+"Total bytes in toto: 5455108"
+$ time ./Test toto +RTS -K500M -RTS
+"Total bytes in toto: 5455108"
+
+real    0m33.453s
+user    0m8.917s
+sys 0m10.433s
+

@@ -1,0 +1,59 @@
+2009-04-13 17:36:09.932 Action Lists[1537:20b] *** Assertion failure in -[InboxRootViewController getInboxTasks], /Users/cperry/Dropbox/Projects/iPhone GTD/GTD/Classes/InboxRootViewController.m:74
+2009-04-13 17:36:09.932 Action Lists[1537:3d0b] *** Assertion failure in +[Task deleteCompletedTasksInDatabase:completedMonthsAgo:], /Users/cperry/Dropbox/Projects/iPhone GTD/GTD/Classes/Data Classes/Task.m:957
+2009-04-13 17:36:09.933 Action Lists[1537:20b] *** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'Error: failed to prepare statement with message 'library routine called out of sequence'.'
+2009-04-13 17:36:09.933 Action Lists[1537:3d0b] *** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'Error: failed to prepare statement with message 'library routine called out of sequence'.'
+
+- (void)applicationDidFinishLaunching:(UIApplication *)application {
+
+    // Take care of jobs that have to run at startup
+    [NSThread detachNewThreadSelector:@selector(startUpJobs) toTarget:self withObject:nil];
+}
+
+// Jobs that run in the background at startup
+- (void)startUpJobs {
+
+    // Anticipating that this method will be called in its own NSThread, set up an autorelease pool.
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+    // Get user preferences
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+
+    // This Class Method calls SQLite functions and sometimes causes errors.
+    [Task revertFutureTasksStatus:database];
+
+
+    [pool release];
+}
+
+static sqlite3_stmt *revert_future_statement = nil;
+
++ (void) revertFutureTasksStatus:(sqlite3 *)db {
+
+    if (revert_future_statement == nil) {
+        // Find all tasks that meet criteria
+        static char *sql = "SELECT task_id FROM tasks where ((deleted IS NULL) OR (deleted=0)) AND (start_date > ?) AND (status=0) AND (revert_status IS NOT NULL)";
+        if (sqlite3_prepare_v2(db, sql, -1, &revert_future_statement, NULL) != SQLITE_OK) {
+            NSAssert1(0, @"Error: failed to prepare update statement with message '%s'.", sqlite3_errmsg(db));
+        }
+    }
+
+    // Bind NOW to sql statement
+    NSDate *now = [[NSDate alloc] init];
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    [formatter setDateFormat:@"yyyy-MM-dd"];
+    NSString *nowString = [formatter stringFromDate:now];
+    sqlite3_bind_text(revert_future_statement, 1, [nowString UTF8String], -1, SQLITE_TRANSIENT);
+    [now release];
+    [formatter release];
+
+    // We "step" through the results - once for each row.
+    while (sqlite3_step(revert_future_statement) == SQLITE_ROW) {
+
+        // Do things to each returned row
+
+    }
+
+    // Reset the statement for future reuse.
+    sqlite3_reset(revert_future_statement);
+}
+

@@ -1,0 +1,66 @@
+SELECT  td.transaction_id,
+    sum(    IF( coalesce(ti.na, -1) = 0
+            AND coalesce(ti.special_info_type, -1) = 0
+            AND coalesce(ti.item_type, '') = 'P'
+            AND coalesce(ti.comp_id, 0) <= 0,
+            coalesce(disc_amt, 0),
+            0
+        )
+    ) as disc_sum,
+
+    sum(    IF( coalesce(ti.na, -1) = 0
+            AND coalesce(ti.special_info_type, -1) = 0
+            AND coalesce(ti.item_type, '') = 'P'
+            AND coalesce(ti.comp_id, 0) > 0,
+            coalesce(comp_amt, 0),
+            0
+        )
+    ) as cSM,
+
+    sum(    IF( coalesce(ti.na, -1) = 0
+            AND coalesce(ti.special_info_type, -1) = 0
+            AND coalesce(ti.item_type, '') = 'P'
+            AND coalesce(ti.comp_id, 0) > 0,
+            coalesce(comp_tax, 0),
+            0
+        )
+    ) as cTX
+
+FROM transaction_details td
+
+LEFT OUTER JOIN transaction_items ti
+    ON ti.transaction_id = td.transaction_id
+
+WHERE   td.na = 0
+    AND td.entry_TS >= ?
+    AND td.entry_TS <  ?
+
+GROUP BY td.transaction_id;
+
+SELECT  count(x.id) as refCnt,
+    coalesce(sum(x.item_price + x.sub_price), 0) as refAmt,
+    coalesce(sum(x.efftax), 0) as refTax
+
+from(
+    SELECT  (tiP.item_price - tiP.comp_amt) as item_price,
+        coalesce(sum(tiA.item_price), 0) as sub_price,
+        (tiP.efftax - tiP.comp_tax) as efftax,
+        tiP.id
+
+    from transaction_items tiP
+
+    left outer join transaction_items tiA
+        on( tiP.id = tiA.ref_id
+            and tiA.item_type = 'A'
+            and tiA.na = 0
+        ) 
+
+    where   tiP.item_type = 'P'
+        and tiP.na = 0
+        and tiP.refund = 1
+        #and tiP.transaction_id = 
+
+    group by tiP.id
+    order by tiP.transaction_id, tiP.order_id
+) as x;
+

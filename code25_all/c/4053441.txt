@@ -1,0 +1,258 @@
+public static final String UUID_STRING = "00000000-0000-0000-0000-00000000ABCD";
+private static final UUID MY_UUID = UUID.fromString(UUID_STRING);
+
+int main(int argc , char **argv)
+{
+//Android wants a 128 bit UUID why are we only giving a 32 bit UUID
+uint32_t svc_uuid_int[] = { 0 , 0 , 0 , 0xABCD } ;
+
+int status ;
+bdaddr_t target ;
+uuid_t svc_uuid ;
+sdp_list_t *response_list , *search_list , *attrid_list ;
+sdp_session_t *session = 0;
+uint32_t range = 0x0000ffff ;
+uint8_t port = 0;
+
+if(argc < 2)
+{
+    fprintf(stderr , "usage: %s <bt_addr>\n" , argv [ 0 ] ) ;
+    exit ( 2 ) ;
+}
+
+str2ba ( argv[1] , &target ) ;
+// connect to the SDP server running on the remote machine
+session = sdp_connect ( BDADDR_ANY, &target, SDP_RETRY_IF_BUSY  );
+//  printf("session %u\n",session);
+
+sdp_uuid128_create( &svc_uuid, &svc_uuid_int ) ;
+search_list = sdp_list_append( 0, &svc_uuid ) ;
+attrid_list = sdp_list_append( 0, &range ) ;
+
+// get a list of service records that have UUID 0xabcd
+response_list = NULL ;   //ERROR: response_list SHOULD GET INITIALIZED BUT IT STAYS NULL CAUSING THE PROGRAM TO NEVER ENTER THE FOR LOOP BELOW.
+status = sdp_service_search_attr_req(session , search_list , SDP_ATTR_REQ_RANGE , attrid_list, &response_list ) ;
+printf("status %d\n",status);
+
+if( status == 0 )
+{
+    sdp_list_t *proto_list = NULL ;
+    sdp_list_t *r = response_list ;
+    // go through each of the service records
+    for ( ; r ; r = r->next )
+    {
+        sdp_record_t *rec = (sdp_record_t * ) r->data ;
+        // get a list of the protocol sequences
+        if( sdp_get_access_protos( rec, &proto_list ) == 0 ) 
+        {
+            // get the RFCOMM port number
+            port = sdp_get_proto_port( proto_list , RFCOMM_UUID ) ;
+            sdp_list_free( proto_list, 0 );
+        }
+        sdp_record_free( rec ) ;
+    }
+}
+
+sdp_list_free( response_list, 0 );
+sdp_list_free( search_list, 0 );
+sdp_list_free( attrid_list, 0 );
+sdp_close( session ) ;
+if( port != 0 )
+{
+    printf( "found service running on RFCOMM port %d\n" , port ) ;
+}
+return 0;
+
+/**
+ * This thread runs while listening for incoming connections. It behaves
+ * like a server-side client. It runs until a connection is accepted
+ * (or until canceled).
+ */
+private class AcceptThread extends Thread {
+    // The local server socket
+    private final BluetoothServerSocket mmServerSocket;
+
+    public AcceptThread() {
+        BluetoothServerSocket tmp = null;
+
+        // Create a new listening server socket
+        try {
+            tmp = mAdapter.listenUsingRfcommWithServiceRecord(NAME, MY_UUID);
+        } catch (IOException e) {
+            Log.e(TAG, "listen() failed", e);
+        }
+        mmServerSocket = tmp;
+    }
+
+    public void run() {
+        if (D) Log.d(TAG, "BEGIN mAcceptThread" + this);
+        setName("AcceptThread");
+        BluetoothSocket socket = null;
+
+        // Listen to the server socket if we're not connected
+        while (mState != STATE_CONNECTED) {
+            try {
+                // This is a blocking call and will only return on a
+                // successful connection or an exception
+                if(D) Log.i("prism", "Waiting to connect************");
+                socket = mmServerSocket.accept();
+                if(D) Log.i("prism", "We have accepted connection and are connected***************");
+            } catch (IOException e) {
+                Log.e(TAG, "accept() failed", e);
+                break;
+            }
+
+            // If a connection was accepted
+            if (socket != null) {
+                synchronized (BluetoothServer.this) {
+                    switch (mState) {
+                    case STATE_LISTEN:
+                    case STATE_CONNECTING:
+                        // Situation normal. Start the connected thread.
+                        connected(socket, socket.getRemoteDevice());
+                        break;
+                    case STATE_NONE:
+                    case STATE_CONNECTED:
+                        // Either not ready or already connected. Terminate new socket.
+                        try {
+                            if (D) Log.i("prism", "Bluetooth already connected, abandoning request from " + socket.getRemoteDevice().getName());
+                            socket.close();
+                        } catch (IOException e) {
+                            Log.e(TAG, "Could not close unwanted socket", e);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if (D) Log.i(TAG, "END mAcceptThread");
+    }
+
+    public void cancel() {
+        if (D) Log.d(TAG, "cancel " + this);
+        try {
+            mmServerSocket.close();
+        } catch (IOException e) {
+            Log.e(TAG, "close() of server failed", e);
+        }
+    }
+}
+
+/**
+ * This thread runs while attempting to make an outgoing connection
+ * with a device. It runs straight through; the connection either
+ * succeeds or fails.
+ */
+private class ConnectThread extends Thread {
+    private final BluetoothSocket mmSocket;
+    private final BluetoothDevice mmDevice;
+
+    public ConnectThread(BluetoothDevice device) {
+        mmDevice = device;
+        BluetoothSocket tmp = null;
+
+        // Get a BluetoothSocket for a connection with the
+        // given BluetoothDevice
+        try {
+            tmp = device.createRfcommSocketToServiceRecord(MY_UUID);
+        } catch (IOException e) {
+            Log.e(TAG, "create() failed", e);
+        }
+        mmSocket = tmp;
+    }
+
+    public void run() {
+        Log.i(TAG, "BEGIN mConnectThread");
+        setName("ConnectThread");
+
+        // Always cancel discovery because it will slow down a connection
+        mAdapter.cancelDiscovery();
+
+        // Make a connection to the BluetoothSocket
+        try {
+            // This is a blocking call and will only return on a
+            // successful connection or an exception
+            Log.i(TAG, "mmSocket.connect() is initiaiting in the ConnectThread");
+            mmSocket.connect();
+            Log.i(TAG, "mmSocket.connect() complete...");
+        } catch (IOException e) {
+            Log.e(TAG, "Connection attempt failed, closing the socket");
+            connectionFailed();
+            // Close the socket
+            try {
+                mmSocket.close();
+            } catch (IOException e2) {
+                Log.e(TAG, "unable to close() socket during connection failure", e2);
+            }
+            // Start the service over to restart listening mode
+            BluetoothServer.this.start();
+            return;
+        }
+
+        // Reset the ConnectThread because we're done
+        synchronized (BluetoothServer.this) {
+            mConnectThread = null;
+        }
+
+        // Start the connected thread
+        connected(mmSocket, mmDevice);
+    }
+
+    public void cancel() {
+        try {
+            mmSocket.close();
+        } catch (IOException e) {
+            Log.e(TAG, "close() of connect socket failed", e);
+        }
+    }
+}
+
+/**
+ * This thread runs during a connection with a remote device.
+ * It handles all incoming and outgoing transmissions.
+ */
+private class ConnectedThread extends Thread {
+    private final BluetoothSocket mmSocket;
+    private final InputStream mmInStream;
+    private final OutputStream mmOutStream;
+
+    public ConnectedThread(BluetoothSocket socket) {
+        Log.d(TAG, "create ConnectedThread");
+        mmSocket = socket;
+        InputStream tmpIn = null;
+        OutputStream tmpOut = null;
+
+        // Get the BluetoothSocket input and output streams
+        try {
+            tmpIn = socket.getInputStream();
+            tmpOut = socket.getOutputStream();
+        } catch (IOException e) {
+            Log.e(TAG, "temp sockets not created", e);
+        }
+
+        mmInStream = tmpIn;
+        mmOutStream = tmpOut;
+    }
+
+    public void run() {
+        Log.i(TAG, "BEGIN mConnectedThread");
+        byte[] buffer = new byte[1024];
+        int bytes;
+
+        // Keep listening to the InputStream while connected
+        while (true) {
+            try {
+                // Read from the InputStream
+                bytes = mmInStream.read(buffer);
+
+                // Send the obtained bytes to the UI Activity
+                mHandler.obtainMessage(Bluetooth.MESSAGE_READ, bytes, -1, buffer)
+                        .sendToTarget();
+            } catch (IOException e) {
+                Log.e(TAG, "disconnected", e);
+                connectionLost();
+                break;
+            }
+        }
+    }
+

@@ -1,0 +1,31 @@
+  def directUpload(projectId: String) = Secured(parse.multipartFormData(myFilePartHandler)) { implicit request =>
+    Ok("Done");
+  }
+
+
+def myFilePartHandler: BodyParsers.parse.Multipart.PartHandler[MultipartFormData.FilePart[Result]] = {
+    parse.Multipart.handleFilePart {
+      case parse.Multipart.FileInfo(partName, filename, contentType) =>
+        println("Handling Streaming Upload:" + filename + "/" + partName + ", " + contentType);
+
+        //Set up the PipedOutputStream here, give the input stream to a worker thread
+        val pos: PipedOutputStream = new PipedOutputStream();
+        val pis: PipedInputStream = new PipedInputStream(pos);
+        val worker: UploadFileWorker = new UploadFileWorker(pis,contentType.get);
+        worker.start();
+
+        //Read content to the POS
+        play.api.libs.iteratee.Iteratee.fold[Array[Byte], PipedOutputStream](pos) { (os, data) =>
+          os.write(data)
+          os
+        }.mapDone { os =>
+          os.close()
+          worker.join()
+          if( worker.success )
+            Ok("uplaod done. Size: " + worker.size )
+          else
+            Status(503)("Upload Failed");
+        }
+    }
+  }
+

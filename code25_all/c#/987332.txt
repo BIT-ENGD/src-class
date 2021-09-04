@@ -1,0 +1,56 @@
+using System;
+using System.Reflection;
+using System.Security;
+using System.Security.Permissions;
+using Xunit;
+
+namespace PartialTrustTest
+{
+    [Serializable]
+    public class ClassUnderTest : MarshalByRefObject
+    {
+        public void PartialTrustSuccess()
+        {
+            Console.WriteLine( "partial trust success #1" );
+        }
+
+        public void PartialTrustFailure()
+        {
+            FieldInfo fi = typeof (Int32).GetField( "m_value", BindingFlags.Instance | BindingFlags.NonPublic );
+            object value = fi.GetValue( 1 );
+            Console.WriteLine( "value: {0}", value );
+        }
+    }
+
+    public class Test
+    {
+        [Fact]
+        public void MediumTrustWithExternalClass()
+        {
+            // ClassUnderTest must extend MarshalByRefObject
+            var classUnderTest = MediumTrustContext.Create<ClassUnderTest>();
+
+            classUnderTest.PartialTrustSuccess();
+            Assert.Throws<FieldAccessException>( classUnderTest.PartialTrustFailure );
+        }
+    }
+
+    internal static class MediumTrustContext
+    {
+        public static T Create<T>()
+        {
+            AppDomain appDomain = CreatePartialTrustDomain();
+            var t = (T) appDomain.CreateInstanceAndUnwrap( typeof (T).Assembly.FullName, typeof (T).FullName );
+            return t;
+        }
+
+        public static AppDomain CreatePartialTrustDomain()
+        {
+            var setup = new AppDomainSetup {ApplicationBase = AppDomain.CurrentDomain.BaseDirectory};
+            var permissions = new PermissionSet( null );
+            permissions.AddPermission( new SecurityPermission( SecurityPermissionFlag.Execution ) );
+            permissions.AddPermission( new ReflectionPermission( ReflectionPermissionFlag.RestrictedMemberAccess ) );
+            return AppDomain.CreateDomain( "Partial Trust AppDomain: " + DateTime.Now.Ticks, null, setup, permissions );
+        }
+    }
+}

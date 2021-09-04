@@ -1,0 +1,101 @@
+use WWW::Mechanize;
+use 5.10.0;
+use strict;
+use warnings;
+
+my $mech = new WWW::Mechanize;
+my $option = $ARGV[$#ARGV];
+
+# we may customize the google search by editing this url (always end it with "q=" though)
+my $google = 'http://www.google.co.uk/search?q=';
+my @dork = ("inurl:", "restaurant", "paris","menu");
+
+#declare necessary variables
+my $max = 0;
+my $link;
+my $sc = scalar(@dork);
+
+#start the main loop, one itineration for every google search
+for my $i ( 0 .. $sc ) {
+
+    #loop until the maximum number of results chosen isn't reached
+    while ( $max <= $option ) {
+        $mech->get( $google . $dork[$i] . "&start=" . $max );
+
+        #get all the google results
+        foreach $link ( $mech->links() ) {
+            my $google_url = $link->url;
+            if ( $google_url !~ /^\// && $google_url !~ /google/ ) {
+                say $google_url;
+            }
+        }
+        $max += 10;
+    }
+}
+
+#call the mechanize object, with autocheck switched off
+#so we don't get error when bad/malformed url is requested
+my $mech = WWW::Mechanize->new(
+   autocheck => 0
+);
+my %comments;
+my %links;
+my @comment;
+
+my $target = "http://google.com";
+
+#store the first target url as not checked
+$links{$target} = 0;
+
+#initiate the search
+my $url = &get_url();
+
+#start the main loop
+while ( $url ne "" ) {
+
+    #get the target url
+    $mech->get($url);
+
+    #search the source for any html comments
+    my $res = $mech->content;
+    @comment = $res =~ /<!--[^>]*-->/g;
+
+    #store comments in 'comments' hash and output it on the screen, if there are any found
+    $comments{$url} = "@comment" and say "\n$url \n---------------->\n $comments{$url}" if $#comment >= 0;
+
+    #loop through all the links that are on the current page (including only urls that are contained in html anchor)
+
+    foreach my $link ( $mech->links() ) {
+        $link = $link->url();
+
+        #exclude some irrelevant stuff, such as javascript functions, or external links
+        #you might want to add checking domain name, to ensure relevant links aren't excluded
+
+        if ( $link !~ /^(#|mailto:|(f|ht)tp(s)?\:|www\.|javascript:)/ ) {
+
+            #check whether the link has leading slash so we can build properly the whole url
+            $link = $link =~ /^\// ? $target . $link : $target . "/" . $link;
+
+            #store it into our hash of links to be searched, unless it's already present
+            $links{$link} = 0 unless $links{$link};
+        }
+    }
+
+    #indicate we have searched this url and start over
+    $links{$url} = 1;
+    $url = &get_url();
+}
+
+sub get_url {
+    my $key, my $value;
+
+    #loop through the links hash and return next target url, unless it's already been searched
+    #if all urls have been searched return empty, ending the main loop
+
+    while ( ( $key, $value ) = each(%links) ) {
+        return $key if $value == 0;
+    }
+
+    return "";
+}
+

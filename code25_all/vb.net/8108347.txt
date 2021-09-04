@@ -1,0 +1,156 @@
+Imports System.Net.Sockets
+Imports System.Text
+
+' The UserConnection class encapsulates the functionality of a TcpClient connection
+' with streaming for a single user.
+Public Class UserConnection
+
+Private client As TcpClient
+Private readBuffer(READ_BUFFER_SIZE) As Byte
+
+Public UID As String = ""
+Public isAdmin As Boolean
+Public IpAddress As String
+Public username As String = ""
+Public Country As String = ""
+Public ServerID As String = ""
+Public Status As String = ""
+Public UserComp As String = ""
+Public OS As String = ""
+
+Public SessionKey As String = ""
+Public UsePublicKeyEncryption As Boolean = True
+
+Public Version As Decimal = 0.0
+
+Const READ_BUFFER_SIZE As Integer = 500
+
+Private _commands As New System.Text.StringBuilder
+Private command_count As Integer = 1
+
+' Overload the New operator to set up a read thread.
+Public Sub New(ByVal client As TcpClient) 'this runs every time a new client is added
+    Me.client = client
+    IpAddress = Me.client.Client.RemoteEndPoint.ToString.Substring(0, Me.client.Client.RemoteEndPoint.ToString.LastIndexOf(":")) 'ip address of client
+    ' This starts the asynchronous read thread.  The data will be saved into
+    ' readBuffer.
+    Call Worker()
+End Sub
+
+Public Sub ForceKill()
+    On Error Resume Next
+    client.GetStream.Close()
+    client.Close()
+    client = Nothing
+End Sub
+
+Private Sub Worker()
+    Try
+        SyncLock client
+            Dim tmp_byte(client.ReceiveBufferSize) As Byte
+            Me.client.GetStream.BeginRead(tmp_byte, 0, client.ReceiveBufferSize, AddressOf RecieveDataAndSplit, Nothing)
+            readBuffer = tmp_byte
+        End SyncLock
+
+    Catch
+        Call myForm.OnLineReceived(Me, "D") 'this also calls ForceKill()
+    End Try
+End Sub
+
+
+Public Event LineReceived(ByVal sender As UserConnection, ByVal Data As String)
+
+' This subroutine uses a StreamWriter to send a message to the user.
+Public Sub SendData(ByVal Data As String)
+    ' Synclock ensure that no other threads try to use the stream at the same time.
+    SyncLock client
+        Dim writer As New IO.StreamWriter(client.GetStream)
+        writer.Write(ToBase64(AES_Encrypt(Data, SessionKey)) & "-")
+        ' Make sure all data is sent now.
+        writer.Flush()
+    End SyncLock
+End Sub
+
+
+
+Public Sub RecieveDataAndSplit(ByVal ar As IAsyncResult) 'this is the FIRST function that incoming data is ran through
+    Dim BytesRead As Integer
+    Dim Content As String
+
+    Try
+        ' Ensure that no other threads try to use the stream at the same time.
+        SyncLock client
+            ' Finish asynchronous read into readBuffer and get number of bytes read.
+            BytesRead = client.GetStream.EndRead(ar)
+        End SyncLock
+    Catch e As Exception
+        Call myForm.OnLineReceived(Me, "D") 'couldn't read the stream from the client. Kill our connection with them :P
+        Exit Sub
+    End Try
+
+
+
+    Try
+        Content = Encoding.ASCII.GetString(readBuffer, 0, BytesRead)
+    Catch ex As Exception
+        Call Worker()
+        Exit Sub
+    End Try
+
+
+    Dim commands() As String
+    Try
+        commands = LineTrim(Content).Split("-")
+    Catch
+    End Try
+
+
+    Dim i As Integer = 0
+
+    For i = 0 To commands.Length - 1
+
+        If commands(i) <> "" Then
+
+            Dim decrypted_content As String = AES_Decrypt(FromBase64(commands(i)), SessionKey)
+            If decrypted_content <> "" Then
+
+                'If decrypted_content = "D" Or Nothing Then
+                '    client.GetStream.Close()
+                '    client.Close()
+                '    Call myForm.OnLineReceived(Me, decrypted_content)
+                'Else
+
+                Call myForm.OnLineReceived(Me, decrypted_content)
+                Call Worker() 'reads the stream again
+                'End If
+            End If
+        End If
+    Next
+
+End Sub
+End Class
+
+Public Sub SendData(ByVal data As String)
+    Try
+        If data = "D" Then 'telling server that we're closing
+            ForceDisconnect(False)
+        Else 'any other message
+            Dim sendBytes As [Byte]()
+
+            sendBytes = Encoding.ASCII.GetBytes(ToBase64(AES_Encrypt(data, SessionKey)) & "-")
+
+            Dim networkStream As NetworkStream = tcp_client.GetStream()
+            networkStream.Write(sendBytes, 0, sendBytes.Length)
+            networkStream.Flush()
+        End If
+    Catch ex As Exception
+        connection_state_toggle(False)
+
+        Label1.ForeColor = Color.Black
+        Label1.Text = "Idle"
+    End Try
+
+
+
+End Sub
+

@@ -1,0 +1,42 @@
+if (::CreateProcess(lpAppName, szCmdLineBuffer, NULL, NULL, TRUE, 0, NULL, NULL,
+                    &StartupInfo, &ProcessInfo))
+{
+  ::GetExitCodeProcess(ProcessInfo.hProcess, &dwExitCode);
+  if (bWait)
+    while (dwExitCode == STILL_ACTIVE)
+    {
+      // In order to allow updates of the GUI to happen while we're waiting for
+      // the application to finish, we must run a mini message pump here to
+      // allow messages to go through and get processed.  This message pump
+      // performs much like MFC's main message pump found in CWinThread::Run().
+      MSG msg;
+      while (::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE))
+      {
+        if (!PumpMessage())
+        {
+          // a termination message (e.g. WM_DESTROY)
+          // was processed, so we need to stop waiting
+          dwExitCode = ERROR_CANT_WAIT;
+          ::PostQuitMessage(0);
+          break;
+        }
+      }
+
+      // let MFC do its idle processing
+      LONG nIdle = 0;
+      while (OnIdle(nIdle++))
+        ;
+
+      if (dwExitCode == STILL_ACTIVE) // was a termination message processed?
+      {
+        // no; wait for .1 second to see if the application is finished
+        ::WaitForSingleObject(ProcessInfo.hProcess, 100);
+        ::GetExitCodeProcess(ProcessInfo.hProcess, &dwExitCode);
+      }
+    }
+  ::CloseHandle(ProcessInfo.hProcess);
+  ::CloseHandle(ProcessInfo.hThread);
+}
+else
+  dwExitCode = ::GetLastError();
+

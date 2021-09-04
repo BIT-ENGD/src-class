@@ -1,0 +1,169 @@
+public:
+_CRTIMP2_PURE static size_t __CLRCALL_OR_CDECL _Getcat(const facet ** = 0,
+    const locale * = 0)
+{   // get category value, or -1 if no corresponding C category
+    return ((size_t)(-1));
+}
+
+_CRTIMP2_PURE void __CLR_OR_THIS_CALL _Incref()
+{   // safely increment the reference count
+    _BEGIN_LOCK(_LOCK_LOCALE)
+        if (_Refs < (size_t)(-1))
+            ++_Refs;      <-computer points to this line
+    _END_LOCK()
+}
+
+_CRTIMP2_PURE facet *__CLR_OR_THIS_CALL _Decref()
+{   // safely decrement the reference count, return this when dead
+    _BEGIN_LOCK(_LOCK_LOCALE)
+    if (0 < _Refs && _Refs < (size_t)(-1))
+        --_Refs;
+    return (_Refs == 0 ? this : 0);
+    _END_LOCK()
+}
+
+stringstream index;
+string fileName = "";
+index.str("");//
+
+index << setw( 3 ) << setfill( '0' ) << stage - 1;
+
+fileName = "positive Z topography-" + index.str() + ".txt";
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <iomanip>
+
+using namespace std;
+
+int main ()
+{
+    int dim = 100;
+    int steps = 9;  //step 0 = 1, steps = actual steps + 1
+    int spread = 5; //number of points averaged to get a slope, must be an odd number
+    int halfSpread = (spread - 1)/2; //redefine for eazier use in program (better efficency)
+
+    char * partMap = new char [dim * dim * dim]; // cad data
+
+    // positive and negitive denote the x direction the check is moving in. Positive is  0 -> x, negitive is x -> 0.
+    unsigned short int * positiveProjection = new unsigned short int [dim * dim]; //projection arrays
+    unsigned short int * negitiveProjection = new unsigned short int [dim * dim];
+
+    unsigned short int * negitiveThickness = new unsigned short int [dim * dim];
+
+    double * negitiveXGradient = new double [dim * dim];
+    double * negitiveYGradient = new double [dim * dim];
+
+    stringstream index;
+    string fileName;
+
+    ifstream txtFile;
+    txtFile.open("3D CAD Part.txt");
+    txtFile.read(partMap, dim * dim * dim);
+    txtFile.close();
+
+
+    for (int stage = 1; stage < steps; stage++)
+    {
+
+        cout << "stage " << stage << endl;
+
+        //z axis projections
+        //projection order is along x then along y, during each step, along z in both directions
+
+        int k = 0; // z axis loop variable
+
+        for (int j = 0; j < dim; j++)
+        {
+            for (int i = 0; i < dim; i++)
+            {
+                k = 0;
+
+                while ((k != dim) && partMap[dim * ((dim - 1 - k) + dim * i) + j] < stage) 
+                    k++;
+                positiveProjection[dim * k + j] = k;
+
+                k = dim;
+
+                while ((k != 0) && partMap[dim * ((dim - 1 - (k - 1)) + dim * i) + j] < stage) 
+                    k--;
+                negitiveProjection[dim * k + j] = i;
+
+                while ((k != 0) && partMap[dim * ((dim - 1 - (k - 1)) + dim * i) + j] >= stage) 
+                    k--;
+                negitiveThickness[dim * k + j] = negitiveProjection[dim * k + j] - k;
+            }
+        }
+
+        // negitive dz/dx gradient
+        for (int j = 0; j < dim; j++)
+        {
+
+            //first loop to handle the first edge gradients
+            for (int i = 0; i < halfSpread; i++)
+                negitiveXGradient[(j * dim) + i] = (double(negitiveProjection[(j * dim) + halfSpread + i]) - double(negitiveProjection[j * dim]))/(halfSpread + i); // untested
+
+            //second loop to handle the main middle section
+            for (int i = halfSpread; i < dim - halfSpread; i++)
+                negitiveXGradient[(j * dim) + i] = (double(negitiveProjection[(j * dim) + i + halfSpread]) - double(negitiveProjection[(j * dim) + i - halfSpread]))/ (spread - 1); // untested
+
+            //third loop to handle the end edge gradients
+            for (int i = dim - halfSpread; i < dim; i++)
+                negitiveXGradient[(j * dim) + i] = (double(negitiveProjection[(j * dim) + dim - 1]) - double(negitiveProjection[j * dim + i - halfSpread]))/((dim - 1) - i + halfSpread); // untested
+        }
+
+        // negitive dz/dy gradient
+        for (int i = 0; i < dim; i++)
+        {
+            //first loop to handle the first edge gradients
+            for (int j = 0; j < halfSpread; j++)
+                negitiveYGradient[(j * dim) + i] = (double(negitiveProjection[((j + halfSpread) * dim) + i]) - double(negitiveProjection[i]))/(halfSpread + j); // untested
+
+            //second loop to handle the main middle section
+            for (int j = halfSpread; j < dim - halfSpread; j++)
+                negitiveYGradient[(j * dim) + i] = (double(negitiveProjection[((j + halfSpread) * dim) + i]) - double(negitiveProjection[((j - halfSpread) * dim) + i]))/ (spread - 1); // untested
+
+            //third loop to handle the end edge gradients
+            for (int j = dim - halfSpread; j < dim; j++)
+                negitiveYGradient[(j * dim) + i] = (double(negitiveProjection[(dim * (dim - 1)) + i]) - double(negitiveProjection[((j - halfSpread) * dim) + i]))/((dim - 1) - j + halfSpread); // untested
+        }
+
+        fileName = ""; // reset string and stringstream
+        index.str("");//
+
+        index << setw( 3 ) << setfill( '0' ) << stage - 1; // set index, index is -1 of stage due to the program structure
+
+        fileName = "positive Z topography-" + index.str() + ".txt";
+
+        ofstream outputFile1(fileName.c_str(), std::ios::binary | std::ios::out);
+        outputFile1.write(reinterpret_cast<const char*>(positiveProjection), streamsize(dim * dim * sizeof(unsigned short int)));
+        outputFile1.close();
+
+        fileName = "negitive Z topography-" + index.str() + ".txt";
+
+        ofstream outputFile2(fileName.c_str(), std::ios::binary | std::ios::out);
+        outputFile2.write(reinterpret_cast<const char*>(negitiveProjection), streamsize(dim * dim * sizeof(unsigned short int)));
+        outputFile2.close();
+
+        fileName = "negitive Z thickness-" + index.str() + ".txt";
+
+        ofstream outputFile4(fileName.c_str(), std::ios::binary | std::ios::out);
+        outputFile4.write(reinterpret_cast<const char*>(negitiveThickness), streamsize(dim * dim * sizeof(unsigned short int)));    
+        outputFile4.close();
+
+        fileName = "negitive Z X gradient-" + index.str() + ".txt";
+
+        ofstream outputFile5(fileName.c_str(), std::ios::binary | std::ios::out);
+        outputFile5.write(reinterpret_cast<const char*>(negitiveXGradient), streamsize(dim * dim * sizeof(double)));
+        outputFile5.close();
+
+        fileName = "negitive Z Y gradient-" + index.str() + ".txt";
+
+        ofstream outputFile6(fileName.c_str(), std::ios::binary | std::ios::out);
+        outputFile6.write(reinterpret_cast<const char*>(negitiveYGradient), streamsize(dim * dim * sizeof(double)));
+        outputFile6.close();
+    }
+}
+

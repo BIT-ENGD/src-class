@@ -1,0 +1,85 @@
+#include <exception>
+#include <new>
+#include <cstdlib>
+#include <cstdio>
+#include "base.hpp"
+void* operator new(size_t size) {
+    std::printf("New of library called\n");
+    void *p=std::malloc(size); 
+    if (p == 0) // did malloc succeed?
+        throw std::bad_alloc(); // ANSI/ISO compliant behavior
+    return p;
+}
+void operator delete(void* p) {
+    std::printf("Delete of library called\n");
+    std::free(p);
+}
+class Derived : public Base {
+public:
+    Derived() : Base(10) { }
+};
+extern "C" {
+    Base* create() {
+        return new Derived;
+    }
+    void destroy(Base* p) {
+        delete p;
+    }
+}
+
+g++ -g -Wall -fPIC -shared library.cpp -o library.so
+
+g++ -g -Wall -fPIC -shared -Wl,-Bsymbolic library.cpp -o library.so
+
+#include <exception>
+#include <new>
+#include <iostream>
+#include <cstdlib>
+#include <cstdio>
+#include <dlfcn.h>
+#include "base.hpp"
+void* operator new(size_t size) {
+    std::printf("New of client called\n");
+    void *p=std::malloc(size); 
+    if (p == 0) // did malloc succeed?
+        throw std::bad_alloc(); // ANSI/ISO compliant behavior
+    return p;
+}
+void operator delete(void* p) {
+    std::printf("Delete of client called\n");
+    std::free(p);
+}
+typedef Base* create_module_t();
+typedef void destroy_module_t(Base *);
+
+int main() {
+    void* handle = dlopen("./library.so", 
+        RTLD_LAZY);
+    if (handle == NULL) {
+        std::cout << dlerror() << std::endl;
+        return 1;
+    }
+    create_module_t* create_module = NULL;
+    void* func = dlsym(handle, "create");
+    if (func == NULL) {
+        std::cout << dlerror() << std::endl;
+        return 1;
+    } else create_module = (create_module_t *)func;
+    destroy_module_t* destroy_module = NULL;
+    func = dlsym(handle, "destroy");
+    if (func == NULL) {
+        std::cout << dlerror() << std::endl;
+        return 1;
+    } else destroy_module = (destroy_module_t *)func;
+    Base* a = create_module();
+    std::cout << "Value: " << a->get_value() << std::endl;
+    destroy_module(a);
+    return 0;
+}
+
+g++ -Wall -g -o client -ldl client.cpp
+
+g++ -Wall -g -fPIC -shared library.cpp -o library.so -Wl,-Bsymbolic
+
+g++ -Wall -g -fPIC -shared library.cpp -o library.so
+

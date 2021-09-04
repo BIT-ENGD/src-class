@@ -1,0 +1,159 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/time.h> 
+#include "readline.h"
+
+// Reference: http://www.gnu.org/s/libc/manual/html_node/Waiting-for-I_002fO.html
+int input_timeout (int filedes, unsigned int seconds)
+{
+    fd_set set;
+    struct timeval timeout;
+
+    /* Initialize the file descriptor set. */
+    FD_ZERO (&set);
+    FD_SET (filedes, &set);
+
+    /* Initialize the timeout data structure. */
+    timeout.tv_sec = seconds;
+    timeout.tv_usec = 0;
+
+    /* select returns 0 if timeout, 1 if input available, -1 if error. */
+    return (select (FD_SETSIZE,&set, NULL, NULL, &timeout));
+}
+
+/* Fetches the number of commands in parameters. Number of Commas + 1 */
+int getNbCmd(char ** argv)
+{
+    int nbCmd = 1;
+    int i;    
+    while(argv[i] != '\0')
+    {        
+        if(strcmp(argv[i], ",") == 0)
+            nbCmd++;
+        i++;
+    }
+
+    return nbCmd;
+}
+
+
+/* Fills the Command Array */
+void getCommandes(char *** tbCmd, int argc, char ** argv)
+{    
+    int indexArgv = 1;
+    int indexCmd = 0;
+    int indexTbCmd = 0;        
+
+    char ** cmd = (char **)malloc(argc*sizeof(char *));
+
+    if(strcmp(argv[indexArgv], "--tick") == 0)
+        indexArgv = 3;
+
+    while (indexArgv < argc)
+    {
+
+        if(strcmp(argv[indexArgv], ",") == 0)
+        {    
+            cmd[indexCmd] = (char *) 0;
+            tbCmd[indexTbCmd] = cmd;
+            free(cmd);
+            cmd = (char **)malloc(argc*sizeof(char *));
+
+            indexTbCmd++;
+            indexCmd = 0;
+        }
+        else
+        {
+            char * arg;
+            arg = argv[indexArgv];
+            cmd[indexCmd] = arg;        
+
+            indexCmd++;
+        }
+        indexArgv++;
+    }
+
+    cmd[indexCmd] = (char *) 0;
+    tbCmd[indexTbCmd] = cmd;
+    free(cmd);        
+}
+
+
+int main (int argc, char ** argv)
+{
+    int nbCmds = getNbCmd(argv);    
+    int tick = -1;    
+
+    char *** tbCmd = (char ***) malloc (nbCmds*sizeof(char **));
+
+    if(strcmp(argv[1], "--tick") == 0)
+        tick = atoi(argv[2]);
+
+    getCommandes(tbCmd, argc, argv);
+
+    int i;
+
+    pid_t pidM[nbCmds];    
+    int p[nbCmds][2];
+
+    for (i = 0;i < nbCmds;i++)
+    {            
+        if ( pipe( p[i] ) != 0 ){ perror( "pipe()" ); exit(1); }
+
+        // fork() to get child process        
+        pidM[i] = fork();    
+
+        if ( pidM[i] < 0 ){ perror( "fork()" ); exit(1); }
+        else if (pidM[i] == 0)
+        {
+            close(p[i][0]);
+            dup2(p[i][1], STDOUT_FILENO);    
+
+            int ret;
+            ret = execvp(tbCmd[i][0], tbCmd[i]);            
+        }
+        else
+        {
+            close(p[i][1]);
+
+            char * buffer;
+            int retval = 1;
+            int pntAfficher = 0;  //Boolean for Period Printing
+            /* select returns 0 if timeout, 1 if input available, -1 if error. */
+            if(tick >= 0)
+                retval = input_timeout(p[i][0], tick);
+            if (retval == 0 && pntAfficher == 0)
+            {
+                printf(".\n");
+                pntAfficher = 1;
+            }
+
+            buffer = readline(p[i][0]);
+            while(buffer[0] != '\0')
+            {                
+                printf("%d: %s",i, buffer);
+                free(buffer);
+
+                /* select returns 0 if timeout, 1 if input available, -1 if error. */
+                if(tick >= 0)
+                    retval = input_timeout(p[i][0], tick);
+                if (retval == 0 && pntAfficher == 0)
+                {
+                    printf(".\n");
+                    pntAfficher = 1;
+                }
+                buffer = readline(p[i][0]);
+                pntAfficher = 0;
+
+            free(buffer);
+            }
+        }
+    }
+free(tbCmd);
+
+}
+

@@ -1,0 +1,99 @@
+X509Certificate2 ^ certificate = gcnew X509Certificate2("C:\\rootcert.pfx","test123");
+X509Store ^ store = gcnew X509Store( "teststore",StoreLocation::CurrentUser );
+store->Open( OpenFlags::ReadWrite );
+store->Add( certificate );
+store->Close();
+
+GetRootCertKeyInfo(){
+  HCERTSTORE hCertStore;
+  PCCERT_CONTEXT pSignerCertContext=NULL;
+  DWORD dwSize = NULL; 
+  CRYPT_KEY_PROV_INFO* pKeyInfo = NULL; 
+  DWORD dwKeySpec;
+  if ( !( hCertStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, NULL,  CERT_SYSTEM_STORE_CURRENT_USER,L"teststore")))
+  {
+    _tprintf(_T("Error 0x%x\n"), GetLastError());
+  }
+  pSignerCertContext = CertFindCertificateInStore(hCertStore,MY_ENCODING_TYPE,0,CERT_FIND_ANY,NULL,NULL);
+
+if(NULL == pSignerCertContext)
+{
+    _tprintf(_T("Error 0x%x\n"), GetLastError());
+}
+
+if(!(CertGetCertificateContextProperty( pSignerCertContext, CERT_KEY_PROV_INFO_PROP_ID, NULL, &dwSize))) 
+{ 
+    _tprintf(_T("Error 0x%x\n"), GetLastError());
+} 
+
+if(pKeyInfo) 
+   free(pKeyInfo); 
+if(!(pKeyInfo = (CRYPT_KEY_PROV_INFO*)malloc(dwSize))) 
+{ 
+    _tprintf(_T("Error 0x%x\n"), GetLastError());
+} 
+
+
+if(!(CertGetCertificateContextProperty( pSignerCertContext, CERT_KEY_PROV_INFO_PROP_ID, pKeyInfo, &dwSize))) 
+{    
+    _tprintf(_T("Error 0x%x\n"), GetLastError());
+}
+return pKeyInfo;
+}
+
+    // Acquire key container
+if (!CryptAcquireContext(&hCryptProv, _T("trykeycon"), NULL, PROV_RSA_FULL, CRYPT_MACHINE_KEYSET)) 
+{
+  _tprintf(_T("Error 0x%x\n"), GetLastError());
+
+  // Try to create a new key container
+  _tprintf(_T("CryptAcquireContext... "));
+  if (!CryptAcquireContext(&hCryptProv, _T("trykeycon"), NULL, PROV_RSA_FULL, CRYPT_NEWKEYSET | CRYPT_MACHINE_KEYSET))
+  {
+    _tprintf(_T("Error 0x%x\n"), GetLastError());
+    return 0;
+  }
+  else 
+  {
+    _tprintf(_T("Success\n"));
+  }
+}
+else
+{
+  _tprintf(_T("Success\n"));
+}
+
+// Generate new key pair
+_tprintf(_T("CryptGenKey... "));
+if (!CryptGenKey(hCryptProv, AT_SIGNATURE, 0x08000000 /*RSA-2048-BIT_KEY*/, &hKey))
+{
+  _tprintf(_T("Error 0x%x\n"), GetLastError());
+  return 0;
+}
+else
+{
+  _tprintf(_T("Success\n"));
+}
+//some code
+    CERT_NAME_BLOB SubjectIssuerBlob;
+memset(&SubjectIssuerBlob, 0, sizeof(SubjectIssuerBlob));
+SubjectIssuerBlob.cbData = cbEncoded;
+SubjectIssuerBlob.pbData = pbEncoded;
+
+// Prepare algorithm structure for self-signed certificate
+CRYPT_ALGORITHM_IDENTIFIER SignatureAlgorithm;
+memset(&SignatureAlgorithm, 0, sizeof(SignatureAlgorithm));
+SignatureAlgorithm.pszObjId = szOID_RSA_SHA1RSA;
+
+// Prepare Expiration date for self-signed certificate
+SYSTEMTIME EndTime;
+GetSystemTime(&EndTime);
+EndTime.wYear += 5;
+
+// Create self-signed certificate
+_tprintf(_T("CertCreateSelfSignCertificate... "));
+
+CRYPT_KEY_PROV_INFO* aKeyInfo;
+aKeyInfo = GetRootCertKeyInfo();
+pCertContext = CertCreateSelfSignCertificate(NULL, &SubjectIssuerBlob, 0, aKeyInfo, &SignatureAlgorithm, 0, &EndTime, 0);
+

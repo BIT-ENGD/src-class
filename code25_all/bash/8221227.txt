@@ -1,0 +1,181 @@
+FTP_PUT_RETVAL
+echo
+cron
+BASH
+GNU bash, version 3.2.25(1)-release (x86_64-redhat-linux-gnu)
+FTP_PUT_RETVAL
+    #!/bin/sh
+    #
+    # Filename: rh5-manager-cron.sh
+    #
+    # Purpose: Runs backup.cron, and FTP uploads backup to Linux4
+    #
+    # Usage: the program is run with no arguments. This program is
+    # intended to run from manager cron, and redirection is handled inside the cron
+    #     e.g. 00 1 * * * /u2/app/lbin/rh5-manager-cron.sh > /tmp/log/rh5-manager-cron.log 2>&1
+    trap signalCaught ABRT EXIT HUP INT PIPE TERM QUIT
+    signalCaught () {
+        for file in $FTP_LOG_FILE $TMPF; do
+            $BIN_HOME/rm_file $TMPF
+        done
+        exit
+    }
+
+    if [[ ! -r /u2/conf/ctrl/lettus.sh || ! -r /u2/app/lbin/fsh_sh_lib ]]; then
+        printf "Cannot source environment.\n" >&2
+        exit 1
+    fi
+    . /u2/conf/ctrl/lettus.sh
+    . /u2/app/lbin/fsh_sh_lib
+
+    #-------------------------------------------------------
+    # Variables
+    #-------------------------------------------------------
+    PRG=${0##*/}
+    FTPUSER=dummy
+    FTPPASS=dummy
+    FTPHOST=192.168.0.3
+    BACKUPDIR=/backup
+    FTPBACKUPNAME=Redhat5Backup.tgz
+    FTPBACKUPFILE=$BACKUPDIR/$FTPBACKUPNAME
+    LOGDIR=/tmp/log
+    FTP_LOG_FILE=$LOGDIR/Redhat5FTP.log
+    SENDLOGS=$C/sendlogs.dat
+    ZOOT_XML=$C/zoot.xml
+    TMPF=`mktemp` || exit 1
+
+    #-------------------------------------------------------
+    # Sanity
+    #-------------------------------------------------------
+    if ! isValidUser root manager; then
+        printf "$PRG: Must be run as user 'root' or user 'manager'.\n" >&2
+        exit 1
+    fi
+
+    if [[ ! -d $BACKUPDIR ]]; then
+        logger "$PRG: $BACKUPDIR: Not a valid directory" >&2
+        exit 1
+    fi
+
+    if [[ ! -d $LOGDIR ]]; then
+        logger "$PRG: $LOGDIR: Not a valid directory" >&2
+        exit 1
+    fi
+
+    if [[ ! -r $SENDLOGS || ! -r $ZOOT_XML ]]; then
+        logger "$PRG: E-mail: Files are not readable: $SENDLOGS, $ZOOT_XML" >&2
+        exit 1
+    fi
+
+    if ! which lftp >/dev/null 2>&1; then
+        logger "$PRG: lftp: command not found" >&2
+        exit 1
+    fi
+
+    # e-mail
+    EMAIL_SUBJECT="Redhat5 FTP PUT"
+    EMAIL_TO=$(email_to $SENDLOGS)
+    EMAIL_FROM=$(email_from $ZOOT_XML)
+
+    # ftp binary
+    LFTP_BIN=$(which lftp 2>/dev/null)
+
+    #-------------------------------------------------------
+    # Functions
+    #-------------------------------------------------------
+
+    # calls lftp to upload a file to server non-interactively
+    ftp_put() {
+        $LFTP_BIN $LFTP_DEBUG -u ${FTPUSER},${FTPPASS} $FTPHOST <<-EOF
+    put $FTPBACKUPFILE
+    pwd
+    ls $FTPBACKUPNAME
+    quit
+    EOF
+    #^^^^^^^^^^^ leave the above indentation alone
+    }
+
+    main() {
+        # Backup, and send manager logs
+        logger "Running backup.cron..."
+        echo
+        backup.cron
+        BACKUP_CRON_RETVAL=$?
+
+        logger "Running fsh_sendlogs..."
+        echo
+        $SH_HOME/fsh_sendlogs 1
+
+        # show ls listing
+        logger "Here comes a directory listing..."
+        echo
+        /bin/ls -l /backup/Redhat5Backup.tgz
+        echo
+
+        # ftp upload
+        logger "Running ftp upload..."
+        echo
+        ftp_put
+        FTP_PUT_RETVAL=$?
+        echo " -- debug: Line ${LINENO:-}: FTP_PUT_RETVAL=${FTP_PUT_RETVAL:-}"
+    }
+
+    checkSuccess() {
+        if [[ "$BACKUP_CRON_RETVAL" -eq 0 ]]; then
+            echo "Backup was successful."
+            echo
+            echo "*********************************"
+            echo "   OK: Backup was successful."
+            echo "*********************************"
+            echo
+        else
+            echo "ERROR: Backup FAILED! "
+            echo
+            echo "*********************************"
+            echo "     ERROR: Backup FAILED! "
+            echo "*********************************"
+            echo
+        fi
+
+        echo " -- debug: Line ${LINENO:-}: FTP_PUT_RETVAL=${FTP_PUT_RETVAL:-}"
+        if [ "$FTP_PUT_RETVAL" -eq 0 ]; then
+            echo "lftp: ftp file upload complete."
+            echo
+            echo "*********************************"
+            echo "  OK: ftp file upload complete."
+            echo "*********************************"
+            echo
+        else
+            echo "lftp: error ftp file upload not successful."
+            echo
+            echo "*********************************"
+            echo "      ERROR: file upload"
+            echo "       NOT successful."
+            echo "*********************************"
+            echo
+        fi
+    }
+
+    email_logs() {
+        if [[ -z "$EMAIL_FROM" || -z $EMAIL_TO || -z $EMAIL_SUBJECT || ! -r $FTP_LOG_FILE ]]; then
+            logger "$PRG: One of the variables is not correctly configured" >&2
+            exit 1
+        fi
+        fsh_mail -r "${EMAIL_TO}" -F "${EMAIL_FROM}" -s "${EMAIL_SUBJECT}" -t "${FTP_LOG_FILE}"
+        return
+    }
+
+    #----------------------------------------------------------------------
+    # Main Program
+    #----------------------------------------------------------------------
+    main               | tee $FTP_LOG_FILE
+    checkSuccess       | tee -a $FTP_LOG_FILE $TMPF
+    cat $FTP_LOG_FILE >> $TMPF
+
+    # E-mail ftp log file
+    logger "Emailing ftp logfile"
+    echo
+    email_logs
+
+    #eof
+

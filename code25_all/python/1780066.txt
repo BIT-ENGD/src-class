@@ -1,0 +1,224 @@
+# DCOMMon.py
+
+
+import win32api, win32service, win32serviceutil, win32event, win32evtlogutil, win32traceutil
+import logging, logging.handlers, os, re, sys, thread, time, traceback, pywmi # pywmi == wmi module renamed as suggested in online post
+import _winreg as reg
+
+
+DCOM_DEFAULT_CONFIGURATION      = ["EnableDCOM", "EnableRemoteConnect", "LegacyAuthenticationLevel", "LegacyImpersonationLevel", "DefaultAccessPermission",
+                                   "DefaultLaunchPermission", "MachineAccessRestriction", "MachineLaunchRestriction"]
+
+DCOM_DEFAULT_ACCESS_PERMISSION  = [1, 0, 4, 128, 92, 0, 0, 0, 108, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 2, 0, 72, 0, 3, 0, 0, 0, 0, 0, 24, 0, 7, 0, 0, 0, 1, 2,
+                                   0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0, 0, 0, 20, 0, 7, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 5, 7, 0, 0, 0, 0, 0, 20, 0, 7,
+                                   0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5, 32,
+                                   0, 0, 0, 32, 2, 0, 0]
+
+DCOM_DEFAULT_LAUNCH_PERMISSION  = [1, 0, 4, 128, 132, 0, 0, 0, 148, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 2, 0, 112, 0, 5, 0, 0, 0, 0, 0, 24, 0, 31, 0, 0, 0, 1,
+                                   2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0, 0, 0, 20, 0, 31, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 5, 7, 0, 0, 0, 0, 0, 20, 0,
+                                   31, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 20, 0, 31, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 5, 4, 0, 0, 0, 0, 0, 20, 0,
+                                   31, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5,
+                                   32, 0, 0, 0, 32, 2, 0, 0]
+
+DCOM_MACHINE_ACCESS_RESTRICTION = [1, 0, 4, 128, 68, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 2, 0, 48, 0, 2, 0, 0, 0, 0, 0, 20, 0, 3, 0, 0, 0, 1, 1,
+                                   0, 0, 0, 0, 0, 5, 7, 0, 0, 0, 0, 0, 20, 0, 7, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5, 32, 0,
+                                   0, 0, 32, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0]
+
+DCOM_MACHINE_LAUNCH_RESTRICTION = [1, 0, 4, 128, 72, 0, 0, 0, 88, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 2, 0, 52, 0, 2, 0, 0, 0, 0, 0, 24, 0, 31, 0, 0, 0, 1,
+                                   2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0, 0, 0, 20, 0, 31, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0,
+                                   0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0]
+
+COMPUTER  = os.environ["COMPUTERNAME"]
+REGISTRY  = pywmi.WMI(COMPUTER, namespace="root/default").StdRegProv
+LOGFILE   = os.getcwd() + "\\DCOMMon.log"
+
+
+def Logger(title, filename):
+    logger = logging.getLogger(title)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.handlers.RotatingFileHandler(filename, maxBytes=0, backupCount=0)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
+
+
+def LogIt(filename=LOGFILE):
+    #try:
+    #    if os.path.exists(filename):
+    #        os.remove(filename)
+    #except:
+    #    pass
+    log = Logger("DCOMMon", filename)
+    tb  = str(traceback.format_exc()).split("\n")
+    log.error("")
+    for i, a in enumerate(tb):
+        if a.strip() != "":
+            log.error(a)
+
+class Monitor:
+
+    def RepairDCOM(self):
+        try:
+            repaired = {}
+            dict1    = self.GetDefaultDCOM()
+            dict2    = self.GetCurrentDCOM()
+            compared = self.CompareDCOM(dict1, dict2)
+
+            for dobj in DCOM_DEFAULT_CONFIGURATION:
+                try:
+                    compared[dobj]
+                    if dobj == "LegacyAuthenticationLevel" or dobj == "LegacyImpersonationLevel":
+                        REGISTRY.SetDWORDValue(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole", sValueName=dobj, uValue=dict1[dobj])
+                    elif dobj == "DefaultAccessPermission" or dobj == "DefaultLaunchPermission" or \
+                         dobj == "MachineAccessRestriction" or dobj == "MachineLaunchRestriction":
+                        REGISTRY.SetBinaryValue(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole", sValueName=dobj, uValue=dict1[dobj])
+                    elif dobj == "EnableDCOM" or dobj == "EnableRemoteConnect":
+                        REGISTRY.SetStringValue(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole", sValueName=dobj, sValue=dict1[dobj])
+                except KeyError:
+                    pass
+        except:
+            LogIt(LOGFILE)
+
+    def CompareDCOM(self, dict1, dict2):
+        compare = {}
+        for (key, value) in dict2.iteritems():
+            try:
+                if dict1[key] != value:
+                    compare[key] = value
+            except KeyError:
+                compare[key] = value
+        return compare
+
+    def GetCurrentDCOM(self):
+        current = {}
+        for name in REGISTRY.EnumValues(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole")[1]:
+            value = REGISTRY.GetStringValue(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole", sValueName=str(name))[1]
+            if value:
+                current[str(name)] = str(value)
+            else:
+                value = REGISTRY.GetDWORDValue(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole", sValueName=str(name))[1]
+                if not value:
+                    value = REGISTRY.GetBinaryValue(hDefKey=reg.HKEY_LOCAL_MACHINE, sSubKeyName="SOFTWARE\\Microsoft\\Ole", sValueName=str(name))[1]
+            current[str(name)] = value
+        return current
+
+    def GetDefaultDCOM(self):
+        default = {}
+        # Get Default DCOM Settings
+        for name in REGISTRY.EnumValues(hDefKey=reg.HKEY_CURRENT_USER, sSubKeyName="Software\\DCOMMon")[1]:
+            value = REGISTRY.GetStringValue(hDefKey=reg.HKEY_CURRENT_USER, sSubKeyName="Software\\DCOMMon", sValueName=str(name))[1]
+            if value:
+                default[str(name)] = str(value)
+            else:
+                value = REGISTRY.GetDWORDValue(hDefKey=reg.HKEY_CURRENT_USER, sSubKeyName="Software\\DCOMMon", sValueName=str(name))[1]
+                if not value:
+                    value = REGISTRY.GetBinaryValue(hDefKey=reg.HKEY_CURRENT_USER, sSubKeyName="Software\\DCOMMon", sValueName=str(name))[1]
+            default[str(name)] = value
+        return default
+
+class DCOMMon(win32serviceutil.ServiceFramework):
+    _svc_name_         = "DCOMMon"
+    _svc_display_name_ = "DCOM Monitoring Service"
+    _svc_description_  = "DCOM Monitoring Service"
+    _svc_deps_         = ["EventLog"]
+
+    def __init__(self, args):
+        win32serviceutil.ServiceFramework.__init__(self, args)
+        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
+        self.isAlive   = True
+
+    def SvcDoRun(self):
+        import servicemanager
+        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED,
+                              (self._svc_name_, ': DCOM Monitoring Service - Service Started'))
+        self.timeout=30000  # In milliseconds
+        while self.isAlive:
+            rc = win32event.WaitForSingleObject(self.hWaitStop, self.timeout)
+            if rc == win32event.WAIT_OBJECT_0:
+                 break
+            else:
+                servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED,
+                                      (self._svc_name_, ': DCOM Monitoring Service - Examining DCOM Configuration'))
+                Monitor().RepairDCOM()
+        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STOPPED,
+                              (self._svc_name_, ': DCOM Monitoring Service - Service Stopped'))
+        return
+
+    def SvcStop(self):
+        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        win32event.SetEvent(self.hWaitStop)
+        LOG.close()
+        self.isAlive = False
+        return
+
+#def ctrlHandler(ctrlType):
+#    return True
+
+if __name__ == '__main__':
+#    win32api.SetConsoleCtrlHandler(ctrlHandler, True)
+    #print Monitor().RepairDCOM()
+    win32serviceutil.HandleCommandLine(DCOMMon)
+
+# DCOMMon_setup.py (self executable, no need for py2exe arg)
+
+# Usage:
+# DCOMMon.exe install
+# DCOMMon.exe start
+# DCOMMon.exe stop
+# DCOMMon.exe remove
+# DCOMMon.exe debug
+
+# you can see output of this program running python site-packages\win32\lib\win32traceutil
+
+
+
+try:
+    # (snippet I found somewhere, searching something??)
+    # if this doesn't work, try import modulefinder
+    import py2exe.mf as modulefinder
+    import win32com, sys
+    for p in win32com.__path__[1:]:
+        modulefinder.AddPackagePath("win32com", p)
+    for extra in ["win32com.shell"]: #,"win32com.mapi"
+        __import__(extra)
+        m = sys.modules[extra]
+        for p in m.__path__[1:]:
+            modulefinder.AddPackagePath(extra, p)
+except ImportError:
+    print "NOT FOUND"
+
+
+from distutils.core import setup
+import py2exe, sys
+
+if len(sys.argv) == 1:
+    sys.argv.append("py2exe")
+    #sys.argv.append("-q")
+
+class Target:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+        # for the versioninfo resources
+        self.version      = "1.0.0.1"
+        self.language     = "English (Canada)"
+        self.company_name = "Whoever"
+        self.copyright    = "Nobody"
+        self.name         = "Nobody Home"
+
+
+myservice = Target(
+    description = 'DCOM Monitoring Service',
+    modules = ['DCOMMon'],
+    cmdline_style='pywin32'
+    #dest_base = 'DCOMMon'
+)
+
+setup(
+    options = {"py2exe": {"compressed": 1, "bundle_files": 1, "ascii": 1, "packages": ["encodings"]} },   
+    console=["DCOMMon.py"],
+    zipfile = None,
+    service=[myservice]
+) 
+

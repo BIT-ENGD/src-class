@@ -1,0 +1,142 @@
+Data.Sequence.Seq
+import qualified Data.Sequence as S
+import qualified Data.Foldable as F
+
+import System.Random
+import Control.DeepSeq
+import Criterion.Main
+import Test.QuickCheck
+import Control.Exception ( evaluate )
+
+instance (Arbitrary a) => Arbitrary (S.Seq a) where
+    arbitrary = fmap S.fromList arbitrary
+
+instance NFData a => NFData (S.Seq a) where
+    rnf = F.foldr seq ()
+
+funs :: [(String, S.Seq Int -> Int)]
+funs =
+    [ ("seqDirect"   , seqDirect)
+    , ("seqFoldr"    , seqFoldr)
+    , ("seqFoldl'"   , seqFoldl')
+    , ("seqSplit  1" , (seqSplit  1))
+    , ("seqSplit  2" , (seqSplit  2))
+    , ("seqSplit  4" , (seqSplit  4))
+    , ("seqSplit  8" , (seqSplit  8))
+    , ("seqSplit 16" , (seqSplit 16))
+    , ("seqSplit 32" , (seqSplit 32)) ]
+
+main :: IO ()
+main = do
+    mapM_ (\(_,f) -> quickCheck (\xs -> seqDirect xs == f xs)) funs
+    gen <- newStdGen
+    let inpt = S.fromList . take 100000 $ randoms gen
+    evaluate (rnf inpt)
+    defaultMain [ bench n (nf f inpt) | (n,f) <- funs ]
+
+seqDirect :: S.Seq Int -> Int
+seqDirect v = case S.viewl v of
+    S.EmptyL -> 0
+    x S.:< xs -> x + seqDirect xs
+
+seqFoldr :: S.Seq Int -> Int
+seqFoldr = F.foldr (+) 0
+
+seqFoldl' :: S.Seq Int -> Int
+seqFoldl' = F.foldl' (+) 0
+
+seqSplit :: Int -> S.Seq Int -> Int
+seqSplit 1 xs = seqFoldr xs
+seqSplit _ xs | S.null xs = 0
+seqSplit n xs =
+    let (a, b) = S.splitAt (S.length xs `div` n) xs
+        sa = seqFoldr a
+        sb = seqSplit (n-1) b
+    in  sa + sb
+
+$ ghc -V
+The Glorious Glasgow Haskell Compilation System, version 7.0.4
+
+$ ghc --make -O2 -fforce-recomp -rtsopts seq.hs
+[1 of 1] Compiling Main             ( seq.hs, seq.o )
+Linking seq ...
+
+$ ./seq +RTS -s
+./seq +RTS -s
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
+warming up
+estimating clock resolution...
+mean is 5.882556 us (160001 iterations)
+found 2368 outliers among 159999 samples (1.5%)
+  2185 (1.4%) high severe
+estimating cost of a clock call...
+mean is 85.26448 ns (44 iterations)
+found 4 outliers among 44 samples (9.1%)
+  3 (6.8%) high mild
+  1 (2.3%) high severe
+
+benchmarking seqDirect
+mean: 23.37511 ms, lb 23.01101 ms, ub 23.77594 ms, ci 0.950
+std dev: 1.953348 ms, lb 1.781578 ms, ub 2.100916 ms, ci 0.950
+
+benchmarking seqFoldr
+mean: 25.60206 ms, lb 25.39648 ms, ub 25.80034 ms, ci 0.950
+std dev: 1.030794 ms, lb 926.7246 us, ub 1.156656 ms, ci 0.950
+
+benchmarking seqFoldl'
+mean: 10.65757 ms, lb 10.29087 ms, ub 10.99869 ms, ci 0.950
+std dev: 1.819595 ms, lb 1.703732 ms, ub 1.922018 ms, ci 0.950
+
+benchmarking seqSplit  1
+mean: 25.50376 ms, lb 25.29045 ms, ub 25.71225 ms, ci 0.950
+std dev: 1.075497 ms, lb 961.5707 us, ub 1.229739 ms, ci 0.950
+
+benchmarking seqSplit  2
+mean: 18.15032 ms, lb 17.62943 ms, ub 18.66413 ms, ci 0.950
+std dev: 2.652232 ms, lb 2.288088 ms, ub 3.044585 ms, ci 0.950
+
+benchmarking seqSplit  4
+mean: 10.48334 ms, lb 10.14152 ms, ub 10.87061 ms, ci 0.950
+std dev: 1.869274 ms, lb 1.690063 ms, ub 1.997915 ms, ci 0.950
+
+benchmarking seqSplit  8
+mean: 5.737956 ms, lb 5.616747 ms, ub 5.965689 ms, ci 0.950
+std dev: 825.2361 us, lb 442.1652 us, ub 1.232003 ms, ci 0.950
+
+benchmarking seqSplit 16
+mean: 3.677038 ms, lb 3.669035 ms, ub 3.685547 ms, ci 0.950
+std dev: 42.18741 us, lb 36.57112 us, ub 49.93574 us, ci 0.950
+
+benchmarking seqSplit 32
+mean: 2.855626 ms, lb 2.849962 ms, ub 2.862226 ms, ci 0.950
+std dev: 31.25475 us, lb 26.49104 us, ub 37.18611 us, ci 0.950
+  25,154,069,064 bytes allocated in the heap
+   4,120,506,464 bytes copied during GC
+      32,344,120 bytes maximum residency (446 sample(s))
+       4,042,704 bytes maximum slop
+              78 MB total memory in use (0 MB lost due to fragmentation)
+
+  Generation 0: 42092 collections,     0 parallel,  6.57s,  6.57s elapsed
+  Generation 1:   446 collections,     0 parallel,  2.62s,  2.62s elapsed
+
+  INIT  time    0.00s  (  0.00s elapsed)
+
+  MUT   time   18.57s  ( 18.58s elapsed)
+  GC    time    9.19s  (  9.19s elapsed)
+  EXIT  time    0.00s  (  0.00s elapsed)
+  Total time   27.76s  ( 27.77s elapsed)
+
+  %GC time      33.1%  (33.1% elapsed)
+
+  Alloc rate    1,354,367,579 bytes per MUT second
+
+  Productivity  66.9% of total user, 66.9% of total elapsed
+

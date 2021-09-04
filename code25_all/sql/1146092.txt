@@ -1,0 +1,216 @@
+/*
+ * Master manufacturers shared between all customers
+ */
+CREATE TABLE master_manufacturers (
+    master_manufacturer_id INTEGER NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    attribute_1 VARCHAR(50),
+    /* ... */
+    attribute_n VARCHAR(50),
+    PRIMARY KEY (master_manufacturer_id)
+);
+
+INSERT INTO
+    master_manufacturers (master_manufacturer_id, name)
+VALUES
+    (1, 'Ford'),
+    (2, 'Chevrolet'),
+    (3, 'BMW');
+
+/*
+ * A Customer's manufacturer.  
+ *   If master_manufacturer_id IS NULL, then it is a custom manufacturer and manufacturer_custom contains the data
+ *   If master_manufacturer_id IS NOT NULL and manufacturer_custom does not exist, then the master is used without modification
+ *   If master_manufacturer_id IS NOT NULL and manufacturer_custom exists, then the master is overridden
+ */
+CREATE TABLE manufacturers (
+    manufacturer_id INTEGER NOT NULL,
+    customer_id INTEGER NOT NULL,
+    master_manufacturer_id INTEGER,
+    PRIMARY KEY (manufacturer_id),
+    FOREIGN KEY (master_manufacturer_id) REFERENCES master_manufacturers (master_manufacturer_id),
+    UNIQUE (customer_id, master_manufacturer_id)
+);
+
+INSERT INTO
+    manufacturers (manufacturer_id, customer_id, master_manufacturer_id)
+VALUES
+    (1, 1, 1),
+    (2, 1, 2),
+    (3, 1, NULL),
+    (4, 1, NULL),
+    (5, 2, 2),
+    (6, 2, 3),    
+    (7, 2, NULL);    
+
+CREATE TABLE manufacturer_custom (
+    manufacturer_id INTEGER NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    attribute_1 VARCHAR(50),
+    /* ... */
+    attribute_n VARCHAR(50),
+    PRIMARY KEY (manufacturer_id),
+    FOREIGN KEY (manufacturer_id) REFERENCES manufacturers (manufacturer_id)
+);
+
+INSERT INTO
+    manufacturer_custom (manufacturer_id, name)
+VALUES
+    (2, 'Chevy'),
+    (3, 'Cust 1 Custom 1'),
+    (4, 'Cust 1 Custom 2'),
+    (7, 'Cust 2 Custom 1');
+
+/*
+ * Master models shared between all customers
+ */
+CREATE TABLE master_models (
+    master_model_id INTEGER NOT NULL,
+    master_manufacturer_id INTEGER NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    attribute_1 VARCHAR(50),
+    /* ... */
+    attribute_n VARCHAR(50),
+    PRIMARY KEY (master_model_id),
+    FOREIGN KEY (master_manufacturer_id) REFERENCES master_manufacturers (master_manufacturer_id)
+);
+
+INSERT INTO
+    master_models (master_model_id, master_manufacturer_id, name)
+VALUES
+    (1, 1, 'F-150'),
+    (2, 1, 'F-250'),
+    (3, 1, 'Falcon'),
+    (4, 2, 'Camaro'),
+    (5, 2, 'Corvette'),
+    (6, 3, 'M3'),
+    (7, 3, '135i');
+
+/*
+ * A Customer''s model.  
+ *   If master_model_id IS NULL, then it is a custom model and model_custom contains the data
+ *   If master_model_id IS NOT NULL and model_custom does not exist, then the master is used without modification
+ *   If master_model_id IS NOT NULL and model_custom exists, then the master is overridden
+ */
+CREATE TABLE models (
+    model_id INTEGER NOT NULL,
+    master_model_id INTEGER,
+    manufacturer_id INTEGER NOT NULL,
+    attribute_1 VARCHAR(50),
+    /* ... */
+    attribute_n VARCHAR(50),
+    PRIMARY KEY (model_id),
+    FOREIGN KEY (master_model_id) REFERENCES master_models (master_model_id)
+);
+
+INSERT INTO
+    models (model_id, master_model_id, manufacturer_id)
+VALUES
+    (1, 1, 1),    /* F-150 for customer_1's Ford */
+    (2, 2, 1),    /* F-250 for customer_1's Ford */
+    (3, 4, 2),    /* Camaro for customer_1's Chevy */
+    (4, 4, 5),    /* Camaro for customer_2's Chevrolet */
+    (5, 5, 5),    /* Corvette for customer_2's Chevrolet */
+    (6, 6, 6),    /* M3 for customer_2's BMW */
+    (7, NULL, 1), /* F-350 (custom) for customer_1's Ford */
+    (8, NULL, 6), /* M7 (custom) for customer_2's BMW */
+    (9, NULL, 7); /* Custom Model (custom) for customer_2's Custom Mfg */
+
+CREATE TABLE model_custom (
+    model_id INTEGER NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    attribute_1 VARCHAR(50),
+    /* ... */
+    attribute_n VARCHAR(50),
+    PRIMARY KEY (model_id),
+    FOREIGN KEY (model_id) REFERENCES models (model_id)
+);
+
+INSERT INTO
+    model_custom (model_id, name)
+VALUES
+    (7, 'F-350'),        /* F-350 for customer_1's Ford */
+    (8, 'M7'),           /* M7 for customer_2's BMW */
+    (9, 'Custom Model'); /* Custom Model for customer_2's Custom Mfg */
+
+/*
+ * View for a customer''s manufacturers
+ */
+CREATE VIEW vw_manufacturers AS
+    SELECT
+        m.customer_id,
+        m.manufacturer_id, 
+        COALESCE(cm.name, mm.name) AS name,
+        COALESCE(cm.attribute_1, mm.attribute_1) AS attribute_1,
+        /* ... */
+        COALESCE(cm.attribute_n, mm.attribute_n) AS attribute_n
+    FROM
+        manufacturers m
+    LEFT JOIN
+        master_manufacturers mm
+    USING
+        (master_manufacturer_id)
+    LEFT JOIN
+        manufacturer_custom cm
+    USING
+        (manufacturer_id);
+
+/*
+ * View for a customer's models
+ */
+CREATE VIEW vw_models AS
+    SELECT
+        mfg.customer_id,
+        mfg.manufacturer_id,
+        mfg.name AS manufacturers_name,
+        m.model_id,
+        COALESCE(cm.name, mm.name) AS name,
+        COALESCE(cm.attribute_1, mm.attribute_1) AS attribute_1,
+        /* ... */
+        COALESCE(cm.attribute_n, mm.attribute_n) AS attribute_n
+    FROM
+        vw_manufacturers mfg,
+        models m
+    LEFT JOIN
+        master_models mm
+    USING
+        (master_model_id)
+    LEFT JOIN
+        model_custom cm
+    USING
+        (model_id)
+    WHERE
+        mfg.manufacturer_id = m.manufacturer_id;
+
+SELECT manufacturer_id, name FROM vw_manufacturers WHERE customer_id = 1;
+ manufacturer_id |      name       
+-----------------+-----------------
+           1 | Ford
+           2 | Chevy
+           3 | Cust 1 Custom 1
+           4 | Cust 1 Custom 2
+
+SELECT manufacturer_id, name FROM vw_manufacturers WHERE customer_id = 2;
+ manufacturer_id |      name       
+-----------------+-----------------
+           5 | Chevrolet
+           6 | BMW
+           7 | Cust 2 Custom 1
+
+SELECT * FROM vw_models WHERE customer_id = 1;
+ customer_id | manufacturer_id | manufacturers_name | model_id |  name  
+-------------+-----------------+--------------------+----------+--------
+       1 |               1 | Ford               |        1 | F-150
+       1 |               1 | Ford               |        2 | F-250
+       1 |               2 | Chevy              |        3 | Camaro
+       1 |               1 | Ford               |        7 | F-350
+
+SELECT * FROM vw_models WHERE customer_id = 2;
+ customer_id | manufacturer_id | manufacturers_name | model_id |     name     
+-------------+-----------------+--------------------+----------+--------------
+           2 |               5 | Chevrolet          |        4 | Camaro
+           2 |               5 | Chevrolet          |        5 | Corvette
+           2 |               6 | BMW                |        6 | M3
+           2 |               6 | BMW                |        8 | M7
+           2 |               7 | Cust 2 Custom 1    |        9 | Custom Model
+

@@ -1,0 +1,67 @@
+threads = []
+max_thread_pool = 5
+running_threads = 0
+Thread.abort_on_exception = true
+
+existing_file_count = 0
+files_downloaded = 0
+
+errors = []
+missing_on_the_server = []
+@last_updated = Time.now
+
+if ids.length > 0
+    ids.each_slice(ids.length / max_thread_pool) do |id_set|
+        threads << Thread.new(id_set) do |t_id_set|
+            running_threads += 1
+            thread_num = running_threads
+            thread_num.freeze
+            puts "making thread # #{thread_num}"
+            begin
+                ftp = Net::FTP.open(@remote_site)
+                ftp.login(@remote_user, @remote_password)
+                ftp.binary = true
+                #ftp.debug_mode = true
+                ftp.passive = false
+            rescue
+                raise "Could not establish FTP connection"
+            end
+            t_id_set.each do |id|
+                @last_updated = Time.now
+                rmls_path = "/_Photos/0#{id[0,2]}00000/#{id[2,1]}0000/#{id[3,1]}000/#{id}-1.jpg"
+                local_path = "#{@photos_path}/01/#{id}-1.jpg"
+                progress += 1
+                unless File.exist?(local_path)
+                    begin
+                        ftp.getbinaryfile(rmls_path, local_path)
+                        puts "ftp reponse: #{ftp.last_response}"
+                        # find the percentage of progress just for fun
+                        files_downloaded += 1
+                        p = sprintf("%.2f", ((progress.to_f / total) * 100))
+                        puts "Thread # #{thread_num} > %#{p} > #{progress}/#{total} > Got file: #{local_path}"
+                    rescue
+                        errors << "#{thread_num} unable to get file > ftp response: #{ftp.last_response}"
+                        puts errors.last
+                        if ftp.last_response_code.to_i == 550
+                            # Add the missing file to the missing list
+                            missing_on_the_server << errors.last.match(/\d{5,}-\d{1,2}\.jpg/)[0]
+                        end
+                    end
+                else
+                    puts "found file: #{local_path}"
+                    existing_file_count += 1
+                end
+            end
+            puts "closing FTP connection #{thread_num}"
+            ftp.close
+        end # close thread
+    end
+end
+
+# If @last_updated has not been updated on the server in over 20 seconds, wait 3 seconds and check again
+while Time.now < @last_updated + 20 do
+    sleep 3
+end
+# threads are hanging so joining the threads does not work.
+threads.each { |t| t.kill }
+

@@ -1,0 +1,84 @@
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <poll.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <limits.h>
+
+int main(int argc,char* argv[])
+{
+    if(argc<3)
+    {
+        printf("Error: Too few arguments...\n");
+        exit(-1);
+    }
+
+    char** buffer_in=(char**) malloc(sizeof(char*));
+    char** buffer_out=(char**) malloc(sizeof(char*));
+    size_t dim_buff=sizeof(char*);
+    FILE* stream;
+    FILE* input;
+    int fifo_in, fifo_out, num_poll_c, num_poll_f, read_count, i,write_b;
+    pid_t pid;
+    ssize_t length;
+    struct pollfd* fd_set_c=(struct pollfd*) malloc(sizeof(int));//for the child
+    struct pollfd* fd_set_f=(struct pollfd*) malloc(sizeof(int));//for the father
+
+
+    printf("Write character e press enter:\n");
+
+    if((fifo_in=open(argv[1],O_RDWR|O_NONBLOCK))==-1)
+        perror("error open");
+    if((fifo_out=open(argv[2],O_RDWR|O_NONBLOCK))==-1)
+        perror("error open");
+
+    if((input=fdopen(STDIN_FILENO,"r"))==NULL)
+        perror("error fdopen");
+
+
+    if((pid=fork())==-1)
+        perror("error fork");
+    while(1)
+    {   
+        if(pid==0)  /*child*/   
+        {   
+            fd_set_c->fd=STDIN_FILENO;
+            fd_set_c->events=POLLIN;
+            if((num_poll_c=poll(fd_set_c, 1, -1))==-1)
+                perror("error poll child");//poll on fifo_in
+            if((length=getline(buffer_in,&dim_buff,input))==-1)
+                perror("error getline");
+
+
+
+                printf("The written word is::%s\n",*buffer_in);/*my control for see what in buffer_in is*/
+
+
+            if((write_b=write(fifo_in,*buffer_in,dim_buff))==-1)
+                perror("error write");
+
+        }
+
+        else    /*father*/
+        {   
+            fd_set_f->fd=fifo_out;
+            fd_set_c->events=POLLIN;
+
+            if((num_poll_f=poll(fd_set_f, 1, 5000))==-1)
+                perror("error poll father");//poll on fifo_out      
+            if((read_count=read(fifo_out,*buffer_out,SSIZE_MAX))==-1)
+                perror("error read");//read on fifo_out
+            for(i=0;i<=read_count;i++)
+                printf("%s",buffer_out[i]);//print on stdout buffer_out
+
+
+        }
+    }
+    return 0;   
+
+}
+

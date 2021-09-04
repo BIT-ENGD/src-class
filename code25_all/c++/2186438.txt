@@ -1,0 +1,78 @@
+#include <iostream>
+#include <unistd.h>
+#include <utmp.h>
+#include <pty.h>
+
+#include <QString>
+#include <QThread>
+// You also need libutil in your .pro file for this to compile.
+
+class CMkPty
+{
+public:
+    CMkPty( int *writeChannel, int *readChannel );
+    ~CMkPty();
+    int runInPty( char *command );
+    int writeToPty( char *input );
+    int readFromPty( QString output );
+    int m_nPid;
+
+private:
+    int m_nMaster, m_nSlave, m_nPosition, m_nBytes;
+    char *m_chName;
+    void safe_print( char *s );
+    char m_output;
+
+};
+
+CMkPty::CMkPty( int *masterFD, int *slaveFD )
+{
+    openpty( &m_nMaster, &m_nSlave, (char*)0, __null, __null );
+    m_nPid = fork();
+    *masterFD = m_nMaster;
+    *slaveFD = m_nSlave;
+    if( m_nPid == 0 )
+    {
+        login_tty( m_nSlave );
+        execl( "/bin/bash", "-l", (char*)0 );
+        return;
+    }
+    else if( m_nPid > 0 )
+    {
+        return;
+    }
+    else if( m_nPid < 0 )
+    {
+        std::cout << "Failed to fork." ;
+        return;
+    }
+}
+CMkPty::~CMkPty()
+{
+    close( m_nMaster );
+    close( m_nSlave );
+}
+int CMkPty::writeToPty( char *szInput )
+{
+    int nWriteTest;
+    write( m_nMaster, szInput, sizeof( szInput ) );
+    nWriteTest = write( m_nMaster, "\n", 1 );
+    if( nWriteTest < 0 )
+    {
+        std::cout << "Write to PTY failed" ;
+        return -1;
+    }
+    return 0;
+}
+int CMkPty::readFromPty( QString output )
+{
+        char buffer[ 160 ];
+        m_nBytes = sizeof( buffer );
+        while ( ( m_nPosition = read( m_nMaster, buffer, m_nBytes ) ) > 0 )
+        {
+            buffer[ m_nPosition ] = 0;
+            output += buffer;
+        }
+       return 0;
+}
+

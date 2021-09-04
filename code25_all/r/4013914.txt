@@ -1,0 +1,84 @@
+ggkm<-function(time,event,stratum="-1",tit="",xscale=round(seq(0,max(time),by=max(time)/10),0)) {
+    lev<-levels(factor(stratum))
+    w2<-lev[1]!="-1"
+
+    if (w2) {stratum<-as.factor(stratum)}
+
+    m2s<-Surv(time,as.numeric(event))
+    if (w2) {fit <- survfit(m2s~stratum)}
+    else fit<-survfit(m2s~-1) 
+
+    w<-fit$time
+
+    k<-fit$surv
+
+    o<-length(levels(stratum))
+
+        strata<-c(rep(names(fit$strata[1:o]),fit$strata[1:o]))
+        lev2<-levels(as.factor(strata))
+    upper<-fit$upper
+    lower<-fit$lower
+    if (w2) {f<-data.frame(w,k,strata,upper,lower)} 
+    else f<-data.frame(w,k,upper,lower)
+    if (w2) {r<-ggplot (f,aes(x=w,y=k,fill=strata,group=strata))+geom_line(aes(color=strata))+scale_fill_brewer(f$strata,palette="Set1")+scale_color_brewer(f$strata,palette="Set1")}
+    else r<-ggplot(f,aes(x=w,y=k))+geom_line()
+    r<-r+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+opts(title=tit)
+    r<-r+opts(panel.grid.minor=theme_blank(),panel.grid.major=theme_blank(),panel.background=theme_blank(),axis.line=theme_segment())
+    r<-r+opts(legend.position=c(0.8,0.8))
+    #r<-r+opts(legend.title="")
+    if (w2) {
+        r<-r+scale_fill_brewer("",palette="Set1",breaks=lev2,labels=lev)+scale_color_brewer("",palette="Set1",breaks=lev2,labels=lev)
+        }
+    r<-r+geom_hline(yintercept=0.5,linetype=2)
+    r+expand_limits(x = 0, y = 0)+scale_x_continuous("Observation time (months)",expand = c(0, 0),breaks=xscale,labels=xscale,limits=c(min(xscale),max(xscale)))+scale_y_continuous("Probability of overall survival (proportion)",expand = c(0,0))->r
+
+
+##number at risk table
+    u<-llply(names(fit$strata),function(x) rep(x,fit$strata[x]))
+    p<-ldply(u,function(x) data.frame(x))
+    fit2<-data.frame(p,fit$n.risk,fit$surv,fit$time,fit$n.event)
+    q<-dlply(fit2,.(x),function(g) data.frame(g$fit.n.risk,g$fit.surv,g$fit.time,g$fit.n.event))
+    e<-ldply(q,function(y){
+    o<-ldply(xscale,function(x) y[min(which((x-y$g.fit.time<0))),1])
+    oo<-cbind(o,xscale)
+    })
+    melt(e,id=c("xscale","x"))->e2
+    e2$strata<-as.factor(e2$x)
+    cast(subset(e2,e2$variable!="x.time"),strata~xscale,identity)->e3
+    #e3[["strata"]]<-names(e3[["strata"]])
+    dg<-ggplot(e2,aes(x=xscale,y=strata,color=strata,label=format(factor(value),nsmall=1)))+geom_text(size=2.5)+theme_bw()+scale_color_brewer(e2$strata,palette="Set1")
+
+    #levels(e2$strata)<-lev
+    dg<-dg+scale_y_discrete(limits=e2$strata)+expand_limits(x=0,y=0)
+    dg<-dg+opts(panel.grid.minor=theme_blank(),panel.grid.major=theme_blank(),panel.background=theme_blank(),axis.line=theme_blank())
+    dg<-dg+opts(panel.border=theme_blank(),axis.text.x=theme_blank(),axis.text.y=theme_blank(),axis.ticks=theme_blank())
+    #dg<-dg+opts(panel.border=theme_blank(),axis.text.x=theme_blank(),axis.ticks=theme_blank())
+
+    dg<-dg+opts(plot.margin = unit(c(-0.5,1, 0, 0.5), "lines")) + xlab(NULL) + ylab(NULL)+labs(colour="")
+    dg<-dg+opts(legend.position="none")
+##Same page
+    Layout <- grid.layout(nrow = 2, ncol = 1, heights = unit(c(2,0.25), c("null", "null")))
+
+    grid.show.layout(Layout)
+
+    vplayout <- function(...) {
+             grid.newpage()
+             pushViewport(viewport(layout = Layout))
+   }
+   subplot <- function(x, y) viewport(layout.pos.row = x,layout.pos.col = y)
+
+   mmplot <- function(a, b) {
+     vplayout()
+     print(a, vp = subplot(1, 1))
+     print(b, vp = subplot(2, 1))
+ } 
+    t<-mmplot(r, dg)
+
+return(t)
+} 
+
+library(survival)
+require(ggplot2)
+data(leukemia)
+with(leukemia,ggkm(time,status,x,tit="Leukemia"))
+

@@ -1,0 +1,141 @@
+import jxl.write.WritableCell;
+
+public interface ExcelCellGenerator<T> {
+ WritableCell getCell(int col, int row, T arg);
+}
+
+import jxl.write.DateFormat;
+import jxl.write.DateTime;
+import jxl.write.Label;
+import jxl.write.NumberFormat;
+import jxl.write.NumberFormats;
+import jxl.write.WritableCell;
+import jxl.write.WritableCellFormat;
+import ExcelExporter.DateTimeExtractor;
+
+final class ExcelCellGeneratorFactory {
+ private ExcelCellGeneratorFactory() {}
+
+ private static final WritableCellFormat DATE_FORMAT = new WritableCellFormat ( new DateFormat ("dd MMM yyyy hh:mm:ss")); // reusing this field fails
+
+ static public <T> ExcelCellGenerator<T> createDateCellGenerator(final DateTimeExtractor<T> extractor) {
+  return new ExcelCellGenerator<T>() {
+   public WritableCell getCell(int col, int row, T arg) {
+    return new DateTime(col, row, extractor.extract(arg), DATE_FORMAT);
+                // if there is new WritableCellFormat(new DateFormat(...)) instead of DATE_FORMAT, works fine
+   }
+
+  };
+ }
+}
+
+import jxl.Workbook;
+import jxl.write.DateFormat;
+import jxl.write.DateTime;
+import jxl.write.Label;
+import jxl.write.NumberFormat;
+import jxl.write.WritableCellFormat;
+import jxl.write.WritableSheet;
+import jxl.write.WritableWorkbook;
+
+public class ExcelExporter<T> {
+ // describe a column in Excel sheet
+ private static class ColumnDescription<T> {
+  public ColumnDescription() {}
+
+        // column title
+        private String title;
+        // a way to generate a value given an object to export
+        private ExcelCellGenerator<T> generator;
+ }
+
+    // all columns for current sheet
+ private List<ColumnDescription<T>> columnDescList = new ArrayList<ColumnDescription<T>>();
+
+    // export given list to Excel (after configuring exporter using addColumn function
+    // in row number rowStart starting with column colStart there will be column titles
+    // and below, in each row, extracted values from each rowList element
+ public byte[] exportList(int rowStart, int colStart, List<? extends T> rowList) {
+  final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+  WritableWorkbook workbook;
+  try {
+   workbook = Workbook.createWorkbook(outputStream);
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  final WritableSheet sheet = workbook.createSheet("Arkusz1", 0);
+
+  int currRow = rowStart;
+  try {
+   int currCol = colStart;
+   for (ColumnDescription<T> columnDesc : columnDescList) {
+    final Label label = new Label(currCol, currRow, columnDesc.title);
+    sheet.addCell(label);
+    currCol++;
+   }
+   currRow++;
+
+   for (T object : rowList) {
+    currCol = colStart;
+    for (ColumnDescription<T> columnDesc : columnDescList) {
+     sheet.addCell(columnDesc.generator.getCell(currCol, currRow, object));
+     currCol++;
+    }
+    currRow++;
+   }
+
+   workbook.write();
+  } catch (Exception e) {
+   e.printStackTrace();
+  } finally {
+   try {
+    workbook.close();
+   } catch (Exception e) {
+    e.printStackTrace();
+   }
+  }
+
+  return outputStream.toByteArray();
+ }
+
+    // configure a Date column
+    public ExcelExporter<T> addColumn(String title, DateTimeExtractor<T> extractor) {
+  final ColumnDescription<T> desc = new ColumnDescription<T>();
+  desc.title = title;
+  desc.generator = ExcelCellGeneratorFactory.createDateCellGenerator(extractor);
+  columnDescList.add(desc);
+  return this;
+ }
+
+    // and test that shows the problem
+    public static void main(String []args) {
+        final ExcelExporter<Date> exporter = new ExcelExporter<Date>();
+        exporter.addColumn("Data", new DateTimeExtractor<Date>() {
+            public Date extract(Date date) {
+                return date;
+        }});
+
+        // this file looks OK
+        FileOutputStream ostream = new FileOutputStream("C:\\tmp\\test1.xls");
+        try {
+            ostream.write(exporter.exportList(0, 0, Collections.singletonList(new Date())));
+        } finally {
+            ostream.close();
+        }
+
+        // but in this file date is shown in cell with numeric format
+        final ExcelExporter<Date> exporter2 = new ExcelExporter<Date>();
+        exporter2.addColumn("Data", new DateTimeExtractor<Date>() {
+            public Date extract(Date date) {
+                return date;
+        }});
+
+        ostream = new FileOutputStream("C:\\tmp\\test2.xls");
+        try {
+            ostream.write(exporter2.exportList(0, 0, Collections.singletonList(new Date())));
+        } finally {
+            ostream.close();
+        }
+    }
+}
+

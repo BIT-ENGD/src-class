@@ -1,0 +1,89 @@
+import sys
+import os
+import shutil
+from subprocess import call
+
+# step 1: call ffmpeg and convert the input avi to an mpeg-2
+def avi_to_mpeg(input, output):
+    return call(["ffmpeg", "-i", input, "-target", "ntsc-dvd", "-threads",  "4", output])
+
+# step 2: create the xml file needed for dvdauthor
+def create_xml_file(mpg_source, xml_file):
+    with open(xml_file, "w") as file:
+        file.write("<dvdauthor>\n")
+        file.write("\t<vmgm />\n")
+        file.write("\t<titleset>\n")
+        file.write("\t\t<titles>\n")
+        file.write("\t\t\t<pgc>\n")
+        file.write("\t\t\t\t<vob file=\"" + mpg_source + "\" />\n")
+        file.write("\t\t\t</pgc>\n")
+        file.write("\t\t</titles>\n")
+        file.write("\t</titleset>\n")
+        file.write("</dvdauthor>\n")
+    return os.path.isfile(xml_file)
+
+# step 3: invoke dvdauthor
+def author_dvd(mpg_source):
+    return call(["dvdauthor", "-o", "mkdvd_temp", "-x", xml_file])
+
+# step 4: finally, burn the files to the dvd
+def burn_dvd(dvd_target):
+    return call(["growisofs", "-Z", dvd_target, "-dvd-video", "mkdvd_temp"])
+
+# step 5: clean up the mess
+def clean_up(mpg_source, xml_file):
+    shutil.rmtree("mkdvd_temp")
+    os.remove(mpg_source)
+    os.remove(xml_file)
+
+def eject(dvd_target):
+    return call(["eject", dvd_target])
+
+def print_usage():
+    print "mkdvd by kitchen"
+    print "usage: mkdvd -s file.avi -t /dev/disc"
+    print "  -s : Input .AVI file"
+    print "  -t : Target disc, /dev/dvd for example"
+
+def get_arg(sentinel):
+    last_arg = ""
+    for arg in sys.argv:
+        if last_arg == sentinel:
+            return arg
+        last_arg = arg
+    return None
+
+# program start
+
+avi_source = get_arg("-s") # input .avi file
+dvd_target = get_arg("-t") # the disc to burn it to (/dev/dvd for example)
+
+if avi_source == None or dvd_target == None:
+    print_usage()
+    sys.exit("Not enough parameters.")
+
+if os.path.isfile(avi_source) == False:
+    sys.exit("File does not exists (" + avi_source + ")")
+
+mpg_source = avi_source + ".mpg"
+
+if avi_to_mpeg(avi_source, mpg_source) != 0:
+    sys.exit("Failed to convert the AVI to an MPG")
+
+xml_file = mpg_source + ".xml"
+
+if create_xml_file(mpg_source, xml_file) == False:
+    sys.exit("Failed to create the XML file required by dvdauthor")
+
+if author_dvd(mpg_source) != 0:
+    sys.exit("Failed to create the DVD files")
+
+if burn_dvd(dvd_target) != 0:
+    sys.exit("Failed to burn the files to the disc")
+
+print "mkdvd has finished burning " + avi_source + " to " + dvd_target
+print "Cleaning up"
+
+clean_up(mpg_source, xml_file)
+eject(dvd_target)
+

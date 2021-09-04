@@ -1,0 +1,71 @@
+typedef struct {
+    char *data;
+} DATA;
+
+typedef struct {
+    CnetAddr src_addr;
+    CnetAddr dest_addr;
+    PACKET_TYPE type;           
+    DATA data;
+} Packet;
+
+typedef struct {
+    int length;         
+    int checksum;   
+    Packet datagram;
+} Frame;
+
+
+static void keyboard(CnetEvent ev, CnetTimerID timer, CnetData data)
+    {
+    char line[80];
+    int length;
+
+    length = sizeof(line);
+    CHECK(CNET_read_keyboard((void *)line, (unsigned int *)&length)); // Reads input from keyboard
+
+    if(length > 1)
+        {           /* not just a blank line */
+        printf("\tsending %d bytes - \"%s\"\n", length, line);
+
+        application_downto_transport(1, line, &length);
+        }
+    }
+
+void application_downto_transport(int link, char *msg, int *length)
+    {
+    transport_downto_network(link, msg, length);
+    }
+
+void transport_downto_network(int link, char *msg, int *length)
+    {
+    Packet *p;
+    DATA *d;
+
+    p = (Packet *)malloc(sizeof(Packet));
+    d = (DATA *)malloc(sizeof(DATA));
+
+    d->data = msg;
+    p->data = *d;
+
+    network_downto_datalink(link, (void *)p, length);
+    }
+
+void network_downto_datalink(int link, Packet *p, int *length)
+    {
+    Frame *f;
+
+    // Encapsulate datagram and checksum into a Frame.
+    f = (Frame *)malloc(sizeof(Frame));
+
+    f->checksum = CNET_crc32((unsigned char *)(p->data).data, *length); // Generate 32-bit CRC for the data.
+    f->datagram = *p;
+    f->length = sizeof(f);
+
+    //Pass Frame to the CNET physical layer to send Frame to the require link.
+    CHECK(CNET_write_physical(link, (void *)f, (size_t *)f->length));
+    free(p->data);
+    free(p);
+    free(f);
+    }
+

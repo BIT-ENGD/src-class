@@ -1,0 +1,81 @@
+import Data.Bits
+import Data.Int
+import Data.List
+import Data.Word
+import Text.Printf
+import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Lazy.Char8 as C
+
+h0 = 0x67452301 :: Word32
+h1 = 0xEFCDAB89 :: Word32
+h2 = 0x98BADCFE :: Word32
+h3 = 0x10325476 :: Word32
+h4 = 0xC3D2E1F0 :: Word32
+
+sha1string :: String -> String
+sha1string s = concat $ map (printf "%02x") $ sha1 . C.pack $ s 
+
+sha1 :: L.ByteString -> [Word8]
+sha1 msg = concat [w32ToComps a, w32ToComps b, w32ToComps c, w32ToComps d, w32ToComps e]
+    where (a, b, c, d, e) = sha1' msg 0 h0 h1 h2 h3 h4 
+
+sha1' msg sz a b c d e 
+    | L.length m1 < 64 = sha1'last (padded msg sz) a b c d e
+    | otherwise        = uncurry5 (sha1' m2 (sz + 64)) $ whole a b c d e m1
+    where (m1, m2) = L.splitAt 64 msg
+
+sha1'last msg a b c d e
+    | m1 == L.empty = (a, b, c, d, e)
+    | otherwise     = uncurry5 (sha1'last m2) $ whole a b c d e m1
+    where (m1, m2) = L.splitAt 64 msg
+
+whole a b c d e msg = partcd (partab msg) a b c d e 
+
+partcd ws a b c d e = (h0 + a', h1 + b', h2 + c', h3 + d', h4 + e')
+    where
+    (a', b', c', d', e')  = go ws a b c d e 0
+    go ws a b c d e 80    = (a, b, c, d, e)
+    go (w:ws) a b c d e t = go ws temp a (rotate b 30) c d (t+1)
+        where temp = (rotate a 5) + f t b c d + e + w + k t
+
+partab chunk = take 80 ns
+    where
+    ns        = initial ++ zipWith4 g (drop 13 ns) (drop 8 ns) (drop 2 ns) ns
+    g a b c d = rotate (a `xor` b `xor` c `xor` d) 1
+    initial   = map (L.foldl (\a b -> (a * 256) + fromIntegral b) 0) $ paginate 4 chunk
+
+f t b c d
+    | t >=  0 && t <= 19 = (b .&. c) .|. ((complement b) .&. d)
+    | t >= 20 && t <= 39 = b `xor` c `xor` d
+    | t >= 40 && t <= 59 = (b .&. c) .|. (b .&. d) .|. (c .&. d)
+    | t >= 60 && t <= 79 = b `xor` c `xor` d
+
+k t
+    | t >=  0 && t <= 19 = 0x5A827999
+    | t >= 20 && t <= 39 = 0x6ED9EBA1
+    | t >= 40 && t <= 59 = 0x8F1BBCDC
+    | t >= 60 && t <= 79 = 0xCA62C1D6
+
+padded msg prevsz = L.append msg (L.pack pad)
+    where
+    sz      = L.length msg
+    totalsz = prevsz + sz
+    padsz   = fromIntegral $ (128 - 9 - sz) `mod` 64
+    pad     = [0x80] ++ (replicate padsz 0) ++ int64ToComps totalsz
+
+uncurry5 f (a, b, c, d, e) = f a b c d e
+
+paginate n xs
+    | xs == L.empty = []
+    | otherwise     = let (a, b) = L.splitAt n xs in a : paginate n b
+
+w32ToComps :: Word32 -> [Word8]
+w32ToComps = integerToComps [24, 16 .. 0] 
+
+int64ToComps :: Int64 -> [Word8]
+int64ToComps = integerToComps [56, 48 .. 0] 
+
+integerToComps :: (Integral a, Bits a) => [Int] -> a -> [Word8]
+integerToComps bits x = map f bits
+    where f n = fromIntegral ((x `shiftR` n) .&. 0xff) :: Word8
+

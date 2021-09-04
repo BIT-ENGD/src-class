@@ -1,0 +1,42 @@
+package Apache2::AuthGetUser; #authenticates users based on bool value from a asmx webservice
+use SOAP::Lite;
+use Data::Dumper;
+use strict;
+use warnings;
+use Apache2::Access();
+use Apache2::RequestRec();
+use Apache2::Const ':common';
+
+sub handler {
+    my $r = shift;
+    my $username = $r->user;
+    my ($status, $password) = $r->get_basic_auth_pw;
+    return $status unless $status == Apache2::Const::OK;
+
+    my $endpoint = "http://localhost:2010/CIM.FBAAuthentication/12/template/layouts/wsFBAAuthentication.asmx"; #endpoint
+    my $namespace = "http://tempuri.org/"; #namespace
+    my $wsfunction = "AuthenticateUser"; #webservice function
+    my $webservice = SOAP::Lite
+        ->uri($namespace)
+        ->on_action(sub { join '/', $namespace, $_[1] })
+        ->proxy($endpoint);
+
+    #my $method = SOAP::Data->name($wsfunction)
+    my $method = SOAP::Data->name($wsfunction)
+      ->attr({xmlns => $namespace});
+
+
+    my @params = (SOAP::Data->name('UserName')->value($username)->type(''), SOAP::Data->name('Password')->value($password)->type(''));
+
+    my $result = $webservice->call($method=>@params)->result;
+    if($result ne "true"){
+          $r->note_basic_auth_failure;
+          #$r->log_reason($result);
+          return AUTH_REQUIRED;
+    }
+
+    return Apache2::Const::OK;
+
+}
+1;
+

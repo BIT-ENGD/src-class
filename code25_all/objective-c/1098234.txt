@@ -1,0 +1,116 @@
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView{
+    [self manageThumbs];    
+}
+
+- (void) manageThumbs{
+    int centerIndex = [self centerThumbIndex];
+    if(lastCenterIndex == centerIndex){
+        return;
+    }
+
+    if(centerIndex >= totalThumbs){
+        return;
+    }
+
+    NSRange unloadRange;
+    NSRange loadRange;
+
+    int totalChange = lastCenterIndex - centerIndex;
+    if(totalChange > 0){ //scrolling backwards
+        loadRange.length = fabsf(totalChange);
+        loadRange.location = centerIndex - 5;
+        unloadRange.length = fabsf(totalChange);
+        unloadRange.location = centerIndex + 6;
+    }else if(totalChange < 0){ //scrolling forwards
+        unloadRange.length = fabsf(totalChange);
+        unloadRange.location = centerIndex - 6;
+        loadRange.length = fabsf(totalChange);
+        loadRange.location = centerIndex + 5;
+    }
+    [self unloadImages:unloadRange];
+    [self loadImages:loadRange];
+    lastCenterIndex = centerIndex;
+
+    return;
+}
+
+- (void) unloadImages:(NSRange)range{
+    UIScrollView *scrollView = (UIScrollView *)[[self.view subviews] objectAtIndex:0];
+    for(int i = 0; i < range.length && range.location + i < [scrollView.subviews count]; i++){
+        UIView *subview = [scrollView.subviews objectAtIndex:(range.location + i)];
+        if(subview != nil && [subview isKindOfClass:[ThumbnailView class]]){
+            ThumbnailView *thumbView = (ThumbnailView *)subview;
+            if(thumbView.loaded){
+                UnloadImageOperation *unloadOperation = [[UnloadImageOperation alloc] initWithOperableImage:thumbView];
+                [queue addOperation:unloadOperation];
+                [unloadOperation release];
+            }
+        }
+    }
+}
+
+- (void) loadImages:(NSRange)range{
+    UIScrollView *scrollView = (UIScrollView *)[[self.view subviews] objectAtIndex:0];
+    for(int i = 0; i < range.length && range.location + i < [scrollView.subviews count]; i++){
+        UIView *subview = [scrollView.subviews objectAtIndex:(range.location + i)];
+        if(subview != nil && [subview isKindOfClass:[ThumbnailView class]]){
+            ThumbnailView *thumbView = (ThumbnailView *)subview;
+            if(!thumbView.loaded){
+                LoadImageOperation *loadOperation = [[LoadImageOperation alloc] initWithOperableImage:thumbView];
+                [queue addOperation:loadOperation];
+                [loadOperation release];
+            }
+        }
+    }
+}
+
+//In the init method
+queue = [[NSOperationQueue alloc] init];
+[queue setMaxConcurrentOperationCount:4];
+
+
+//In the thumbnail view the loadImage and unloadImage methods
+- (void) loadImage{
+    if(!loaded){
+        NSString *filename = [NSString stringWithFormat:@"%03d-cover-front", recipe.identifier, recipe.identifier]; 
+        NSString *directory = [NSString stringWithFormat:@"RestaurantContent/%03d", recipe.identifier];     
+
+        NSString *path = [[NSBundle mainBundle] pathForResource:filename ofType:@"png" inDirectory:directory];
+        UIImage *image = [UIImage imageWithContentsOfFile:path];
+
+        imageView = [[ImageView alloc] initWithImage:image andFrame:CGRectMake(0.0f, 0.0f, 176.0f, 262.0f)];
+        [self addSubview:imageView];
+        [self sendSubviewToBack:imageView];
+        [imageView release];
+        loaded = YES;       
+    }
+}
+
+- (void) unloadImage{
+    if(loaded){
+        [imageView removeFromSuperview];
+        imageView = nil;
+        loaded = NO;
+    }
+}
+
+- (id) initWithOperableImage:(id<OperableImage>) anOperableImage{
+
+    self = [super init];
+    if (self != nil) {
+        self.image = anOperableImage;
+    }
+    return self;
+}
+
+//This is the main method in the load image operation
+- (void)main {
+    [image loadImage];
+}
+
+
+//This is the main method in the unload image operation
+- (void)main {
+    [image unloadImage];
+}
+

@@ -1,0 +1,72 @@
+class Iso < Sale
+  include Shared::TracksSerialNumberExtension
+  include Shared::OrderLines
+  extend  Shared::Filtered
+  include Sendable::Model
+
+  validates_presence_of   :customer
+  validates_associated    :lines
+
+  owned_by :customer
+
+  def initialize( params = nil )
+    super
+    self.created_at ||= Time.now.to_date
+  end
+
+  def after_initialize
+  end
+
+  order_lines             :despatched
+
+  # tracks_serial_numbers   :items
+  sendable :customer
+
+  def created_at=( date )
+    write_attribute( :created_at, Chronic.parse( date ) )
+  end
+end
+
+# This is a module that is used for pages/forms that are can be "sent"
+# either via fax, email, or printed.
+module Sendable
+  module Model
+    def self.included( klass )
+      klass.extend ClassMethods
+    end
+
+    module ClassMethods
+      def sendable( class_to_send_to )
+        attr_accessor :fax_number,
+                      :email_address,
+                      :to_be_faxed,
+                      :to_be_emailed,
+                      :to_be_printed
+
+        @_class_sending_to ||= class_to_send_to
+
+        include InstanceMethods
+      end
+
+      def class_sending_to
+        @_class_sending_to
+      end
+    end # ClassMethods
+
+    module InstanceMethods
+      def after_initialize( )
+        super
+        self.to_be_faxed    = false
+        self.to_be_emailed  = false
+        self.to_be_printed  = false
+
+        target_class = self.send( self.class.class_sending_to )
+        if !target_class.nil?
+          self.fax_number     = target_class.send( :fax_number )
+          self.email_address  = target_class.send( :email_address )
+        end
+      end
+    end
+  end # Module Model
+end # Module Sendable
+

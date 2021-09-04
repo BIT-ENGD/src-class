@@ -1,0 +1,129 @@
+System.Net.Sockets.NetworkStream
+TcpClient
+List <Index>
+Actual size: 577860, Returned size: 421096 using Exchange 2007
+Actual size: 561005, Returned size: 560997 using Exchange 2003
+
+StringBuilder
+PopRead
+DataAvailable
+NetworkStream
+DataAvailable
+private bool POPRead(StringBuilder strBuffer, long lngFetchMailSize)
+{
+   const int bufferSize = 1024;
+
+    byte[] inb;
+    if (enc == null)
+    {
+        enc = new ASCIIEncoding();
+    }
+
+    try
+    {
+        if (lngFetchMailSize > 0 && lngFetchMailSize < (32 * bufferSize))
+        {
+            // limit the size of the buffer as the amount of memory
+            // on Pocket PC is limited.
+            inb = new byte[lngFetchMailSize];
+        }
+        else
+        {
+            inb = new byte[bufferSize];
+        }
+        Array.Clear(inb, 0, inb.Length);
+        bool bMoreData = true;
+        long iBytesRead = 0L;
+        int bytesReadInThisRound = 0;
+
+        int numberOfTimesZeroBytesRead = 0;
+
+        while (bMoreData)
+        {
+            bytesReadInThisRound = this.nsPOP.Read(inb, 0, inb.Length);
+            iBytesRead += bytesReadInThisRound;
+
+            if (bytesReadInThisRound == 0)
+            {
+                numberOfTimesZeroBytesRead++;
+            }
+            else
+            {//If on a retry the data read is not empty, reset the counter.
+                numberOfTimesZeroBytesRead = 0;
+            }
+
+            strBuffer.Append(enc.GetString(inb, 0, bytesReadInThisRound));
+            Array.Clear(inb, 0, bytesReadInThisRound);
+            // DataAvailable sometimes gives false even though there is
+            // more to be read.
+            bMoreData = this.nsPOP.DataAvailable;
+            // Use this number (5), since some servers sometimes give the size
+            // of the email bigger than the actual size.
+            if ((lngFetchMailSize != 0 && !bMoreData)
+                && (iBytesRead < lngFetchMailSize)
+                && numberOfTimesZeroBytesRead < 5)
+            {
+                bMoreData = true;
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        string errmessage = "Reading email Expected Size: " + lngFetchMailSize;
+        LogException.LogError(ex, errmessage, false, "oePPop.POPRead");
+        Error = ex.Message + " " + errmessage;
+        return false;
+    }
+    finally
+    {
+        GC.Collect();
+    }
+    return true;
+}
+
+private long GetMailSize(int index)
+{
+    StringBuilder strBuffer = new StringBuilder();
+    const string LISTError = "Unable to read server's reply for LIST command";
+    if ((this.POPServer != null) && (this.nsPOP != null))
+    {
+        if (!this.POPWrite("LIST " + index))
+        {
+            return -1L;
+        }
+        if (!this.POPRead(strBuffer))
+        {
+            this.Error = LISTError;
+            return -1L;
+        }
+        if (!this.IsOK(strBuffer))
+        {
+            return -1L;
+        }
+        string strReturned = strBuffer.ToString();
+        int pos1 = strReturned.IndexOf(" ", 3);
+        if (pos1 == -1)
+        {
+            this.Error = LISTError;
+            return -1L;
+        }
+        int pos2 = strReturned.IndexOf(" ", (int)(pos1 + 1));
+        if (pos2 == -1)
+        {
+            this.Error = LISTError;
+            return -1L;
+        }
+        int pos3 = strReturned.IndexOf("\r\n", (int)(pos2 + 1));
+        if (pos3 == -1)
+        {
+            this.Error = LISTError;
+            return -1L;
+        }
+        long mailSize = 0;
+        Int64.TryParse(strBuffer.ToString(pos2 + 1, pos3 - (pos2 + 1)).Trim(), out mailSize);
+        return mailSize;
+    }
+    this.Error = NotConnectedError;
+    return -1L;
+}
+

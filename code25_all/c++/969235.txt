@@ -1,0 +1,211 @@
+int main(int argc, char** argv)
+{
+ParseArgs(argc,argv);
+
+SerialPort* port = SerialPort::New();
+if(!port)
+    Error(ErrorNoMemory,"Can't create port");
+
+int error = port->Open(PortNum, SendFlag);
+if(error)
+    Error(error,"Can't open port");
+
+error = port->Initialise(PortBaud);
+if(error)
+    Error(error,"Can't initialise port");
+
+if(ReceiveFlag)
+{
+    port->Listen();
+    Receive(port); //after the call is stablished I send a file
+}
+else
+{
+    port->Dial(PhoneNumber);
+     Send(port);
+}
+port->Close();
+delete port;
+
+return 0;
+}
+
+int Open(unsigned port, bool SendFlag)
+{
+// make name for port...
+char name[] = "\\\\.\\com???.???";
+char* nameNumber = name+sizeof(name)-8;
+char* nameEnd = nameNumber;
+if(port>999){
+    return ErrorInvalidPort;
+}
+if(port>99)
+{
+    *nameEnd++ = '0'+port/100;
+    port %= 100;
+}
+if(port>9)
+{
+    *nameEnd++ = '0'+port/10;
+    port %= 10;
+}
+*nameEnd++ = '0'+port;
+*nameEnd = 0;
+
+// open port...
+    hSerial = CreateFile(name, GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+
+if(hSerial==INVALID_HANDLE_VALUE)
+{
+    switch(GetLastError())
+    {
+        case ERROR_FILE_NOT_FOUND:
+            return ErrorInvalidPort;
+        case ERROR_ACCESS_DENIED:
+            return ErrorPortInUse;
+        default:
+            return Error();
+    }
+}
+
+SetupComm( hSerial, 1024, 1024 );
+if (!SendFlag)
+{
+    if (!SetCommMask(hSerial, EV_RING |EV_RLSD))
+         // Error setting communications mask
+        printf("error mascara");
+}
+else
+{
+    if (!SetCommMask(hSerial, EV_RLSD))
+    {
+        // Error setting communications mask
+        printf("error mascara");
+    }
+}
+
+return 0;
+}
+
+int Initialise(unsigned baud)
+{
+// flush port...
+if(!FlushFileBuffers(hSerial))
+    return Error();
+if(!PurgeComm(hSerial, PURGE_TXABORT|PURGE_RXABORT|PURGE_TXCLEAR|PURGE_RXCLEAR))
+    return Error();
+
+// configure port...
+DCB dcb ;
+if(!GetCommState(hSerial, &dcb))
+    return Error();
+dcb.BaudRate    = CBR_115200;
+dcb.ByteSize    = 8;
+dcb.StopBits    = ONESTOPBIT;
+dcb.Parity        = NOPARITY;
+if(!SetCommState(hSerial, &dcb))
+{
+    if(GetLastError()==ERROR_INVALID_PARAMETER)
+        return ErrorInvalidSettings;
+    return Error();
+}
+
+// set timeouts to zero so read/writes return immediately...
+COMMTIMEOUTS timeouts = {0};
+timeouts.ReadIntervalTimeout        = MAXDWORD;
+timeouts.ReadTotalTimeoutConstant       = 0;
+timeouts.ReadTotalTimeoutMultiplier     = 0;
+timeouts.WriteTotalTimeoutConstant      = 0;
+timeouts.WriteTotalTimeoutMultiplier= 0;
+if(!SetCommTimeouts(hSerial, &timeouts))
+    return Error();
+
+// flush port again...
+if(!PurgeComm(hSerial, PURGE_TXABORT|PURGE_RXABORT|PURGE_TXCLEAR|PURGE_RXCLEAR))
+    return Error();
+return 0;
+}
+
+int Dial(char *telefono)
+{
+
+unsigned long int  n = 0;
+DWORD dwCommEvent;
+DWORD bytes;
+DWORD dwRead;
+char cadena[15];
+char  chRead;
+
+
+sprintf(cadena, "ATDT%s\r", telefono);
+
+if (!WriteFile( hSerial, "ATH1\r", strlen("ATH1\r"), (&(n)), 0 ))
+{
+    printf("error");
+}
+FlushFileBuffers( hSerial );
+Sleep(1000);
+
+if (!WriteFile( hSerial, cadena, strlen(cadena), (&(n)), 0))
+{
+    printf("error");
+}
+FlushFileBuffers( hSerial );
+Sleep(10000);
+
+printf("Marcamos");
+
+do
+{
+    printf("Espero eventos");
+    if(WaitCommEvent(hSerial, &dwCommEvent, NULL))
+    {
+        if(dwCommEvent & EV_RLSD)
+        {
+            printf("rlsd");
+            break;
+        }
+        else
+        {
+            printf("otro");
+        }
+    }
+    printf("fin del bucle");
+} while(true);
+
+
+
+return 0;
+}
+
+int Listen()
+{
+DWORD dwCommEvent;
+unsigned long int  n = 0;
+
+do
+{
+    printf("ESpero eventos");
+    if(WaitCommEvent(hSerial, &dwCommEvent, NULL))
+    {
+        if(dwCommEvent & EV_RING)
+        {
+            printf("RING");
+
+            if (!WriteFile( hSerial, "ATA\r", strlen("ATA\r"), (&(n)), 0 ))
+            {
+                printf("error");
+            }
+            FlushFileBuffers( hSerial );
+            break;
+        }
+        else if (dwCommEvent & EV_RLSD )
+        {
+            break;
+        }
+    }
+    printf("fin del bucle");
+} while(true);
+return 0;
+}
+

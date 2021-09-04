@@ -1,0 +1,54 @@
+Imports Microsoft.Web.Administration
+
+Module Module1
+Sub main(ByVal cmdArgs() As String)
+    Dim WebSite As String = Nothing
+    Dim UserName As String = Nothing
+    Dim Password As String = Nothing
+    Dim Base64EncodedCertData As String = Nothing
+    Dim switch As String, arg As String
+
+    For Each Str As String In cmdArgs
+        switch = Split(Str, ":").First
+        arg = Split(Str, ":").Last
+        Select Case switch
+            Case "/Web"
+                WebSite = arg
+            Case "/User"
+                UserName = arg
+            Case "/Pwd"
+                Password = arg
+            Case "/Cert"
+                If arg = "mySecretCode" Then
+                    Base64EncodedCertData = "ServerCertGoesHere"
+                Else
+                    Base64EncodedCertData = arg
+                End If
+        End Select
+    Next
+
+    Using serverManager As New ServerManager
+        Dim config As Configuration = serverManager.GetWebConfiguration(WebSite.ToString)
+
+        Dim iisClientCertificateMappingAuthenticationSection As ConfigurationSection = config.GetSection("system.webServer/security/authentication/iisClientCertificateMappingAuthentication")
+        iisClientCertificateMappingAuthenticationSection("enabled") = True
+        iisClientCertificateMappingAuthenticationSection("oneToOneCertificateMappingsEnabled") = True
+
+        Dim oneToOneMappingsCollection As ConfigurationElementCollection = iisClientCertificateMappingAuthenticationSection.GetCollection("oneToOneMappings")
+        Dim addElement As ConfigurationElement = oneToOneMappingsCollection.CreateElement("add")
+        addElement.SetMetadata("lockItem", True)
+        addElement("enabled") = True
+        addElement("userName") = UserName.ToString
+        addElement("password") = Password.ToString
+        addElement("certificate") = Base64EncodedCertData.ToString
+        oneToOneMappingsCollection.Add(addElement)
+
+        Dim accessSection As ConfigurationSection = config.GetSection("system.webServer/security/access", WebSite.ToString)
+        accessSection("sslFlags") = "Ssl, SslNegotiateCert"
+
+        serverManager.CommitChanges()
+    End Using
+End Sub
+
+End Module
+

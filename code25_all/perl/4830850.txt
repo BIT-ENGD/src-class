@@ -1,0 +1,105 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use threads;
+use threads::shared;
+use Thread::Queue;
+use DBI();
+use File::Touch;
+
+my $databasefile = "/var/www/deamon/new.db";
+my $count        = touch($databasefile);
+
+my $dbuser        = "****";
+my $dbpwd         = "****";
+my $dbhost        = "localhost";
+my $dbname        = "****";
+my $max_threads   = 16;
+my $queue_id_list = Thread::Queue->new;
+my @childs;
+
+#feeds entries to the queue list
+my $ArrayMonitor = threads->new(\&URLArrayMonitor, $queue_id_list);
+sleep 3;    #make sure system has enough time to connect and load up array
+
+#start 10 crawler threads (these are the work horses)
+my $CrawlerThreads = ();
+for (0 .. $max_threads) {
+    $CrawlerThreads->[$_] = threads->new(\&NameChecker, $queue_id_list);
+
+    #print "Crawler " . ($_ + 1) . " created.\n";
+}
+
+#print "Letting threads run until queue is empty.\n";
+
+while ($queue_id_list->pending > 0) {
+    sleep .01;
+}
+
+sleep 1;
+
+foreach my $thr (threads->list) {
+
+    # don't join the main or ourselves
+    if ($thr->tid && !threads::equal($thr, threads->self)) {
+
+        #print "Waiting for thread " . $thr->tid . " to join\n";
+        #print "Thread " . $thr->join . " has joined.\n";
+        sleep .01;
+    }
+}
+
+sub URLArrayMonitor {
+    my ($queue_id_list) = @_;
+
+    #**********************************************
+    # here we walk though all users / select database and check what needs to be checked
+    #**********************************************
+    my $dbh = DBI->connect("DBI:mysql:database=" . $dbname . ";host=" . $dbhost, $dbuser, $dbpwd, {'RaiseError' => 1});
+    my $sth = $dbh->prepare("SELECT * FROM ci_users WHERE user_group >= 10 ORDER BY user_id");
+    $sth->execute();
+    while (my $ref = $sth->fetchrow_hashref()) {
+
+        # now we check the user if there are names we need to check
+        print "Now checking relian_user_" . $ref->{'user_id'} . "\r\n";
+        eval {
+            my $dbuser
+              = DBI->connect("DBI:mysql:database=user_" . $ref->{'user_id'} . ";host=" . $dbhost, $dbuser, $dbpwd, {'RaiseError' => 1});
+            my $stuser = $dbuser->prepare("SELECT * FROM ci_address_book WHERE lastchecked=0");    #select only new
+            $stuser->execute();
+            while (my $entry = $stuser->fetchrow_hashref()) {
+                my @queueitem = ($ref->{'user_id'} . "#" . $entry->{'id'});
+                $queue_id_list->enqueue(@queueitem);
+            }
+            $stuser->finish();
+            $dbuser->disconnect();
+        };
+        warn "failed to connect - $dbuser->errstr" if ($@);
+    }
+    $sth->finish();
+    $dbh->disconnect();
+    print "List now contains " . $queue_id_list->pending . " records.\n";
+    sleep 1;
+}
+
+sub NameChecker {
+    my ($queue_id_list) = @_;
+    while ($queue_id_list->pending > 0) {
+        my $info = $queue_id_list->dequeue_nb;
+        if (defined($info)) {
+            my @details      = split(/#/, $info);
+            my $result       = system("/var/www/deamon/NewScan/match_name db=" . $details[0] . " id=" . $details[1]);
+            my $databasefile = "/var/www/deamon/new.db";
+            my $count        = touch($databasefile);
+
+            #print "Thread: ". threads->self->tid. " - Done user: ".$details[0]. " and addressbook id: ". $details[1]."\r\n";
+            #print $queue_id_list->pending."\r\n";
+        }
+    }
+
+    #print "Crawler " . threads->self->tid . " ready to exit.\n";
+
+    return threads->self->tid;
+}
+

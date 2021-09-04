@@ -1,0 +1,90 @@
+addressForm :: Monad m => Maybe Address -> [Address] -> Form Text m Address
+addressForm a addrs = 
+    Address
+        <$> "id" .: choiceWith (addrToChoice addrs) (fmap id a)
+        <*> "name" .: string (fmap name a)
+        <*> "street" .: string (fmap street a)
+        <*> "city" .: string (fmap city a)
+        <*> "state" .: choiceWith stateChoices (fmap state a)
+        <*> "country" .: choiceWith countryChoicesRequired (fmap country a)
+        <*> "zipcode" .: string (fmap zipcode a)
+
+
+stateChoices :: [(Text, (Maybe String, Text))] -- (htmlValue, (realValue, labelValue))
+stateChoices = [("ON", (Just "ON", "Ontario")), ("NE", (Just "NE", "Nebraska"))]
+
+countryChoicesRequired :: [(Text, (String, Text))]
+countryChoicesRequired = [("CA", ("CA", "Canada")), ("US", ("US", "United States of America"))]
+
+addressForm' :: (HasPostgres p, Monad m) => Maybe Address -> [Address] -> p (Form Text m Address)
+addressForm' a addrs = do
+    countries <- countryChoices'
+    return $ Address
+        <$> "id" .: choiceWith (addrToChoice addrs) (fmap id a)
+        <*> "name" .: string (fmap name a)
+        <*> "street" .: string (fmap street a)
+        <*> "city" .: string (fmap city a)
+        <*> "state" .: choiceWith stateChoices (fmap state a)
+        <*> "country" .: choiceWith countries (fmap country a)
+        <*> "zipcode" .: string (fmap zipcode a)
+
+data Region = Region
+    { code :: String
+    , fullName :: String
+    }
+
+countryChoices' :: HasPostgres m => m [(Text, (String, Text))]
+countryChoices' = do
+    countries <- getCountries
+    return $ abbrToChoice countries
+
+abbrToChoice :: [Region] -> [(Text, (String, Text))]
+abbrToChoice regions =
+    map (\ a -> ((pack $ code a), (code a, (pack $ fullName a)))) regions
+
+editAddressH :: ([(T.Text, Splice AppHandler)] -> AppHandler ()) -> Addr.Address -> Maybe Int64 -> AppHandler ()
+editAddressH renderer a userId = do
+    addresses <- Addr.list userId
+    (view, result) <- runForm "form" $ Addr.addressForm' (Just a) addresses -- line 233
+    case result of
+        Just x -> do
+            r <- Addr.edit x -- line 236
+            case r of
+                _ -> renderer [("success", showContents), ("dfForm", hideContents)]
+        Nothing -> renderer $ ("success", hideContents) : ("addressList", addressScriptSplice addresses) : phoneSplices ++ digestiveSplices view
+
+src/Site.hs:233:44:
+    No instance for (HasPostgres
+                       (digestive-functors-0.5.0.1:Text.Digestive.Form.Internal.FormTree
+                          (Handler App App) v0 (Handler App App)))
+      arising from a use of `Addr.addressForm''
+    Possible fix:
+      add an instance declaration for
+      (HasPostgres
+         (digestive-functors-0.5.0.1:Text.Digestive.Form.Internal.FormTree
+            (Handler App App) v0 (Handler App App)))
+    In the second argument of `($)', namely
+      `Addr.addressForm' (Just a) addresses'
+    In a stmt of a 'do' expression:
+        (view, result) <- runForm "form"
+                        $ Addr.addressForm' (Just a) addresses
+    In the expression:
+      do { addresses <- Addr.list userId;
+           (view, result) <- runForm "form"
+                           $ Addr.addressForm' (Just a) addresses;
+           case result of {
+             Just x -> do { ... }
+             Nothing
+               -> renderer
+                $   ("success", hideContents)
+                  :   ("addressList", addressScriptSplice addresses)
+                    :   phoneSplices ++ digestiveSplices view } }
+src/Site.hs:236:40:
+    Couldn't match expected type `Addr.Address'
+                with actual type `digestive-functors-0.5.0.1:Text.Digestive.Form.Internal.FormTree
+                                    m0 Text m0 Addr.Address'
+    Expected type: Addr.Address
+      Actual type: Form Text m0 Addr.Address
+    In the first argument of `Addr.edit', namely `x'
+    In a stmt of a 'do' expression: r <- Addr.edit x
+

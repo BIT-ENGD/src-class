@@ -1,0 +1,57 @@
+require 'rubygems'
+require 'net/http'
+require 'uri'
+
+threads = []
+to_get = File.readlines(ARGV[0])
+
+dir = ARGV[1]
+errorFile = ARGV[2]
+
+error_f = File.open(errorFile, "w")
+
+puts "Need to get #{to_get.length} queries ..!!"
+start_time = Time.now
+
+100.times do
+  threads << Thread.new do
+    while q_word = to_get.pop
+      toks = q_word.chop.split("\t")
+
+      entity = toks[0]
+      urls = toks[1].chop.split("::")
+      count = 1
+
+      urls.each do |url|
+        q_final = URI.escape(url)
+        q_parsed = URI.parse(q_final)
+
+        filename = dir+"/"+entity+"_"+count.to_s
+
+        if(File.exists? filename)
+          count = count + 1
+        else
+          begin
+            res_http = Net::HTTP.get(q_parsed.host, q_parsed.request_uri)
+            File.open(filename, 'w') {|f| f.write(res_http) }
+          rescue Timeout::Error
+            error_f.write("timeout error " + url+"\n")
+          rescue 
+            error_f.write($!.inspect + " " + filename + " " + url+"\n")
+          end
+          count = count + 1
+        end
+      end
+    end
+  end 
+end
+
+puts "waiting here"
+
+threads.each { |x| x.join }
+puts "finished in #{Time.now - start_time}"
+#puts "#{dup} duplicates found"
+puts "writing output ..."
+error_f.close()
+puts "Done."
+

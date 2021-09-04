@@ -1,0 +1,109 @@
+clientPort = [[NSSocketPort alloc] initWithTCPPort:SERVER_PORT];
+if(clientPort == nil) continue; else NSLog(@"Port OK");
+
+clientConnection = [NSConnection connectionWithReceivePort:clientPort sendPort:nil];
+if(clientConnection == nil) continue; else NSLog(@"Conn OK");
+
+[[NSSocketPortNameServer sharedInstance] registerPort:clientPort name:@"DOTest3_0"];
+
+//Vend Object
+@try {
+[clientConnection setRootObject:object];
+NSLog([NSString stringWithFormat:@"Port %d: Vend OK", (SERVER_PORT + i)]);
+return;
+} @catch (...) {
+NSLog([NSString stringWithFormat:@"Port %d: Vend Next", (SERVER_PORT + i)]);
+}
+
+// Create temporary Pointer to kGLView Object.
+  id <NSCoding, kGLViewProtocol> openGLView;
+
+      // Setup Port, Connection, & Proxy
+      portTest = (NSSocketPort *)[[NSSocketPortNameServer sharedInstance] portForName:@"DOTest3_0" host:@"*"];
+      if (portTest == nil ) continue ; else NSLog(@"Port OK");
+
+      connTest = [NSConnection  connectionWithReceivePort:nil sendPort:portTest];
+      if (connTest == nil ) continue ; else NSLog(@"Conn OK");
+
+      openGLView = [[connTest rootProxy] retain];
+      if (openGLView == nil ) continue ; else NSLog(@"OpenGL OK");
+
+      [openGLView drawWithRotation: rotationAngle];
+
+  }
+
+-(void)vend:(id)object {
+  port = [[[NSSocketPort alloc] initWithTCPPort:[self tcpPort]] 
+          retain];
+
+  conn = [[NSConnection connectionWithReceivePort:port sendPort:nil] 
+          retain];
+
+  for (int i = 0; i < 10; i++) {
+    [[NSSocketPortNameServer sharedInstance] registerPort:port
+                                                     name:[[self portName] stringByAppendingFormat:@"_%d", i]];
+    @try {
+      [conn setRootObject:object];
+      return;
+    } @catch (...) {
+      NSLog(@"Vend Next");
+      continue;
+    }
+  }
+  NSLog(@"Vend Failed");
+}
+
+-(id)init {
+  self = [super init];
+
+  [self setRotationAngle:0.0f];
+
+  clientObj = [[Client alloc] initWithName:@"DOTest4" 
+                                   Address:@"10.10.5.104" // mini
+                                      Port:48557];
+
+  [clientObj vend:self];
+
+  return self;
+}
+
+-(IBAction)rotateClient:(id)sender {
+  NSArray *vendedObjects = [serverObj getVendedObjects];
+  id <NSCoding, ClientController_Protocol> proxy;
+
+  if (vendedObjects != nil) {
+    for (int i = 0; i < [vendedObjects count]; i++) {
+      proxy = [vendedObjects objectAtIndex:i];
+      [proxy rotate];
+    }
+  }
+    // release
+  [vendedObjects release];
+}
+
+-(NSArray *)getVendedObjects {
+
+  NSArray *vendedObjects = [[[NSArray alloc] init] retain];
+  NSSocketPort *port;
+  NSConnection *conn;
+
+  for (int i = 0; i< 10; i++) {
+    // Get Port Object
+    port = (NSSocketPort *)[[NSSocketPortNameServer sharedInstance] 
+                           portForName:[[self portName] stringByAppendingFormat:@"_%d", i]
+                           host:[self addressRemote]];
+    if (port == nil) continue;
+    // Create Connection with Timeouts
+    conn = [NSConnection connectionWithReceivePort:nil sendPort:port];
+    if (conn == nil) continue;
+
+    [conn setReplyTimeout:(NSTimeInterval)60.0];
+    [conn setRequestTimeout:(NSTimeInterval)60.0];
+
+    // Get VendedObject of Connection
+    vendedObjects = [[vendedObjects arrayByAddingObject:[conn rootProxy]] retain];
+  }
+
+  return vendedObjects;
+}
+

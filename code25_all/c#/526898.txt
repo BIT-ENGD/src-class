@@ -1,0 +1,123 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Linq;
+using System.Text;
+using System.Net;
+using System.Net.Sockets;
+using System.Net.Security;
+using System.Web;
+using System.Web.Handlers;
+using System.IO;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+
+namespace ConsoleApplication1
+{
+
+
+    class Program
+    {
+        public static string API_KEY = "MY_API_KEY";
+        public static string SECRET_ACCESS_KEY = "MY_SECRET_KEY";
+        public static string PATTERN_RFC1123 = "ddd, dd MMM yyyy HH:mm:ss " + "GMT";
+
+        static void Main(string[] args)
+        {
+            // URL for sending message - 
+            //      send_message = "https://api.zeepmobile.com/messaging/2008-07-14/send_message";
+            //      blast_message = "https://api.zeepmobile.com/messaging/2008-07-14/blast_message";
+            string apiurl = "https://api.zeepmobile.com/messaging/2008-07-14/blast_message";
+
+
+            // FORMAT must be Sun, 06 Nov 1994 08:49:37 GMT
+            string http_date = DateTime.UtcNow.ToString("r");
+            // Text to send
+            string body = HttpUtility.UrlEncode("Test message.", System.Text.Encoding.UTF8);
+            // NOTE: Use 'user_id=22&body=' instead of just 'body=' when sending a message to a user.
+            // 22 is a user I have previously registered with ZEEP and is used for testing purposes.
+            string parameters = "body=" + body; 
+            // String that will be converted into a signature.
+            string canonicalString = API_KEY + http_date + parameters;
+
+
+            //------------START HASH COMPUTATION---------------------
+            // Compute the Base64 HMACSHA1 value
+            HMACSHA1 hmacsha1 = new HMACSHA1(SECRET_ACCESS_KEY.ToByteArray());
+
+            // Compute the hash of the input file.
+            byte[] hashValue = hmacsha1.ComputeHash(canonicalString.ToByteArray());
+
+            String b64Mac = hashValue.ToBase64String();
+            String authentication = String.Format("Zeep {0}:{1}", API_KEY, b64Mac);
+            //-----------END HASH COMPUTATION------------------------
+
+
+            // We are using TCPClient instead of an HTTPWebRequest because we need to manually
+            // set the "Headers" such as Date, Authorization etc which cannot easily be done with HTTPWebRequest.
+            Uri reqUrl = new Uri(apiurl);
+            TcpClient client = new TcpClient(reqUrl.Host, reqUrl.Port);
+            NetworkStream netStream = client.GetStream();
+            // SSLStream is used for secure communication. ZEEP requires the use of SSL to send and SMS.
+            System.Net.Security.SslStream sslStream = new System.Net.Security.SslStream(
+                netStream, 
+                false, 
+                new System.Net.Security.RemoteCertificateValidationCallback(ValidateServerCertificate));
+            sslStream.AuthenticateAsClient(reqUrl.Host);
+
+
+            // POST content we are going to transmit over the SSL channel. 
+            // See. http://zeepmobile.com/developers/documentation/messaging/2008-07-14/rest_api#send_message
+            System.IO.StreamWriter s = new System.IO.StreamWriter(sslStream);
+            s.WriteLine(String.Format("POST {0} HTTP/1.1", "/api/blast"));
+            s.WriteLine(String.Format("Host: {0}", "api.zeepmobile.com"));
+            s.WriteLine(String.Format("Authorization: Zeep {0}:{1}", API_KEY, b64Mac));
+            s.WriteLine(String.Format("Date: {0}", http_date));
+            s.WriteLine(String.Format("Content-Type: {0}", "application/x-www-form-urlencoded"));
+            s.WriteLine(String.Format("Content-Length: {0}", parameters.Length));
+            s.WriteLine(String.Format("{0}", parameters));
+            s.Flush();
+
+
+            System.IO.StreamReader r = new StreamReader(sslStream);
+            string resp = r.ReadToEnd();
+            Console.WriteLine(resp);
+            r.Close();
+
+        }
+
+        // The following method is invoked by the RemoteCertificateValidationDelegate.
+        // We want to make sure the SSL has no Policy errors and is safe.
+        public static bool ValidateServerCertificate(
+              object sender,
+              X509Certificate certificate,
+              X509Chain chain,
+              SslPolicyErrors sslPolicyErrors)
+        {
+            if (sslPolicyErrors == SslPolicyErrors.None)
+                return true;
+
+            Console.WriteLine("Certificate error: {0}", sslPolicyErrors);
+
+            // Do not allow this client to communicate with unauthenticated servers.
+            return false;
+        }
+
+    }
+
+    public static class Extensions
+    {
+        public static byte[] ToByteArray(this string input)
+        {
+            UTF8Encoding encoding = new UTF8Encoding();
+            return encoding.GetBytes(input);
+        }
+
+        public static string ToBase64String(this byte[] input)
+        {
+            return Convert.ToBase64String(input);
+        }
+    }
+}
+

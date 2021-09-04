@@ -1,0 +1,94 @@
+ Public Sub StartSim()
+        Log.Info("SimulationInstance.StartSim", String.Format("Starting the simulation instance: {0}", InstanceEntity.Guid), Nothing)
+
+        'initialize thread, and start it
+        SyncLock _lock
+            If _runner IsNot Nothing Then
+                Return 'running
+            End If
+            _runner = New Thread(New ThreadStart(AddressOf RunSimulation))
+            _runner.Priority = ThreadPriority.Highest
+            _runner.Start()
+        End SyncLock
+    End Sub
+
+    Private Sub RunSimulation()
+        Me.StartedOn = DateTime.Now
+        Me.StartedOnMinutes = TimeSpan.FromMinutes(InstanceEntity.MinutesTaken)
+
+        InstanceEntity.StartedOn = Me.StartedOn
+
+        TranscriptLog.AppendTranscriptLog(
+            DB,
+            InstanceEntity.Guid,
+            Guid.Empty,
+            InstanceEntity.Scenario,
+            "Simulation instance started.",
+            "from",
+            "to",
+            "Simulation instance started.",
+            "entry",
+            InGameTime,
+            "event",
+            Nothing,
+            0,
+            ""
+        )
+
+        While True
+            Try
+                ' This is the master simulation controller
+
+                RunSimulation_HandleMessages()
+
+                RunSimulation_CheckPulse()
+
+                RunSimulation_IdleCheck()
+
+                RunSimulation_ServiceUnits()
+
+                RunSimulation_AutoSave()
+
+            Catch ex As ThreadAbortException
+                'closing
+                Log.Info("SimulationInstance.RunSimulation", "Ending Simulation", String.Empty)
+                TranscriptLog.AppendTranscriptLog(
+                    DB,
+                    InstanceEntity.Guid,
+                    Guid.Empty,
+                    InstanceEntity.Scenario,
+                    "Simulation instance stopped.",
+                    "from",
+                    "to",
+                    "Simulation instance stopped.",
+                    "entry",
+                    InGameTime,
+                    "event",
+                    Nothing,
+                    0,
+                    ""
+                )
+                SaveSim()
+                Return ' done running
+
+            Catch ex As Exception
+                Log.Critical("SimulationInstance.RunSimulation", "Critical Error", ex.ToString())
+
+                Dim dialog = <dialog>
+                                <title>Server Internal Error</title>
+                                <image>dialog_idle.png</image>
+                                <message><%= New XCData(String.Format("<p><b>Server Error:</b></p><p><hr>{0}<hr></p><p>Terminating the simulation.</p><p>Please try again.</p>", ex.Message)) %></message>
+                                <buttons>
+                                    <button action="exit">Exit</button>
+                                </buttons>
+                            </dialog>
+
+                BroadcastMessage("dialog", "IMAGE+TEXT", Nothing, Guid.NewGuid().ToString(), dialog)
+
+                StopSim()
+                Return 'done running
+
+            End Try
+        End While
+    End Sub
+

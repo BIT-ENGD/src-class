@@ -1,0 +1,131 @@
+    /// <summary>
+    /// Write byte data to the channel.
+    /// </summary>
+    /// <param name="bytes">The byte array to write.</param>
+    private void Write(byte[] bytes)
+    {
+        try
+        {
+            // Write the data to the port asynchronously.
+            this._stream.BeginWrite(bytes, 0, bytes.Length, new AsyncCallback(this.WriteCallback), null);
+        }
+        catch (IOException ex)
+        {
+            // Do stuff.
+        }
+        catch (ObjectDisposedException ex)
+        {
+            // Do stuff.
+        }
+    }
+
+    /// <summary>
+    /// Asynchronous write callback operation.
+    /// </summary>
+    private void WriteCallback(IAsyncResult ar)
+    {
+        bool writeSuccess = false;
+
+        try
+        {
+            this._stream.EndWrite(ar);
+            writeSuccess = true;
+        }
+        catch (IOException ex)
+        {
+            // Do stuff.
+        }
+
+        // If the write operation completed sucessfully, start the read process.
+        if (writeSuccess) { this.Read(); }
+    }
+
+    /// <summary>
+    /// Read byte data from the channel.
+    /// </summary>
+    private void Read()
+    {
+        try
+        {
+            // Create new comms response state object.
+            CommsResponse response = new CommsResponse();
+
+            // Begin the asynchronous read process to get response.
+            this._stream.BeginRead(this._readBuffer, 0, this._readBuffer.Length, new AsyncCallback(this.ReadCallback), response);
+        }
+        catch (IOException ex)
+        {
+            // Do stuff.
+        }
+        catch (ObjectDisposedException ex)
+        {
+            // Do stuff.
+        }
+    }
+
+    /// <summary>
+    /// Asynchronous read callback operation.
+    /// </summary>
+    private void ReadCallback(IAsyncResult ar)
+    {
+        // Retrieve the comms response object.
+        CommsResponse response = (CommsResponse)ar.AsyncState;
+
+        try
+        {
+            // Call EndRead to complete call made by BeginRead.
+            // At this point, new data will be in this._readbuffer.
+            int numBytesRead = this._stream.EndRead(ar);
+
+            if (numBytesRead > 0)
+            {
+                // Create byte array to hold newly received bytes.
+                byte[] rcvdBytes = new byte[numBytesRead];
+
+                // Copy received bytes from read buffer to temp byte array
+                Buffer.BlockCopy(this._readBuffer, 0, rcvdBytes, 0, numBytesRead);
+
+                // Append received bytes to the response data byte list.
+                response.AppendBytes(rcvdBytes);
+
+                // Check received bytes for a correct response.
+                CheckResult result = response.CheckBytes();
+
+                switch (result)
+                {
+                    case CheckResult.Incomplete: // Correct response not yet received.
+                        if (!this._cancelComm)
+                        {
+                            this._stream.BeginRead(this._readBuffer, 0, this._readBuffer.Length,
+                                new AsyncCallback(this.ReadCallback), response);
+                        }
+                        break;
+
+                    case CheckResult.Correct:  // Raise event if complete response received.
+                        this.OnCommResponseEvent(response);
+                        break;
+
+                    case CheckResult.Invalid: // Incorrect response
+                        // Do stuff.
+                        break;
+
+                    default: // Unknown response
+                        // Do stuff.
+                        break;
+                }
+            }
+            else
+            {
+                // Do stuff.
+            }
+        }
+        catch (IOException ex)
+        {
+            // Do stuff.
+        }
+        catch (ObjectDisposedException ex)
+        {
+            // Do stuff.
+        }
+    }
+

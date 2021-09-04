@@ -1,0 +1,136 @@
+int RSA_public_encrypt(int flen, unsigned char *from,
+unsigned char *to, RSA *rsa, int padding);
+int RSA_private_decrypt(int flen, unsigned char *from,
+ unsigned char *to, RSA *rsa, int padding);
+
+int RSA_public_encrypt(int flen, unsigned char *from,
+unsigned char *to, RSA *rsa_public, int padding);
+int RSA_private_decrypt(int flen, unsigned char *from,
+ unsigned char *to, RSA *rsa_private, int padding);
+
+/*
+ *  theEncryptor.cpp
+ *  
+ *
+ *  Created by ben on 14/01/2010.
+ *  Copyright 2010 __MyCompanyName__. All rights reserved.
+ *
+ */
+
+#include "theEncryptor.h"
+#include <iostream>
+#include <sys/socket.h>
+#include <sstream>
+
+theEncryptor::theEncryptor()
+{
+
+}
+
+void
+theEncryptor::blowfish(unsigned char *data, int data_len, unsigned char* key, int enc)
+{
+
+    //  hash the key first! 
+    unsigned char obuf[20];
+    bzero(obuf,20);
+    SHA1((const unsigned char*)key, 64, obuf);
+
+    BF_KEY bfkey;
+    int keySize = 16;//strlen((char*)key);
+    BF_set_key(&bfkey, keySize, obuf);
+
+    unsigned char ivec[16];
+    memset(ivec, 0, 16);
+
+    unsigned char* out=(unsigned char*) malloc(data_len);
+    bzero(out,data_len);
+    int num = 0;
+    BF_cfb64_encrypt(data, out, data_len, &bfkey, ivec, &num, enc);
+
+    //for(int i = 0;i<data_len;i++)data[i]=out[i];
+
+    memcpy(data, out, data_len);
+    free(out);  
+
+}
+
+void
+theEncryptor::generateRSAKeyPair(int bits)
+{
+    rsa = RSA_generate_key(bits, 65537, NULL, NULL);
+}
+
+
+int
+theEncryptor::publicEncrypt(unsigned char* data, unsigned char* dataEncrypted,int dataLen)
+{   
+    return RSA_public_encrypt(dataLen, data, dataEncrypted, rsa, RSA_PKCS1_OAEP_PADDING);   
+}
+
+int
+theEncryptor::privateDecrypt(unsigned char* dataEncrypted,
+                             unsigned char* dataDecrypted)
+{
+    return RSA_private_decrypt(RSA_size(rsa), dataEncrypted, 
+                                   dataDecrypted, rsa, RSA_PKCS1_OAEP_PADDING);
+}
+
+void 
+theEncryptor::receivePublicKeyAndSetRSA(int sock, int bits)
+{
+    int max_hex_size = (bits / 4) + 1;
+    char keybufA[max_hex_size];
+    bzero(keybufA,max_hex_size);
+    char keybufB[max_hex_size];
+    bzero(keybufB,max_hex_size);
+    int n = recv(sock,keybufA,max_hex_size,0); 
+    n = send(sock,"OK",2,0);
+    n = recv(sock,keybufB,max_hex_size,0); 
+    n = send(sock,"OK",2,0); 
+    rsa = RSA_new();
+    BN_hex2bn(&rsa->n, keybufA);
+    BN_hex2bn(&rsa->e, keybufB);
+}
+
+void 
+theEncryptor::transmitPublicKey(int sock, int bits)
+{
+    const int max_hex_size = (bits / 4) + 1;
+    long size = max_hex_size;
+    char keyBufferA[size];
+    char keyBufferB[size];
+    bzero(keyBufferA,size);
+    bzero(keyBufferB,size);
+    sprintf(keyBufferA,"%s\r\n",BN_bn2hex(rsa->n));
+    sprintf(keyBufferB,"%s\r\n",BN_bn2hex(rsa->e));
+    int n = send(sock,keyBufferA,size,0);
+    char recBuf[2];
+    n = recv(sock,recBuf,2,0);
+    n = send(sock,keyBufferB,size,0);
+    n = recv(sock,recBuf,2,0);
+}
+
+void
+theEncryptor::generateRandomBlowfishKey(unsigned char* key, int bytes)
+{
+            /*
+    srand( (unsigned)time( NULL ) );
+    std::ostringstream stm;
+    for(int i = 0;i<bytes;i++){
+        int randomValue = 65 + rand()% 26;
+        stm << (char)((int)randomValue);
+    }
+    std::string str(stm.str());
+    const char* strs = str.c_str();
+    for(int i = 0;bytes;i++)key[i]=strs[i];
+            */
+
+    int n = RAND_bytes(key, bytes);
+
+    if(n==0)std::cout<<"Warning key was generated with bad entropy. You should not consider communication to be secure"<<std::endl;
+
+}
+
+theEncryptor::~theEncryptor(){}
+

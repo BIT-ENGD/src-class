@@ -1,0 +1,231 @@
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.TreeMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
+import org.xml.sax.SAXException;
+
+public class AddressTree
+{
+
+    private AddressNode structureRoot, userRoot;
+    private String xmlAddress;
+
+    public AddressTree(String XMLaddress)
+    {
+        this.xmlAddress = XMLaddress;
+        createEmptyTree();
+        startParsing();
+    }
+
+    private void startParsing()
+    {
+        AddressXMLParser handler = new AddressXMLParser(this);
+        try
+        {
+            SAXParser parser = SAXParserFactory.newInstance().newSAXParser();
+            File xml = new File(xmlAddress);
+            parser.parse(xml, handler);
+            ArrayList<AddressNode> rawNodes = createRawNodes(handler.getAddressStructure());
+            createTreeFromRawNodes(rawNodes, handler.getStartItem());
+            for (int i = 0; i < handler.getFinalItems().size(); i++)
+            {
+                getAddressNode(handler.getFinalItems().get(i), structureRoot).setIsFinal(true);
+            }
+        }
+        catch (StartAddressNodeNotFoundException ex)
+        {
+            Logger.getLogger(AddressTree.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        catch (ParserConfigurationException ex)
+        {
+        }
+        catch (SAXException ex)
+        {
+        }
+        catch (IOException ex)
+        {
+        }
+    }
+
+    private void createEmptyTree()
+    {
+        structureRoot = new AddressNode("root", null);
+        userRoot = new AddressNode("root", null);
+    }
+
+    public void setValue(String nodeName, String value) throws AddressNodeNotFoundException
+    {
+        AddressNode node = getAddressNode(nodeName, userRoot);
+        if (node != null)
+        {
+            node.setNodeValue(value);
+        }
+        else
+        {
+            throw new AddressNodeNotFoundException();
+        }
+    }
+
+    public ArrayList<String> getCompleteAddress()
+    {
+        return null;
+    }
+
+    public boolean isAddressCompleted()
+    {
+        AddressNode iterator = userRoot;
+        while (iterator.getAllChilds().size() != 0)
+        {
+            iterator = iterator.getAllChilds().get(0);
+        }
+        if (getAddressNode(iterator.getNodeName(), structureRoot).isFinal())
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    public List<String> getSubAddressItems(String addressItem)
+    {
+        ArrayList<String> subAddressItems = new ArrayList<String>();
+        List<AddressNode> childNodes = getAddressNode(addressItem, structureRoot).getAllChilds();
+        for (int i = 0; i < childNodes.size(); i++)
+        {
+            subAddressItems.add(childNodes.get(i).getNodeName());
+        }
+        return subAddressItems;
+    }
+
+    private AddressNode getAddressNode(String nodeName, AddressNode root)
+    {
+        ArrayList<AddressNode> graphNodes = new ArrayList<AddressNode>();
+        ArrayList<AddressNode> passedNodes = new ArrayList<AddressNode>();
+        graphNodes.add(root);
+        while (graphNodes.size() != 0)
+        {
+            AddressNode cureNode = graphNodes.remove(0);
+            passedNodes.add(cureNode);
+            if (cureNode.getNodeName().equals(nodeName))
+            {
+                return cureNode;
+            }
+            else
+            {
+                for (int i = 0; i < cureNode.getAllChilds().size(); i++)
+                {
+                    if (!passedNodes.contains(cureNode.getAllChilds().get(i)))
+                    {
+                        graphNodes.add(cureNode.getAllChilds().get(i));
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private ArrayList<AddressNode> createRawNodes(TreeMap<String, ArrayList<String>> addressStructure)
+    {
+        int itemsSize = addressStructure.size();
+        ArrayList<AddressNode> tmpNodes = new ArrayList<AddressNode>();
+        ArrayList<AddressNode> finalNodes = new ArrayList<AddressNode>();
+        for (int i = 0; i < itemsSize; i++)
+        {
+            String curKey = addressStructure.firstKey();
+            ArrayList<String> curSubItems = addressStructure.remove(curKey);
+            AddressNode curNode = new AddressNode(curKey);
+            finalNodes.add(new AddressNode(curKey));
+            for (int j = 0; j < curSubItems.size(); j++)
+            {
+                curNode.addChlid(curSubItems.get(j));
+            }
+            tmpNodes.add(curNode);
+        }
+        for (int i = 0; i < finalNodes.size(); i++)
+        {
+            for (int j = 0; j < tmpNodes.get(i).getAllChilds().size(); j++)
+            {
+                AddressNode childNode = null;
+                boolean existNodeBefore = false;
+                for (int k = 0; k < finalNodes.size(); k++)
+                {
+                    if (finalNodes.get(k).getNodeName().equals(tmpNodes.get(i).getAllChilds().get(j).getNodeName()))
+                    {
+                        childNode = finalNodes.get(k);
+                        existNodeBefore = true;
+                    }
+                }
+                if (!existNodeBefore)
+                {
+                    finalNodes.get(i).addChlid(tmpNodes.get(i).getAllChilds().get(j).getNodeName());
+                }
+                else
+                {
+                    finalNodes.get(i).addChildNode(childNode);
+                }
+            }
+        }
+        return finalNodes;
+    }
+
+    private void createTreeFromRawNodes(ArrayList<AddressNode> rawNodes, String rootName) throws StartAddressNodeNotFoundException
+    {
+        if (rootName == null)
+        {
+            throw new StartAddressNodeNotFoundException();
+        }
+        for (int i = 0; i < rawNodes.size(); i++)
+        {
+            if (rawNodes.get(i).getNodeName().equals(rootName))
+            {
+                structureRoot.addChildNode(rawNodes.get(i));
+                rawNodes.get(i).setParent(structureRoot);
+            }
+        }
+    }
+
+    public void addAddressItem(String itemName) throws AddressStructureAbusingException
+    {
+        AddressNode iterator = userRoot;
+        while (iterator.getAllChilds().size() > 0)
+        {
+            iterator = iterator.getAllChilds().get(0);
+        }
+        AddressNode fatherNode = getAddressNode(iterator.getNodeName(), structureRoot);
+        for (int i = 0; i < fatherNode.getAllChilds().size(); i++)
+        {
+            if (fatherNode.getAllChilds().get(i).getNodeName().equals(itemName))
+            {
+                iterator.addChlid(itemName);
+                return;
+            }
+        }
+        throw new AddressStructureAbusingException();
+    }
+
+    public void removeLastAddressItem() throws AddressNodeNotFoundException
+    {
+        if (userRoot.getAllChilds().size() > 0)
+        {
+            AddressNode iterator = userRoot;
+            while (iterator.getAllChilds().get(0).getAllChilds().size() > 0)
+            {
+                iterator = iterator.getAllChilds().get(0);
+            }
+            iterator.clearChilds();
+        }
+        else
+        {
+            throw new AddressNodeNotFoundException();
+        }
+    }
+}
+

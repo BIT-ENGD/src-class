@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+use strict;
+use Net::HTTP;
+use Getopt::Std;
+
+my %opts;
+
+getopts('ht:',\%opts);
+
+my @hostlist ("www.foo.com","www1.foo.com","www2.foo.com");
+
+my $timeout;
+
+if ($opts{t} =~ /\d+/) {
+ $timeout = $opts{t} + time();
+} else {
+ $timeout = 3600 + time();
+}
+
+while ($timeout < time()) {
+ foreach my $host (@hostlist) {
+  my $cnct = mkcnct($host);
+  if ($cnct) { mkreq($cnct) };
+ }
+}
+
+sub mkreq {
+ my $cnct = shift;
+ my $time = gettime();
+ my $out;
+ $cnct->write_request(GET => "/index.html");
+ ($out->{code},$out->{message},%{$out->{headers}}) = $cnct->read_response_headers;
+ printf "%s\t%s - Size %d\tLast modified %s\n", $time, $out->{message}, $out->{headers}{'Content-Length'}, $out->{headers}{'Last-Modified'};
+ $out = "";
+ $cnct->write_request(GET => "/pki/ca.crl");
+ ($out->{code},$out->{message},%{$out->{headers}}) = $cnct->read_response_headers;
+ printf "%s\t%s - Size %d\tLast modified %s\n", $time, $out->{message}, $out->{headers}{'Content-Length'}, $out->{headers}{'Last-Modified'};
+}
+
+sub mkcnct {
+ my $host = shift;
+ my $time = gettime();
+ my $cnct;
+ eval{
+  local $SIG{ALRM} = sub { print "$time\tCannot connect to $host\n"};
+  alarm(2);
+  $cnct = Net::HTTP->new(Host => $host);
+  alarm(0);
+ };
+ alarm(0);
+ return($cnct);
+}
+
+sub gettime {
+ my @time = localtime(time);
+ my $out;
+ $out = sprintf "%d\/%d\/%d %d:%d", ($time[4] + 1), $time[3], ($time[5] % 100 ), $time[2], $time[1];
+ return($out);
+}
+

@@ -1,0 +1,77 @@
+public bool ExecuteAsync(Command cmd);
+SomeCmd cmd = new SomeCmd(23, 14, 10, "hike!");
+cmd.OnCompleted += this.SomeCmd_OnCompleted;
+this.ConnectionToServer.ExecuteAsync(cmd);
+
+SomeCmd cmd = new SomeCmd(23, 14, 10, "hike!");
+cmd.OnCompleted += this.SomeCmd_OnCompleted;
+if( this.ConnectionToServer.ExecuteAsync(cmd) )
+{
+    Monitor.Wait( this.WillBePulsedBy_SomeCmd_OnCompleted );
+}
+
+class Connection
+{
+    public bool ExecuteAsync(Command cmd)
+    {
+        /// CONSIDER: If you don't catch every exception here
+        /// then every caller of this method must have 2 sets of
+                /// exception handling:
+        /// One in the handler of Command.OnCompleted and one where ExecuteAsync
+        /// is called.
+        try
+        {
+        /// Some possible exceptions here:
+        /// 1) remote is disposed. happens when the other side disconnects (WCF).
+        /// 2) I do something wrong in TrackCommand (a bug that I want to fix!)
+            this.TrackCommand(cmd);
+            remote.ServerExecuteAsync( cmd.GetRequest() );
+            return true;
+        }
+        catch(Exception ex)
+        {
+            /// Command completing synchronously.
+            cmd.Completed(ex, true);
+            return false;
+        }
+    }
+    /// <summary>This is what gets called by some magic when the server returns a response.</summary>
+    internal CommandExecuteReturn(CommandResponse response)
+    {
+        Command cmd = this.GetTrackedCommand(response.RequestId);
+        /// Command completing asynchronously.
+        cmd.Completed(response, false);
+    }
+
+    private IServer remote;
+}
+
+abstract class Command: EventArgs
+{
+    internal void Completed(Exception ex, bool synchronously)
+    {
+        this.Exception = ex;
+
+        this.CompletedSynchronously = synchronously;
+
+        if( this.OnCompleted != null )
+        {
+            this.OnCompleted(this);
+        }
+    }
+
+    internal void Completed(CommandResponse response, bool synchronously)
+    {
+        this.Response = response;
+        this.Completed(response.ExceptionFromServer, synchronously)
+    }
+
+    public bool CompletedSynchronously{ get; private set; }
+
+    public event EventHandler<Command> OnCompleted;
+
+    public Exception Exception{ get; private set; }
+
+    internal protected abstract CommandRequest GetRequest();
+}
+

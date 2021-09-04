@@ -1,0 +1,41 @@
+A<----->B
+B<----->C
+B<----->D
+C<----->E
+D<----->C
+D<----->E
+F<----->E
+With t as (select 'A' as per1, 'B' as per2 from dual union all
+         select 'B','C' from dual union all
+         select 'B','D' from dual union all
+         select 'C','B' from dual union all
+         select 'C','E' from dual union all
+         select 'D','C' from dual union all
+         select 'D','E' from dual union all
+         select 'E','C' from dual union all
+         select 'E','D' from dual union all
+         select 'F','E' from dual)
+ ,t2 as (select distinct least(per1, per2) as per1, greatest(per1, per2) as per2 from t union
+       select distinct greatest(per1, per2) as per1, least(per1, per2) as per1 from t)
+ ,t3 as (select per1, per2, row_number() over (partition by per1 order by per2) as rn from t2)
+ ,people as (select per, row_number() over (order by per) rn
+             from (select distinct per1 as per from t union
+                   select distinct per2 from t)
+            )
+  ,comb   as (select sys_connect_by_path(per,',')||',' as p
+              from   people
+              connect by rn > prior rn
+             )
+  ,find   as (select p, per2, count(*) over (partition by p) as cnt
+             from (
+                   select distinct comb.p, t3.per2
+                   from   comb, t3
+                   where  instr(comb.p, ','||t3.per1||',') > 0 or instr(comb.p, ','||t3.per2||',') > 0
+                  )
+            )
+ ,rnk as (select p, rank() over (order by length(p)) as rnk
+          from find
+          where cnt = (select count(*) from people)
+          order by rnk
+         )  select distinct trim(',' from p) as p from rnk  where rnk.rnk = 1`
+

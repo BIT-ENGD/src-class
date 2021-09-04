@@ -1,0 +1,111 @@
+uint32_t port;
+int sockfd, err_ip;
+const uint32_t sizebuff = 65535 - (20 + 8);
+unsigned char *buff = (unsigned char *) malloc(sizebuff);
+struct sockaddr_in servaddr, cliaddr;
+struct in_addr serv_in_addr;
+struct ip_mreq req;
+
+port = str2uint16(cmdsrv->ipport);
+bzero(buff, (size_t)sizebuff);
+bzero(&servaddr, sizeof(servaddr));
+bzero(&serv_in_addr, sizeof(serv_in_addr));
+err_ip = inet_aton(cmdsrv->ipaddr, &serv_in_addr);
+
+if(( err_ip != 0 ) && ( port != 0 )) {
+   servaddr.sin_family = AF_INET;
+   servaddr.sin_addr = serv_in_addr;
+   servaddr.sin_port = htons(port);
+   memcpy(&req.imr_multiaddr,&serv_in_addr,sizeof(req.imr_multiaddr));
+   req.imr_interface.s_addr = INADDR_ANY;
+   sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+   if( sockfd == -1 ) {
+      int outerror = errno;
+      char *retstr = "Couldn't open socket\n";
+      pthread_exit(retstr);
+   }
+   else {
+      struct in_addr ifaddr;
+      ifaddr.s_addr = INADDR_ANY;
+      int optres3 =
+         setsockopt( sockfd, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr,
+                     sizeof( ifaddr ));
+      if( optres3 == -1 ) {
+         int perrno = errno;
+         char *retstr = "Can't set IP_MULTICAST_IF for socket\n";
+         printf( "Error setsockopt: ERRNO = %s\n", strerror( perrno ));
+         printf( "%s",retstr );
+         pthread_exit(retstr);
+      }
+
+      unsigned char ttl = 32;
+      int optres2 =
+         setsockopt( sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl,
+                     sizeof( ttl ));
+      if( optres2 == -1 ) {
+         int perrno = errno;
+         char *retstr = "Can't set IP_MULTICAST_TTL for socket\n";
+         printf("Error setsockopt: ERRNO = %s\n",strerror(perrno));
+         printf("%s",retstr);
+         pthread_exit(retstr);
+      }
+
+      int optres =
+         setsockopt( sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &req,
+                     sizeof( req ));
+      if( optres == -1 ) {
+         int perrno = errno;
+         char *retstr = "Can't join to multicast-group\n";
+         printf("Error setsockopt: ERRNO = %s\n",strerror(perrno));
+         printf("%s",retstr);
+         pthread_exit(retstr);
+      }
+
+      // Bind port with socket
+      uint16_t cliport;
+      cliaddr.sin_family = AF_INET;
+      cliaddr.sin_addr.s_addr = INADDR_ANY;
+
+      if( strcmp( cmdsrv->ipport, "16011" ) == 0 ) {
+         cliport = str2uint16("16003");
+         cliaddr.sin_port = htons(cliport);
+      }
+      else if( strcmp( cmdsrv->ipport, "16012" ) == 0 ) {
+         cliport = str2uint16("16004");
+         cliaddr.sin_port = htons(cliport);                     
+      }
+      else {
+         printf("Device hasn't such port");
+         pthread_exit(NULL);
+      }
+
+      int bindres =
+         bind( sockfd, (struct sockaddr*)&cliaddr, sizeof( cliaddr ));
+      if( bindres == -1 ) {
+         int perrno = errno;
+         perror("Error in bind\n");
+      }
+      // ADD 1 BYTE
+      data rawdata;
+      rawdata.desc = 23;
+      printf( "SIZEOF = %d\n", sizeof( *( cmdsrv->cmd )));
+      memcpy( &rawdata.cmd, cmdsrv->cmd, sizeof( *( cmdsrv->cmd )));
+      printf( "RAWDATA: desc = %d, cmd = %d\n", rawdata.desc, rawdata.cmd );
+
+      int outerror = 0;
+      printf( "Send command to IP:\n addr = %s, port = %d\n",
+         inet_ntoa( servaddr.sin_addr ), ntohs( servaddr.sin_port ));
+      int size = sendto( sockfd, &rawdata, sizeof( rawdata ), 0,
+         (struct sockaddr*)&servaddr, sizeof( servaddr ));
+      if( size == -1 ) {
+         perror("Can't send command to socket");
+      }
+      ...
+
+192.168.80.122
+192.168.1.2
+int optres =
+   setsockopt( sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &req,
+               sizeof( req ));
+

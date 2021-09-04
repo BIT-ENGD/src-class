@@ -1,0 +1,44 @@
+case class Pipe[-I,+O,+R](f: I => (O, R));
+
+object Pipe {
+  // The problematic implicit class:
+  implicit class PipeEnrich[I,O,R](val pipe: Pipe[I,O,R]) extends AnyVal {
+    def >->[X](that: Pipe[O,X,R]): Pipe[I,X,R] = Pipe.fuse(pipe, that);
+    def <-<[X](that: Pipe[X,I,R]): Pipe[X,O,R] = Pipe.fuse(that, pipe);
+  }
+
+  def fuse[I,O,X,R](i: Pipe[I,O,R], o: Pipe[O,X,R]): Pipe[I,X,R] = null;
+
+  // Example that works:
+  val p1: Pipe[Int,Int,String] = Pipe((x: Int) => (x, ""));
+  val q1: Pipe[Int,Int,String] = p1 >-> p1;
+
+  // Example that does not, just because R = Nothing:
+  val p2: Pipe[Int,Int,Nothing] = Pipe((x: Int) => (x, throw new Exception));
+  val q2: Pipe[Int,Int,String] = p2 >-> p2;
+}
+
+R
+Nothing
+Pipe.scala:19: error: type mismatch;
+ found   : Pipe[Int,Int,R]
+ required: Pipe[Int,Int,String]
+  val q2: Pipe[Int,Int,String] = p2 >-> p2;
+
+trait Fuse[I,O,R] extends Any {
+  def >->[X](that: Pipe[O,X,R])(implicit finalizer: Finalizer): Pipe[I,X,R];
+}
+
+protected trait FuseImpl[I,O,R] extends Any with Fuse[I,O,R] {
+  def pipe: Pipe[I,O,R];
+  def >->[X](that: Pipe[O,X,R]) = Pipe.fuse(pipe, that);
+  def <-<[X](that: Pipe[X,I,R]) = Pipe.fuse(that, pipe);
+}
+
+implicit class PipeEnrich[I,O,R](val pipe: Pipe[I,O,R])
+  extends AnyVal with FuseImpl[I,O,R];
+implicit class PipeEnrichNothing[I,O](val pipe: Pipe[I,O,Nothing])
+  extends AnyVal with FuseImpl[I,O,Nothing];
+
+Nothing
+R

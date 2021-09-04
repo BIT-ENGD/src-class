@@ -1,0 +1,100 @@
+Pixture(1257,0xa0610500) malloc: *** error for object 0x21a8000: pointer being freed was not allocated
+*** set a breakpoint in malloc_error_break to debug
+
+(gdb) shell malloc_history 1257 0x21a8000
+ALLOC 0x2196a00-0x21a89ff [size=73728]: thread_a0610500 |start | main | UIApplicationMain | GSEventRun | GSEventRunModal | CFRunLoopRunInMode | CFRunLoopRunSpecific | __CFRunLoopDoObservers | CA::Transaction::observer_callback(__CFRunLoopObserver*, unsigned long, void*) | CA::Transaction::commit() | CA::Context::commit_transaction(CA::Transaction*) | CALayerDisplayIfNeeded | -[CALayer _display] | CABackingStoreUpdate | backing_callback(CGContext*, void*) | -[CALayer drawInContext:] | -[UIView(CALayerDelegate) drawLayer:inContext:] | -[AvatarView drawRect:] | -[AvatarView overlayPNG:] | +[UIImageUtility createMaskOf:] | UIGraphicsGetImageFromCurrentImageContext | CGBitmapContextCreateImage | create_bitmap_data_provider | malloc | malloc_zone_malloc
+[UIImageUtility createMaskOf:]
++ (UIImage *)createMaskOf:(UIImage *)source {
+    CGRect rect = CGRectMake(0, 0, source.size.width, source.size.height);
+    UIGraphicsBeginImageContext(CGSizeMake(source.size.width, source.size.height));
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    CGContextTranslateCTM(context, 0, source.size.height);
+    CGContextScaleCTM(context, 1.0, -1.0);
+
+    UIImage *original = [self createGrayCopy:source];
+
+    CGContextRef context2 = CGBitmapContextCreate(NULL, source.size.width, source.size.height, 8, 4 * source.size.width, 
+                                                   CGColorSpaceCreateDeviceRGB(), kCGImageAlphaNoneSkipLast);
+    CGContextDrawImage(context2, CGRectMake(0, 0, source.size.width, source.size.height), original.CGImage);
+    CGImageRef unmasked = CGBitmapContextCreateImage(context2);
+
+    const float myMaskingColorsFrameColor[6] = { 1,256,1,256,1,256 };
+    CGImageRef mask = CGImageCreateWithMaskingColors(unmasked, myMaskingColorsFrameColor);
+
+    CGContextSetRGBFillColor (context, 256,256,256, 1);
+    CGContextFillRect(context, rect);
+    CGContextDrawImage(context, rect, mask);
+
+    UIImage *whiteMasked = UIGraphicsGetImageFromCurrentImageContext();
+
+    UIGraphicsEndImageContext();
+
+    return whiteMasked;
+}
+
+- (UIImage *)overlayPNG:(SinglePart *)sp {
+    NSLog([sp description]);
+    // Rect and context setup
+    CGRect rect = CGRectMake(0, 0, sp.image.size.width, sp.image.size.height);
+    NSLog(@"%f x %f", sp.image.size.width, sp.image.size.height);
+
+    // Create an image of a color filled rectangle
+    UIImage *baseColor = nil;
+    if (sp.hasOwnColor) {
+            baseColor = [UIImageUtility imageWithRect:rect ofColor:sp.color];
+    } else {
+        SinglePart *facePart = [editingAvatar.face.partList objectAtIndex:0];
+        baseColor = [UIImageUtility imageWithRect:rect ofColor:facePart.color];
+    }
+
+    // Crete the mask of the layer
+    UIImage *mask = [UIImageUtility createMaskOf:sp.image];
+    mask = [UIImageUtility createGrayCopy:mask];
+
+    // Create a new context for merging the overlay and a mask of the layer
+    UIGraphicsBeginImageContext(CGSizeMake(sp.image.size.width, sp.image.size.height));
+    CGContextRef context2 = UIGraphicsGetCurrentContext(); 
+
+    // Adjust the coordinate system so that the origin 
+    // is in the lower left corner of the view and the 
+    // y axis points up 
+    CGContextTranslateCTM(context2, 0, sp.image.size.height); 
+    CGContextScaleCTM(context2, 1.0, -1.0); 
+
+    // Create masked overlay color layer
+    CGImageRef MaskedImage = CGImageCreateWithMask (baseColor.CGImage, mask.CGImage);
+
+    // Draw the base color layer
+    CGContextDrawImage(context2, rect, MaskedImage);
+
+    // Get the result of the masking
+    UIImage* overlayMasked = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    UIGraphicsBeginImageContext(CGSizeMake(sp.image.size.width, sp.image.size.height));
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    // Adjust the coordinate system so that the origin 
+    // is in the lower left corner of the view and the 
+    // y axis points up 
+    CGContextTranslateCTM(context, 0, sp.image.size.height);
+    CGContextScaleCTM(context, 1.0, -1.0);
+
+    // Get the result of the blending of the masked overlay and the base image
+    CGContextDrawImage(context, rect, overlayMasked.CGImage);
+
+    // Set the blend mode for the next drawn image
+    CGContextSetBlendMode(context, kCGBlendModeOverlay);
+
+    // Component image drawn
+    CGContextDrawImage(context, rect, sp.image.CGImage);
+
+    UIImage* blendedImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    CGImageRelease(MaskedImage);
+
+    return blendedImage;
+}
+

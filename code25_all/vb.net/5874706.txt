@@ -1,0 +1,54 @@
+1: PrintMessageGrid.DataSource = GlobalFunctions.GlobalF.GetComplaintTrendingList6(FirstMonthDate, LastMonthDate, TheLevel) 
+
+Public Shared Function GetComplaintTrendingList6(ByVal FirstMonth As DateTime, ByVal LastMonth As DateTime, ByVal rowLevel As Integer) As DataSet
+    Dim DSPageData As New System.Data.DataSet
+    Dim param(2) As SqlClient.SqlParameter
+
+    param(0) = New SqlParameter("@FirstMonthDate", SqlDbType.DateTime)
+    param(0).Value = FirstMonth
+    param(1) = New SqlParameter("@LastMonthDate", SqlDbType.DateTime)
+    param(1).Value = LastMonth
+    param(2) = New SqlParameter("@TheLevel", SqlDbType.Int)
+    param(2).Value = rowLevel
+
+    ''# A Using block will ensure the .Dispose() method is called for these variables, even if an exception is thrown 
+    ''# This is IMPORTANT - not disposing your connections properly can result in an unrespsonsive database 
+    Using conn As New SQLConnection(ConfigurationSettings.AppSettings("AMDMetricsDevConnectionString")), _
+   cmd As New SQLCommand("ComplaintTrendingList6", conn), _
+    da As New SQLDataAdapter(cmd)
+        cmd.CommandType = CommandType.StoredProcedure
+        cmd.Parameters.AddRange(param)
+
+        da.Fill(DSPageData)
+    End Using
+
+    Return DSPageData
+End Function
+
+SELECT E.PRODUCT_GROUP, a.QXP_SHORT_DESC, COUNT(DISTINCT A.QXP_EXCEPTION_NO), A.QXP_REPORT_DATE, DATEADD(M, DATEDIFF(M, 0, A.QXP_REPORT_DATE), 0) AS STARTDATE
+FROM ALL_COMPLAINTS A
+LEFT OUTER JOIN SMARTSOLVE.V_QXP_ISSUE_REF D ON A.QXP_ID = D.IRF_QXP_ID 
+INNER JOIN CT_ProductFailures b ON b.old_modes = a.qxp_short_desc
+LEFT OUTER JOIN [MANUAL].PRODUCTS E ON A.EPA_PRD_CODE = E.LIST_NUMBER 
+LEFT JOIN SMARTSOLVE.V_CXP_CUSTOMER_PXP C ON A.QXP_ID = C.QXP_ID
+INNER JOIN @SelectedLevels F ON A.[LEVEL] = F.LevelId
+WHERE   --[LEVEL] > 0 AND
+(A.QXP_SHORT_DESC <> 'Design Control') 
+and A.QXP_REPORT_DATE >= @OneYearAgo AND A.QXP_REPORT_DATE <= @LastMonthDate
+AND (C.QXP_EXCEPTION_TYPE <> 'Non-Diagnostic' OR C.QXP_EXCEPTION_TYPE IS NULL)  
+GROUP BY E.PRODUCT_GROUP, A.QXP_REPORT_DATE,  A.QXP_SHORT_DESC 
+
+INSERT #PVAL_NUM
+SELECT E.PRODUCT_GROUP, b.new_modes 'QXP_SHORT_DESC', COUNT(DISTINCT A.QXP_EXCEPTION_NO), A.QXP_REPORT_DATE, DATEADD(M, DATEDIFF(M, 0, A.QXP_REPORT_DATE), 0) AS STARTDATE
+FROM ALL_COMPLAINTS A
+LEFT OUTER JOIN SMARTSOLVE.V_QXP_ISSUE_REF D ON A.QXP_ID = D.IRF_QXP_ID 
+INNER JOIN CT_ProductFailures b ON b.old_modes = a.qxp_short_desc
+LEFT OUTER JOIN [MANUAL].PRODUCTS E ON A.EPA_PRD_CODE = E.LIST_NUMBER 
+LEFT JOIN SMARTSOLVE.V_CXP_CUSTOMER_PXP C ON A.QXP_ID = C.QXP_ID
+INNER JOIN @SelectedLevels F ON A.[LEVEL] = F.LevelId
+WHERE   --[LEVEL] > 0 AND
+(A.QXP_SHORT_DESC <> 'Design Control') 
+and A.QXP_REPORT_DATE >= @OneYearAgo AND A.QXP_REPORT_DATE <= @LastMonthDate
+AND (C.QXP_EXCEPTION_TYPE <> 'Non-Diagnostic' OR C.QXP_EXCEPTION_TYPE IS NULL)
+GROUP BY E.PRODUCT_GROUP, A.QXP_REPORT_DATE, b.new_modes
+

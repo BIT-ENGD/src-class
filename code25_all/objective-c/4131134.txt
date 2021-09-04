@@ -1,0 +1,100 @@
+NSString *destURLString = [self.track.location absoluteString];
+destURLString = [destURLString substringToIndex:([destURLString length] - 4)];     //remove .caf
+destURLString = [NSString stringWithFormat:@"%@TMP.caf",destURLString]; //add tmp.caf
+NSURL *destinationURL = [NSURL URLWithString:destURLString];
+
+ExtAudioFileRef inputFile = NULL;
+ExtAudioFileRef outputFile = NULL;
+
+AudioStreamBasicDescription destFormat;
+
+destFormat.mFormatID = kAudioFormatLinearPCM;
+destFormat.mFormatFlags = kAudioFormatFlagsCanonical;
+destFormat.mSampleRate = 22000;
+destFormat.mFormatFlags = 0;
+destFormat.mBytesPerPacket = 2;
+destFormat.mFramesPerPacket = 1;
+destFormat.mBytesPerFrame = 2;
+destFormat.mChannelsPerFrame = 1;
+destFormat.mBitsPerChannel = 16;
+destFormat.mReserved = 0;
+
+ExtAudioFileCreateWithURL((CFURLRef)destinationURL, kAudioFileCAFType, &destFormat, NULL, kAudioFileFlags_EraseFile, &outputFile);
+
+OSStatus fileStatus = ExtAudioFileOpenURL((CFURLRef)track.location, &inputFile);
+//AudioFileID fileID;
+//OSStatus fileStatus = AudioFileOpenURL((CFURLRef)track.location, kAudioFileReadPermission, 0, &fileID);
+//ExtAudioFileWrapAudioFileID (fileID, true, &inputFile);
+OSStatus fileStatus2 = ExtAudioFileOpenURL((CFURLRef)destinationURL, &outputFile);
+
+//NSLog(@"open status: %i", fileStatus2);
+
+//find out how many frames long this file is
+SInt64 length = 0;
+UInt32 dataSize2 = (UInt32)sizeof(length);
+OSStatus propStatus2 = ExtAudioFileGetProperty(inputFile, kExtAudioFileProperty_FileLengthFrames, &dataSize2, &length);
+
+AudioStreamBasicDescription clientFormat;
+clientFormat.mFormatID = kAudioFormatLinearPCM;
+clientFormat.mSampleRate = 22000;
+clientFormat.mFormatFlags = kAudioFormatFlagsCanonical;
+clientFormat.mBitsPerChannel = 16;
+clientFormat.mChannelsPerFrame = 1;
+clientFormat.mFramesPerPacket = 1;
+clientFormat.mBytesPerPacket = 2;
+clientFormat.mBytesPerFrame = 2;
+destFormat.mReserved = 0;
+
+UInt32 size = sizeof(clientFormat);
+
+//set the intermediate format to canonical on the source file for conversion (?)
+OSStatus setpropstatus = ExtAudioFileSetProperty(inputFile, kExtAudioFileProperty_ClientDataFormat, size, &clientFormat);
+OSStatus setpropstatusout = ExtAudioFileSetProperty(outputFile, kExtAudioFileProperty_ClientDataFormat, size, &clientFormat);
+
+//UInt32 size = sizeof(destFormat);
+//OSStatus setpropstatus = ExtAudioFileSetProperty(inputFile, kAudioFilePropertyDataFormat, size, &destFormat);
+//NSLog(@"set prop status in %i", setpropstatus);
+//NSLog(@"set prop status out %i", setpropstatusout);
+
+
+OSStatus seekStatus = ExtAudioFileSeek(inputFile, (SInt64)22000); // skip one second of audio
+NSLog(@"seekstatus %i", seekStatus);
+
+SInt64 newLength = length - (5*22000); //shorten by 5 seconds worth of frames
+
+NSLog(@"length: %i frames", length);
+
+UInt8 *buffer = malloc(65536); //64K
+
+UInt32 totalFramecount = 0;
+while(true) {
+    AudioBufferList bufferList;
+    bufferList.mNumberBuffers = 1;
+    bufferList.mBuffers[0].mNumberChannels = 1;
+    bufferList.mBuffers[0].mData = buffer; //pointer to buffer of audio data
+    bufferList.mBuffers[0].mDataByteSize = 65536; //number of bytes in the buffer
+
+    UInt32 frameCount = 65536 / 2; //2 bytes per frame
+
+    // Read a chunk of input
+    OSStatus status = ExtAudioFileRead(inputFile, &frameCount, &bufferList);
+    totalFramecount += frameCount;
+
+    NSLog(@"read status %i", status);
+    //NSLog(@"loaded %f KB of data in %i frames", frameCount*2 / 1024.0, frameCount);
+    NSLog(@"loaded %i frames and stopping at %i", totalFramecount, newLength);
+
+    if (!frameCount || totalFramecount >= newLength) {
+        //termination condition
+        break;
+    }
+
+    OSStatus writeStatus = ExtAudioFileWrite(outputFile, frameCount, &bufferList);
+    NSLog(@"ws: %i", writeStatus);
+}
+
+free(buffer);
+
+ExtAudioFileDispose(inputFile);
+ExtAudioFileDispose(outputFile);
+

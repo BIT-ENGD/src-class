@@ -1,0 +1,105 @@
+Couldn't match type `handler'
+               with `GGHandler
+                       Scheduler
+                       Scheduler
+                       (Data.Enumerator.Iteratee Data.ByteString.Internal.ByteString IO)'
+  `handler' is a rigid type variable bound by
+            the type signature for getRootR :: handler RepHtml at Rocko.hs:65:1
+Expected type: handler RepHtml
+  Actual type: GGHandler
+                 Scheduler
+                 Scheduler
+                 (Data.Enumerator.Iteratee Data.ByteString.Internal.ByteString IO)
+                 RepHtml
+Expected type: handler RepHtml
+  Actual type: GHandler Scheduler Scheduler RepHtml
+In the return type of a call of `defaultLayout'
+In the expression:
+  defaultLayout
+    (addHtml
+       ((Text.Blaze.Internal.preEscapedText . Data.Text.pack)
+          "<p>Result: </p>"))
+
+>{-# LANGUAGE OverloadedStrings, TypeFamilies, QuasiQuotes,
+         TemplateHaskell, MultiParamTypeClasses #-}
+>import Yesod
+ import Control.Applicative
+ import Control.Monad
+ import Data.Text (Text)
+ import Data.Time
+ import Yesod.Form.Jquery
+ import JsonParser
+
+ data Scheduler = Scheduler
+
+ mkYesod "Scheduler" [parseRoutes|
+ / RootR GET
+ |]
+
+ instance Yesod Scheduler where
+    approot _ = ""
+
+ instance RenderMessage Scheduler FormMessage where
+    renderMessage _ _ = defaultFormMessage
+
+ instance YesodJquery Scheduler
+
+ data SelectedProduct = MKsp { product :: Text
+                             , version :: Text
+                             , requestedDate :: Day
+                             } deriving Show
+
+
+ productForm :: Html
+             -> Form Scheduler Scheduler (FormResult SelectedProduct, Widget)
+ productForm extra = do
+    pInfo <- liftIO getUIdata
+    let products = Prelude.map productACC $ fst pInfo
+        versions = Prelude.map versionsACC $ snd pInfo
+        version' = head versions
+    (productRes, productView) <- mreq (radioField products) "Placeholder" Nothing
+    (versionRes, versionView) <- mreq (selectField version') "Placeholder" Nothing
+    (dateRes, dateView) <- mreq (jqueryDayField def
+                          { jdsChangeYear = True
+                          , jdsYearRange = "2011:2012"
+                          }) "Schedule" Nothing
+    let selectedRes = MKsp <$> productRes <*> versionRes <*> dateRes
+        widget = do
+           toWidget [whamlet|
+  #{extra}
+  <p>
+     ^{fvInput productView}
+     ^{fvInput versionView}
+     ^{fvInput dateView}
+     <input type=submit value="aint that some &^*^">
+  |]
+
+    return (selectedRes, widget)
+
+ productACC :: ProductNames -> (Text,Text)
+ productACC (MKpn pNames) = (pNames,pNames)
+
+ versionsACC :: [ProductVersions] -> [(Text,Text)]
+ versionsACC pVersions = Prelude.map vACC' pVersions
+                                where vACC' (MKpv pversions') = (pversions', pversions')
+
+ getRootR :: handler RepHtml
+ getRootR = do
+     ((res, widget), enctype) <- runFormGet productForm
+     defaultLayout [whamlet|
+ <p>Result:
+ |]
+
+ main = return ()
+ -- main :: IO ()
+ --main = warpDebug 3000 Scheduler `
+
+>getRootR :: Handler RepHtml
+ getRootR = do
+   ((res, widget), enctype) <- runFormGet productForm
+   defaultLayout [whamlet|
+  <p>Result: #{show res}
+  <form enctype=#{enctype}>
+      ^{widget}
+  |]
+

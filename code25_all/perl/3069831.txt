@@ -1,0 +1,91 @@
+ (in cleanup) Can't store CODE items at blib\lib\Storable.pm (autosplit into blib\lib\auto\Storable\_freeze.al)...
+
+$Storable::Deparse = 1;
+$Storable::Eval = 1;
+
+sub _build_cell_generic {
+    my ($self,$col) = @_;
+    my $sth = $self->call_dbh('prepare','select '.$col.' from '.$self->TABLE.' where CI = ? and LAC = ? and IMPORTDATE = ?');
+    $sth->execute($self->CI,$self->LAC,$self->IMPORTDATE);
+    my $val = $sth->fetchrow_array;
+    $sth->finish;
+    return defined $val ? $val : undef;
+}
+
+#!/usr/bin/perl -w
+
+use Apache::Session::File;
+use Test::More;
+use strict;
+use warnings;
+
+require_ok( 'GSM::TestCell' );
+require_ok( 'GSM::SQLConnection');
+
+my $db = new_ok('GSM::SQLConnection');
+my $cell4 = new_ok( 'GSM::TestCell' => [{LAC => 406, CI => 24491, DB => $db }] );
+
+my %session;
+tie %session, 'Apache::Session::File', undef, {Directory =>"./", LockDirectory   => "./" };
+print "BCCH is ",$cell4->BCCH,"\n";
+$session{$cell4->ID} = $cell4;
+done_testing();
+__END__
+
+package GSM::SQLConnection;
+#use DBI;
+use Moose;
+use DBIx::Connector;
+
+has dbixc => (is => 'ro', isa => 'DBIx::Connector', lazy_build => 1, handles => [ qw(dbh) ]); 
+
+sub _build_dbixc {
+    my $self = shift;
+    my $dsn = 'DBI:mysql:testDB;host=127.0.0.1;port=3306';
+    return DBIx::Connector->new($dsn,'user','pwd');
+}
+
+sub call_dbh {
+    my $self = shift;
+    my $method = shift;
+    my @args = @_;
+    $self->dbixc->run(fixup => sub { $_->$method(@args) });
+}
+no Moose;
+__PACKAGE__->meta->make_immutable;
+1;
+
+package GSM::TestCell;
+use MooseX::NaturalKey;
+use strict;
+use warnings;
+
+has [qw(LAC CI)] => (is => 'ro', required => 1);
+has [qw(ID BCCH IMPORTDATE)] => (is => 'rw', lazy_build => 1);
+has 'DB' => (is => 'rw', isa => 'GSM::SQLConnection', required => 1, );
+has 'TABLE' => (is => 'rw', default => 'Cell');
+
+primary key =>('LAC','CI');
+
+sub _build_ID {
+    my $self = shift;
+    return join(',',$self->LAC,$self->CI);
+}
+
+sub _build_IMPORTDATE {return '2010-06-21'}
+
+sub _build_BCCH {(shift)->_build_cell_generic('BCCHFrequency');}
+
+sub _build_cell_generic {
+    my ($self,$col) = @_;
+    my $sth = $self->DB->call_dbh('prepare','select '.$col.' from '.$self->TABLE.' where CI = ? and LAC = ? and IMPORTDATE = ?');
+    $sth->execute($self->CI,$self->LAC,$self->IMPORTDATE);
+    my $val = $sth->fetchrow_array;
+    $sth->finish;
+    return defined $val ? $val : undef;
+}
+
+no Moose;
+__PACKAGE__->meta->make_immutable;
+1;
+

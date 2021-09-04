@@ -1,0 +1,302 @@
+--main.lua
+ 
+StaticBody = require"StaticBody"
+collision = require"collision"
+ 
+player = StaticBody.StaticBody:new(300, 200, 40, 30, "RECT", 2000, 5000, 8.9, 900, 900, 5)
+ 
+function love.load()
+    playerimg = love.graphics.newImage("player.png")
+    player:setSprite(playerimg, 1, 1, 0, 0)
+end
+ 
+function love.draw()
+    player:draw()
+end
+ 
+function love.update(d)
+ 
+    if love.keyboard.isDown("a") then
+        input = -1
+    end
+    if love.keyboard.isDown("d") then
+        input = 1
+    end
+    if not love.keyboard.isDown("a") and not love.keyboard.isDown("d") then
+        input = 0
+    end
+ 
+    player:update(d,input)
+end
+ 
+ 
+function love.keypressed( key, scancode, isrepeat)
+    if key == "space" then
+        player:jump(800)
+    end
+end
+ 
+-----------------------------------------------------------------------------------------------------------------
+--StaticBody.lua
+-----------------------------------------------------------------------------------------------------------------
+ 
+StaticBody = {x = 0, y = 0, w = 1, h = 1, speedx = 0, speedy = 0, maxxspd = 1, maxyspd = 1, collosionmode = "RECT", sprite = nil, scalex = 1,
+ scaley = 1, offsetx = 0, offsety = 0, acc = 1, decel = 1, grav = 1, velx = 0, colbox = nil, hitbox = nil, turningfriction = 2}
+ 
+collision = require"collision"
+ 
+function clamp(variable,vmin,vmax)
+    if variable < vmin then
+        variable = vmin
+    end
+    if variable > vmax then
+        variable = vmax
+    end
+end
+ 
+function StaticBody:new(x, y, w, h, colmode, acc, decel, grav, maxxspd, maxyspd, turningfriction)
+    setmetatable({},StaticBody)
+ 
+    self.x = x
+    self.y = y
+    self.w = w
+    self.h = h
+    self.hitbox = collision.hitbox:new(x,y,w,h,false)
+    self.colbox = collision.ColObjekt:new(colmode,self.hitbox)
+    self.acc = acc
+    self.decel = decel
+    self.grav = grav
+    self.maxxspd = maxxspd
+    self.maxyspd = maxyspd
+    self.speedx = 0
+    self.speedy = 0
+    self.turningfriction = turningfriction
+    self.velx = 0
+ 
+    return self
+end
+ 
+function StaticBody:setSprite(sprite, scalex, scaley, offsetx, offsety)
+    self.sprite = sprite
+    self.scalex = scalex
+    self.scaley = scaley
+    self.offsetx = offsetx
+    self.offsety = offsety
+end
+ 
+function StaticBody:draw()
+    love.graphics.draw(self.sprite,self.x,self,y,0,self.scalex,self.scaley,self.offsetx,self.offsety,0,0)
+end
+ 
+function StaticBody:update(d,input)
+    local dir = 0
+    if input == -dir then
+        self.speedx = self.speedx / self.turningfriction
+    end
+    if input then
+        dir = input
+    end
+    if not self.colbox:getOnGround() then
+        self.speedy = self.speedy + self.grav * d
+    end
+ 
+    if input ~= 0 then
+        self.speedx = self.speedx + self.acc * d
+    else
+        self.speedx = self.speedx - self.decel * d
+    end
+ 
+    clamp(self.speedx,0,self.maxxspd)
+    clamp(self.speedy,0,self.maxyspd)
+ 
+    self.velx = self.speedx * d * dir
+    self.y = self.y + self.speedy * d 
+    self.x = self.x + self.speedx * d * dir
+end
+ 
+function StaticBody:jump(jumpforce)
+    self.speedy = -jumpforce
+end
+ 
+------------------------------------------------------------------------------------------------
+--collision.lua
+------------------------------------------------------------------------------------------------
+ 
+ColObjekts = {}
+ColObjekt = {mode, x, y, w, h, collisionObjekts = ColObjekts}
+--Constructer
+function ColObjekt:new(mode,x,y,w,h,collisionObjekts)
+    setmetatable({},ColObjekt)
+ 
+    self.mode = mode
+    self.collisionObjekts = collisionObjekts
+    self.x = x
+    self.y = y
+    self.w = w
+    self.h = h
+    ColObjekts.push(self)
+ 
+    return self
+end
+ 
+--Constructer with Hitbbox
+function ColObjekt:new(mode,Hb,collisionObjekts)
+    setmetatable({},ColObjekt)
+ 
+    self.mode = mode
+    self.collisionObjekts = collisionObjekts
+    self.x = Hb.x
+    self.y = Hb.y
+    self.w = Hb.w
+    self.h = Hb.h 
+end
+ 
+function ColObjekt:setcolObjekts(colobs)
+    self.collisionObjekts = colobs
+end
+ 
+function ColObjekt:getColliding()
+    for key,i in pairs(self.collisionObjekts) do
+        if getCollidingWith(self,i) then
+            return true
+    end
+    return false
+end
+end
+ 
+function ColObjekt:getCollidingWhich()
+    for key,i in pairs(self.collisionObjekts) do
+        if getCollidingWith(self,i) then
+            return true, i
+    end
+    return false
+end
+end
+ 
+function ColObjekt:getCollidingDir(Colob1,Colob2)
+    if not getCollidingWith(Colob1,Colob2) then
+        return false 
+    elseif Colob1.y > Colob2.y then return "ONTOP"
+    elseif Colob1.x < Colob2.x and Colob1.y > Colob2.y+Colob2.h then return "LEFT"
+    elseif Colob1.x > Colob2.x and Colob1.y > Colob2.y+Colob2.h then return "RIGHT"
+    else return "UNDER"
+    end
+end
+ 
+function ColObjekt:getOnGround()
+    if self:getCollidingDir(self,self:getCollidingWhich()) == "ONTOP" then
+        return true
+    else
+        return false
+end
+ 
+function getCollidingWith(Colob1,Colob2)
+    --if Colob1 == Rectangle
+    if Colob1.mode == "RECT" then
+        if Colob2.mode == "RECT" then
+            ColRect_Rect(Colob1,Colob2)
+        end
+        if Colob2.mode == "CIRCLE" then 
+            ColRect_Circle(Colob2,Colob1)
+        end
+    end
+ 
+    --if Colob1 == Circle
+    if Colob1.mode == "CIRCLE" then
+        if Colob2.mode == "CIRCLE" then 
+            ColCircle_Circle(Colob1,Colob2)
+        end
+        if Colob2.mode == "RECT" then 
+            ColRect_Circle(Colob1,Colob2)
+        end
+    end
+end
+ 
+function ColRect_Edges(c,r)
+    --OBEN
+    if  c.x > r.x and c.x < r.x + r.w
+    and c.y > r.y - c.h and c.y < r.y then return true
+    --UNTEN
+    elseif c.x > r.x and c.x < r.x + r.w
+    and c.y > r.y + r.h - c.h and c.y < r.y + r.h then return true   
+    --LINKS
+    elseif  c.y > r.y and c.y < r.y + r.h
+    and     c.x > r.x - c.w and c.x < r.x then return true
+    --RECHTS
+    elseif c.y > r.y and c.y < r.y + r.h
+    and    c.x > r.x + r.w - c.w and c.x < r.x + r.w then return true 
+    --WENN NICHTS ZUTRIFFT
+    else return false end  
+end
+ 
+function ColRect_Corners(c,r)
+    if math.sqrt((c.x - r.x * c.x - r.x) + (c.y - r.y *  c.y - r.y)) < c.w/2 then 
+        return true
+    elseif math.sqrt((c.x - (r.x + r.w) * c.x - (r.x + r.w)) + (c.y - r.y *  c.y - r.y)) < c.w/2 then 
+        return true
+    elseif math.sqrt((c.x - (r.x + r.w) * c.x - (r.x + r.w)) + (c.y - (r.y + r.h) *  c.y - (r.y + r.h))) < c.w/2 then 
+        return true
+    elseif math.sqrt((c.x - r.x * c.x - r.x) + (c.y - (r.y + r.h) *  c.y - (r.y + r.h))) then
+        return true
+    else
+        return false
+    end
+end
+ 
+function ColRect_Rect(r1,r2)
+    if r1.x < r2.x + r2.w and r1.x > r2.x - r1.x and r1.y > r2.y - r1.h and r1.y < r2.y + r2.h then
+        return true
+    end
+    return false
+end
+ 
+function ColCircle_Circle(c1,c2)
+    local scndx = c1.x - c2.x
+    local scndy = c1.y - c2.y
+    if math.sqrt((scndx * scndx) + (scndy *  scndy)) < c1.w/2 + c2.w/2 then 
+        return true
+    end
+    return false
+end
+ 
+function ColRect_Circle(c,r)
+    if c.x > r.x and c.x < r.x + r.w
+    and c.y > r.y and c.y < r.y + r.h then
+        return true
+    end
+    if ColRect_Corners(c,r) then 
+        return true
+    end
+    if ColRect_Edges(c,r) then
+        return true
+    end
+    return false
+end
+ 
+ 
+ 
+Hitbox = {x,y,w,h,show = false}
+function Hitbox:new(x,y,w,h,show)
+    setmetatable({},Hitbox)
+ 
+    self.x = x
+    self.y = y
+    self.w = w
+    self.h = h
+    self.show = show
+ 
+    return self
+end
+ 
+function Hitbox:update()
+    if self.show then
+    love.graphics.Rectangle("fill",self.x,self.y,self.w,self.h)
+    end
+end
+ 
+function Hitbox:setVisible(b)
+    self.show = b
+end
+ 
+end
+

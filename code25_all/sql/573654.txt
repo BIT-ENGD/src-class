@@ -1,0 +1,117 @@
+set ANSI_NULLS ON
+set QUOTED_IDENTIFIER ON
+GO
+--SpResumeSearch NULL,null,null,null,null,null,null,null,null,null,null,NULL,null,null,null,null,null,null,null,0,10,NULL
+
+ALTER PROCEDURE [dbo].[SpResumeSearch] 
+    @Keyword varchar(50) = NULL,
+    @JobCategoryId int  = NULL,
+    @NationalityId int = NULL,
+    @CountryId int = NULL,
+    @LocationId int = NULL,
+    @Email nvarchar(50) = NULL,
+    @Gender int = NULL,
+    @PassportNumber nvarchar(20) = NULL,
+    @VisaStatus int = NULL,
+    @PoBox nvarchar(10) = NULL,
+    @CareerLevelId int = NULL,
+    @KeySkills nvarchar(50) = NULL,
+    @ExpectedSalary int = NULL,
+    @Experience int = NULL,
+    @DOB varchar(20) = NULL,
+    @AppliedFrom datetime = NULL,
+    @AppliedTo datetime = NULL,
+    @MaritalStatusId int = NULL,
+    @LanguageId int = NULL,
+    @PageIndex int,
+    @NumRows int, 
+    @SortCol varchar(20) = NULL 
+AS 
+BEGIN
+
+    DECLARE @startRowIndex INT;
+    SET @startRowIndex = (@PageIndex * @NumRows) + 1;
+
+    WITH ResumeListTemp AS 
+        (SELECT DISTINCT M.MemberID, R.ResumeID, R.CreatedDate, R.ModifiedDate, R.CompletedDate, RP.FirstName, RP.LastName, G.Title AS Gender, 
+        RP.DateOfBirth, C.NationalityTitle AS Nationality, RPD.KeySkills, RPD.ExperienceYear AS Experience, V.Title AS VisaStatus, RC.Phone, RC.Mobile, 
+        ROW_NUMBER() OVER (ORDER BY 
+            CASE WHEN @SortCol='FIRSTNAME' THEN FirstName END, 
+            CASE WHEN @SortCol='LASTNAME' THEN RP.LastName END, 
+            CASE WHEN @SortCol='GENDER' THEN G.Title END, 
+        CASE WHEN @SortCol='DOB' THEN RP.DateOfBirth END,
+        CASE WHEN @SortCol='NATIONALITY' THEN C.NationalityTitle END,
+        CASE WHEN @SortCol='KEYSKILLS' THEN RPD.KeySkills END,
+        CASE WHEN @SortCol='EXPERIENCE' THEN RPD.ExperienceYear END, 
+        CASE WHEN @SortCol='VISASTATUS' THEN V.Title END, 
+        CASE WHEN @SortCol='CONTACTNO' THEN RC.Mobile END,
+        CASE WHEN @SortCol='UPDATEDATE' THEN R.ModifiedDate END,
+        CASE WHEN @SortCol IS NULL THEN R.CompletedDate END
+        ) AS RowNum
+    FROM TblResume AS R
+
+    LEFT OUTER JOIN TblResumeContactInfo AS RC ON RC.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblResumePersonalDetail AS RP ON RP.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblResumeJobCategory AS RJC ON RJC.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblResumeProfessionalDetail AS RPD ON RPD.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblResumeWorkExperience AS RE ON RE.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblResumeEducation AS RQ ON RQ.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblResumeSkill AS RS ON RS.FKResumeID = R.ResumeID
+    LEFT OUTER JOIN TblMember AS M ON M.MemberID = R.FKMemberID
+    LEFT OUTER JOIN TblMasterGender AS G ON G.GenderID = RP.FKGenderID
+    LEFT OUTER JOIN TblMasterCountry AS C ON C.CountryID = RP.FKNationalityID 
+    LEFT OUTER JOIN TblRisVisaStatus AS V ON V.VisaStatusID = RP.FKVisaStatusID
+    LEFT OUTER JOIN TblResumeLanguage AS L ON L.FKResumeID = R.ResumeID
+
+    WHERE (
+--      RC.Address LIKE '%'+COALESCE(@Keyword,RC.Address)+'%' OR
+--      RC.City LIKE '%'+COALESCE(@Keyword,RC.City)+'%' OR
+        R.ResumeID IN ( SELECT _RQ.FKResumeID FROM TblResumeEducation AS _RQ, TblResume AS _R WHERE _RQ.Specialization LIKE '%'+COALESCE(@Keyword, _RQ.Specialization)+'%' AND _RQ.FKResumeID=_R.ResumeID GROUP BY _RQ.FKResumeID) OR
+        R.ResumeID IN ( SELECT _RQ.FKResumeID FROM TblResumeEducation AS _RQ, TblResume AS _R WHERE _RQ.Institution LIKE '%'+COALESCE(@Keyword, _RQ.Institution)+'%' AND _RQ.FKResumeID=_R.ResumeID GROUP BY _RQ.FKResumeID) OR
+        RP.FirstName LIKE '%'+COALESCE(@Keyword,RP.FirstName)+'%' OR
+        RP.LastName LIKE '%'+COALESCE(@Keyword,RP.LastName)+'%' OR
+        --RP.PassportNumber LIKE '%'+COALESCE(@Keyword,RP.PassportNumber)+'%' OR
+        --(@Keyword IS NULL OR RP.PassportNumber LIKE '%' + @Keyword +'%') OR
+        RPD.Summary LIKE '%'+COALESCE(@Keyword,RPD.Summary)+'%' OR
+--      R.ResumeID IN ( SELECT _RS.FKResumeID FROM TblResumeSkill AS _RS, TblResume AS _R WHERE _RS.Title LIKE '%'+COALESCE(@Keyword,_RS.Title)+'%' AND _RS.FKResumeID=_R.ResumeID GROUP BY _RS.FKResumeID) OR
+--      R.ResumeID IN ( SELECT _RE.FKResumeID FROM TblResumeWorkExperience AS _RE, TblResume AS _R WHERE _RE.Employer LIKE '%'+COALESCE(@Keyword, _RE.Employer)+'%' AND _RE.FKResumeID=_R.ResumeID GROUP BY _RE.FKResumeID) OR
+        R.ResumeID IN ( SELECT _RE.FKResumeID FROM TblResumeWorkExperience AS _RE, TblResume AS _R WHERE _RE.Designation LIKE '%'+COALESCE(@Keyword, _RE.Designation)+'%' AND _RE.FKResumeID=_R.ResumeID GROUP BY _RE.FKResumeID) OR
+        R.ResumeID IN ( SELECT _RE.FKResumeID FROM TblResumeWorkExperience AS _RE, TblResume AS _R WHERE _RE.Responsibilities LIKE '%'+COALESCE(@Keyword, _RE.Responsibilities)+'%' AND _RE.FKResumeID=_R.ResumeID GROUP BY _RE.FKResumeID)) AND 
+        R.ResumeID IN ( SELECT _RJC.FKResumeID FROM TblResumeJobCategory AS _RJC, TblResume AS _R WHERE _RJC.FKJobCategoryID = COALESCE(@JobCategoryId, _RJC.FKJobCategoryID) AND _RJC.FKResumeID=_R.ResumeID GROUP BY _RJC.FKResumeID ) AND
+        RP.FKNationalityID = COALESCE(@NationalityId, RP.FKNationalityID) AND
+        RC.FKCountryID = COALESCE(@CountryId, RC.FKCountryID) AND
+--      RPD.FKJobLocationID = COALESCE(@LocationId, RPD.FKJobLocationID) AND 
+--      M.Email LIKE '%'+COALESCE(@Email, M.Email)+'%' AND  
+--      RP.FKGenderID = COALESCE(@Gender, RP.FKGenderID) AND  
+--      RP.PassportNumber LIKE '%'+COALESCE(@PassportNumber, RP.PassportNumber)+'%' AND    
+--      RP.FKVisaStatusID = COALESCE(@VisaStatus, RP.FKVisaStatusID) AND    
+--      COALESCE(RC.ZipCode,'0') LIKE '%'+COALESCE(@PoBox, COALESCE(RC.ZipCode,'0'))+'%' AND 
+        RPD.FKExperienceLevelID = COALESCE(@CareerLevelId, RPD.FKExperienceLevelID) AND 
+--      RPD.KeySkills LIKE '%'+COALESCE(@KeySkills, RPD.KeySkills)+'%' AND 
+        RPD.FKSalaryID = COALESCE(@ExpectedSalary, RPD.FKSalaryID) AND  
+        RPD.ExperienceYear = COALESCE(@Experience, RPD.ExperienceYear) AND  
+        RP.DateOfBirth = COALESCE(@DOB, RP.DateOfBirth) AND 
+        R.CompletedDate = COALESCE(@AppliedFrom, R.CompletedDate) AND
+        R.CompletedDate = COALESCE(@AppliedTo, R.CompletedDate) AND 
+        RP.FKMaritalStatusID = COALESCE(@MaritalStatusId, RP.FKMaritalStatusID) AND 
+        R.ResumeID IN ( SELECT _L.FKResumeID FROM TblResumeLanguage AS _L, TblResume AS _R WHERE _L.FKLanguageID = COALESCE(@LanguageId, _L.FKLanguageID) AND _L.FKResumeID=_R.ResumeID GROUP BY _L.FKResumeID ) AND
+        R.IsCompleted = 1
+    )
+
+    SELECT ResumeListTemp.*, (SELECT COUNT(*) from ResumeListTemp) AS RecCount 
+        FROM ResumeListTemp
+        WHERE RowNum BETWEEN @startRowIndex AND @StartRowIndex + @NumRows - 1
+        ORDER BY             
+            CASE WHEN @SortCol='FIRSTNAME' THEN FirstName END, 
+        CASE WHEN @SortCol='LASTNAME' THEN LastName END, 
+        CASE WHEN @SortCol='GENDER' THEN Gender END, 
+        CASE WHEN @SortCol='DOB' THEN DateOfBirth END,
+        CASE WHEN @SortCol='NATIONALITY' THEN Nationality END,
+        CASE WHEN @SortCol='KEYSKILLS' THEN KeySkills END,
+        CASE WHEN @SortCol='EXPERIENCE' THEN Experience END, 
+        CASE WHEN @SortCol='VISASTATUS' THEN VisaStatus END, 
+        CASE WHEN @SortCol='CONTACTNO' THEN Mobile END,
+        CASE WHEN @SortCol='UPDATEDATE' THEN ModifiedDate END,
+        CASE WHEN @SortCol IS NULL THEN CompletedDate END
+END
+

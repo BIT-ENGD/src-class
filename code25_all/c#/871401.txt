@@ -1,0 +1,104 @@
+AsyncOperationManager
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.ComponentModel;
+
+namespace ConsoleApplication1 {
+
+    public delegate void WorkerDelegate();
+
+    class Program {
+
+        static void Main(string[] args) {
+
+            String taskId = new Guid().ToString();
+
+            AsyncTest test = new AsyncTest();
+            test.DoSomethingLongAsyncCompleted += new AsyncCompletedEventHandler(test_DoSomethingLongAsyncCompleted);
+            test.DoSomethingLongProgressChanged += new ProgressChangedEventHandler(test_DoSomethingLongProgressChanged);
+            test.DoSomethingLongAsync(ItsOver, taskId);
+
+            // Cancel after 2 seconds
+            Thread.Sleep(2000);
+            test.DoSomethingLongCancelAsync();
+
+            Console.ReadLine(); //Pause the console window
+        }
+
+        static void test_DoSomethingLongProgressChanged(object sender, ProgressChangedEventArgs e) {
+            Console.WriteLine("Percent complete: " + e.ProgressPercentage);
+        }
+
+        static void test_DoSomethingLongAsyncCompleted(object sender, AsyncCompletedEventArgs e) {
+            Console.WriteLine("Cancelled? " + e.Cancelled);
+            Console.WriteLine("Task ID: " + (String)e.UserState);
+        }
+
+        static void ItsOver(IAsyncResult r) {
+            Console.WriteLine("Task ID: " + (String)r.AsyncState);
+        }
+    }
+
+    class AsyncTest {
+
+        IAsyncResult _asyncResult = null;
+        Object _stateObj = null;
+        AsyncCallback _callBackDelegate;
+
+        public event ProgressChangedEventHandler DoSomethingLongProgressChanged;
+        public event AsyncCompletedEventHandler DoSomethingLongAsyncCompleted;
+
+
+        public IAsyncResult DoSomethingLongAsync(AsyncCallback userCallback, Object userState) {
+
+            if (_stateObj != null)
+                throw new InvalidOperationException("Method already started");
+
+            WorkerDelegate worker = new WorkerDelegate(DoSomethingLong);
+
+            _callBackDelegate = userCallback;
+            _asyncResult = worker.BeginInvoke(null, userState);
+
+            return _asyncResult;
+        }
+
+        public void DoSomethingLongCancelAsync() {
+            _stateObj = null;
+        }
+
+        public void DoSomethingLong() {
+
+            // Set state object if method was called synchronously
+            if (_stateObj == null)
+                _stateObj = new Object();
+
+            for (int i = 0; i < 10; i++) {
+
+                //If state object is null, break out of operation
+                if (_stateObj == null) break;
+
+                Thread.Sleep(1000);
+                Console.WriteLine("Elapsed 1sec");
+
+                if (DoSomethingLongProgressChanged != null) {
+                    // Percentage calculation for demo only :-)
+                    DoSomethingLongProgressChanged(this, new ProgressChangedEventArgs(i+1 * 10, _stateObj));
+                }
+            }
+
+            // Only execute if method was called async
+            if (_callBackDelegate != null) {
+                _callBackDelegate(_asyncResult);
+
+                DoSomethingLongAsyncCompleted(
+                    this,
+                    new AsyncCompletedEventArgs(null, (_stateObj == null), _asyncResult.AsyncState)
+                );
+            }
+        }
+    }
+}
+

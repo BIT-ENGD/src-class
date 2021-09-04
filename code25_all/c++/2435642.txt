@@ -1,0 +1,69 @@
+ImfInputFile *iFile = ImfOpenInputFile(filename);
+        FrameBuffer fb;
+        const Header &iHeader = iFile.header();
+        bool hasRed = false, hasGreen = false, hasBlue = false;
+        bool hasY = false;
+        Box2i dw = iHeader.dataWindow();
+        int width = dw.max.x-dw.min.x+1;
+        int height = dw.max.y-dw.min.y+1;
+
+        for (ChannelList::ConstIterator it = iHeader.channels().begin(), ite = iHeader.channels().end(); it != ite; it++) {
+            if ((strcmp(it.name(), "R") == 0)) { hasRed = true; }
+            if ((strcmp(it.name(), "G") == 0)) { hasGreen = true; }
+            if ((strcmp(it.name(), "B") == 0)) { hasBlue = true; }
+            if (it.channel().type != HALF) {
+                HDR_LOG("Unable to open EXR file \"%s\" (unsupported data type %s)", filename, it.channel().type);
+                return (IEFileCantOpen);
+            }
+        }
+
+        if ((hasRed == true) || (hasGreen == true) || (hasBlue == true)) {
+            fb.insert("R", Slice(
+                Imf::FLOAT, (char*)((char*)image->data + (sizeof(float) * 0)),
+                sizeof(float) * 3,
+                sizeof(float) * width * 3,
+                1, 1,
+                0.0
+                )
+            );
+            fb.insert("G", Slice(
+                Imf::FLOAT, (char*)((char*)image->data + (sizeof(float) * 1)),
+                sizeof(float) * 3,
+                sizeof(float) * width * 3,
+                1, 1,
+                0.0
+                )
+            );
+
+            fb.insert("B", Slice(
+                Imf::FLOAT, (char*)((char*)image->data + (sizeof(float) * 2)),
+                sizeof(float) * 3,
+                sizeof(float) * width * 3,
+                1, 1,
+                0.0
+                )
+            );
+
+            iFile.setFrameBuffer(fb);
+
+            if (ReadImage(filename, iFile, dw.min.y, dw.max.y) == IEFileReadError) {
+                HDR_LOG("There was a generic error on loading the EXR image \"%s\". Image could be corrupted.", filename);
+                return (IEFileReadError);
+            }
+
+            image->unproc = 1;
+
+            return (IENoError);
+        } else {
+            char sChannels[2048] = { '\0' };
+
+            for (ChannelList::ConstIterator it = iHeader.channels().begin(), ite = iHeader.channels().end(); it != ite; it++) {
+                strcat(sChannels, it.name());
+                strcat(sChannels, " ");
+            }
+
+            HDR_LOG("Unable to open EXR file (unknown channels set: %s)", sChannels);
+            return (IEFileReadError);
+        }
+    }
+

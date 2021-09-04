@@ -1,0 +1,70 @@
+function newConnection( params )
+    params = params or {}
+    if (not params.server  or not  params.port) then
+        print("SERVER OR PORT NOT SPECIFIED");
+        return a
+    end
+
+    local self = {}
+    self.buffer = ""
+
+    self.server =  params.server
+    self.port = params.port
+    self.isOpen = false
+
+    function self:start( params )
+            self.callback = params.callback
+
+            self.sock, err = socket.connect( self.server,  self.port )
+            if ( self.sock == nil ) then
+                print("COULDN'T CONNECT TO SERVER (self:start): "..err)
+                return false;
+            else
+                print( "Connected." )
+            end
+            self.isOpen = true
+            self.sock:setoption( "tcp-nodelay", true ) -- disable Nagle's algorithm for the connection
+            self.sock:settimeout(0)
+            self.sock:setoption( "keepalive", true )
+            return true
+    end
+
+function self:enterFrame()          
+    local input,output = socket.select( { self.sock }, nil, 0 ) -- this is a way not to block runtime while reading socket. zero timeout does the trick
+    for i,v in ipairs(input) do  -------------
+
+        local got_something_new = false
+        while  true  do
+            skt, e, p = v:receive()
+            if skt      then 
+                self.buffer = self.buffer.."__JSON__START__"..skt.."__JSON__END__"; 
+                got_something_new = true;  
+            end
+            if p        then 
+                self.buffer = self.buffer.."__JSON__START__"..p.."__JSON__END__";
+                got_something_new = true; 
+            end
+            if not skt  then break; end
+            if e        then print( "ERROR: ", e ); break; end
+        end
+
+        -- now, checking if a message is present in buffer...
+        while got_something_new do  --  this is for a case of several messages stocker in the buffer
+            local start = string.find(self.buffer,'__JSON__START__')
+            local finish = string.find(self.buffer,'__JSON__END__')
+            if (start and finish) then -- found a message!
+                local message = string.sub( self.buffer, start+15, finish-1)
+                self.buffer = string.sub( self.buffer, 1, start-1 )  ..   string.sub(self.buffer, finish + 13 ) -- cutting our message from buffer
+                self.callback(  message  )
+            else
+                break
+            end
+        end
+    end         
+end
+
+Runtime:addEventListener('enterFrame', self)
+
+return self
+end
+

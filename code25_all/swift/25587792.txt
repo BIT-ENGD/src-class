@@ -1,0 +1,127 @@
+import UIKit
+import AVFoundation
+
+class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
+
+  let captureSession = AVCaptureSession()
+  var previewLayer : AVCaptureVideoPreviewLayer?
+
+  var captureDevice : AVCaptureDevice?
+
+  @IBOutlet weak var cameraView: UIImageView!
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+
+    captureSession.sessionPreset = AVCaptureSessionPresetMedium
+
+    let devices = AVCaptureDevice.devices()
+
+    for device in devices {
+      if device.hasMediaType(AVMediaTypeVideo) && device.position == AVCaptureDevicePosition.Back {
+        if let device = device as? AVCaptureDevice {
+          captureDevice = device
+          beginSession()
+          break
+        }
+      }
+    }
+  }
+
+  func focusTo(value : Float) {
+    if let device = captureDevice {
+      if(device.lockForConfiguration(nil)) {
+        device.setFocusModeLockedWithLensPosition(value) {
+          (time) in
+        }
+        device.unlockForConfiguration()
+      }
+    }
+  }
+
+  override func touchesBegan(touches: NSSet!, withEvent event: UIEvent!) {
+    var touchPercent = Float(touches.anyObject().locationInView(view).x / 320)
+    focusTo(touchPercent)
+  }
+
+  override func touchesMoved(touches: NSSet!, withEvent event: UIEvent!) {
+    var touchPercent = Float(touches.anyObject().locationInView(view).x / 320)
+    focusTo(touchPercent)
+  }
+
+  func beginSession() {
+    configureDevice()
+
+    var error : NSError?
+    captureSession.addInput(AVCaptureDeviceInput(device: captureDevice, error: &error))
+
+    if error != nil {
+      println("error: \(error?.localizedDescription)")
+    }
+
+    previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+
+    previewLayer?.frame = view.layer.frame
+    //view.layer.addSublayer(previewLayer)
+
+    let output = AVCaptureVideoDataOutput()
+    let cameraQueue = dispatch_queue_create("cameraQueue", DISPATCH_QUEUE_SERIAL)
+    output.setSampleBufferDelegate(self, queue: cameraQueue)
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA]
+
+    captureSession.addOutput(output)
+    captureSession.startRunning()
+  }
+
+  func configureDevice() {
+    if let device = captureDevice {
+      device.lockForConfiguration(nil)
+      device.focusMode = .Locked
+      device.unlockForConfiguration()
+    }
+  }
+
+  // MARK : - AVCaptureVideoDataOutputSampleBufferDelegate
+
+  func captureOutput(captureOutput: AVCaptureOutput!, didOutputSampleBuffer sampleBuffer: CMSampleBuffer!, fromConnection connection: AVCaptureConnection!) {
+    let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+    CVPixelBufferLockBaseAddress(imageBuffer, 0)
+
+    let baseAddress = CVPixelBufferGetBaseAddressOfPlane(imageBuffer, 0)
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer)
+    let width = CVPixelBufferGetWidth(imageBuffer)
+    let height = CVPixelBufferGetHeight(imageBuffer)
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+    var bitmapInfo = CGBitmapInfo.fromRaw(CGImageAlphaInfo.PremultipliedFirst.toRaw())! | CGBitmapInfo.ByteOrder32Little
+
+    let context = CGBitmapContextCreate(baseAddress, width, height, 8, bytesPerRow, colorSpace, bitmapInfo)
+    let imageRef = CGBitmapContextCreateImage(context)
+
+    CVPixelBufferUnlockBaseAddress(imageBuffer, 0)
+
+    let data = CGDataProviderCopyData(CGImageGetDataProvider(imageRef)) as NSData
+    let pixels = data.bytes
+
+    var newPixels = UnsafeMutablePointer<UInt8>()
+
+    //for index in stride(from: 0, to: data.length, by: 4) {
+
+      /*newPixels[index] = 255 - pixels[index]
+      newPixels[index + 1] = 255 - pixels[index + 1]
+      newPixels[index + 2] = 255 - pixels[index + 2]
+      newPixels[index + 3] = 255 - pixels[index + 3]*/
+    //}
+
+    bitmapInfo = CGImageGetBitmapInfo(imageRef)
+    let provider = CGDataProviderCreateWithData(nil, newPixels, UInt(data.length), nil)
+
+    let newImageRef = CGImageCreate(width, height, CGImageGetBitsPerComponent(imageRef), CGImageGetBitsPerPixel(imageRef), bytesPerRow, colorSpace, bitmapInfo, provider, nil, false, kCGRenderingIntentDefault)
+
+    let image = UIImage(CGImage: newImageRef, scale: 1, orientation: .Right)
+    dispatch_async(dispatch_get_main_queue()) {
+      self.cameraView.image = image
+    }
+  }
+}
+

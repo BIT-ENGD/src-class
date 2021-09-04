@@ -1,0 +1,46 @@
+import akka.actor._
+import java.net.InetSocketAddress
+
+class EchoServer(port: Int) extends Actor {
+
+  val state = IO.IterateeRef.Map.async[IO.Handle]()(context.dispatcher)
+
+  override def preStart {
+    IOManager(context.system) listen new InetSocketAddress(port)
+  }
+
+  def receive = {
+    case IO.NewClient(server) =>
+      val socket = server.accept()
+      state(socket) flatMap (_ => EchoServer.processRequest(socket))
+    case IO.Read(socket, bytes) =>
+      state(socket)(IO.Chunk(bytes))
+    case IO.Closed(socket, cause) =>
+      state(socket)(IO.EOF(None))
+      state -= socket
+  }
+}
+
+object EchoServer extends App
+{
+  def processRequest(socket: IO.SocketHandle): IO.Iteratee[Unit] =
+  {
+    println( "In process request")
+    try {
+      for {
+        bs <- IO take 1
+      } yield {
+        println("I'll get here")
+        throw new Exception("Hey-o!")
+        println("But not here ... as expected")
+      }
+    } catch {
+      case e: Exception => println("And not here ... wtf?"); IO.Done()  // NEVER GETS HERE
+    }
+  }
+
+  ActorSystem().actorOf(Props(new EchoServer(8080)))
+}
+
+[DEBUG] [04/03/2012 22:42:25.106] [EchoServerActorSystem-akka.actor.default-dispatcher-1] [Future] Hey-o!
+

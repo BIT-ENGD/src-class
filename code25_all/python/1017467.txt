@@ -1,0 +1,61 @@
+NameError: global name 'has_no_changeset' is not defined
+has_no_changeset
+from genshi.builder import tag
+
+from trac.core import implements,Component
+from trac.ticket.api import ITicketManipulator
+from trac.ticket.default_workflow import ConfigurableTicketWorkflow
+from trac.perm import IPermissionRequestor
+from trac.config import Option, ListOption
+import re
+
+revision = "$Rev$"
+url = "$URL$"
+
+class CloseActionController(Component):
+    """Support for close checking.
+
+    If a ticket is closed, it is NOT allowed if ALL the following conditions apply: 
+     a) ticket is 'bug' ticket
+     b) resolution status is 'fixed'
+     c) none of the ticket's changes include a comment containing a changeset, i.e. regex "\[\d+\]"
+     d) the ticket does not have the keyword 'web'
+    """
+
+    implements(ITicketManipulator)
+
+    # ITicketManipulator methods
+
+    def prepare_ticket(req, ticket, fields, actions):
+        """Not currently called, but should be provided for future
+        compatibility."""
+        return
+
+
+    def has_no_changeset(ticket):
+        db = self.env.get_db_cnx()
+        cursor = db.cursor()
+
+        cursor.execute("SELECT newvalue FROM ticket_change WHERE ticket=%s AND field='comment'", (str(ticket.id).encode('ascii','replace'),))
+
+        for newvalue, in cursor:
+            if re.search("\[\d{5,}\]", newvalue):
+                return False
+
+        return True
+
+    def validate_ticket(me, req, ticket):
+        """Validate a ticket after it's been populated from user input.
+
+        Must return a list of `(field, message)` tuples, one for each problem
+        detected. `field` can be `None` to indicate an overall problem with the
+
+        ticket. Therefore, a return value of `[]` means everything is OK."""
+
+        if ticket['type'] == 'bug' and ticket['resolution'] == 'fixed':
+          if ticket['keywords'] == None or ticket['keywords'].find('web') == -1:
+            if has_no_changeset(ticket):
+              return [(None, 'You can only close a bug ticket as "fixed" if you refer to a changeset somewhere within the ticket, e.g. with [12345]!')]
+
+        return[]
+

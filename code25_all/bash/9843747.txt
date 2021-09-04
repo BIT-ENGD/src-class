@@ -1,0 +1,273 @@
+set -e
+
+setuid () {
+    db_get XXXXX/setuid
+    if [ -x /usr/bin/XXXXX ] && [ "$RET" = "false" ] ; then
+    if [ ! -x /usr/sbin/dpkg-statoverride ] ||\
+        ! /usr/sbin/dpkg-statoverride --list /usr/bin/XXXXX >/dev/null; then
+        chown root:root /usr/bin/XXXXX
+        chmod u=rwx,go=rx /usr/bin/XXXXX
+    fi
+    else
+    if [ ! -x /usr/sbin/dpkg-statoverride ] || \
+        ! /usr/sbin/dpkg-statoverride --list /usr/bin/XXXXX >/dev/null; then
+        chown root:root /usr/bin/XXXXX
+        chmod u=rwxs,go=rx /usr/bin/XXXXX
+    fi
+   fi
+}
+
+# Parse the option requested from XXXXX-configure
+get_option () {
+    OPTION=`XXXXX-configure --$1 2>/dev/null | awk -F: '{ print \$2 }'`
+}
+
+suck_XXXXX_xml () {
+    # If XXXXX-configure was not there at Debconf, but
+    # /etc/XXXXX/XXXXX.xml was, then we presume that the
+    # administrator knew what he was doing.  We will therefore suck
+    # this information into the Debconf database now that
+    # XXXXX-configure is installed.
+    if [ -f /etc/XXXXX/debconf.XXXXX.xml ]; then
+    get_option norm
+    db_set XXXXX/norm "$OPTION"
+
+    get_option frequencies
+    db_set XXXXX/frequencies-ntsc "$OPTION"
+    db_set XXXXX/frequencies-jp "$OPTION"
+    db_set XXXXX/frequencies-pal "$OPTION"
+
+    get_option device
+    db_set XXXXX/v4ldevice "$OPTION"
+
+    get_option vbidevice
+    db_set XXXXX/vbidevice "$OPTION"
+
+    get_option priority
+    db_set XXXXX/processpriority "$OPTION"
+    fi
+}
+
+### MAIN POSTINST ###
+case "$1" in
+    configure)
+    # Load Debconf library
+    . /usr/share/debconf/confmodule
+
+    # Handle the setuid bit.
+    setuid
+
+    # Load /etc/XXXXX/XXXXX.xml into Debconf, if necessary
+    suck_XXXXX_xml
+
+    # Try to set the /var/run/XXXXX directory to video group
+    if [ -d /var/run/XXXXX ] ; then
+        if [ ! -x /usr/sbin/dpkg-statoverride ] || \
+        ! /usr/sbin/dpkg-statoverride --list /var/run/XXXXX >/dev/null; then
+        chmod ug=rwx,o=rxt /var/run/XXXXX
+        chown root:video /var/run/XXXXX
+        fi
+    fi
+
+    CONFIGFILE=/etc/XXXXX/XXXXX.xml
+
+    db_get XXXXX/norm
+    NORM=$RET
+    case "$NORM" in
+        NTSC|PAL-M|PAL-Nc)
+        db_get XXXXX/frequencies-ntsc
+        case "$RET" in
+            Cable) FREQTABLE=us-cable ;;
+            Broadcast) FREQTABLE=us-broadcast ;;
+            *) FREQTABLE=us-cable100 ;;
+        esac
+        ;;
+        NTSC-JP)
+        db_get XXXXX/frequencies-jp
+        case "$RET" in
+        Cable) FREQTABLE=japan-cable ;;
+        *) FREQTABLE=japan-broadcast ;;
+    esac
+    ;;
+    PAL|PAL-60|PAL-N|SECAM)
+    db_get XXXXX/frequencies-pal
+    case "$RET" in
+        Europe) FREQTABLE=europe ;;
+        France) FREQTABLE=france ;;
+        Russia) FREQTABLE=russia ;;
+        Australia) FREQTABLE=australia ;;
+        "New Zealand") FREQTABLE=newzealand ;;
+        "China Broadcast") FREQTABLE=china-broadcast ;;
+        "Australia Optus cable") FREQTABLE=australia-optus ;;
+        *) FREQTABLE=custom ;;
+    esac
+    ;;
+    *)
+    FREQTABLE=custom
+    ;;
+esac
+
+db_get XXXXX/v4ldevice
+V4LDEV=$RET
+db_get XXXXX/vbidevice
+VBIDEV=$RET
+db_get XXXXX/processpriority
+PRI=$RET
+
+db_stop
+
+# Create the configuration file if it doesn't exist
+if [ ! -f $CONFIGFILE ]; then
+    cp /usr/share/doc/XXXXX/examples/default.XXXXX.xml $CONFIGFILE
+fi
+
+# Configure XXXXX.
+XXXXX-configure --configfile="$CONFIGFILE" --norm="$NORM" \
+    --frequencies="$FREQTABLE" --device="$V4LDEV" \
+    --vbidevice="$VBIDEV" --priority="$PRI" 2>/dev/null
+
+;;
+abort-upgrade|abort-remove|abort-deconfigure)
+
+;;
+*)
+echo "postinst called with unknown argument \`$1'" >&2
+exit 1
+;;
+esac
+
+int mkdir_and_force_owner( const char *path, uid_t uid, gid_t gid )
+{
+    if( mkdir( path, S_IRWXU ) < 0 ) {
+        if( errno != EEXIST ) {
+            lfprintf( stderr, _("Cannot create %s: %s\n"),
+                      path, strerror( errno ) );
+        } else {
+            /* It exists, make sure it's a directory. */
+            DIR *temp_dir = opendir( path );
+            if( !path ) {
+                lfprintf( stderr, _("Cannot open %s: %s\n"), 
+                          path, strerror( errno ) );
+            } else {
+                closedir( temp_dir );
+                return 1;
+            }
+        }
+     } else {
+        /* We created the directory, now force it to be owned by the user. */
+        if( chown( path, uid, gid ) < 0 ) {
+            lfprintf( stderr, _("Cannot change owner of %s: %s.\n"),
+                     path, strerror( errno ) );
+        } else {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+ct->uid = getuid();
+/* Make the ~/.XXXXX directory every time on startup, to be safe. */
+if( asprintf( &temp_dirname, "%s/.XXXXX", getenv( "HOME" ) ) < 0 ) {
+    /* FIXME: Clean up ?? */
+    return 0;
+}
+mkdir_and_force_owner( temp_dirname, ct->uid, getgid() );
+free( temp_dirname );
+
+int main( int argc, char **argv )
+{
+rtctimer_t *rtctimer = 0;
+int read_stdin = 1;
+int result = 0;
+int realtime = 0;
+uid_t priv_uid = geteuid();
+uid_t user_uid = getuid();
+
+/*
+ * Temporarily drop down to user-level access, so that files aren't
+ * created setuid root.
+ */
+if( seteuid( user_uid ) == -1 ) {
+    lfprintf( stderr, _("\n"
+"    Failed to drop root privileges: %s.\n"
+"    motv will now exit to avoid security problems.\n\n"),
+        strerror( errno ) );
+    return 1;
+}
+
+setup_i18n();
+
+setup_utf8();
+
+lfprintf( stderr, _("Running %s.\n"), PACKAGE_STRING );
+
+/* Steal system resources in the name of performance. */
+/* Get maximum priority before dropping root privileges. We'll drop back */
+/* to the value specified in the config file (or the default) later. */
+seteuid( priv_uid );
+setpriority( PRIO_PROCESS, 0, -19 );
+if( set_realtime_priority( 0 ) ) {
+    realtime = 1;
+}
+
+rtctimer = rtctimer_new( 0 );
+
+if( rtctimer ) {
+    if( !rtctimer_set_interval( rtctimer, 1024 ) &&
+        !rtctimer_set_interval( rtctimer, 64 ) ) {
+        rtctimer_delete( rtctimer );
+        rtctimer = 0;
+    } else {
+        rtctimer_start_clock( rtctimer );
+        if( rtctimer_get_resolution( rtctimer ) < 1024 ) {
+            rtctimer_delete( rtctimer );
+            rtctimer = 0;
+        }
+    }
+}
+
+
+/* We've now stolen all our root-requiring resources, drop to a user. */
+if( setuid( user_uid ) == -1 ) {
+    /*
+     * This used to say "Unknown problems", but we're printing an
+     * error string, so that didn't really make sense, did it?
+     */
+    lfprintf( stderr, _("\n"
+"    Failed to drop root privileges: %s.\n"
+"    motv will now exit to avoid security problems.\n\n"),
+        strerror( errno ) );
+    return 1;
+}
+
+
+/* Ditch stdin early. */
+if( isatty( STDIN_FILENO ) ) {
+    read_stdin = 0;
+    close( STDIN_FILENO );
+}
+
+/* Run motv. */
+for(;;) {
+    if( result == 2 ) {
+        char *new_argv[ 2 ];
+
+        new_argv[ 0 ] = "motv";
+        new_argv[ 1 ] = 0;
+
+        result = motv_main( rtctimer, read_stdin, realtime, 0, new_argv );
+    } else {
+        result = motv_main( rtctimer, read_stdin, realtime, argc, argv );
+    }
+
+    if( result != 2 ) break;
+}
+
+if( rtctimer ) {
+    rtctimer_delete( rtctimer );
+}
+
+return result;
+}
+

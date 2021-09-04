@@ -1,0 +1,126 @@
+import System.Environment   (getArgs)
+import Data.List            (nub)
+import System.Random
+import Control.Applicative  ( (<$>) )
+import Control.Monad        (replicateM)
+
+randomItem :: [a] -> IO a
+randomItem xs = (xs!!)  <$> randomRIO (0, length xs - 1)
+
+genFromMask :: [String] -> IO String
+genFromMask = mapM randomItem
+
+genMeSome :: [String] -> Int -> IO [String]
+genMeSome mask n = do
+  glist <- replicateM (n*10) (genFromMask mask)
+  return $ take n $ nub glist
+
+writeIt ::  FilePath -> Int -> [String] -> IO ()
+writeIt fi n mask = do
+    glist <- genMeSome mask n
+   writeFile fi $ unlines glist
+
+maj :: String
+maj = ['A'..'Z']
+
+numa :: String
+numa = ['0'..'9']
+
+
+-- | Certaines regions n'utilisent aucune des plages libres
+genBra :: [String]
+genBra = ["VWXYZ",maj,maj," ",numa,numa,numa,numa]
+
+genAus :: [String]
+genAus = [maj,maj,maj," ",numa,numa,numa]
+
+main :: IO ()
+main = do
+  args <- getArgs
+  case args of
+    (mo:fi:n:_) -> case mo of
+      "aus" -> writeIt fi (read n) genAus
+      "bra" -> writeIt fi (read n) genBra
+      _     -> error "country is not supported"
+    _           -> error "wrong input, format is: genLicensePlate country file number"
+
+import System.Environment   (getArgs)
+import System.Random
+import Crypto.Random.AESCtr (makeSystem)
+import Control.Applicative  ( (<$>) )
+import qualified Data.Vector  as V
+import qualified Data.Text    as T
+import qualified Data.Text.IO as T
+
+nubV :: V.Vector a -> V.Vector a
+nubV va
+  | V.null va              = V.empty
+  | V.any (== headV) tailV = nubV tailV
+  | otherwise              = headV `V.cons` nubV tailV
+ where
+  headV = V.head va
+  tailV = V.tail va
+
+randomItem :: RandomGen g => g -> V.Vector a -> (a,g)
+randomItem g xs =
+  (xs V.! fst shamble, snd shamble)
+ where
+  shamble = randomR (0, V.length xs - 1) g
+
+genFromMask :: RandomGen g => g -> V.Vector (V.Vector a) -> V.Vector a
+genFromMask g xs =
+  if V.null xs
+     then V.empty
+     else fst paket `V.cons` genFromMask (snd paket) (V.tail xs)
+ where
+  paket = randomItem g (V.head xs)
+
+genMeSome :: RandomGen g => g -> V.Vector (V.Vector a) -> Int -> V.Vector (V.Vector a)
+genMeSome g mask n =
+  V.take n $ nubV $ V.replicateM (n*10) (genFromMask g mask)
+
+writeIt :: RandomGen g => g -> FilePath -> Int -> V.Vector (V.Vector a) -> IO ()
+writeIt g fi n mask =
+   T.writeFile fi $ T.unlines $ T.pack $ V.toList (V.map V.toList $ genMeSome g mask n)
+
+maj   = V.fromList ['A'..'Z']
+num a = V.fromList ['0'..'9']
+vspa  = V.fromList " "
+vtir  = V.fromList "-"
+
+-- | Certaines regions n'utilisent aucune des plages libres
+genBra = V.fromList [static,maj,maj,vspa,numa,numa,numa,numa]
+ where
+  static = V.fromList "VWXYZ"
+
+genAus = V.fromList [maj,maj,maj,vspa,numa,numa,numa]
+
+main :: IO ()
+main = do
+  g    <- makeSystem
+  args <- getArgs
+  case args of
+    (mo:fi:n:_) -> case mo of
+      "aus" -> writeIt g fi (read n) genAus
+      "bra" -> writeIt g fi (read n) genBra
+      _     -> error "country is not supported"
+    _           -> error "wrong input, format is: genLicensePlate country file number"
+
+genLicensePlate.hs:22:12:
+    No instance for (Eq a)
+      arising from a use of `=='
+    In the first argument of `V.any', namely `(== headV)
+    In the expression: V.any (== headV) tailV
+    In a stmt of a pattern guard for
+               an equation for `nubV':
+      V.any (== headV) tailV
+
+genLicensePlate.hs:48:52:
+    Couldn't match expected type `Char' with actual type
+    Expected type: V.Vector Char
+      Actual type: V.Vector [a]
+    In the first argument of `V.toList', namely
+      `(V.map V.toList $ genMeSome g mask n)'
+    In the second argument of `($)', namely
+      `V.toList (V.map V.toList $ genMeSome g mask n)'
+

@@ -1,0 +1,46 @@
+Directories0
+Directories1
+Directories2
+let Recurse=4               ## say... variable value ##
+[ "$Recurse" ] && let MaxDepth="$Recurse" || let MaxDepth=0
+declare -i depth=0
+
+IFS=$'\n'
+## declare -a Directories${depth}=("${@}")      ##  <—— doesn't work
+## declare -a Directories${depth}="("${@}")"        ##  <—— works if the brackets only are quoted...
+## declare -a Directories${depth}=\("${@}"\)        ##  <—— ... or escaped
+declare -a "Directories${depth}=("${@}")"
+IFS=$' \t\n'
+
+## Nested loop, depth counter increases for each directory depth. I want to stop at a specific depth which is entered as an option ##
+for (( depth = 0; depth <= MaxDepth; depth++ )); do                  ## MaxDepth is entered as option ##
+    until [ -z "${Directories${depth}[*]}" ]; do                       ## ***** bad substitution error ***** ##
+        declare input="$(follow "${Directories${depth}[0]}")"       ## follow is a script that resolves symlinks and Finder aliases ##
+        CheckDirectory "${input%/}/"                                  ## check directory ##
+        case $? in
+
+        ## Tests passed ##
+        0)  if [[ "$Recurse" && "$depth" -lt "$MaxDepth" ]]; then
+                IFS=$'\n'
+                ## get ready to check sub-directories ##
+                declare -a Directories$(( depth + 1 ))="("${Directories$(( depth + 1 ))[@]}" $(find -P "${Directories${depth}[0]}" -type d -mindepth 1 -maxdepth 1 -exec follow '{}' \;))"
+                IFS=$' \t\n'
+            fi
+            true;;
+
+        ## Tests failed ##
+        *)  false;;
+        esac
+        [ $? -eq 0 ] && unset Directories${depth}[0] || exit 1             ## if test fails, exit, if succeeds, move on to next directory ##
+        declare -a Directories${depth}="("${Directories${depth}[@]}")"      ## re-shuffle the array to get rid of null value at index 0 ##
+        (( element++ ))
+    done
+done
+
+depth=2
+declare -a "Directories${depth}=(yo man ma me mo)"
+echo "${Directories${depth}[4]}"
+    > -bash: ${Directories${depth}[4]}: bad substitution
+echo "${Directories2[4]}"
+    > mo
+

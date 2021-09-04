@@ -1,0 +1,53 @@
+proc ims_syn_lock_object { db object {timeout 30} {wait 1}}  {   
+    if {[catch {
+        while {true} {
+            am_dbtransaction begin $db
+
+            # read the object locks that aren't timed out       
+            set result [am_db1cell $db "SELECT object from GranularLocks WITH (ROWLOCK,HOLDLOCK) where object = [ns_dbquotevalue $object] AND  timeActionMade > DATEADD(second,-timeout, GETDATE())"]
+
+            # check to see if this object is locked and not timed out
+            if { [string equal "" $result] } {
+                break;
+            } else {
+                # another process has this object and it is not timed out. 
+                # release the row lock
+                am_dbtransaction rollback $db
+
+                if { $wait } {
+                    # sleep for between 400 and 800 miliseconds
+                    sleep [expr [ns_rand 400] + 400]                    
+                } else {
+                    # we aren't waiting on locked resources.
+                    return 0;
+                }
+            }            
+        }
+
+        # either the object lock has timed out, or the object isn't locked
+        # create the object lock.          
+        ns_db dml $db "DELETE FROM GranularLocks  WHERE object = [ns_dbquotevalue $object]"
+        ns_db dml $db "INSERT INTO GranularLocks(object,timeout) VALUES ([ns_dbquotevalue $object],[ns_dbquotevalue $timeout int])"   
+
+        # releases the row lock and commits the transaction
+        am_dbtransaction commit $db    
+
+    } errMsg]} {
+        ns_log Notice "Could not lock $object. $errMsg"
+        catch { 
+            am_dbtransaction rollback $db 
+        } errMsg
+        return 0
+    }
+    return 1     
+
+}
+
+
+proc ims_syn_unlock_object {db object } {
+
+    #simply remove the objects lock
+    ns_db dml $db "DELETE FROM GranularLocks WHERE object = [ns_dbquotevalue $object]"
+
+}
+

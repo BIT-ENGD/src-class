@@ -1,0 +1,155 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.IO.Ports;
+using System.Threading;
+using System.Net;
+using System.Net.Sockets;
+using System.IO;
+
+
+namespace ConsoleApplication1
+{
+    class Program
+    {
+        static bool _continue;
+        static SerialPort _serialPort;
+        static Thread readThread;
+        static Thread sendThread;
+        static String sendString;
+        static Socket s;
+        static int byteCount;
+        static Byte[] bytesReceived;
+
+        // synchronise send and receive threads
+        static bool dataReceived;
+
+        const int FIONREAD = 0x4004667F;
+
+        static void Main(string[] args)
+        {
+            dataReceived = false;
+            readThread = new Thread(Read);
+            sendThread = new Thread(Send);
+
+            bytesReceived = new Byte[16384];
+
+            // Create a new SerialPort object with default settings.
+            _serialPort = new SerialPort("COM4", 38400, Parity.None, 8, StopBits.One);
+
+            // Set the read/write timeouts
+            _serialPort.WriteTimeout = 500;
+
+            _serialPort.Open();
+            string moveMode = "CV ";
+            _serialPort.WriteLine(moveMode);
+
+            s = null;
+            IPHostEntry hostEntry = Dns.GetHostEntry("localhost");
+            foreach (IPAddress address in hostEntry.AddressList)
+            {
+                IPEndPoint ipe = new IPEndPoint(address, 10001);
+                Socket tempSocket =
+                    new Socket(ipe.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+
+                tempSocket.Connect(ipe);
+
+                if (tempSocket.Connected)
+                {
+                    s = tempSocket;
+                    s.ReceiveBufferSize = 16384;
+                    break;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            readThread.Start();
+            sendThread.Start();
+
+            while (_continue)
+            {
+                Thread.Sleep(10);
+                ;// Console.WriteLine("main...");
+            }
+
+            readThread.Join();
+            _serialPort.Close();
+            s.Close();
+        }
+
+        public static void Read()
+        {
+            while (_continue)
+            {
+                try
+                {
+                    //Console.WriteLine("Read");
+                    if (!dataReceived)
+                    {
+                        byte[] outValue = BitConverter.GetBytes(0);
+                        // Check how many bytes have been received.
+                        s.IOControl(FIONREAD, null, outValue);
+                        uint bytesAvailable = BitConverter.ToUInt32(outValue, 0);
+
+                        if (bytesAvailable > 0)
+                        {
+                            Console.WriteLine("Read thread..." + bytesAvailable);
+                            byteCount = s.Receive(bytesReceived);
+                            string str = Encoding.ASCII.GetString(bytesReceived);
+                            //str = Encoding::UTF8->GetString( bytesReceived );
+                            string[] split = str.Split(new Char[] { '\t', '\r', '\n' });
+
+                            string filteredX = (split.GetValue(7)).ToString();
+                            string filteredY = (split.GetValue(8)).ToString();
+
+                            string[] AzSplit = filteredX.Split(new Char[] { '.' });
+                            filteredX = (AzSplit.GetValue(0)).ToString();
+                            string[] ElSplit = filteredY.Split(new Char[] { '.' });
+                            filteredY = (ElSplit.GetValue(0)).ToString();
+
+                            // scale values 
+                            int x = (int)(Convert.ToInt32(filteredX) * 1.9);
+                            string scaledAz = x.ToString();
+                            int y = (int)(Convert.ToInt32(filteredY) * 1.9);
+                            string scaledEl = y.ToString();
+
+                            String moveAz = "PS" + scaledAz + " ";
+                            String moveEl = "TS" + scaledEl + " ";
+
+                            sendString = moveAz + moveEl;
+                            dataReceived = true;
+                        }
+                    }
+                }
+                catch (TimeoutException) {Console.WriteLine("timeout exception");}
+                catch (NullReferenceException) {Console.WriteLine("Read NULL reference  exception");}
+            }
+        }
+
+        public static void Send()
+        {
+            while (_continue)
+            {
+                try
+                {
+                    if (dataReceived)
+                    {
+                        // sleep Read() thread to allow serial port interrupt     processing 
+                        readThread.Join(100);
+                        // send command to PTU
+            dataReceived = false;
+                        Console.WriteLine(sendString);
+                        _serialPort.WriteLine(sendString);
+                    }
+                }
+                catch (TimeoutException) { Console.WriteLine("Timeout exception"); }
+                catch (IOException) { Console.WriteLine("IOException exception"); }
+                catch (NullReferenceException) { Console.WriteLine("Send NULL reference exception"); }
+            }
+        }
+    }
+}
+

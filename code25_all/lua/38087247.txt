@@ -1,0 +1,67 @@
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY, 
+  client VARCHAR(20) NOT NULL UNIQUE, 
+  secret VARCHAR(20) NOT NULL
+);
+
+INSERT INTO users(client, secret) VALUES('john' , 'john'  );
+INSERT INTO users(client, secret) VALUES('apple', 'orange');
+INSERT INTO users(client, secret) VALUES('kiwi' , 'pear'  );
+INSERT INTO users(client, secret) VALUES('peach', 'berry' );
+
+<IfModule dbd_module>
+  DBDriver      pgsql
+  DBDPersist    on
+  DBDMax        20
+  DBDParams     "host='localhost' port='5432' dbname='demousers' user='postgres' password='postgres'"
+  DBDPrepareSQL 'SELECT u.secret FROM users u WHERE u.client=%s' client_secret
+</IfModule>
+
+<IfModule lua_module>
+  LuaRoot              /vagrant/luatest
+  LuaScope             thread
+  LuaCodeCache         stat
+  LuaHookAccessChecker /vagrant/luatest/cookie_handler.lua handler early
+  LuaHookAccessChecker /vagrant/luatest/handler.lua        handler late
+</IfModule>
+
+require "string"
+require "apache2"
+
+local inspect = require "inspect"
+
+function handler(r)
+    local db, err  = r:dbacquire()
+    if not db then
+        r:debug("[500] DB Error: " .. err)
+        return 500
+    end
+    r:debug("Acquired database")
+    local statement, errmsg = db:prepared(r, "client_secret")
+    if not statement then
+        r:debug("[500] DB Error: " .. errmsg)
+        db:close()
+        return 500
+    end
+    r:info("Acquired prepared statement")
+    local secret
+    local result, emsg = statement:select("john")
+    if not emsg then
+        r:info("Fetch rows")
+        local rows = result(0, true)
+        r:debug("Rows " .. inspect(rows))
+        for k, row in pairs(rows) do
+            r:info("Pass " .. k .. inspect(row))
+            if row[1] then
+                secret = string.format("%s", row[1])
+            end
+        end
+    else
+        r:debug( "Error : " .. emsg)
+    end
+
+    db:close()
+
+    return 403
+end
+

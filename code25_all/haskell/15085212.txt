@@ -1,0 +1,48 @@
+{-# LANGUAGE TypeFamilies,GADTs,FlexibleContexts,RankNTypes #-}
+
+-- A function has an argument type and a result type
+class Fun f where
+  type FunArg f
+  type FunRes f
+
+-- Expressions are either constants of function applications
+data Expr a where
+  Const :: a -> Expr a
+  App :: Fun f => f -> FunArg f -> Expr (FunRes f)
+
+-- A very simple function
+data Plus = Plus
+
+-- Which takes two integer expressions and returns an integer expression
+instance Fun Plus where
+  type FunArg Plus = (Expr Int,Expr Int)
+  type FunRes Plus = Int
+
+-- A more complicated function which lifts a function to lists (like in haskell)
+data Map f r = Map f
+
+-- For this we need the concept of lifting function arguments:
+class Liftable a where
+  type LiftRes a
+
+-- A singleton argument is lifted by changing the expression type from a to [a]
+instance Liftable (Expr a) where
+  type LiftRes (Expr a) = Expr [a]
+
+-- Two function arguments are lifted by lifting each argument
+instance (Liftable a,Liftable b) => Liftable (a,b)  where
+  type LiftRes (a,b) = (LiftRes a,LiftRes b)
+
+-- Now we can declare a function instance for Map
+instance (Fun f,Liftable (FunArg f),r ~ LiftRes (FunArg f)) => Fun (Map f r) where
+  type FunArg (Map f r) = r
+  type FunRes (Map f r) = [FunRes f]
+
+-- Now a parser for functions:
+parseFun :: [String] -> (forall f. Fun f => f -> a) -> a
+-- The parser for the plus function is easy:
+parseFun ["plus"] f = f Plus
+-- But the parser for map is not possible:
+parseFun ("map":sym) f 
+  = parseFun sym (\fun -> f (Map fun))
+

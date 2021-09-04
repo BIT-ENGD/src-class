@@ -1,0 +1,132 @@
+require 'image'
+require 'nn
+npy4th = require 'npy4th'
+
+function scandir(directory)
+    local i, t, popen = 0, {}, io.popen
+    local pfile = popen('ls -a "'..directory..'"')
+    for filename in pfile:lines() do
+        i = i + 1
+        t[i] = filename
+    end
+    pfile:close()
+    return t
+end
+
+dataset={}
+
+path1='/home/dataset/train/data/'
+
+path2='/home/dataset/train/label/'
+
+x=scandir(path1)
+table.remove(x,1)
+table.remove(x,1)
+
+y=scandir(path2)
+table.remove(y,1)
+table.remove(y,1)
+
+num_files=0
+for _ in pairs(x) do 
+    num_files= num_files + 1 
+end
+
+num_files=2
+--dataset of form input, output creation
+function dataset:size() return num_files end
+
+for i=1, dataset:size() do
+    data=npy4th.loadnpy(path1..x[i])
+    label=npy4th.loadnpy(path2..y[i])
+    output=torch.Tensor(8,data:size(1),data:size(2)):zero()
+    output[1][label:eq(1)]=1 --healthy
+    output[2][label:eq(2)]=2 --emphysema
+    output[3][label:eq(3)]=3 --GGO                                                    
+    output[4][label:eq(4)]=4 --fibrosis
+    output[4][label:eq(14)]=4 --early_fibrosis
+    output[5][label:eq(5)]=5 --micronodules
+    output[6][label:eq(6)]=6 --consolidation
+    output[7][label:eq(8)]=7 --reticulation
+    output[8][label:eq(11)]=8 --peripheral_micronodules
+    input=torch.reshape(data,1,data:size(1),data:size(2))
+    dataset[i]={input:double(),output};
+end
+
+unet = nn.Sequential()
+-- ndim=input:size(2)
+ndim=512
+unet:add(nn.SpatialReflectionPadding(1+ndim/2,1+ndim/2,1+ndim/2,1+ndim/2)) --reflection padding 
+unet:add(nn.SpatialConvolution(1, 64, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(64, 64, 3, 3)) 
+unet:add(nn.SpatialMaxPooling(2,2,2,2))    
+
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(64, 128, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(128,128, 3, 3)) 
+unet:add(nn.SpatialMaxPooling(2,2,2,2))  
+
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(128, 256, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(256, 256, 3, 3)) 
+unet:add(nn.SpatialMaxPooling(2,2,2,2))
+
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(256, 512, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(512, 512, 3, 3)) 
+unet:add(nn.SpatialMaxPooling(2,2,2,2))  
+
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(512, 1024, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(1024, 1024, 3, 3)) 
+unet:add(nn.SpatialMaxPooling(2,2,2,2))  
+
+unet:add(nn.SpatialFullConvolution(1024, 1024, 2, 2, 2, 2)) -- up convolve 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(1024, 512, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(512, 512, 3, 3)) 
+
+unet:add(nn.SpatialFullConvolution(512, 512, 2, 2, 2, 2))   -- up convolve 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(512, 256, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(256, 256, 3, 3)) 
+
+unet:add(nn.SpatialFullConvolution(256, 256, 2, 2, 2, 2))   -- up convolve
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(256, 128, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(128, 128, 3, 3))
+
+unet:add(nn.SpatialFullConvolution(128, 128, 2, 2, 2, 2))   -- up convolve 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(128, 64, 3, 3)) 
+unet:add(nn.SpatialReflectionPadding(1,1,1,1)) --reflection padding 
+unet:add(nn.SpatialConvolution(64, 64, 3, 3))  
+unet:add(nn.SpatialConvolution(64, 8, 1, 1))  --output size 
+
+criterion=nn.CrossEntropyCriterion()
+trainer=nn.StochasticGradient(unet,criterion)
+trainer.learningRate = 0.01
+trainer:train(dataset)
+
+# StochasticGradient: training  
+/home/torch/install/share/lua/5.1/nn/THNN.lua:109: bad argument #2 to 'v' (vector or matrix expected at /home/SparseConvolution/nn/lib/THNN/generic/LogSoftMax.c:26)
+stack traceback:
+    [C]: in function 'v'
+    /home/torch/install/share/lua/5.1/nn/THNN.lua:109: in function 'LogSoftMax_updateOutput'
+    ...e/torch/install/share/lua/5.1/nn/LogSoftMax.lua:4: in function 'updateOutput'
+    ...torch/install/share/lua/5.1/nn/CrossEntropyCriterion.lua:12: in function 'forward'
+    ...le/torch/install/share/lua/5.1/nn/StochasticGradient.lua:35: in function 'train'
+    [string "_RESULT={trainer:train(dataset)}"]:1: in main chunk
+    [C]: in function 'xpcall'
+    /home/torch/install/share/lua/5.1/trepl/init.lua:651: in function 'repl'
+    ...me/torch/install/lib/luarocks/rocks/trepl/scm-1/bin/th:199: in main chunk
+    [C]: at 0x00406670  
+

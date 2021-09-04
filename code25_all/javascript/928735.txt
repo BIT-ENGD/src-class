@@ -1,0 +1,101 @@
+function TracingListener() {
+}
+
+TracingListener.prototype =
+{
+    originalListener: null,
+    receivedData: [],   // array for incoming data.
+
+    onDataAvailable: function(request, context, inputStream, offset, count)
+    {
+       var binaryInputStream = CCIN("@mozilla.org/binaryinputstream;1",
+                "nsIBinaryInputStream");
+        var storageStream = CCIN("@mozilla.org/storagestream;1", "nsIStorageStream");
+        binaryInputStream.setInputStream(inputStream);
+        storageStream.init(8192, count, null);
+
+        var binaryOutputStream = CCIN("@mozilla.org/binaryoutputstream;1",
+                "nsIBinaryOutputStream");
+
+        binaryOutputStream.setOutputStream(storageStream.getOutputStream(0));
+
+        // Copy received data as they come.
+        var data = binaryInputStream.readBytes(count);
+
+        this.receivedData.push(data);
+
+        binaryOutputStream.writeBytes(data, count);
+        this.originalListener.onDataAvailable(request, context,storageStream.newInputStream(0), offset, count);
+    },
+
+    onStartRequest: function(request, context) {
+        this.originalListener.onStartRequest(request, context);
+    },
+
+    onStopRequest: function(request, context, statusCode)
+    {
+        try {
+            if (request.originalURI && piratequesting.baseURL == request.originalURI.prePath && request.originalURI.path.indexOf("/index.php?ajax=") == 0) {
+
+                dump("\nProcessing: " + request.originalURI.spec + "\n");
+                var date = request.getResponseHeader("Date");
+
+                var responseSource = this.receivedData.join();
+                dump("\nResponse: " + responseSource + "\n");
+
+                piratequesting.ProcessRawResponse(request.originalURI.spec, responseSource, date);
+            }
+        } catch(e) { dumpError(e);}
+
+        this.originalListener.onStopRequest(request, context, statusCode);
+    },
+
+    QueryInterface: function (aIID) {
+        if (aIID.equals(Ci.nsIStreamListener) ||
+            aIID.equals(Ci.nsISupports)) {
+            return this;
+        }
+        throw Components.results.NS_NOINTERFACE;
+    }
+}
+
+
+hRO = {
+
+    observe: function(aSubject, aTopic, aData){
+        try {
+            if (aTopic == "http-on-examine-response") {
+                if (aSubject.originalURI && piratequesting.baseURL == aSubject.originalURI.prePath && aSubject.originalURI.path.indexOf("/index.php?ajax=") == 0) {
+                    var newListener = new TracingListener();
+                    aSubject.QueryInterface(Ci.nsITraceableChannel);
+                    newListener.originalListener = aSubject.setNewListener(newListener);
+
+                    dump("\n\nObserver Processing: " + aSubject.originalURI.spec + "\n");
+                    for (var i in aSubject) {
+                        dump("\n\trequest." + i);
+                    }
+                }
+            }
+        } catch (e) {
+            dumpError(e);
+
+        }
+    },
+
+    QueryInterface: function(aIID){
+        if (aIID.equals(Ci.nsIObserver) ||
+        aIID.equals(Ci.nsISupports)) {
+            return this;
+        }
+
+        throw Components.results.NS_NOINTERFACE;
+
+    }
+};
+
+
+var observerService = Cc["@mozilla.org/observer-service;1"] .getService(Ci.nsIObserverService);
+
+observerService.addObserver(hRO, "http-on-examine-response", false);
+
+responseSource

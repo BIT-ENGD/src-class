@@ -1,0 +1,171 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
+import Prelude hiding ( catch )
+import Control.Exception
+
+fooLazy :: Int -> IO Int
+fooLazy m = return $ 1 `div` m
+
+fooStrict :: Int -> IO Int
+fooStrict m = return $! 1 `div` m
+
+test :: (Int -> IO Int) -> IO ()
+test f = print =<< f 0 `catch` \(_ :: SomeException) -> return 42
+
+testLazy :: Int -> IO Int
+testLazy m = (return $ 1 `div` m) `catch` \(_ :: SomeException) -> return 42
+
+testStrict :: Int -> IO Int
+testStrict m = (return $! 1 `div` m) `catch` \(_ :: SomeException) -> return 42
+
+fooLazy
+fooStrict
+testLazy
+testStrict
+> test fooLazy
+*** Exception: divide by zero
+> test fooStrict
+42
+> testLazy 0
+*** Exception: divide by zero
+> testStrict 0
+42
+
+catch
+{-# LANGUAGE ScopedTypeVariables #-}
+
+import Prelude hiding ( catch )
+import Control.DeepSeq
+import Control.Exception
+import System.IO.Unsafe
+
+fooLazy :: Int -> IO Int
+fooLazy m = return $ 1 `div` m
+
+fooStrict :: Int -> IO Int
+fooStrict m = return $! 1 `div` m
+
+instance NFData a => NFData (IO a) where
+  rnf = rnf . unsafePerformIO
+
+catchStrict :: (Exception e, NFData a) => IO a -> (e -> IO a) -> IO a
+catchStrict = catch . force
+
+test :: (Int -> IO Int) -> IO ()
+test f = print =<< f 0 `catchStrict` \(_ :: SomeException) -> return 42
+
+testLazy :: Int -> IO Int
+testLazy m = (return $ 1 `div` m) `catchStrict` \(_ :: SomeException) -> return 42
+
+testStrict :: Int -> IO Int
+testStrict m = (return $! 1 `div` m) `catchStrict` \(_ :: SomeException) -> return 42
+
+> test fooLazy
+42
+> test fooStrict
+42
+> testLazy 0
+42
+> testStrict 0
+42
+
+unsafePerformIO
+catch
+catchStrict
+catchStrict
+forceM :: (Monad m, NFData a) => m a -> m a
+forceM m = m >>= (return $!) . force
+
+catchStrict :: (Exception e, NFData a) => IO a -> (e -> IO a) -> IO a
+catchStrict expr = (forceM expr `catch`)
+
+main :: IO ()
+main = do
+  args <- getArgs
+  res <- return ((+ 1) $ read $ head args) `catch` \(_ :: SomeException) -> return 0
+  print res
+
+main :: IO ()
+main = do
+  args <- getArgs
+  print ((+ 1) $ read $ head args) `catch` \(_ :: SomeException) -> print 0
+-- or
+-- 
+-- res <- return ((+ 1) $ read $ head args) `catchStrict` \(_ :: SomeException) -> return 0
+-- print res
+-- 
+-- or
+-- 
+-- res <- returnStrcit ((+ 1) $ read $ head args) `catch` \(_ :: SomeException) -> return 0
+-- print res
+-- 
+-- where
+returnStrict :: Monad m => a -> m a
+returnStrict = (return $!)
+
+catch
+($!)
+return
+forceM
+catch
+catchStrict
+{-# LANGUAGE GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances
+  , MultiParamTypeClasses, UndecidableInstances, ScopedTypeVariables #-}
+
+import System.Environment
+
+import Prelude hiding ( IO )
+import qualified Prelude as P ( IO )
+import qualified Control.Exception as E
+import Data.Foldable
+import Data.Traversable
+import Control.Applicative
+import Control.Monad.Trans
+import Control.Monad.Error
+
+newtype StrictT m a = StrictT { runStrictT :: m a } deriving
+  ( Foldable, Traversable, Functor, Applicative, Alternative, MonadPlus, MonadFix
+  , MonadIO
+  )
+
+instance Monad m => Monad (StrictT m) where
+  return = StrictT . (return $!)
+  m >>= k = StrictT $ runStrictT m >>= runStrictT . k
+  fail = StrictT . fail
+
+instance MonadTrans StrictT where
+  lift = StrictT
+
+type IO = StrictT P.IO
+
+instance E.Exception e => MonadError e IO where
+  throwError = StrictT . E.throwIO
+  catchError m h = StrictT $ runStrictT m `E.catch` (runStrictT . h)
+
+io :: StrictT P.IO a -> P.IO a
+io = runStrictT
+
+return
+foo :: Int -> IO Int
+foo m = return $ 1 `div` m
+
+fooReadLn :: Int -> IO Int
+fooReadLn x = liftM (`div` x) $ liftIO readLn
+
+test :: (Int -> IO Int) -> P.IO ()
+test f = io $ liftIO . print =<< f 0 `catchError` \(_ :: E.SomeException) -> return 42
+
+main :: P.IO ()
+main = io $ do
+  args <- liftIO getArgs
+  res <- return ((+ 1) $ read $ head args) `catchError` \(_ :: E.SomeException) -> return 0
+  liftIO $ print res
+
+-- > test foo
+-- 42
+-- > test fooReadLn
+-- 1
+-- 42
+-- ./main
+-- 0
+

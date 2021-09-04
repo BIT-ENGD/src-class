@@ -1,0 +1,777 @@
+MiscLibs::MySQL::MySQLDoCmd, MySQL.pm line 564:
+-->UPDATE tbl_xxx_files SET ReloadStart=123" WHERE (FileName="image.txt")<--
+#=====================================================================================
+# Execute MySQL commands and handle errors
+#=====================================================================================
+
+sub MySQLDoCmd ($;$) {
+
+my ($MySQLCmd, $Quite) = @_;
+
+ if ( eval { $DBHandle->do($MySQLCmd) } ) {
+   open (MYFILE2, '>/bb/bin/fa/logs/last_sql_warning.txt');
+   # trying to write warning to log.  As a first pass I was attempting to write 
+   # each statement to the log and include any warnings.  What I would like code to
+   # do is check if there is a warning and only then write that statement to the log. 
+
+   print MYFILE2 MySQLMakeID() . ": $DBHandle->errstr\n-->$MySQLCmd<--\n";
+
+return 0;
+
+} elsif ( ! $Quite ) {
+  open (MYFILE, '>>/bb/bin/fa/logs/badsql.txt');
+  print MYFILE  MySQLMakeID() . ": $@\n-->$MySQLCmd<--\n";
+
+#=========SENDS EMAIL ON STATEMENT FAILURE===================
+ while (my ($addressee, $address) = each (%emailList))
+ {
+     print STDERR "INFO: Sending email to $addressee at address $address\n";
+     $message =~ s/ADDRESSEE/$addressee/g;
+     $message =~ s/ERRORREASON/$errMessage/g;
+     &sendMail($addressee, $address, $message);
+     $message =~ s/$addressee/ADDRESSEE/g;
+     $message =~ s/$errMessage/ERRORREASON/g;
+  }
+
+return 1;
+
+ } else {
+  return 1;
+
+ }
+
+}
+
+use strict;                        # Everything must be defined before it is used
+use warnings;                      # Print warnings
+use POSIX;                         # Provides POSIX functions
+use English '-no_match_vars';      # Provides access to English version of builtin variables
+use Net::SMTP;
+
+#===================================================================================================
+
+package MiscLibs::MySQL;
+use Exporter ();
+
+our ($VERSION, @ISA, @EXPORT, @EXPORT_OK);
+
+$VERSION = '1.00';
+@ISA = qw(Exporter);
+@EXPORT_OK = ( );
+@EXPORT = qw( 
+
+MySQLOpenConnection
+MySQLCloseConnection
+
+MySQLCloseHandle
+
+MySQLErrNo
+MySQLError
+MySQLHostInfo
+MySQLInfo
+MySQLInsertID
+MySQLProtoInfo
+MySQLServerInfo
+MySQLStat
+MySQLThreadID
+MySQLDBDStats
+MySQLAutoReconnect
+MySQLUseResult
+MySQLShowTables
+MySQLShowColumns
+MySQLValidateFields
+MySQLNumOfFields
+MySQLErrStr
+MySQLUseResults
+
+MySQLDoCmd
+
+MySQLDeleteRows
+MySQLDeleteRowsICS
+MySQLInsertRow
+MySQLUpdateRows
+
+MySQLSelectRows
+MySQLGetHashRef
+MySQLGetArray
+MySQLSetLastUpdate
+MySQLSetReportState
+
+MySQLTruncateTable
+MySQLDisableKeys
+MySQLEnableKeys
+MySQLOptimizeTable
+
+MySQLCacheAddTable
+MySQLCacheAddBuffer
+MySQLCacheFlush
+
+);
+#=====================================================================================
+my %emailList = (
+                   "bob"=>"\@bog.com",
+               );
+
+my $errMessage = "error_message";
+my $message = "MySQl Query Timed out - check logs/";
+
+#======================================================================================
+ sub sendMail()
+{
+ #not relevant - smtp code
+
+     print "EXECUTE: Mail sent successfully\n";
+}
+
+#======================================================================================
+
+use File::Basename;                # Provides basename, dirname and fileparse functions
+use Data::Dumper;
+use DBI;                           # Interface to MySQL
+
+my $DBHandle;
+
+my %CacheFieldNameStrings;
+my %CacheFieldNameArrays;
+my %CacheSizes;
+my %CacheFieldValues;
+my %CacheDupKeyCmds;
+
+my %ValidateFieldNames;
+
+my $MaxCacheSize = 50;
+
+1;
+
+#=====================================================================================
+# Create an ID string for error reporting
+#=====================================================================================
+
+sub MySQLMakeID {
+
+  my ($package, $filepath, $line, $subroutine, $hasargs,
+      $wantarray, $evaltext, $is_require, $hints, $bitmask) = caller(1);
+
+  $subroutine =~ s/main:://;
+
+  my $filename = basename($filepath);
+
+  my $id = "$subroutine, $filename line $line";
+
+  # print "ID: '$id'\n";
+
+  return $id;
+
+}
+
+#=====================================================================================
+# Open MySQL connection and get reference information
+#=====================================================================================
+
+sub MySQLOpenConnection (;$) {
+
+  my ( $NewMaxCacheSize ) = @_;
+
+  my $Database;
+  my $Host;
+  my $Port;
+  my $DSN;
+  my $User;
+  my $Password;
+  my %Options;
+
+  if ( defined($NewMaxCacheSize) && ($NewMaxCacheSize > 1) ) { $MaxCacheSize = $NewMaxCacheSize }
+
+  $Database = $ENV{MySQLDatabase}; if ( ! defined($Database) ) { $Database = "database" }
+  $Host     = $ENV{MySQLHost};     if ( ! defined($Host)     ) { $Host     = "host" }
+  $Port     = $ENV{MySQLPort};     if ( ! defined($Port)     ) { $Port     = 123 }
+
+  $DSN = "DBI:mysql";
+  $DSN = $DSN . ":$Database";
+  $DSN = $DSN . ";host=$Host";
+  $DSN = $DSN . ";port=$Port";
+  $DSN = $DSN . ";mysql_compression=1";
+
+  $User     = 'user';
+  $Password = 'pw';
+
+  %Options = ( RaiseError => 1 );
+
+  $DBHandle = DBI->connect($DSN, $User, $Password, \%Options);
+
+  return $DBHandle;
+
+}
+
+#=====================================================================================
+# Close MySQL connection opened above or a handle that is passed
+#=====================================================================================
+
+sub MySQLCloseConnection {
+  if ( $DBHandle ) { $DBHandle->disconnect }
+  return 0;
+}
+
+sub MySQLCloseHandle ($) { 
+  my ($sh) = @_;
+  if ( $sh ) { $sh->finish() }
+  return 0;
+}
+
+#=====================================================================================
+# Return a various database handle values and conditions
+#=====================================================================================
+
+sub MySQLErrNo      () { return $DBHandle->{'mysql_errno'}      }
+sub MySQLError      () { return $DBHandle->{'mysql_error'}      }
+sub MySQLHostInfo   () { return $DBHandle->{'mysql_hostinfo'}   }
+sub MySQLInfo       () { return $DBHandle->{'mysql_info'}       }
+sub MySQLInsertID   () { return $DBHandle->{'mysql_insertid'}   }
+sub MySQLProtoInfo  () { return $DBHandle->{'mysql_protoinfo'}  }
+sub MySQLServerInfo () { return $DBHandle->{'mysql_serverinfo'} }
+sub MySQLStat       () { return $DBHandle->{'mysql_stat'}       }
+sub MySQLThreadID   () { return $DBHandle->{'mysql_thread_id'}  }
+sub MySQLDBDStats   () { return $DBHandle->{'mysql_dbd_stats'}  }
+
+#=====================================================================================
+# Optionally set but always return various database handle values and conditions
+#=====================================================================================
+
+sub MySQLAutoReconnect (;$) { 
+  my $val = $_[0];
+  if ( defined($val) ) { $DBHandle->{'mysql_auto_reconnect'} = $val }
+  return $DBHandle->{'mysql_auto_reconnect'};
+}
+
+sub MySQLUseResult (;$) { 
+  my $val = $_[0];
+  if ( defined($val) ) { $DBHandle->{'mysql_use_result'} = $val }
+  return $DBHandle->{'mysql_use_result'};
+}
+
+#=====================================================================================
+# Execute MySQL commands and handle errors
+#=====================================================================================
+
+sub MySQLDoCmd ($;$) {
+
+  my ($MySQLCmd, $Quite) = @_;
+
+  if ( eval { $DBHandle->do($MySQLCmd) } ) {
+       open (MYFILE2, '>>/bb/bin/fa/logs/last_sql.txt');
+       #!!!!! trying to write warning to log 
+       print MYFILE2 MySQLMakeID() . ": $DBHandle->errstr\n-->$MySQLCmd<--\n";
+      return 0;
+
+  } elsif ( ! $Quite ) {
+      open (MYFILE, '>>/bb/bin/fa/logs/badsql.txt');
+      print MYFILE  MySQLMakeID() . ": $@\n-->$MySQLCmd<--\n";
+
+#=========SENDS EMAIL ON STATEMENT FAILURE===================    
+ while (my ($addressee, $address) = each (%emailList))
+     {
+         print STDERR "INFO: Sending email to $addressee at address $address\n";
+         $message =~ s/ADDRESSEE/$addressee/g;
+         $message =~ s/ERRORREASON/$errMessage/g;
+         &sendMail($addressee, $address, $message);
+         $message =~ s/$addressee/ADDRESSEE/g;
+         $message =~ s/$errMessage/ERRORREASON/g;
+      }
+
+    return 1;
+
+  } else {
+    return 1;
+
+  }
+
+}
+
+#=====================================================================================
+# Delete rows from a MySQL table
+#=====================================================================================
+
+sub MySQLDeleteRows ($;$) {
+
+  my ($Table, $WhereRef) = @_;
+
+  my $WhereList;
+
+  my $MySQLCmd = 'DELETE FROM ' . $Table;
+
+  if ( $WhereRef ) {
+    $WhereList = BuildLists ('where', $WhereRef);
+    $MySQLCmd = $MySQLCmd . $WhereList;
+  }
+
+  return MySQLDoCmd($MySQLCmd);
+
+}
+
+
+#=====================================================================================
+# Select rows from a MySQL table and return a statement handle
+#=====================================================================================
+
+sub MySQLSelectRows ($$;$$) {
+
+  my ($What, $Table, $WhereRef, $OrderRef) = @_;
+
+  my $MySQLCmd = "SELECT $What FROM $Table";
+
+  if ( $WhereRef ) { $MySQLCmd = $MySQLCmd . BuildLists ('Where'  , $WhereRef) }
+  if ( $OrderRef ) { $MySQLCmd = $MySQLCmd . BuildLists ('OrderBy', $OrderRef) }
+
+  # print "MySQLSelectRows: MySQLCmd '$MySQLCmd'\n";
+
+  my $StmtHandle;
+
+  if ( ! eval {  $StmtHandle = $DBHandle->prepare($MySQLCmd) } ) {
+    print STDERR MySQLMakeID() . ": $@\n-->$MySQLCmd<--\n";
+    return undef;
+
+  } elsif ( ! eval { $StmtHandle->execute() } ) {
+    print STDERR MySQLMakeID() . ": $StmtHandle->errstr\n-->$MySQLCmd<--\n";
+    return undef;
+
+  } else {
+    return $StmtHandle;
+
+  }
+
+}
+
+#=====================================================================================
+# Return a various statement handle values and conditions
+#====================================================================================
+
+sub MySQLNumOfFields ($) { my ($sh) = @_; return $sh->{'NUM_OF_FIELDS'}      }
+sub MySQLErrStr      ($) { my ($sh) = @_; return $sh->errstr                 }
+
+sub MySQLGetHashRef  ($) { my ($sh) = @_;
+  if ( my $Ref = $sh->fetchrow_hashref() ) { return $Ref }
+  else                                     { MySQLCloseHandle($sh); return undef } 
+}
+
+sub MySQLGetArray ($) { my ($sh) = @_; 
+  if ( my $Ref = $sh->fetchrow_array()   ) { return $Ref }
+  else                                     { MySQLCloseHandle($sh); return undef } 
+}
+
+#=====================================================================================
+# Optionally set but always return various statement handle values and conditions
+#=====================================================================================
+
+sub MySQLUseResults ($;$) { 
+  my ($sh, $val) = @_;
+  if ( defined($val) ) { $sh->{'mysql_use_result'} = $val }
+  return $sh->{'mysql_use_result'};
+}
+
+#=====================================================================================
+# Update a row in a MySQL table
+#=====================================================================================
+
+sub MySQLUpdateRows ($$;$) {
+
+  my ($Table, $SetRef, $WhereRef) = @_;
+
+  my $MySQLCmd;
+  my $SetList;
+  my $WhereList;
+
+  $MySQLCmd = 'UPDATE ' . $Table;
+
+  $SetList = BuildLists ('set', $SetRef);
+
+  $MySQLCmd = $MySQLCmd . $SetList;
+
+  if ( $WhereRef ) {
+    $WhereList = BuildLists ('where', $WhereRef);
+    $MySQLCmd = $MySQLCmd . $WhereList ;
+  }
+
+  # print "MySQLUpdateRows: MySQLCmd '$MySQLCmd'\n";
+
+  return MySQLDoCmd($MySQLCmd);
+
+}
+
+
+
+#=====================================================================================
+# Truncate a MySQL table
+#=====================================================================================
+
+sub MySQLTruncateTable ($) {
+
+  my ($Table) = @_;
+
+  my $MySQLCmd = 'TRUNCATE TABLE ' . $Table;
+
+  return MySQLDoCmd($MySQLCmd);
+
+}
+
+
+
+
+#=====================================================================================
+#
+# The routines below maintain a cache of MySQL values to allow inserting multiple
+# rows at a time to improve efficiency
+#
+#=====================================================================================
+
+#=====================================================================================
+# Add a table to the MySQL Cache
+#=====================================================================================
+
+sub MySQLCacheAddTable ($$;$) {
+
+  my ( $TableName, $FieldNameArray, $DupKeyCmds ) = @_;
+
+  my $DupKeyCmd;
+
+  my $FieldName;
+  my $FieldNameString = '';
+
+  for $FieldName ( @$FieldNameArray ) {
+    if ( $FieldNameString ) { $FieldNameString = $FieldNameString . ',' }
+    $FieldNameString = $FieldNameString . $FieldName;    
+  }
+
+    $CacheFieldNameStrings{$TableName} = $FieldNameString;
+  @{$CacheFieldNameArrays{$TableName}} = @$FieldNameArray;
+  $CacheDupKeyCmds{$TableName}         = $DupKeyCmds;
+  $CacheSizes{$TableName}              = 0;
+  $CacheFieldValues{$TableName}        = '';
+
+  return 0;
+
+}
+
+#=====================================================================================
+# Add a buffer to the MySQL cache
+#=====================================================================================
+
+sub MySQLCacheAddBuffer ($$) {
+
+  my ( $TableName, $AddValues ) = @_;
+
+  my $FieldName;
+  my $FieldValue;
+  my $FieldValues;
+
+  my $CacheValues;
+
+  if ( ! defined($CacheFieldNameStrings{$TableName}) ) {
+    print STDERR MySQLMakeID() . ": Table '$TableName' has not been initialized with the 'AddTable' command\n"; 
+    return 1;
+  }
+
+  if ( $CacheSizes{$TableName} >= $MaxCacheSize ) { 
+    # if ( $TableName eq 'tbl_xyz' ) {
+      # print "Flushing $TableName cache before adding buffer: CacheSize = '$CacheSizes{$TableName}'\n" }
+    MySQLCacheFlush ($TableName);
+  }
+
+  $FieldValues = '';
+
+  for $FieldName ( @{$CacheFieldNameArrays{$TableName}} ) {
+
+    $FieldValue = $AddValues->{$FieldName};
+
+    if ( ! defined($FieldValue) ) { $FieldValue  =  '' }                 # Make sure value is defined
+    else                          { $FieldValue  =~ s/(["',\\])/\\$1/g } # Make sure that MySQL special chars are escaped
+
+    if ( $FieldValues ) { $FieldValues =  $FieldValues . "," }
+
+    $FieldValues =  $FieldValues . "'" . $FieldValue . "'";
+
+  }
+
+  $CacheValues = $CacheFieldValues{$TableName};
+
+  if ( $CacheValues ) { $CacheValues = $CacheValues . ',' }
+
+  $CacheValues = $CacheValues . '(' . $FieldValues . ')';
+
+  $CacheFieldValues{$TableName} = $CacheValues;
+
+  $CacheSizes{$TableName}++;
+
+  # if ( $TableName eq 'tbl_xyz' ) {
+    # print "Added buffer to $TableName cache: CacheSizes '$CacheSizes{$TableName}', CacheValues '$CacheValues'\n" }
+
+  return 0;
+
+}
+
+#=====================================================================================
+# Flush entries from MySQL cache
+#=====================================================================================
+
+sub MySQLCacheFlush ($) {
+
+  my ( $TableName ) = @_;
+
+  my $FlushTable;
+  my @FlushTables,
+
+  my $FieldNames;
+  my $FieldValues;
+  my $DupKeyCmd;
+
+  my $MySQLCmd;
+
+  if ( lc($TableName) eq 'all' ) { 
+    for $FlushTable ( keys(%CacheFieldNameStrings) ) { push @FlushTables, $FlushTable }
+
+  } elsif ( ! defined($CacheFieldNameStrings{$TableName}) ) {
+    print STDERR MySQLMakeID() . ": Table '$TableName' has not been initialized with the 'AddTable' command\n"; 
+    return 1;
+
+  } else {
+    push @FlushTables, $TableName;
+
+  }
+
+  FlushTable: for $FlushTable ( @FlushTables ) {
+
+    $FieldValues = $CacheFieldValues{$FlushTable};
+
+    $CacheFieldValues{$FlushTable} = '';
+    $CacheSizes{$FlushTable}       = 0;
+
+    if ( ! $FieldValues ) { next FlushTable }
+
+    $FieldNames = $CacheFieldNameStrings{$FlushTable};
+    $DupKeyCmd  = $CacheDupKeyCmds{$FlushTable};
+
+#Removed DELAYED after moving to innodb
+#$MySQLCmd = "INSERT DELAYED INTO $FlushTable ($FieldNames) VALUES $FieldValues";
+
+ $MySQLCmd = "INSERT INTO $FlushTable ($FieldNames) VALUES $FieldValues";
+
+    if ( $DupKeyCmd ) { $MySQLCmd = $MySQLCmd . ' ON DUPLICATE KEY UPDATE ' . $DupKeyCmd }
+
+    return MySQLDoCmd($MySQLCmd);
+
+  }
+
+}
+
+sub BuildLists ($$;$) {
+
+  my ($Type, $Ref1, $Ref2) = @_;
+
+  my $Ref1Type = ref($Ref1);
+  my $Ref2Type = ref($Ref2);
+
+  my $Name;
+  my $NameList;
+  my $Value;
+  my $ValueList;
+
+  my %Fields;
+
+  my $RtnVal;
+
+  $Type = lc($Type);
+
+  my $TypeIndex = index('values set where orderby', $Type);
+
+  # print "Type '$Type', TypeIndex '$TypeIndex', Ref1Type '$Ref1Type', Ref1 '$Ref1'\n";
+
+  if ( $TypeIndex < 0 ) {
+
+    print STDERR MySQLMakeID() . ": $Type is not a a valid type. Use 'values', 'set' or 'where'\n";
+    return $RtnVal;
+
+  } elsif ( $Ref1Type eq '' ) {
+
+    if ( $Type eq 'values' ) {
+      $RtnVal = '(' . $Ref1 . ') VALUES (' . $Ref2 . ')';
+    } elsif ( $Type eq 'set' ) {
+      $RtnVal = ' SET ' . $Ref1;
+    } elsif ( $Type eq 'where' ) {
+      $RtnVal = ' WHERE ' . $Ref1;
+    } elsif ( $Type eq 'orderby' ) {
+      $RtnVal = ' ORDER BY ' . $Ref1;
+    }
+
+  } elsif ( $Ref1Type eq 'SCALAR' ) {
+
+    if ( $Type eq 'values' ) {
+      $RtnVal = '(' . $$Ref1 . ') VALUES (' . $$Ref2 . ')';
+    } elsif ( $Type eq 'set' ) {
+      $RtnVal = ' SET ' . $$Ref1;
+    } elsif ( $Type eq 'where' ) {
+      $RtnVal = ' WHERE ' . $$Ref1;    
+    } elsif ( $Type eq 'orderby' ) {
+      $RtnVal = ' ORDER BY ' . $$Ref1;
+    }
+
+  } elsif ( $Ref1Type eq 'HASH' ) {
+
+    for $Name ( keys(%$Ref1) )  {
+
+      $Value = $Ref1->{$Name};
+
+      if ( ! defined($Value) ) { $Value  =  '' }                 # Make sure value is defined
+      else                     { $Value  =~ s/(["',\\])/\\$1/g } # Make sure that MySQL special chars are escaped
+
+      $Fields{$Name} = $Value;
+
+    }
+
+    if ( $Type eq 'values' ) {
+
+      while (($Name, $Value) = each %Fields ) {
+        if ( $NameList ) {
+          $NameList  = $NameList  . ','  . $Name;
+          $ValueList = $ValueList . ',"' . $Value . '"';
+        } else {
+          $NameList  = $Name;
+          $ValueList = '"' . $Value . '"';    
+        }
+      }
+
+      $RtnVal = " ($NameList) VALUES ($ValueList)";
+
+    } elsif ( $Type eq 'set' ) {
+      $RtnVal = '';
+      while (($Name, $Value) = each %Fields ) {
+        if ( $RtnVal ) { $RtnVal = $RtnVal . ',' }
+        $RtnVal = $RtnVal . $Name . '="' . $Value . '"';
+      }
+      $RtnVal = ' SET ' . $RtnVal;
+
+    } elsif ( $Type eq 'where' ) {
+      $RtnVal = '';
+      while (($Name, $Value) = each %Fields ) {
+        if ( $RtnVal ) { $RtnVal = $RtnVal . ' AND ' }
+        $RtnVal = $RtnVal . '(' . $Name . '="' . $Value . '")';
+      }
+      $RtnVal = ' WHERE ' . $RtnVal;
+
+    }
+
+  } else {
+
+    print STDERR MySQLMakeID() . ": Parameter two is unsupported reference type '$Ref1Type'\n";
+    return $RtnVal;
+
+  }
+
+  return $RtnVal;
+
+}
+
+sub BuildListsInt ($$;$) {
+
+  my ($Type, $Ref1, $Ref2) = @_;
+  my $Ref1Type = ref($Ref1);
+  my $Ref2Type = ref($Ref2);
+
+  my $Name;
+  my $NameList;
+  my $Value;
+  my $ValueList;
+
+  my %Fields;
+
+  my $RtnVal;
+
+  $Type = lc($Type);
+
+  my $TypeIndex = index('values set where orderby', $Type);
+
+  # print "Type '$Type', TypeIndex '$TypeIndex', Ref1Type '$Ref1Type', Ref1 '$Ref1'\n";
+
+  if ( $TypeIndex < 0 ) {
+
+    print STDERR MySQLMakeID() . ": $Type is not a a valid type. Use 'values', 'set' or 'where'\n";
+    return $RtnVal;
+
+  } elsif ( $Ref1Type eq '' ) {
+
+    if ( $Type eq 'values' ) {
+      $RtnVal = '(' . $Ref1 . ') VALUES (' . $Ref2 . ')';
+    } elsif ( $Type eq 'set' ) {
+      $RtnVal = ' SET ' . $Ref1;
+    } elsif ( $Type eq 'where' ) {
+      $RtnVal = ' WHERE ' . $Ref1;
+    } elsif ( $Type eq 'orderby' ) {
+      $RtnVal = ' ORDER BY ' . $Ref1;
+    }
+
+  } elsif ( $Ref1Type eq 'SCALAR' ) {
+
+    if ( $Type eq 'values' ) {
+      $RtnVal = '(' . $$Ref1 . ') VALUES (' . $$Ref2 . ')';
+    } elsif ( $Type eq 'set' ) {
+      $RtnVal = ' SET ' . $$Ref1;
+    } elsif ( $Type eq 'where' ) {
+      $RtnVal = ' WHERE ' . $$Ref1;
+    } elsif ( $Type eq 'orderby' ) {
+      $RtnVal = ' ORDER BY ' . $$Ref1;
+    }
+
+  } elsif ( $Ref1Type eq 'HASH' ) {
+
+    for $Name ( keys(%$Ref1) )  {
+
+      $Value = $Ref1->{$Name};
+
+      if ( ! defined($Value) ) { $Value  =  '' }                 # Make sure value is defined
+      else                     { $Value  =~ s/(["',\\])/\\$1/g } # Make sure that MySQL special chars are escaped
+
+      $Fields{$Name} = $Value;
+
+    }
+
+    if ( $Type eq 'values' ) {
+
+      while (($Name, $Value) = each %Fields ) {
+        if ( $NameList ) {
+          $NameList  = $NameList  . ','  . $Name;
+          $ValueList = $ValueList . ',"' . $Value . '"';
+        } else {
+          $NameList  = $Name;
+          $ValueList = '"' . $Value . '"';
+        }
+      }
+
+      $RtnVal = " ($NameList) VALUES ($ValueList)";
+
+    } elsif ( $Type eq 'set' ) {
+      $RtnVal = '';
+      while (($Name, $Value) = each %Fields ) {
+        if ( $RtnVal ) { $RtnVal = $RtnVal . ',' }
+        $RtnVal = $RtnVal . $Name . '="' . $Value . '"';
+      }
+      $RtnVal = ' SET ' . $RtnVal;
+
+    } elsif ( $Type eq 'where' ) {
+      $RtnVal = '';
+      while (($Name, $Value) = each %Fields ) {
+        if ( $RtnVal ) { $RtnVal = $RtnVal . ' AND ' }
+        $RtnVal = $RtnVal . '(' . $Name . '=' . $Value . ')';
+      }
+      $RtnVal = ' WHERE ' . $RtnVal;
+
+    }
+
+  } else {
+
+    print STDERR MySQLMakeID() . ": Parameter two is unsupported reference type '$Ref1Type'\n";
+    return $RtnVal;
+
+  }
+
+  return $RtnVal;
+
+}
+

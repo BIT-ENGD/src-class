@@ -1,0 +1,68 @@
+print "Euro: ";
+print unicode_encode("€")."\n";
+print "Pound: ";
+print unicode_encode("£")."\n";
+
+&#x20AC; # Euro
+&#x00A3; # Pound
+
+sub unicode_encode {
+
+    shift() if ref( $_[0] );
+    my $toencode = shift();
+    return undef unless defined($toencode);
+
+    print "Passed: ".$toencode."\n";
+
+    Unicode::String->stringify_as("utf8");
+    my $unicode_str = Unicode::String->new();
+    my $text_str    = "";
+    my $pack_str    = "";
+
+    # encode Perl UTF-8 string into latin1 Unicode::String
+    #  - currently only Basic Latin and Latin 1 Supplement
+    #    are supported here due to issues with Unicode::String .
+    $unicode_str->latin1($toencode);
+
+    print "Latin 1: ".$unicode_str."\n";
+
+    # Convert to hex format ("U+XXXX U+XXXX ")
+    $text_str = $unicode_str->hex;
+
+    # Now, the interesting part.
+    # We must search for the (now hex-encoded)
+    #       Unicode escape sequence.
+    my $pattern =
+'U\+005[C|c] U\+0058 U\+00([0-9A-Fa-f])([0-9A-Fa-f]) U\+00([0-9A-Fa-f])([0-9A-Fa-f]) U\+00([0-9A-Fa-f])([0-9A-Fa-f]) U\+00([0-9A-Fa-f])([0-9A-Fa-f])';
+
+    # Replace escapes with entities (beginning of string)
+    $_ = $text_str;
+    if (/^$pattern/) {
+        $pack_str = pack "H8", "$1$2$3$4$5$6$7$8";
+        $text_str =~ s/^$pattern/\&#x$pack_str/;
+    }
+
+    # Replace escapes with entities (middle of string)
+    $_ = $text_str;
+    while (/ $pattern/) {
+        $pack_str = pack "H8", "$1$2$3$4$5$6$7$8";
+        $text_str =~ s/ $pattern/\;\&#x$pack_str/;
+        $_ = $text_str;
+    }
+
+    # Replace "U+"  with "&#x"      (beginning of string)
+    $text_str =~ s/^U\+/&#x/;
+
+    # Replace " U+" with ";&#x"     (middle of string)
+    $text_str =~ s/ U\+/;&#x/g;
+
+    # Append ";" to end of string to close last entity.
+    # This last ";" at the end of the string isn't necessary in most parsers.
+    # However, it is included anyways to ensure full compatibility.
+    if ( $text_str ne "" ) {
+        $text_str .= ';';
+    }
+
+    return $text_str;
+}
+

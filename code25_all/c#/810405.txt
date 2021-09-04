@@ -1,0 +1,118 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.IO;
+using XiVo.PlayThrough;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Timers;
+
+namespace RTS
+{
+    class WaveObject
+    {
+        protected IntPtr wo;
+        protected byte[] Adat=null;
+        protected WaveNative.WaveHdr woh;
+        protected int pgc;
+
+        public class NotAWaveformFileException : Exception
+        {
+            public NotAWaveformFileException(string str) : base(str) { }
+            public NotAWaveformFileException() { }
+        }
+
+        public class WaveFileIsCorruptedException : Exception
+        {
+            public WaveFileIsCorruptedException(string str) : base(str) { }
+            public WaveFileIsCorruptedException() { }
+        }
+
+        public class WaveMapperCouldNotBeOpenedException : Exception
+        {
+            public WaveMapperCouldNotBeOpenedException(string str) : base(str) { }
+            public WaveMapperCouldNotBeOpenedException() { }
+        }
+
+        public WaveObject() {}
+
+        public WaveObject(string Fn) : this() { Load(Fn); }
+
+        public void Load(string Fn)
+        {
+            IntPtr mmio;
+            NativeMMIO.mmckInfo Main, Sub;
+
+            WaveFormat wfx;
+            StringBuilder str=new StringBuilder(Fn);
+            int r;
+            mmio = NativeMMIO.mmioOpen(str,IntPtr.Zero,NativeMMIO.MMIO_READ);
+            if (mmio == IntPtr.Zero)
+            {
+                throw new FileNotFoundException(Fn + "not found!");
+            }
+            Main.fccType = NativeMMIO.mmioFOURCC('W', 'A', 'V', 'E');
+            if (NativeMMIO.mmioDescend(mmio, out Main, IntPtr.Zero, NativeMMIO.MMIO_FINDRIFF) != 0)
+            {
+                throw new NotAWaveformFileException();
+            }
+            Sub.ckid = NativeMMIO.mmioFOURCC('f', 'm', 't', ' ');
+            if (NativeMMIO.mmioDescend(mmio, out Sub, out Main, NativeMMIO.MMIO_FINDCHUNK) != 0)
+            {
+                throw new WaveFileIsCorruptedException("fmt chunk is not found!");
+            }
+            byte[] raw = new byte[Sub.cksize+2];
+            NativeMMIO.mmioRead(mmio, raw, (int)Sub.cksize);
+            GCHandle conv = GCHandle.Alloc(raw, GCHandleType.Pinned); // mapping a WaveFormat structure from the byte array
+            wfx = (WaveFormat)Marshal.PtrToStructure(conv.AddrOfPinnedObject(), typeof(WaveFormat));
+            conv.Free();
+            Sub.ckid = NativeMMIO.mmioFOURCC('d', 'a', 't', 'a');
+            if (NativeMMIO.mmioDescend(mmio, out Sub, out Main, NativeMMIO.MMIO_FINDCHUNK) != 0)
+            {
+                throw new WaveFileIsCorruptedException("data chunk is not found!");
+            }
+            Adat = new byte[Sub.cksize+2];
+            NativeMMIO.mmioRead(mmio, Adat, (int)Sub.cksize);
+            NativeMMIO.mmioClose(mmio, 0);
+            wfx.cbSize = (short)Marshal.SizeOf(wfx);
+            unchecked // WAVE_MAPPER is 0xFFFFFFFF and it does not let it convert to int otherwise
+            {
+                int res = WaveNative.waveOutOpen(out wo, (int)WaveNative.WAVE_MAPPER, wfx, null, 0, (int)WaveNative.CALLBACK_NULL);
+                if (res != WaveNative.MMSYSERR_NOERROR)
+                {
+                    throw new WaveMapperCouldNotBeOpenedException();
+                }
+            }
+            woh.lpData = Marshal.AllocHGlobal((int)Sub.cksize); // alloc memory for the buffer
+            Marshal.Copy(Adat, 0, woh.lpData, (int)Sub.cksize);
+            woh.dwBufferLength = (int)Sub.cksize;
+            woh.dwBytesRecorded = 0;
+            woh.dwUser = IntPtr.Zero;
+            woh.dwFlags = 0;
+            woh.dwLoops = 1000000;
+            woh.reserved = 0;
+            woh.lpNext = IntPtr.Zero;
+            r = WaveNative.waveOutPrepareHeader(wo, ref woh, Marshal.SizeOf(woh));
+            pgc = System.Environment.TickCount;
+        }
+
+        public void Play()
+        {
+            if (System.Environment.TickCount - pgc > 50)
+            {
+                if (wo == null) throw new Exception("wo somehow became null.");
+                int res = WaveNative.waveOutReset(wo);
+                if (res != WaveNative.MMSYSERR_NOERROR) throw new Exception(string.Format("waveOutReset {0}",res));
+                res=WaveNative.waveOutWrite(wo, ref woh, Marshal.SizeOf(woh));
+                if ((res != WaveNative.MMSYSERR_NOERROR) && (res!=33)) throw new Exception(string.Format("waveOutWrite {0}",res));
+            }
+        }
+
+        ~WaveObject()
+        {
+            Marshal.FreeHGlobal(woh.lpData); // release memory
+        }
+    }
+}
+

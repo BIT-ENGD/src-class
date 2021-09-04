@@ -1,0 +1,37 @@
+        for i in 0 ... 2 {
+            let filePath : NSURL = NSURL(fileURLWithPath: "filepathgoeshere")
+
+            let tempFilename = String(format: "%f", NSDate.timeIntervalSinceReferenceDate())
+            let tempFileUrl = NSURL(fileURLWithPath: "\(NSTemporaryDirectory())\(tempFilename)")
+
+            let request = AFHTTPRequestSerializer().multipartFormRequestWithMethod("POST", URLString: getAPIURL(), parameters: parameters, constructingBodyWithBlock: { (formData : AFMultipartFormData!) -> Void in
+                formData.appendPartWithFileURL(filePath, name: "file", fileName: "file", mimeType: "video/mp4", error: nil)
+                }, error: nil)
+
+            // Work around for problem with multi-part requests not giving a content-length and being rejected by S3
+            // See: https://github.com/AFNetworking/AFNetworking/issues/1398
+            AFHTTPRequestSerializer().requestWithMultipartFormRequest(request, writingStreamContentsToFile: tempFileUrl, completionHandler: { (error: NSError!) -> Void in
+                var manager : AFURLSessionManager = AFURLSessionManager(sessionConfiguration: NSURLSessionConfiguration.defaultSessionConfiguration())
+
+                var progress : NSProgress? = nil
+
+                var uploadTask : NSURLSessionUploadTask = manager.uploadTaskWithRequest(request, fromFile: tempFileUrl, progress: &progress, completionHandler: { (response: NSURLResponse!, responseObject: AnyObject!, error: NSError!) -> Void in
+                    NSFileManager.defaultManager().removeItemAtURL(tempFileUrl, error: nil)
+                    if let err = error {
+                        println("There was an error :(")
+                        println("Error: \(err.localizedDescription)")
+                        // TODO: Add in relevant error catching
+                        successCallback(success: false)
+                    } else {
+                        successCallback(success: true)
+                    }
+                })
+
+                if let testNil = progress {
+                    progressCallback(progress: progress)
+                }
+
+                uploadTask.resume()
+            })
+        }
+

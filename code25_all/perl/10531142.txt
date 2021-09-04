@@ -1,0 +1,47 @@
+setuid
+Insecure dependency in chdir while running setuid at /file/find
+
+!/usr/bin/perl
+
+use strict;
+
+my $qtool = "/usr/local/bin/qtool.pl";
+my $mqueue_directory = "/var/spool/mqueue";
+my $messages_removed = 0;
+
+use File::Find;
+# Recursively find all files and directories in $mqueue_directory
+find(\&wanted, $mqueue_directory);
+
+sub wanted {
+   # Is this a qf* file?
+   if ( /^qf(\w{14})/ ) {
+      my $qf_file = $_;
+      my $queue_id = $1;
+      my $deferred = 0;
+      my $from_postmaster = 0;
+      my $delivery_failure = 0;
+      my $double_bounce = 0;
+      open (QF_FILE, $_);
+      while(<QF_FILE>) {
+         $deferred = 1 if ( /^MDeferred/ );
+         $from_postmaster = 1 if ( /^S<>$/ );
+         $delivery_failure = 1 if \
+            ( /^H\?\?Subject: DELIVERY FAILURE: (User|Recipient)/ );
+         if ( $deferred && $from_postmaster && $delivery_failure ) {
+            $double_bounce = 1;
+            last;
+         }
+      }
+      close (QF_FILE);
+      if ($double_bounce) {
+         print "Removing $queue_id...\n";
+         system "$qtool", "-d", $qf_file;
+         $messages_removed++;
+      }
+   }
+}
+
+print "\n$messages_removed total \"double bounce\" message(s) removed from ";
+print "mail queue.\n";
+

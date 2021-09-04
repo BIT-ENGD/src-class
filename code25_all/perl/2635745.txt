@@ -1,0 +1,78 @@
+use namespace;
+#! /usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+
+{
+    package LogFuncs;
+
+    use threads;
+    use Time::HiRes qw( gettimeofday );
+
+    # provide tcpdump style time stamp
+    sub _gf_time {
+        my ( $seconds, $microseconds ) = gettimeofday();
+        my @time = localtime($seconds);
+
+        return sprintf( "%02d:%02d:%02d.%06ld",
+            $time[2], $time[1], $time[0], $microseconds );
+    }
+
+    sub logerr;
+
+    sub compile {
+        my %params = @_;
+
+        *logerr = $params{do_logging}
+            ? sub {
+                my $msg = shift;
+                warn _gf_time() . " Thread " . threads->tid() . ": $msg\n";
+            }
+            : sub { };
+    }            
+}
+
+{
+    package FooObj;
+
+    sub new {
+        my $class = shift;
+        bless {}, $class; 
+    };
+
+    sub foo_work { 
+        my $self = shift;
+        # do some foo work
+        LogFuncs::logerr($self);
+    }
+}
+
+{
+    package BarObj;
+
+    sub new {
+        my $class = shift;
+        my $data  = { fooObj => FooObj->new() };
+        bless $data, $class;
+    }
+
+    sub bar_work { 
+        my $self = shift;
+        $self->{fooObj}->foo_work();
+        LogFuncs::logerr($self);
+    }
+}        
+
+my $do_logging = 0;
+
+GetOptions(
+    "do_logging"    => \$do_logging,
+);
+
+LogFuncs::compile(do_logging => $do_logging);
+
+my $bar = BarObj->new();
+LogFuncs::logerr("Created $bar");
+$bar->bar_work();
+

@@ -1,0 +1,104 @@
+SOCKET SocketArray [WSA_MAXIMUM_WAIT_EVENTS];
+WSAEVENT EventArray [WSA_MAXIMUM_WAIT_EVENTS],
+NewEvent;
+SOCKADDR_IN InternetAddr;
+SOCKET Accept, Listen;
+DWORD EventTotal = 0;
+DWORD Index, i;
+WSANETWORKEVENTS NetworkEvents;
+
+
+// Set up socket for listening etc...
+// .... 
+
+NewEvent = WSACreateEvent();
+
+WSAEventSelect(Listen, NewEvent,
+               FD_ACCEPT │ FD_CLOSE);
+
+listen(Listen, 5);
+
+SocketArray[EventTotal] = Listen;
+EventArray[EventTotal] = NewEvent;
+EventTotal++;
+
+while(TRUE)
+{
+    // Wait for network events on all sockets
+    Index = WSAWaitForMultipleEvents(EventTotal,
+        EventArray, FALSE, WSA_INFINITE, FALSE);
+    Index = Index - WSA_WAIT_EVENT_0;
+
+    // Iterate through all events to see if more than one is signaled
+    for(i=Index; i < EventTotal ;i++
+    {
+        Index = WSAWaitForMultipleEvents(1, &EventArray[i], TRUE, 1000, 
+            FALSE);
+        if ((Index == WSA_WAIT_FAILED) ││ (Index == WSA_WAIT_TIMEOUT))
+            continue;
+        else
+        {
+            Index = i;
+            WSAEnumNetworkEvents(
+                SocketArray[Index],
+                EventArray[Index], 
+                &NetworkEvents);
+
+            // Check for FD_ACCEPT messages     
+            if (NetworkEvents.lNetworkEvents & FD_ACCEPT)
+            { 
+                if (NetworkEvents.iErrorCode[FD_ACCEPT_BIT] != 0)
+                {
+                    printf("FD_ACCEPT failed with error %d\n", 
+                        NetworkEvents.iErrorCode[FD_ACCEPT_BIT]);
+                    break;
+                }
+
+                // Accept a new connection, and add it to the
+                // socket and event lists
+                Accept = accept(
+                    SocketArray[Index],
+                    NULL, NULL);
+
+                NewEvent = WSACreateEvent();
+
+                WSAEventSelect(Accept, NewEvent,
+                    FD_READ │  FD_CLOSE);
+
+                EventArray[EventTotal] = NewEvent;
+                SocketArray[EventTotal] = Accept;
+                EventTotal++;
+                printf("Socket %d connected\n", Accept);
+            }
+
+            // Process FD_READ notification
+            if (NetworkEvents.lNetworkEvents & FD_READ)
+            {
+                if (NetworkEvents.iErrorCode[FD_READ_BIT] != 0)
+                {
+                    printf("FD_READ failed with error %d\n", 
+                        NetworkEvents.iErrorCode[FD_READ_BIT]);
+                    break;
+                }
+
+                // Read data from the socket
+                recv(SocketArray[Index - WSA_WAIT_EVENT_0],
+                    buffer, sizeof(buffer), 0);
+
+                // here I do some processing on the data received
+                DoSomething(buffer);
+
+                // now I want to send data
+                send(SocketArray[Index - WSA_WAIT_EVENT_0],
+                        buffer, sizeof(buffer), 0);
+                // how can I be assured that the data is sent completely
+
+            }
+
+            // FD_CLOSE handling here
+            // ......
+            // ......
+        }
+    }
+}
+

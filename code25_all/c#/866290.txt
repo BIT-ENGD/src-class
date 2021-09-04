@@ -1,0 +1,60 @@
+private void WriteEntryToLog(string msg, LogEventType entryType)
+{
+    // ApplicationName = "MyApp"
+    // The code as-is is writing to the Application log. Changing the 2nd param of
+    // the function below to "companyX" allows me to write to my "companyX" event log,
+    // but also changes the Source value of each entry append to that log to "companyX" rather than "MyApp"
+    IntPtr eventSrcHandle = NativeMethods.RegisterEventSource(null, Resources.ApplicationName);
+
+
+    try
+    {
+        uint tokenInfoSize = 0;
+        IntPtr userTokenPtr = WindowsIdentity.GetCurrent().Token;
+        const UInt16 typeError = 1, typeWarning = 2, typeInformation = 4;
+
+        //using this first call, get the length required to hold the token information in the tokenInfoSize parameter
+        bool bresult = NativeMethods.GetTokenInformation(userTokenPtr, NativeMethods.TOKEN_INFORMATION_CLASS.TokenUser, IntPtr.Zero, tokenInfoSize, out tokenInfoSize);
+        if (bresult) throw new Win32Exception(Marshal.GetLastWin32Error());
+
+        IntPtr userTokenInfo = Marshal.AllocHGlobal((int)tokenInfoSize);
+        try
+        {
+            //get the user token now with the pointer allocated to the right size
+            bresult = NativeMethods.GetTokenInformation(userTokenPtr, NativeMethods.TOKEN_INFORMATION_CLASS.TokenUser, userTokenInfo, tokenInfoSize, out tokenInfoSize);
+            if (!bresult) throw new Win32Exception(Marshal.GetLastWin32Error());
+
+            UInt16 type = typeError;
+            switch (entryType)
+            {
+                case LogEventType.Error:
+                    type = typeError; 
+                    break;
+                case LogEventType.Warning:
+                    type = typeWarning; 
+                    break;
+                case LogEventType.Information:
+                    type = typeInformation; 
+                    break;
+                    default: 
+                        type = typeInformation; 
+                        break;
+            }
+
+            NativeMethods.TOKEN_USER tokUser = (NativeMethods.TOKEN_USER)Marshal.PtrToStructure(userTokenInfo, typeof(NativeMethods.TOKEN_USER));
+
+            string[] message = new string[1];
+            message[0] = msg;
+            bresult = NativeMethods.ReportEvent(eventSrcHandle, type, 0, 0, tokUser.User.Sid, 1, 0, message, new byte());
+            if (!bresult) throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(userTokenInfo);
+        }
+    }
+    finally
+    {
+        NativeMethods.DeregisterEventSource(eventSrcHandle);
+    }
+

@@ -1,0 +1,76 @@
+user www-data;
+worker_processes  2;
+error_log logs/error.log warn;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    resolver 8.8.4.4;
+
+    sendfile            on;
+    tcp_nopush          on;
+    tcp_nodelay         on;
+    keepalive_timeout   65;
+    types_hash_max_size 2048;
+
+    include             /etc/nginx/mime.types;
+    default_type        application/octet-stream;
+
+        # Load modular configuration files from the /etc/nginx/conf.d directory.
+        # See http://nginx.org/en/docs/ngx_core_module.html#include
+        # for more information.
+        include /etc/nginx/conf.d/*.conf;
+
+        server {
+            listen       80 default_server;
+            listen       [::]:80 default_server;
+          server_name  _;
+          root         /usr/share/nginx/html;
+
+          # Load configuration files for the default server block.
+          include /etc/nginx/default.d/*.conf;
+
+            location / {
+              set $target '';
+
+              access_by_lua_block {
+                        local key = ngx.var.arg_key
+                        if not key then
+                          ngx.log(ngx.ERR, "No argument key found")
+                        end
+
+                        local redis = require "resty.redis"
+                        local red = redis:new()
+
+                        red:set_timeout(1000) -- 1 second
+
+                        --local ok, err = red:connect("localhost", 6379)
+                        local ok, err = red:connect("127.0.0.1", 6379)
+                        if not ok then
+                          ngx.log(ngx.ERR, "Failed to connect to Redis: ", err)
+                          return ngx.exit(500)
+                        end
+
+                        local host,err = red:get(key)
+                        if not host then
+                          ngx.log(ngx.ERR, "Failed to get Redis key: ", err)
+                          return ngx.exit(500)
+                        end
+
+                        if host == ngx.null then
+                          ngx.log(ngx.ERR, "No host found for key ", key)
+                          return ngx.exit(400)
+                        end
+
+                        ngx.var.target = host
+              }
+
+              proxy_pass $scheme://$target/;
+
+          }
+        }
+}
+

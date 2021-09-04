@@ -1,0 +1,246 @@
+main = do
+  orders <- randomOrders
+  let (orderBook, events) = foldr (\order (book, ev) -> let (b, e) = processOrder order book in (b, ev++e)) (empty, []) 
+                            (take 2000 orders) 
+  let (total, count) = ((fromIntegral $ sum $ map executePrice events), fromIntegral $ length events)
+  print $ "Average execution price: " ++ show (total / count) ++ ", " ++ (show count) ++ " executions"
+
+time ./main                                                           
+"Average execution price: 15137.667036215817, 2706.0 executions"
+./main  9.90s user 0.09s system 89% cpu 11.205 total 
+
+time ./main
+"Average execution price: 15047.099824996354, 13714.0 executions"
+./main  161.99s user 2.08s system 57% cpu 4:44.16 total
+
+import Data.Array
+import Data.List
+import Data.Word
+import Data.Maybe
+import Data.Tuple
+import Debug.Trace
+import System.Random
+import Control.Monad (replicateM)
+
+-- Price is measured in smallest divisible unit of currency.
+type Price = Word64
+
+maximumPrice = 30000
+
+type Quantity = Word64
+type Trader a = a
+type Entry a = (Quantity, Trader a)
+type PricePoint a = [Entry a]
+data OrderBook a = OrderBook {
+  pricePoints :: Array Price (PricePoint a),
+  minAsk :: Price,
+  maxBid :: Price
+} deriving (Show)
+
+data Side = Buy | Sell deriving (Eq, Show, Read, Enum, Bounded)
+
+instance Random Side where
+  randomR (a, b) g =
+    case randomR (fromEnum a, fromEnum b) g of
+      (x, g') -> (toEnum x, g')
+  random g = randomR (minBound, maxBound) g
+
+data Order a = Order {
+  side :: Side,
+  price :: Price,
+  size :: Quantity,
+  trader :: Trader a
+} deriving (Show)
+
+
+data Event a =
+  Execution {
+    buyer :: Trader a,
+    seller :: Trader a,
+    executePrice :: Price,
+    executeQuantity :: Quantity
+  } deriving (Show)
+
+
+empty :: OrderBook a
+empty = OrderBook {
+  pricePoints = array (1, maximumPrice) [(i, []) | i <- [1..maximumPrice]],
+  minAsk = maximumPrice,
+  maxBid = 0
+}
+
+insertOrder :: Order a -> OrderBook a -> OrderBook a
+insertOrder (Order side price size t) (OrderBook pricePoints minAsk maxBid) = 
+  OrderBook {
+    pricePoints = pricePoints // [(price, (pricePoints!price) ++ [(size, t)])],
+    maxBid = if side == Buy  && maxBid < price then price else maxBid,
+    minAsk = if side == Sell && minAsk > price then price else minAsk
+  }
+
+processOrder :: Order a -> OrderBook a -> (OrderBook a, [Event a])
+processOrder order orderBook
+  | size /= 0 && price `comp` current =
+    let (_order, _ob, _events) = executeForPrice order{price=current} _orderBook
+    in (\(a,b) c -> (a,c++b)) (processOrder _order{price=price} _ob) _events
+  | otherwise = (insertOrder order orderBook, [])
+  where
+    Order side price size _ = order
+    (current, comp, _orderBook) 
+      | side == Buy  = (minAsk orderBook, (>=), orderBook{minAsk=current+1})
+      | side == Sell = (maxBid orderBook, (<=), orderBook{maxBid=current-1})
+
+executeForPrice :: Order a -> OrderBook a -> (Order a, OrderBook a, [Event a])
+executeForPrice order orderBook
+  | null pricePoint = (order, orderBook, [])
+  | entrySize < size = (\(a, b, c) d -> (a, b, d:c))
+    (executeForPrice order{size=size-entrySize} (set rest)) (execute entrySize)
+  | otherwise =
+    let entries
+          | entrySize > size = (entrySize-size, entryTrader):rest
+          | otherwise = rest 
+    in (order{size=0}, set entries, [execute size])
+  where
+    pricePoint = (pricePoints orderBook)!price
+    (entrySize, entryTrader):rest = pricePoint
+    Order side price size trader = order
+    set = \p -> orderBook{pricePoints=(pricePoints orderBook)//[(price, p)]}
+    (buyer, seller) = (if side == Buy then id else swap) (trader, entryTrader)
+    execute = Execution buyer seller price
+
+randomTraders :: IO [Int]
+randomTraders = do
+  g <- newStdGen
+  return (randomRs (1, 3) g)
+
+randomPrices :: IO [Word64]
+randomPrices = do
+  g <- newStdGen
+  return (map fromIntegral $ randomRs (1 :: Int, fromIntegral maximumPrice) g)
+
+randomSizes :: IO [Word64]
+randomSizes = do
+  g <- newStdGen
+  return (map fromIntegral $ randomRs (1 :: Int, 10) g)
+
+randomSides :: IO [Side]
+randomSides = do
+  g <- newStdGen
+  return (randomRs (Buy, Sell) g)
+
+randomOrders = do
+  sides <- randomSides
+  prices <- randomPrices
+  sizes <- randomSizes
+  traders <- randomTraders
+  let zipped = zip4 sides prices sizes traders
+  let orders = map (\(side, price, size, trader) -> Order side price size trader) zipped
+  return orders
+
+main = do
+  orders <- randomOrders
+  let (orderBook, events) = foldr (\order (book, ev) -> let (b, e) = processOrder order book in (b, ev++e)) (empty, []) 
+                            (take 2000 orders) 
+  let (total, count) = ((fromIntegral $ sum $ map executePrice events), fromIntegral $ length events)
+  print $ "Average execution price: " ++ show (total / count) ++ ", " ++ (show count) ++ " executions"
+
+ghc -rtsopts --make -O2 OrderBook.hs -o main -prof -auto-all -caf-all -fforce-recomp
+time ./main +RTS -sstderr +RTS -hd -p -K100M && hp2ps -e8in -c main.hp    
+./main +RTS -sstderr -hd -p -K100M 
+"Average execution price: 15110.97202536367, 2681.0 executions"
+   3,184,295,808 bytes allocated in the heap
+     338,666,300 bytes copied during GC
+       5,017,560 bytes maximum residency (149 sample(s))
+         196,620 bytes maximum slop
+              14 MB total memory in use (2 MB lost due to fragmentation)
+
+  Generation 0:  4876 collections,     0 parallel,  1.98s,  2.01s elapsed
+  Generation 1:   149 collections,     0 parallel,  1.02s,  1.07s elapsed
+
+  INIT  time    0.00s  (  0.00s elapsed)
+  MUT   time    5.16s  (  5.24s elapsed)
+  GC    time    3.00s  (  3.08s elapsed)
+  RP    time    0.00s  (  0.00s elapsed)
+  PROF  time    0.01s  (  0.01s elapsed)
+  EXIT  time    0.00s  (  0.00s elapsed)
+  Total time    8.17s  (  8.33s elapsed)
+
+  %GC time      36.7%  (36.9% elapsed)
+
+  Alloc rate    617,232,166 bytes per MUT second
+
+  Productivity  63.1% of total user, 61.9% of total elapsed
+
+./main +RTS -sstderr +RTS -hd -p -K100M  8.17s user 0.06s system 98% cpu 8.349 total
+cat main.prof
+  Sun Feb  9 12:03 2014 Time and Allocation Profiling Report  (Final)
+
+     main +RTS -sstderr -hd -p -K100M -RTS
+
+  total time  =        0.64 secs   (32 ticks @ 20 ms)
+  total alloc = 1,655,532,980 bytes  (excludes profiling overheads)
+
+COST CENTRE                    MODULE               %time %alloc
+
+processOrder                   Main                  46.9   81.2
+insertOrder                    Main                  21.9    0.0
+executeForPrice                Main                  18.8    9.7
+randomPrices                   Main                   9.4    0.1
+main                           Main                   3.1    4.5
+minAsk                         Main                   0.0    2.1
+maxBid                         Main                   0.0    2.0
+
+
+                                                                                               individual    inherited
+COST CENTRE              MODULE                                               no.    entries  %time %alloc   %time %alloc
+
+MAIN                     MAIN                                                   1           0   0.0    0.0   100.0  100.0
+ main                    Main                                                 392           3   3.1    4.5   100.0   99.8
+  executePrice           Main                                                 417        2681   0.0    0.0     0.0    0.0
+  processOrder           Main                                                 398     5695463  46.9   81.2    87.5   95.0
+   executeForPrice       Main                                                 412     5695252  18.8    9.7    18.8    9.7
+    pricePoints          Main                                                 413     5695252   0.0    0.0     0.0    0.0
+   insertOrder           Main                                                 406        1999  21.9    0.0    21.9    0.0
+   minAsk                Main                                                 405           0   0.0    2.1     0.0    2.1
+   maxBid                Main                                                 400           0   0.0    2.0     0.0    2.0
+  randomOrders           Main                                                 393           1   0.0    0.0     9.4    0.2
+   randomTraders         Main                                                 397           1   0.0    0.0     0.0    0.0
+   randomSizes           Main                                                 396           2   0.0    0.1     0.0    0.1
+   randomPrices          Main                                                 395           2   9.4    0.1     9.4    0.1
+   randomSides           Main                                                 394           1   0.0    0.1     0.0    0.1
+ CAF:main14              Main                                                 383           1   0.0    0.0     0.0    0.0
+  randomPrices           Main                                                 401           0   0.0    0.0     0.0    0.0
+ CAF:lvl42_r2wH          Main                                                 382           1   0.0    0.0     0.0    0.0
+  main                   Main                                                 418           0   0.0    0.0     0.0    0.0
+ CAF:empty_rqz           Main                                                 381           1   0.0    0.0     0.0    0.0
+  empty                  Main                                                 403           1   0.0    0.0     0.0    0.0
+ CAF:lvl40_r2wB          Main                                                 380           1   0.0    0.0     0.0    0.0
+  empty                  Main                                                 407           0   0.0    0.0     0.0    0.0
+ CAF:lvl39_r2wz          Main                                                 379           1   0.0    0.0     0.0    0.1
+  empty                  Main                                                 409           0   0.0    0.1     0.0    0.1
+ CAF:lvl38_r2wv          Main                                                 378           1   0.0    0.0     0.0    0.1
+  empty                  Main                                                 410           0   0.0    0.1     0.0    0.1
+ CAF:maximumPrice        Main                                                 377           1   0.0    0.0     0.0    0.0
+  maximumPrice           Main                                                 402           1   0.0    0.0     0.0    0.0
+ CAF:lvl14_r2vF          Main                                                 350           1   0.0    0.0     0.0    0.0
+  executeForPrice        Main                                                 414           0   0.0    0.0     0.0    0.0
+ CAF:lvl12_r2vB          Main                                                 349           1   0.0    0.0     0.0    0.0
+  processOrder           Main                                                 415           0   0.0    0.0     0.0    0.0
+ CAF:lvl10_r2vx          Main                                                 348           1   0.0    0.0     0.0    0.0
+  processOrder           Main                                                 416           0   0.0    0.0     0.0    0.0
+ CAF:lvl8_r2vt           Main                                                 347           1   0.0    0.0     0.0    0.0
+  processOrder           Main                                                 399           0   0.0    0.0     0.0    0.0
+ CAF:lvl6_r2vp           Main                                                 346           1   0.0    0.0     0.0    0.0
+  empty                  Main                                                 408           0   0.0    0.0     0.0    0.0
+ CAF:lvl4_r2vl           Main                                                 345           1   0.0    0.0     0.0    0.0
+  empty                  Main                                                 411           0   0.0    0.0     0.0    0.0
+ CAF:lvl2_r2vh           Main                                                 344           1   0.0    0.0     0.0    0.0
+  empty                  Main                                                 404           0   0.0    0.0     0.0    0.0
+ CAF                     GHC.Float                                            319           8   0.0    0.0     0.0    0.0
+ CAF                     GHC.Int                                              304           2   0.0    0.0     0.0    0.0
+ CAF                     GHC.IO.Handle.FD                                     278           2   0.0    0.0     0.0    0.0
+ CAF                     GHC.IO.Encoding.Iconv                                239           2   0.0    0.0     0.0    0.0
+ CAF                     GHC.Conc.Signal                                      232           1   0.0    0.0     0.0    0.0
+ CAF                     System.Random                                        222           1   0.0    0.0     0.0    0.0
+ CAF                     Data.Fixed                                           217           3   0.0    0.0     0.0    0.0
+ CAF                     Data.Time.Clock.POSIX                                214           2   0.0    0.0     0.0    0.0
+

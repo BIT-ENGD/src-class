@@ -1,0 +1,58 @@
+ReaderT
+StateT
+openClientSocket
+initialNetwork
+socket
+address
+func
+sendMsg
+func
+openClientConnection
+HNT
+import Control.Monad.Reader
+import Control.Monad.State
+
+import Network.Socket
+import Network.Multicast
+
+_MULTICAST_IP_ADDR_ :: HostName
+_MULTICAST_IP_ADDR_ = "224.0.0.99"
+
+_MULTICAST_PORT_ :: PortNumber
+_MULTICAST_PORT_ = 9999
+
+data NetworkEnv = NetworkEnv {
+    getMulticastIP :: HostName,
+    getMulticastPort :: PortNumber
+} deriving (Show)
+type NetworkEnvT = ReaderT NetworkEnv
+
+data ClientSocket = ClientSocket { 
+    getClientSocket :: Socket, 
+    getAddress:: SockAddr 
+} deriving (Show)
+type ClientSocketT = StateT ClientSocket
+
+type HNT m = ClientSocketT (NetworkEnvT m)
+
+initialNetwork :: NetworkEnv
+initialNetwork = NetworkEnv { getMulticastIP = _MULTICAST_IP_ADDR_, getMulticastPort = _MULTICAST_PORT_ } 
+
+
+openClientConnection :: HNT m a -> m a 
+openClientConnection func = do
+    env <- ask
+    (sock, addr) <- liftIO $ multicastSender (getMulticastIP env) (getMulticastPort env)
+    put $ ClientSocket sock addr
+    func   -- <== How do I call func (sendMsg) here ??
+
+
+sendMsg :: String -> HNT IO ()
+sendMsg msg = do
+    NetworkEnv ip port <- ask
+    ClientSocket sock addr <- get
+    _ <- liftIO $ sendTo sock msg addr
+    liftIO $ print "done"
+
+doRun = runReaderT ( openClientConnection . (sendMsg "Hello") ) initialNetwork 
+

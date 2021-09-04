@@ -1,0 +1,66 @@
+library(rgdal)
+
+raster = "image.pix"
+training_band = 2
+validation_band = 1
+BlockWidth = 500
+BlockHeight = 500
+
+# Get some metadata about the whole raster
+myinfo = GDALinfo(raster)
+ysize = myinfo[[1]]
+xsize = myinfo[[2]]
+numbands = myinfo[[3]]
+
+
+# Iterate through the image in blocks and retrieve the training data
+column = 0
+training_data = NULL
+while(column < xsize){
+ if(column + BlockWidth > xsize){
+  BlockWidth = xsize - column
+ }
+ row = 0
+ while(row < ysize){
+  if(row + BlockHeight > ysize){
+   BlockHeight = ysize - row
+  }
+
+  # Do stuff here
+  myblock = readGDAL(raster, region.dim = c(BlockHeight,BlockWidth), offset = c(row, column), band = c(training_band,3:numbands), silent = TRUE)
+  blockdata = matrix(NA, dim(myblock)[1], dim(myblock)[2])
+  for(i in 1:(dim(myblock)[2])){
+   bandname = paste("myblock", names(myblock)[i], sep="$")
+   blockdata[,i]= as.matrix(eval(parse(text=bandname)))
+  }
+  blockdata = as.data.frame(blockdata)
+  blockdata = subset(blockdata, blockdata[,1] > 0)
+  if (dim(blockdata)[1] > 0){
+   training_data = rbind(training_data, blockdata)
+  }
+
+  row = row + BlockHeight
+ }
+ column = column + BlockWidth
+}
+remove(blockdata, myblock, BlockHeight, BlockWidth, row, column)
+
+myformula = formula(paste("as.factor(V1) ~ V3:V", dim(training_data)[2], sep=""))
+r_tree = randomForest(formula = myformula, data = training_data, ntree = 500, keep.forest=TRUE)
+
+library(raster)
+library(randomForest)
+
+# Set some user variables
+fn = "image.pix"
+training_band = 2
+validation_band = 1
+
+# Get the training data
+myraster = stack(fn)
+training_class = subset(myraster, training_band)
+training_class[training_class == 0] = NA
+training_class = Which(training_class != 0, cells=TRUE)
+training_data = extract(myraster, training_class)
+training_data = as.data.frame(training_data)
+

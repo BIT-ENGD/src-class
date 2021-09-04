@@ -1,0 +1,156 @@
+module AST where
+
+data Statement
+    = Assign String Expression
+    | Call String
+    | Write String
+    | If Condition Statement
+    | While Condition Statement
+    | Begin [Statement]
+    deriving (Show, Eq)
+
+data Condition
+    = Odd Expression
+    | Eq Expression Expression
+    | Ne Expression Expression
+    | Gt Expression Expression
+    | Lt Expression Expression
+    | Ge Expression Expression
+    | Le Expression Expression
+    deriving (Show, Eq)
+
+data Expression
+    = Identifier String
+    | Number Integer
+    | Plus Expression Expression
+    | Minus Expression Expression
+    | Multiply Expression Expression
+    | Divide Expression Expression
+    deriving (Show, Eq)
+
+data Block = Block {
+        blockConsts :: [(String, Integer)],
+        blockVars :: [String],
+        blockProcs :: [Procedure],
+        blockStatement :: Statement
+    }
+    deriving (Show, Eq)
+
+data Procedure = Procedure String Block
+    deriving (Show, Eq)
+
+module Codegen {-(writeModule)-} where
+
+import LLVM.Core
+import AST
+import Data.Int (Int64)
+import Data.Word (Word8, Word32)
+
+codegenExpr :: [(String, Value (Ptr Int64))] -> Expression -> CodeGenFunction r (Value Int64)
+codegenExpr ls (Identifier s) = case lookup s ls of
+    Nothing -> error $ "unknown identifier: " ++ s
+    (Just v) -> load v
+codegenExpr _ (Number n) = return $ valueOf $ fromIntegral n
+codegenExpr ls (Plus e1 e2)     = arith ls e1 e2 iadd
+codegenExpr ls (Minus e1 e2)    = arith ls e1 e2 isub
+codegenExpr ls (Multiply e1 e2) = arith ls e1 e2 imul
+codegenExpr ls (Divide e1 e2)   = arith ls e1 e2 idiv
+
+arith ls e1 e2 f = do
+    lhs <- codegenExpr ls e1
+    rhs <- codegenExpr ls e2
+    f lhs rhs
+
+codegenCond :: [(String, Value (Ptr Int64))] -> Condition -> CodeGenFunction r (Value Bool)
+codegenCond ls (Eq e1 e2) = cnd ls e1 e2 CmpEQ
+codegenCond ls (Ne e1 e2) = cnd ls e1 e2 CmpNE
+codegenCond ls (Gt e1 e2) = cnd ls e1 e2 CmpGT
+codegenCond ls (Lt e1 e2) = cnd ls e1 e2 CmpLT
+codegenCond ls (Ge e1 e2) = cnd ls e1 e2 CmpGE
+codegenCond ls (Le e1 e2) = cnd ls e1 e2 CmpLE
+
+cnd ls e1 e2 f = do
+    lhs <- codegenExpr ls e1
+    rhs <- codegenExpr ls e2
+    cmp f lhs rhs
+
+codegenStatement :: [(String, Value (Ptr Int64))] -> Statement -> CodeGenFunction () ()
+codegenStatement ls (Assign id e) = case lookup id ls of
+    Nothing -> error $ "unknown identifier: " ++ id
+    (Just v) -> do
+        val <- codegenExpr ls e
+        store val v
+codegenStatement ls (Begin stmts) = mapM_ (codegenStatement ls) stmts
+codegenStatement ls (If cond s1) = do
+    ifbl <- newBasicBlock
+    thenbl <- newBasicBlock
+
+    cnd <- codegenCond ls cond
+    condBr cnd ifbl thenbl
+
+    defineBasicBlock ifbl
+    codegenStatement ls s1
+    ret ()
+
+    defineBasicBlock thenbl
+    ret ()
+codegenStatement ls (While cond s) = do
+    exit <- newBasicBlock
+    while <- newBasicBlock
+
+    defineBasicBlock while
+    cnd <- codegenCond ls cond
+    codegenStatement ls s
+    condBr cnd while exit
+
+    defineBasicBlock exit
+    ret ()
+
+codegenBlock :: [(String, Value (Ptr Int64))] -> Block -> CodeGenModule (Function ())
+codegenBlock vls (Block _ vars _ stmt) = do
+    -- And here is the type error
+    func <- createFunction ExternalLinkage $ do
+        ls <- mapM named vars
+        codegenStatement (vls ++ ls) stmt
+        mapM_ (free . snd) ls
+    return func
+    where
+        named n = do
+            v <- alloca
+            return (n, v)
+
+writeModule bl file = do
+    m <- newModule
+    defineModule m $ codegenBlock [] bl
+    writeBitcodeToFile file m
+
+GHCi, version 7.0.3: http://www.haskell.org/ghc/  :? for help
+Loading package ghc-prim ... linking ... done.
+Loading package integer-gmp ... linking ... done.
+Loading package base ... linking ... done.
+Loading package ffi-1.0 ... linking ... done.
+[1 of 2] Compiling AST              ( AST.hs, interpreted )
+[2 of 2] Compiling Codegen          ( Codegen.hs, interpreted )
+
+Codegen.hs:71:13:
+    No instances for (IsFunction (),
+                      FunctionArgs () (CodeGenFunction () ()) (CodeGenFunction r0 ()))
+      arising from a use of `createFunction'
+    Possible fix:
+      add instance declarations for
+      (IsFunction (),
+       FunctionArgs () (CodeGenFunction () ()) (CodeGenFunction r0 ()))
+    In the expression: createFunction ExternalLinkage
+    In a stmt of a 'do' expression:
+        func <- createFunction ExternalLinkage
+              $ do { ls <- mapM named vars;
+                     codegenStatement (vls ++ ls) stmt;
+                     mapM_ (free . snd) ls }
+    In the expression:
+      do { func <- createFunction ExternalLinkage
+                 $ do { ls <- mapM named vars;
+                        codegenStatement (vls ++ ls) stmt;
+                        .... };
+
+       return func }
+

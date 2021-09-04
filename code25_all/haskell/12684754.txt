@@ -1,0 +1,35 @@
+{-# LANGUAGE OverloadedStrings, ExtendedDefaultRules #-}
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
+import Shelly 
+import Shelly.Background
+
+import Control.Monad
+import Control.Arrow
+import System.IO.Temp (withSystemTempDirectory)
+import System.Directory (getCurrentDirectory)
+import System.FilePath (splitFileName)
+import Data.Text.Lazy (Text, pack)
+default (Int, Text)
+
+dcc32 = command "dcc32" ["-RC:\\Program Files\\Borland\\BDS\\4.0\\Lib", "-Q", "-H", "-W", "-B"]
+
+compile project = liftIO $ withSystemTempDirectory "TempDCU_" compile'
+  where
+    compile' tmpDir = shellyNoDir $ silently $ 
+      chdir dir (dcc32 [toTextIgnore file, pack $ "-N" ++ tmpDir])
+    (dir, file) = mapTuple (fromText . pack) $ splitFileName project
+    mapTuple = join (***)
+
+compilePooled n projects = shellyNoDir $ jobs n (\job -> mapM (background job . compile) projects)
+
+projectList = [
+    "C:\\Path\\to\\project1.dpr",
+    "C:\\Path\\to\\project2.dpr",
+    "C:\\Path\\to\\project3.dpr",
+    "C:\\Path\\to\\project4.dpr",
+    ]
+
+main = do
+  output <- compilePooled 2 projectList
+  shellyNoDir $ mapM getBgResult output >>= mapM_ inspect 
+

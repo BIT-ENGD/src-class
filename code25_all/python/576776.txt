@@ -1,0 +1,59 @@
+from thread2 import Thread
+
+"""  A TTL decorator. """
+class Worker(Thread):
+    def __init__(self, q, f, args, kvargs):
+        Thread.__init__(self)
+
+        self.q = q
+        self.f = f
+        self.args = args
+        self.kvargs = kvargs
+
+    def run(self,):
+        try:
+            res = (True, self.f(*self.args, **self.kvargs))
+            self.q.put(res)
+        except Exception, e:
+            self.q.put((False, e))
+
+class Referee(Thread):
+    def __init__(self,q, ttl,exception_factory):
+        Thread.__init__(self)
+
+        self.exception_factory=exception_factory    
+        self.q=q
+        self.ttl=ttl
+
+    def run(self):
+        time.sleep(self.ttl)
+        res = (False, self.exception_factory())
+        self.q.put(res)
+
+def raise_if_too_long(ttl, exception_factory=lambda :RuntimeError("Timeout")):
+    def raise_if_too_long_aux(f):
+        def ritl(*args,**kvargs):
+            q = Queue.Queue(2)
+
+            referee = Referee(q, ttl, exception_factory)
+            worker = Worker(q,f,args,kvargs)
+
+            worker.start()
+            referee.start()
+
+            (valid, res)= q.get(1)
+
+            q.task_done()
+
+            referee.terminate()
+            worker.terminate()
+
+            if valid:
+                return res
+            else:
+                raise res
+
+        return ritl
+
+    return raise_if_too_long_aux
+

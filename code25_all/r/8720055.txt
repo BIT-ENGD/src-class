@@ -1,0 +1,77 @@
+library(quantmod)
+
+do.call.rbind <- function(lst) {
+    while(length(lst) > 1) {
+        idxlst <- seq(from=1, to=length(lst), by=2)
+
+        lst <- lapply(idxlst, function(i) {
+                    if(i==length(lst)) { return(lst[[i]]) }
+
+                    return(rbind(lst[[i]], lst[[i+1]]))
+                })
+    }
+    lst[[1]]
+}
+
+to.period.cumulative <- function(x, name=NULL, period="days", numPeriods=15) {
+    if(is.null(name))
+        name <- deparse(substitute(x))
+
+    cnames <- c("Open", "High", "Low", "Close")
+    if (has.Vo(x)) 
+        cnames <- c(cnames, "Volume")
+
+    cnames <- paste(name, cnames, sep=".") 
+
+    if (quantmod:::is.OHLCV(x)) {
+        x <- OHLCV(x)
+        out <- do.call.rbind( 
+                lapply(split(x, f=period, k=numPeriods), 
+                        function(x) cbind(rep(first(x[,1]), NROW(x[,1])), 
+                                cummax(x[,2]), cummin(x[,3]), x[,4], cumsum(x[,5]))))
+    } else if (quantmod:::is.OHLC(x)) {
+        x <- OHLC(x)
+        out <- do.call.rbind( 
+                lapply(split(x, f=period, k=numPeriods), 
+                        function(x) cbind(rep(first(x[,1]), NROW(x[,1])), 
+                                cummax(x[,2]), cummin(x[,3]), x[,4])))
+    } else {
+        stop("Object does not have OHLC(V).")
+    }
+
+    colnames(out) <- cnames
+
+    return(out)
+}
+
+EMA.cumulative<-function(cumulativeBars, nEMA = 4, period="days", numPeriods=15) {
+    barsEndptCl <- Cl(cumulativeBars[endpoints(cumulativeBars, on=period,     k=numPeriods)])
+
+    # TODO: This is sloooooooooooooooooow... 
+    outEMA <- do.call.rbind(
+            lapply(split(Cl(cumulativeBars), period), 
+                    function(x) {
+                        previousFullBars <- barsEndptCl[index(barsEndptCl) < last(index(x)), ]
+                        if (NROW(previousFullBars) >= (nEMA - 1)) {
+                                last(EMA(last(rbind(previousFullBars, x), n=(nEMA + 1)), n=nEMA))
+                        } else {
+                            xts(NA, order.by=index(x))
+                        }
+                    }))
+
+    colnames(outEMA) <- paste("EMA", nEMA, sep="")
+
+    return(outEMA)
+}
+
+getSymbols("SPY", from="2010-01-01")
+
+SPY.cumulative <- to.period.cumulative(SPY, , name="SPY")
+
+system.time(
+        SPY.EMA <- EMA.cumulative(SPY.cumulative)
+)
+
+   user  system elapsed 
+  4.708   0.000   4.410 
+

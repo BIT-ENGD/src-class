@@ -1,0 +1,66 @@
+import scala.actors.Actor
+import scala.actors.Actor._
+import scala.actors.Exit
+import scala.actors.remote.RemoteActor
+import scala.actors.remote.RemoteActor._
+
+object Sink {
+  def main(args: Array[String]): Unit = {
+     new RemoteSink("node03-0",43001).start()
+     new RemoteSink("node03-1",43001).start()
+   }
+}
+class RemoteSink(name: String, port: Int) extends Actor
+{
+ def act() {
+    println(name+" starts")
+    trapExit=true
+    alive(port)
+    register(Symbol(name),self)
+
+    loop {
+        react {
+            case Exit(from,reason) =>{
+                    exit()
+            }
+            case msg => reply{
+                    println(name+" sending reply to: "+msg)
+                    msg+" back at you from "+name
+                }
+        }
+    }
+ }
+}
+
+import scala.actors.Actor
+import scala.actors.Actor._
+import scala.actors.remote.Node;
+import scala.actors.remote.RemoteActor
+import scala.actors.remote.RemoteActor._
+
+object Source {
+    def main(args: Array[String]):Unit = {
+        val peer = Node("127.0.0.1", 43001)
+        val source = new RemoteSource(peer)
+        source.start()
+    }
+}
+class RemoteSource(peer: Node) extends Actor
+{
+    def act() {
+        trapExit=true
+        alive(43001)
+        register(Symbol("source"),self)
+
+        val sinks = List(select(peer,Symbol("node03-0"))
+                                   ,select(peer,Symbol("node03-1"))
+                                )
+        sinks.foreach(link)
+
+        val futures = for(sink <- sinks; i <- 0 to 20) yield    sink !! "hello "+i
+        futures.foreach( f => println(f()))
+
+        exit()
+    }
+}
+

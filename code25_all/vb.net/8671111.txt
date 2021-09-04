@@ -1,0 +1,56 @@
+Public Function AddWatermarkText(ByVal tempDirectory As String) As String
+    ' Just return the full path of the PDF if we don't need to add a watermark.
+    If Me.Document.RevRank <> 0 OrElse Me.Document.ReleaseDate Is Nothing Then Return Me.FullPath
+
+    Dim reader As iTextSharp.text.pdf.PdfReader = Nothing
+    Dim stamper As iTextSharp.text.pdf.PdfStamper = Nothing
+    Dim gstate As New iTextSharp.text.pdf.PdfGState()
+    Dim overContent As iTextSharp.text.pdf.PdfContentByte = Nothing
+    Dim rect As iTextSharp.text.Rectangle = Nothing
+    Dim watermarkFont As iTextSharp.text.pdf.BaseFont = Nothing
+    Dim folderGuid As Guid = Guid.NewGuid()
+    Dim outputFile As String = tempDirectory & System.IO.Path.DirectorySeparatorChar & folderGuid.ToString() & System.IO.Path.DirectorySeparatorChar _
+                               & Me.Document.Prefix & Me.Document.BaseNumber & Me.Document.Revision & ".pdf"
+
+    ' Create the temp directory to place the new PDF in.
+    If Not My.Computer.FileSystem.DirectoryExists(tempDirectory) Then My.Computer.FileSystem.CreateDirectory(tempDirectory)
+    My.Computer.FileSystem.CreateDirectory(tempDirectory & System.IO.Path.DirectorySeparatorChar & folderGuid.ToString())
+
+    reader = New iTextSharp.text.pdf.PdfReader(Me.FullPath)
+    rect = reader.GetPageSizeWithRotation(1)
+    stamper = New iTextSharp.text.pdf.PdfStamper(reader, New System.IO.FileStream(outputFile, IO.FileMode.Create))
+    watermarkFont = iTextSharp.text.pdf.BaseFont.CreateFont(iTextSharp.text.pdf.BaseFont.HELVETICA_BOLD, _
+                                                  iTextSharp.text.pdf.BaseFont.CP1252, _
+                                                  iTextSharp.text.pdf.BaseFont.NOT_EMBEDDED)
+    gstate.FillOpacity = 0.9F
+    gstate.StrokeOpacity = 1.0F
+
+    ' Add the watermark to each page in the document.
+    For i As Integer = 1 To reader.NumberOfPages()
+        overContent = stamper.GetOverContent(i)
+        With overContent
+            .SaveState()
+            .SetGState(gstate)
+            .SetColorFill(iTextSharp.text.BaseColor.BLUE)
+            .Fill()
+            .BeginText()
+            .SetFontAndSize(watermarkFont, 8)
+            .SetTextMatrix(30, 30)
+
+            If Me.Document.RevRank = 0 AndAlso Me.Document.ReleaseDate IsNot Nothing Then
+                .ShowTextAligned(iTextSharp.text.Element.ALIGN_LEFT, UCase(String.Format("CONTROLLED DOCUMENT – THIS COPY IS THE LATEST REVISION AS OF {0}" _
+                                                                                         , Date.Now.ToString("ddMMMyyyy"))), 10, rect.Height - 15, 0)
+            End If
+
+            .Fill()
+            .EndText()
+            .RestoreState()
+        End With
+    Next
+
+    stamper.Close()
+    reader.Close()
+
+    Return outputFile
+End Function
+

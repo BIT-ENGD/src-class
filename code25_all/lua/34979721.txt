@@ -1,0 +1,95 @@
+./configure
+# OPENRESTY_PREFIX is set to /opt/openresty
+./configure --prefix=$OPENRESTY_PREFIX \
+            --with-lua=$OPENRESTY_PREFIX/luajit \
+            --with-lua-include=$OPENRESTY_PREFIX/luajit/include \
+            --with-lua-lib=$OPENRESTY_PREFIX/lualib
+
+Checking Lua interpreter... lua not found (looked in =/opt/openresty/luajit/bin)
+You may want to use the flag --with-lua or --with-lua-bin. See --help.
+
+configure failed.
+
+/opt/openresty/luajit/bin/lua
+/opt/openresty/luajit/bin
+$ ls -al /opt/openresty/luajit/bin/
+total 2860
+drwxr-xr-x 2 root root    4096 Jan  9 14:05 .
+drwxr-xr-x 6 root root    4096 Jan  9 14:05 ..
+lrwxrwxrwx 1 root root      44 Jan  9 14:05 lua -> /opt/openresty/luajit/bin/luajit-2.1.0-beta1
+lrwxrwxrwx 1 root root      18 Jan  9 14:05 luajit -> luajit-2.1.0-beta1
+-rwxr-xr-x 1 root root 2918392 Jan  9 14:05 luajit-2.1.0-beta1
+
+lua
+luajit
+luajit-2.1.0-beta1
+make
+--lua-suffix=jit-2.1.0-beta1
+make
+Checking Lua interpreter... luajit-2.1.0-beta1 not found (looked in =/opt/openresty/luajit/bin)
+You may want to use the flag --with-lua or --with-lua-bin. See --help.
+
+configure failed.
+
+debian:jessie
+Dockerfile
+FROM debian:jessie
+
+# derived from https://github.com/ficusio/openresty/blob/master/debian/Dockerfile
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl perl make build-essential procps libreadline-dev libncurses5-dev libpcre3-dev libssl-dev
+
+ENV CFLAGS '-O2'
+ENV OPENRESTY_VERSION 1.9.7.1
+ENV OPENRESTY_PREFIX /opt/openresty
+ENV NGINX_PREFIX /opt/openresty/nginx
+ENV VAR_PREFIX /var/nginx
+
+# NginX prefix is automatically set by OpenResty to $OPENRESTY_PREFIX/nginx
+# look for $ngx_prefix in https://github.com/openresty/ngx_openresty/blob/master/util/configure
+
+RUN cd /tmp \
+    && echo "==> Downloading OpenResty..." \
+    && curl -sSL http://openresty.org/download/ngx_openresty-${OPENRESTY_VERSION}.tar.gz | tar -xvz \
+    && echo "==> Configuring OpenResty..." \
+    && cd ngx_openresty-* \
+    && readonly NPROC=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || 1) \
+    && echo "using upto $NPROC threads" \
+    && ./configure \
+    --prefix=$OPENRESTY_PREFIX \
+    --http-client-body-temp-path=$VAR_PREFIX/client_body_temp \
+    --http-proxy-temp-path=$VAR_PREFIX/proxy_temp \
+    --http-log-path=$VAR_PREFIX/access.log \
+    --error-log-path=$VAR_PREFIX/error.log \
+    --pid-path=$VAR_PREFIX/nginx.pid \
+    --lock-path=$VAR_PREFIX/nginx.lock \
+    --with-luajit \
+    --with-pcre-jit \
+    --with-ipv6 \
+    --with-http_ssl_module \
+    --without-http_scgi_module \
+    -j${NPROC} \
+    && echo "==> Building OpenResty..." \
+    && make -j${NPROC} \
+    && echo "==> Installing OpenResty..." \
+    && make install \
+    && echo "==> Finishing..." \
+    && ln -sf $NGINX_PREFIX/sbin/nginx /usr/local/bin/nginx \
+    && ln -sf $NGINX_PREFIX/sbin/nginx /usr/local/bin/openresty \
+    && ln -sf $OPENRESTY_PREFIX/bin/resty /usr/local/bin/resty \
+    && ln -sf $OPENRESTY_PREFIX/luajit/bin/luajit-* $OPENRESTY_PREFIX/luajit/bin/lua \
+    && ln -sf $OPENRESTY_PREFIX/luajit/bin/luajit-* /usr/local/bin/lua \
+    && apt-get remove -y make build-essential \
+    && rm -rf /tmp/ngx_openresty* \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR $NGINX_PREFIX
+
+# Example contents for the `nginx` directory can be found at:
+# https://github.com/ficusio/openresty/tree/master/_example/nginx
+ONBUILD RUN rm -rf conf/* html/*
+ONBUILD COPY nginx $NGINX_PREFIX
+
+CMD ["nginx", "-g", "daemon off; error_log /dev/stderr info;"]
+

@@ -1,0 +1,85 @@
+//From AngelCodeFont.m
+
+// Changed 07/05/09 to add kerning
+- (void)drawStringAt:(CGPoint)point text:(NSString*)text {
+
+    // TODO: Add error if string is too long using NSASSERT
+    //NSAssert(1>0, @"WARNING: Text to be rendered is too long");
+
+    // Reset the number of quads which are going to be drawn
+    int currentQuad = 0;
+
+    // Enable those states necessary to draw with textures and allow blending
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnableClientState(GL_VERTEX_ARRAY);
+
+    // Setup how the text is to be blended
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Bind to the texture which was generated for the spritesheet image used for this font.  We only
+    // need to bind once before the drawing as all characters are on the same texture.
+    if([[image texture] name] != [_director currentlyBoundTexture]) {
+        [_director setCurrentlyBoundTexture:[[image texture] name]];
+        glBindTexture(GL_TEXTURE_2D, [[image texture] name]);
+    }   
+
+    // Set up the previous character and kerning amount vars
+    unichar previousChar = -1;
+    int kerningAmount = 0;
+
+    // Loop through all the characters in the text
+    for(int i=0; i<[text length]; i++) {
+
+        // Grab the unicode value of the current character
+        unichar charID = [text characterAtIndex:i];
+
+        // Look up the kerning information for the previous char and this current char
+        kerningAmount = [self kerningAmountForFirst:previousChar second:charID];
+
+        // Move x based on the kerning info
+        point.x += kerningAmount * scale;
+
+        // Only render the current character if it is going to be visible otherwise move the variables such as currentQuad and point.x
+        // as normal but don't render the character which should save some cycles
+        if(point.x > 0 - ([charsArray[charID] width] * scale) || point.x < [[UIScreen mainScreen] bounds].size.width || point.y > 0 - ([charsArray[charID] height] * scale) || point.y < [[UIScreen mainScreen] bounds].size.height) {
+
+            // Using the current x and y, calculate the correct position of the character using the x and y offsets for each character.
+            // This will cause the characters to all sit on the line correctly with tails below the line etc.
+            CGPoint newPoint = CGPointMake(point.x, 
+                                           point.y - ([charsArray[charID] yOffset] + [charsArray[charID] height]) * [charsArray[charID] scale]);
+
+            // Create a point into the bitmap font spritesheet using the coords read from the control file for this character
+            CGPoint pointOffset = CGPointMake([charsArray[charID] x], [charsArray[charID] y]);
+
+            // Calculate the texture coordinates and quad vertices for the current character
+            [[charsArray[charID] image] calculateTexCoordsAtOffset:pointOffset subImageWidth:[charsArray[charID] width] subImageHeight:[charsArray[charID] height]];
+            [[charsArray[charID] image] calculateVerticesAtPoint:newPoint subImageWidth:[charsArray[charID] width] subImageHeight:[charsArray[charID] height] centerOfImage:NO];
+
+            // Place the calculated texture coordinates and quad vertices into the arrays we will use when drawing our string
+            texCoords[currentQuad] = *[[charsArray[charID] image] textureCoordinates];
+            vertices[currentQuad] = *[[charsArray[charID] image] vertices];
+
+            // Increment the Quad count
+            currentQuad++;
+        }
+
+        // Move x based on the amount to advance for the current char
+        point.x += [charsArray[charID] xAdvance] * scale;
+
+        // Store the character just processed as the previous char for looking up any kerning info
+        previousChar = charID;
+    }
+
+    // Now that we have calculated all the quads and textures for the string we are drawing we can draw them all
+    glVertexPointer(2, GL_FLOAT, 0, vertices);
+    glTexCoordPointer(2, GL_FLOAT, 0, texCoords);
+    glColor4f(colourFilter.red, colourFilter.green, colourFilter.blue, colourFilter.alpha * [_director globalAlpha]);
+    glDrawElements(GL_TRIANGLES, currentQuad*6, GL_UNSIGNED_SHORT, indices);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_BLEND);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+}
+

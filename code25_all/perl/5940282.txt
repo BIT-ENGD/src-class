@@ -1,0 +1,143 @@
+#this script will not migrate novaPDF pritter
+my @printers;
+my %PQ2;
+my %PQ;
+my @NewPQ;
+my $NewServer = "MTAPQ10";
+my $OldServer = "MTAPQ5";
+
+#Retrive print queues info from the new network print server
+print "Generating a printer list on $NewServer..\n";
+@NewPQ = `net view $NewServer`;
+
+
+#Create a required TEMP folder on C:
+system("md C:\\TEMP") if(not (-e "C:\\TEMP"));
+
+#Create a VBScripts to enumerate network printer connections
+open(OUTFILE,">C:\\TEMP\\EnumPQ.vbs") or die "Unable to create TEMP file";
+
+print OUTFILE  "Option Explicit\n";
+print OUTFILE  "Dim objNetwork, objPrinter, intDrive, intNetLetter\n";
+print OUTFILE  "Set objNetwork = CreateObject(\"WScript\.Network\")\n";
+print OUTFILE  "Set objPrinter = objNetwork.EnumPrinterConnections\n";
+print OUTFILE  "For intDrive = 0 To (objPrinter.Count -1) Step 2\n";
+print OUTFILE  "  intNetLetter = IntNetLetter +1\n";
+print OUTFILE  "  Wscript.Echo objPrinter.Item(intDrive +1)\n";
+print OUTFILE  "Next\n";
+print OUTFILE  "Wscript\.Quit(1)\n";
+
+close OUTFILE;
+
+#Run VBScript EnumPQ.vbs to generate a list of connected network printers
+print "Enumerating local printers...\n";
+my @results = `cscript c:\\TEMP\\EnumPQ.vbs`;
+print "Local printer enumeration complete\n";
+
+my $FOUND = 0;
+#Search for printer(s) on MTAPQ5
+foreach my $rec (@results)
+{
+    chomp $rec;
+
+    next if($rec =~ /nova/i); #bypass nova PDF printer
+    #Searching for old server in the form of \\ServerName
+    if($rec =~ /\\\\$OldServer/i)
+    {
+        #Exp rec=\\MTAPQ2\(05-103) HP Color LaserJet 4650 PS 6=
+        push @printers, $rec;
+        $FOUND = 1;
+    }
+}
+
+if($FOUND)
+{
+    &RemovePrinter();
+    &AddPrinter();
+}
+else
+{
+    print "No network printer on $OldServer found..\n"
+}
+
+exit 0; #exit main
+#===============================================================================
+#Creat a VB script to remove network printer(s)
+#===============================================================================
+sub RemovePrinter
+{
+
+open(OUTFILE,">C:\\TEMP\\rmprint.vbs") or die "Error open outfile..";
+print OUTFILE 'Set WshNetwork = WScript.CreateObject("WScript.Network")'."\n\n";
+
+foreach my $printer (@printers)
+{
+    $printer =~ m/^\\\\$OldServer\\\((.+)\)/i;
+    $PQ2{$1} = "old printer";
+}
+
+foreach my $shrname (@NewPQ)
+{
+    chomp $shrname;
+    $shrname =~ m/^.+\((.+)\).+/i;
+    $PQ{$1} = "New printer";
+}
+
+my @PQ2Printers = keys %PQ2;
+
+foreach my $prt (@PQ2Printers)
+{
+    if(exists $PQ{$prt})
+    {
+        #Create VB Script to remove the found printers
+        print OUTFILE "PrinterPath = \"\\\\$OldServer\\$prt\"\n";
+        print OUTFILE "WshNetwork.RemovePrinterConnection PrinterPath, true, true\n\n";
+    }
+}
+
+
+print OUTFILE  "Wscript\.Quit(1)\n";
+close OUTFILE;
+
+print "Deleting $OldServer printer(s)..\n";
+sleep 2;
+my $rm_results = `cscript c:\\TEMP\\rmprint.vbs`;
+#print "remove result:\n";
+#print $rm_results."\n";
+
+
+}#end sub RemovePrinter
+#===============================================================================
+#Create a VB script to add network printers
+#===============================================================================
+sub AddPrinter
+{
+open(OUTFILE,">C:\\TEMP\\addprint.vbs") or die "Error open outfile..";
+print OUTFILE 'Set WshNetwork = WScript.CreateObject("WScript.Network")'."\n\n";
+
+
+my @PQ2Printers = keys %PQ2;
+
+#if old printer exists on new server, map it.
+foreach my $prt (@PQ2Printers)
+{
+        if(exists $PQ{$prt})
+        {
+        #Create VB Script to map the found printers to new server
+        print OUTFILE "PrinterPath = \"\\\\$NewServer\\$prt\"\n";
+        print OUTFILE "WshNetwork.AddWindowsPrinterConnection PrinterPath, true, true\n\n";
+        print "Remapping $OldServer printer to: \\\\$NewServer\\$prt\n";
+    }
+}
+
+print OUTFILE  "Wscript\.Quit(1)\n";
+close OUTFILE;
+
+sleep 2;
+my $add_results = `cscript c:\\TEMP\\addprint.vbs`;
+#print "Add result:\n";
+#print $add_results."\n";
+
+}#end sub AddPrinter
+#===============================================================================
+

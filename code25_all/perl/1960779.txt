@@ -1,0 +1,132 @@
+sysread
+tr/\n//
+tr/\n//
+wc
+tr/\n//
+s/\n//g
+while( <$fh> ) { $count++ }
+tr///
+1 while( <$fh> ); $.
+wc
+tr/\n//
+tr/\n//
+tr///
+s///
+                         Rate very_long_lines-tr very_long_lines-$count very_long_lines-$. very_long_lines-s very_long_lines-wc
+very_long_lines-tr     1.60/s                 --                   -10%               -12%              -39%               -72%
+very_long_lines-$count 1.78/s                11%                     --                -2%              -32%               -69%
+very_long_lines-$.     1.82/s                13%                     2%                 --              -31%               -68%
+very_long_lines-s      2.64/s                64%                    48%                45%                --               -54%
+very_long_lines-wc     5.67/s               253%                   218%               212%              115%                 --
+                    Rate long_lines-tr long_lines-$count long_lines-$. long_lines-s long_lines-wc
+long_lines-tr     9.56/s            --               -5%           -7%         -30%          -63%
+long_lines-$count 10.0/s            5%                --           -2%         -27%          -61%
+long_lines-$.     10.2/s            7%                2%            --         -25%          -60%
+long_lines-s      13.6/s           43%               36%           33%           --          -47%
+long_lines-wc     25.6/s          168%              156%          150%          88%            --
+                     Rate short_lines-$count short_lines-s short_lines-$. short_lines-wc short_lines-tr
+short_lines-$count 60.2/s                 --           -7%           -11%           -34%           -42%
+short_lines-s      64.5/s                 7%            --            -5%           -30%           -38%
+short_lines-$.     67.6/s                12%            5%             --           -26%           -35%
+short_lines-wc     91.7/s                52%           42%            36%             --           -12%
+short_lines-tr      104/s                73%           61%            54%            14%             --
+                      Rate varied_lines-$count varied_lines-s varied_lines-$. varied_lines-tr varied_lines-wc
+varied_lines-$count 48.8/s                  --            -6%             -8%            -29%            -36%
+varied_lines-s      51.8/s                  6%             --             -2%            -24%            -32%
+varied_lines-$.     52.9/s                  8%             2%              --            -23%            -30%
+varied_lines-tr     68.5/s                 40%            32%             29%              --            -10%
+varied_lines-wc     75.8/s                 55%            46%             43%             11%              --
+
+use Benchmark qw(cmpthese);
+use Statistics::Descriptive;
+
+my @files = create_files();
+
+open my( $outfh ), '>', 'bench-out';
+
+foreach my $file ( @files )
+    {
+    cmpthese(
+        100, {
+#               "$file-io-control" => sub { 
+#                       open my( $fh ), '<', $file; 
+#                   print "Control found 99999 lines\n";
+#                       },
+               "$file-\$count" => sub { 
+                    open my( $fh ), '<', $file; 
+                    my $count = 0;
+                    while(<$fh>) { $count++ } 
+                    print $outfh "\$count found $count lines\n";
+                    },
+               "$file-\$."     => sub { 
+                    open my( $fh ), '<', $file; 
+                    1 while(<$fh>); 
+                    print $outfh "\$. found $. lines\n";
+                    },
+               "$file-tr"      => sub { 
+                    open my( $fh ), '<', $file; 
+                    my $lines = 0;
+                    my $buffer;
+                    while (sysread $fh, $buffer, 4096) {
+                        $lines += ($buffer =~ tr/\n//);
+                        }
+                    print $outfh "tr found $lines lines \n";
+                    },
+               "$file-s"       => sub { 
+                    open my( $fh ), '<', $file; 
+                    my $lines = 0;
+                    my $buffer;
+                    while (sysread $fh, $buffer, 4096) {
+                        $lines += ($buffer =~ s/\n//g);
+                        }
+                    print $outfh "s found $lines line\n";
+                    },
+               "$file-wc"       => sub { 
+                    my $lines = `wc -l $file`;
+                    chomp( $lines );
+                    print $outfh "wc found $lines line\n";
+                    },
+                    }
+           );   
+     }
+
+sub create_files
+    {
+            my @names;
+    my @files = (
+        [ qw( very_long_lines 10000  4000 5000 ) ],
+        [ qw( long_lines   10000 700 800 ) ],
+        [ qw( short_lines  10000  60  80 ) ],
+        [ qw( varied_lines 10000  10 200 ) ],
+        );
+
+    foreach my $tuple ( @files )
+        {
+        push @names, $tuple->[0];
+        next if -e $tuple->[0];
+        my $stats = create_file( @$tuple );
+        printf "%10s: %5.2f  %5.f \n", $tuple->[0], $stats->mean, sqrt( $stats->variance );
+        }
+
+    return @names;
+    }
+
+
+sub create_file
+    {
+    my( $name, $lines, $min, $max ) = @_;
+
+    my $stats = Statistics::Descriptive::Full->new();
+
+    open my( $fh ), '>', $name or die "Could not open $name: $!\n";
+
+    foreach ( 1 .. $lines )
+        {
+        my $line_length = $min + int rand( $max - $min );
+        $stats->add_data( $line_length );
+        print $fh 'a' x $line_length, "\n";
+        }
+
+    return $stats;
+    }
+

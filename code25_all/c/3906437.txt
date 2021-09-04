@@ -1,0 +1,119 @@
+#include <iostream>
+#include <cv.h>
+#include <highgui.h>
+using namespace std;
+
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <stdio.h>
+
+#include "2cam.h"
+
+int sizeofmat(CvMat *mat) {
+    return mat->rows * mat->cols * CV_ELEM_SIZE(mat->type);
+}
+
+int main() {
+    int shmid;
+    key_t key = 5678;
+
+    CvMat *vdisp = cvCreateMat(240, 320, CV_8U);
+    const size_t vdispsize = sizeofmat(vdisp);
+    CvMat *s = cvCreateMat(240, 320, CV_8U);
+    CvMat stub;
+    CvSize imageSize = cvSize(320, 240);
+
+    IplImage *color = cvCreateImage(imageSize, 8, 3);
+    IplImage *gray = cvCreateImage(imageSize, 8, 1);
+
+    /* Create the segment */
+    if ((shmid = shmget(key, vdispsize, IPC_CREAT | 0666)) < 0) {
+        perror("shmget");
+        exit(1);
+    }
+
+    /* Attach the segment to our data space */
+    if ((vdisp = (CvMat *)shmat(shmid, NULL, 0)) == (CvMat *)-1) {
+        perror("shmat");
+        exit(1);
+    }
+
+    /* Put CvMat into the memory to be read for other processes */
+    s = vdisp;
+
+    /* Create camera */
+    Camera c("/dev/video0", 320, 240, 30);
+
+    while (1) {
+        /* Get one frame */
+        c.Update();
+        c.toIplImage(color);
+
+        /* Convert color frame to grayscale */
+        cvCvtColor(color, gray, CV_BGR2GRAY);
+
+        /* Get matrix from the gray frame and write the matrix in shared memory*/
+        s = cvGetMat(gray, &stub, 0, 0);
+
+        /* Show frame */
+        cvNamedWindow("result", CV_WINDOW_AUTOSIZE);
+        cvShowImage("result", s);
+
+        /* Wait for escape key */
+        if ((cvWaitKey(10) & 255) == 27)
+            break;
+    }
+
+    /* free memory */
+    cvDestroyWindow("result");
+    cvReleaseImage(&color);
+    cvReleaseImage(&gray);
+    //cvReleaseMat(&vdisp);
+    //cvReleaseMat(&s);
+
+    return 0;
+}  
+
+#include <iostream>
+#include <cv.h>
+#include <highgui.h>
+using namespace std;
+
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <stdio.h>
+
+int sizeofmat(CvMat *mat) {
+    return mat->rows * mat->cols * CV_ELEM_SIZE(mat->type);
+}
+
+int main() {
+    int shmid;
+    key_t key = 5678;
+
+    CvMat *vdisp = cvCreateMat(240, 320, CV_8U);
+    const size_t vdispsize = sizeofmat(vdisp);
+    CvMat *s = cvCreateMat(240, 320, CV_8U);
+
+    /* Locate the segment */
+    if ((shmid = shmget(key, vdispsize, 0666)) < 0) {
+        perror("shmget");
+        exit(1);
+    }
+
+    /* Now we attach the segment to our data space */
+    if ((vdisp = (CvMat *)shmat(shmid, NULL, 0)) == (CvMat *) -1) {
+        perror("shmat");
+        exit(1);
+    }
+
+    s = vdisp;
+
+    cout << "rows: " << s->rows << endl;
+    cout << "cols: " << s->cols << endl;
+
+    return 0;
+}
+

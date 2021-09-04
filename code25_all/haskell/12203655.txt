@@ -1,0 +1,85 @@
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Monad
+import System.Random
+
+type Fork = TVar Bool
+type StringBuffer = TChan String
+
+philosopherNames :: [String]
+philosopherNames = map show ([1..] :: [Int])
+
+logThinking :: String -> StringBuffer -> STM ()
+logThinking name buffer = writeTChan buffer $ name ++ " is thinking..."
+
+logEating :: String -> StringBuffer -> STM ()
+logEating name buffer = writeTChan buffer $ name ++ " is eating..."
+
+firstLogEntry :: StringBuffer -> STM String
+firstLogEntry buffer = do empty <- isEmptyTChan buffer
+                          if empty then retry
+                                   else readTChan buffer
+
+takeForks :: Fork -> Fork -> STM ()
+takeForks left right = do leftUsed <- readTVar left
+                          rightUsed <- readTVar right
+                          if leftUsed || rightUsed
+                             then retry
+                             else do writeTVar left True
+                                     writeTVar right True
+
+putForks :: Fork -> Fork -> STM ()
+putForks left right = do writeTVar left False
+                         writeTVar right False
+
+philosopher :: String -> StringBuffer -> Fork -> Fork -> IO ()
+philosopher name out left right = do atomically $ logThinking name out
+                                     randomDelay
+                                     atomically $ takeForks left right
+                                     atomically $ logEating name out
+                                     randomDelay
+                                     atomically $ putForks left right
+
+randomDelay :: IO ()
+randomDelay = do delay <- getStdRandom(randomR (1,3))
+                 threadDelay (delay * 1000000)
+
+main :: IO ()
+main = do let n = 8
+          forks <- replicateM n $ newTVarIO False
+          buffer <- newTChanIO
+          forM_ [0 .. n - 1] $ \i ->
+              do let left = forks !! i
+                     right = forks !! ((i + 1) `mod` n)
+                     name = philosopherNames !! i
+                 forkIO $ forever $ philosopher name buffer left right
+
+          forever $ do str <- atomically $ firstLogEntry buffer
+                       putStrLn str
+
+randomDelay
+philosopher
+1 is thinking...
+1 is eating...
+1 is thinking...
+1 is eating...
+2 is thinking...
+2 is eating...
+2 is thinking...
+2 is eating...
+2 is thinking...
+2 is eating...
+2 is thinking...
+
+About 2500 lines later...
+
+2 is thinking...
+2 is eating...
+2 is thinking...
+3 is thinking...
+3 is eating...
+3 is thinking...
+3 is eating...
+
+And so on...
+

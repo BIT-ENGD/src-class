@@ -1,0 +1,232 @@
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <iostream>
+#include <errno.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <sys/timeb.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <netdb.h>
+#include <time.h>
+#include </usr/local/include/ssl/ssl.h>
+
+#include "SSL_CA.cpp"
+
+int main( int argc, char **argv ) {
+
+    int retval;
+    SSL_CTX *ctx;
+    SSL *con;
+    int port = atoi(argv[1]);
+    sockaddr_in client_addr;
+    sockaddr_in serv_addr;
+    socklen_t client_len;
+    int max_clients = 40;
+    int serv_sock, client_sock;
+
+    if ( ( serv_sock = socket( AF_INET, SOCK_STREAM, 0 ) ) < 0 )
+                return -12; 
+
+    SSL_library_init();
+    int SSL_CA = NowySSL();
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = port;
+
+cout << "Conf " << endl;
+
+    if ( bind( serv_sock, ( sockaddr * ) &serv_addr, sizeof( serv_addr ) ) < 0 )
+        return -1;
+
+    if ( listen( serv_sock, max_clients ) < 0 )
+        return -1;
+
+
+    while (1) {
+
+        cout << "Waiting" << endl;
+
+        if ( ( client_sock = accept( serv_sock, ( sockaddr * ) &client_addr, &client_len ) ) < 0 )
+            return -1;
+
+        pid_t pid = fork();
+
+        if ( pid = 0 ) {
+
+            con = NULL;
+            ctx = NULL;
+            ctx = (SSL_CTX *)SSL_CTX_new( SSLv23_server_method() );
+            con = (SSL *)SSL_new( (SSL_CTX *)ctx );
+
+            if (
+                !( ( ( !SSL_CA ) && ( SSL_NO_CA_RUN( con, ctx, client_sock, 0 ) ) ) ||
+                ( ( SSL_CA ) && ( SSL_CA_RUN( con, ctx, client_sock, true ) ) ) )
+            )
+                return -1;
+
+            char buf[10];
+
+            if ( ( retval = SSL_read( con, buf, 10  ) ) <= 0 )
+                return -16; 
+            cout << "Got msg " << buf << " " << retval << endl;
+
+            sprintf(buf, "12345" );
+
+            if ( ( retval = SSL_write( con, buf, strlen(buf) ) ) <= 0 )
+                return -1; 
+
+            cout << "Sent" << endl;
+
+        }
+        else cout << "Parent " << endl; 
+    }
+
+    return 0;
+}
+
+int SSL_NO_CA_RUN (SSL *con, SSL_CTX *ctx, int msgsock, int exit_now)
+{
+//   printf ("SSL NO CA\n");
+//   SSL_library_init();
+//   ctx=(SSL_CTX *)SSL_CTX_new(SSLv23_server_method());
+//   con=(SSL *)SSL_new((SSL_CTX *)ctx);
+   if ((!SSL_set_fd (con,msgsock))||
+      (!SSL_use_RSAPrivateKey_file (con,"ktsa_u_linux.k",1))||
+      (!SSL_use_certificate_file (con,"ktsa_u_linux.c",1))||
+      (!SSL_accept (con))) 
+       {
+        printf ("SSL ERROR (%s)\n",strerror(errno));
+        if (exit_now)
+     {     
+           zamknij_polaczenie (con,ctx,msgsock);
+           exit(0);
+     } 
+    return false;  
+       }
+  // printf ("SSL NO CA OK!!!\n");
+   return true;       
+}
+
+
+int SSL_CA_RUN (SSL *con, SSL_CTX *ctx, int msgsock, int exit_now)
+{
+    int ret, ok=true;
+    X509 *peer;
+    FILE *fp;
+    char error[250];
+//   printf ("SSL CA\n");
+
+//MARCIN (START)
+                //robimy linki do certyfikatow  Marcin
+                 certhash(CA_DIR,CRL_DIR,getpid());
+                //dostep_read (890);
+//          SSL_library_init();
+
+//      printf("\n");
+
+//                ctx=(SSL_CTX *)SSL_CTX_new(SSLv23_server_method());
+
+//          con=(SSL *)SSL_new((SSL_CTX *)ctx);
+            cb=pem_passwd_cb;           
+        SSL_CTX_set_default_passwd_cb_userdata(ctx,haslo);
+        SSL_CTX_set_default_passwd_cb(ctx,cb);
+        //SSL_set_verify_depth(con,10); default  = 9
+        SSL_set_verify(con,SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT,NULL);
+                //      SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT,NULL);
+
+                //SSL_CTX_set_cipher_list(ctx,"SHA1+3DES:+RSA:HIGH");
+                //SSL_set_cipher_list(con,"SHA1+3DES:+RSA:HIGH");
+                if ((!SSL_set_fd (con,msgsock))||
+            (!SSL_use_RSAPrivateKey_file (con,KEY_FILE,1))||
+            (!SSL_use_certificate_file (con,CERT_FILE,1))||
+//          (!SSL_CTX_load_verify_locations(ctx,CA_FILE,NULL))||
+            (!SSL_CTX_load_verify_locations(ctx,NULL,linkdir))||
+            (!SSL_accept (con))
+                     )
+                        {
+              if (exit_now)
+               {
+                             remove_symdir(getpid());       
+//               printf("error connect\n");         
+                             zamknij_polaczenie (con,ctx,msgsock);
+                 exit(0);
+               } else remove_symdir(getpid());          
+              ok=false;     
+            } 
+         if (ok)
+          { 
+             peer=SSL_get_peer_certificate(con); 
+             if(peer!=NULL)
+                 {
+                 //ret=1 - odwolany
+             //ret=0 - wszystko ok
+             //ret = inne - jakis inny blad, np. brak wlasciwej listy crl
+                 //ret=check_peer_crl_dir(peer,error,CRL_DIR);  //sprawdzenie odwolania certyfikatu przychodzacego
+                 ret=check_peera(peer,error,0);  //sprawdzenie odwolania certyfikatu przychodzacego
+//                   printf("peer certyfikat:%s:%i\n",error,ret);
+                 }
+         if ((peer==NULL)||(ret==1))
+              {
+              //nie akceptujemy polaczenia bo nie dostalismy certyfikatu lub certyfikat jest odwolany
+//          printf("polaczenie odrzucone - certyfikat peera odwolany, brak certyfikatu lub wystawiony przez inne CA \n");           
+            if (exit_now)
+             {
+              remove_symdir(getpid());          
+                          zamknij_polaczenie (con,ctx,msgsock);
+                          exit(2);
+             }
+            ok=false;
+              }
+          }      
+         if (ok)
+          { 
+                    X509_free(peer);   //potrzebne?
+                    peer=NULL;
+
+            //mozna sprawdzic tez nasz certyfikat
+            if (!(fp = fopen (CERT_FILE, "r")))  //"/router/ssl/cert/sslcert.cer"
+                  printf ("Error reading my certificate file\n");
+            if (!(peer = PEM_read_X509 (fp, NULL, NULL, NULL)))
+              printf ("Error reading my certificate in file\n");
+            if (fp)fclose (fp);
+
+            if(peer!=NULL)
+                 { 
+                 //ret=1 - odwolany
+             //ret=0 - wszystko ok
+             //ret = inne - jakis inny blad, np. brak wlasciwej listy crl
+                 //ret=check_peer_crl_dir(peer,error,CRL_DIR);  //sprawdzenie odwolania certyfikatu przychodzacego
+                 ret=check_peera(peer,error,0);  //sprawdzenie odwolania certyfikatu naszego
+  //                 printf("nasz certyfikat:%s:%i\n",error,ret);
+                 }
+
+             if ((peer==NULL)||(ret==1))
+              {
+              //nie akceptujemy polaczenia bo nasz certyfikat ma problem lub jest odwolany
+//            printf("polaczenie odrzucone- nasz certyfikat odwolany\n");           
+            if (exit_now)
+             {  
+               remove_symdir(getpid());         
+                       zamknij_polaczenie (con,ctx,msgsock);
+                       exit(2);
+             }  
+            ok=false;
+              }
+           }      
+         if (ok)
+          {  
+                X509_free(peer);   //potrzebne?
+                    peer=NULL;
+          }          
+//               printf("connected...ok\n");
+   remove_symdir(getpid());         
+   return ok;
+}
+

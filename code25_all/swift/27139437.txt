@@ -1,0 +1,211 @@
+//
+//  main.swift
+//
+//  Tests 3 ways of handling 2D arrays in Swift. Test takes a 2D array and calls a routine
+//  that takes each element of an input array and adds the X and Y index values to it and
+//  returns an array with the result.
+//
+//  Command line arguments: Option Nrpt Nx Ny
+//
+//  Option is type of array used (1: Swift array of arrays, 
+//                                2: Array2D 1D array looking like a 2D array
+//                                3: 1D array used like a 2D array with explicit index calculation)
+//  Nrpt is number of repeats of subroutine call
+//  Nx, Ny are array dimensions.
+//
+
+import Darwin
+
+//  Array2D comes from http://blog.trolieb.com/trouble-multidimensional-arrays-swift/
+
+class Array2D {
+    var cols:Int, rows:Int
+    var matrix: [Int]
+
+    init(cols:Int, rows:Int) {
+        self.cols = cols
+        self.rows = rows
+        matrix = Array(count:cols*rows, repeatedValue:0)
+    }
+    subscript(col:Int, row:Int) -> Int {
+        get { return matrix[cols * row + col] }
+        set { matrix[cols*row+col] = newValue }
+    }
+    func colCount() -> Int { return self.cols }
+    func rowCount() -> Int { return self.rows }
+}
+
+//  Using a 'proper' Swift '2D' array - ie an array of 1D arrays
+func Subr (Input: Array<Array<Int>>, Nx: Int, Ny : Int, inout Output: Array<Array<Int>>) {
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            Output[Iy][Ix] = Input[Iy][Ix] + (Ix + Iy)
+        }
+    }
+}
+
+//  Using an Array2D array - wrapping up a 1D array to act as a 2D one.
+func Subr2d (Input: Array2D, Nx: Int, Ny : Int, inout Output: Array2D) {
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            Output[Ix,Iy] = Input[Ix,Iy] + (Ix + Iy)
+        }
+    }
+}
+
+//  Using a 1D Swift array and doing the indexing explicitly
+func Subr1d (Input: [Int], Nx: Int, Ny: Int, inout Output: [Int]) {
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            Output[Iy * Nx + Ix] = Input[Iy * Nx + Ix] + (Ix + Iy)
+        }
+    }
+}
+
+var Option:Int = 1
+if let argStr = String.fromCString(C_ARGV[1]) {
+    if let argInt = argStr.toInt() { Option = argInt }
+}
+
+var Nrpt:Int = 100
+if let argStr = String.fromCString(C_ARGV[2]) {
+    if let argInt = argStr.toInt() { Nrpt = argInt }
+}
+
+var Nx:Int = 2000;
+if let argStr = String.fromCString(C_ARGV[3]) {
+    if let argInt = argStr.toInt() { Nx = argInt }
+}
+
+var Ny:Int = 10;
+if let argStr = String.fromCString(C_ARGV[4]) {
+    if let argInt = argStr.toInt() { Ny = argInt }
+}
+
+
+println("Repeats: \(Nrpt), Array \(Nx) by \(Ny)")
+
+switch Option {
+case 1:
+
+    println ("Using an ordinary Swift '2D' array of arrays")
+
+    var array = Array(count:Ny, repeatedValue:Array(count:Nx, repeatedValue:Int()))
+
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            array[Iy][Ix] = (Ix + Iy)
+        }
+    }
+
+    var output = Array(count:Ny, repeatedValue:Array(count:Nx, repeatedValue:Int()))
+
+    let start : UInt64 = mach_absolute_time()
+
+    for Irpt in 0...Nrpt-1 {
+       Subr(array,Nx,Ny,&output)
+    }
+
+    let duration : UInt64 = mach_absolute_time() - start
+
+    check:
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            let Expected = array[Iy][Ix] + (Ix + Iy)
+            if (output[Iy][Ix] != Expected) {
+                println("Error at \(Ix),\(Iy) Got \(output[Iy][Ix]) expected \(Expected)")
+                break check
+            }
+        }
+    }
+
+    var info : mach_timebase_info = mach_timebase_info(numer: 0, denom: 0)
+    mach_timebase_info(&info)
+
+    let total = (duration * UInt64(info.numer) / UInt64(info.denom)) / 1_000_000
+    println("2D array took:\(total) ms.")
+
+case 2:
+
+    println ("Using the Array2D class")
+
+    var array2 = Array2D(cols: Nx, rows: Ny)
+    var output2 = Array2D(cols: Nx, rows: Ny)
+
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            array2[Ix,Iy] = (Ix + Iy)
+        }
+    }
+
+    println("Timing array2D version")
+
+    let start2 : UInt64 = mach_absolute_time()
+
+    for Irpt in 0...Nrpt-1 {
+        Subr2d(array2,Nx,Ny,&output2)
+    }
+
+    let duration2 : UInt64 = mach_absolute_time() - start2
+
+    check:
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            let Expected = array2[Ix,Iy] + (Ix + Iy)
+            if (output2[Ix,Iy] != Expected) {
+                println("Error at \(Ix),\(Iy) Got \(output2[Ix,Iy]) expected \(Expected)")
+                break check
+            }
+        }
+    }
+
+
+    var info2 : mach_timebase_info = mach_timebase_info(numer: 0, denom: 0)
+    mach_timebase_info(&info2)
+
+    let total2 = (duration2 * UInt64(info2.numer) / UInt64(info2.denom)) / 1_000_000
+    println("Array2D version took:\(total2) ms.")
+
+case 3:
+
+    println ("Using an a 1D array and handling the indexing explicitly")
+
+    var array3 = Array(count:Ny * Nx, repeatedValue:Int())
+
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            array3[Iy * Nx + Ix] = (Ix + Iy)
+        }
+    }
+
+    var output3 = Array(count:Ny * Nx, repeatedValue:Int())
+
+    let start3 : UInt64 = mach_absolute_time()
+
+    for Irpt in 0...Nrpt-1 {
+        Subr1d(array3,Nx,Ny,&output3)
+    }
+
+    let duration3 : UInt64 = mach_absolute_time() - start3
+
+    check:
+    for Iy in 0...Ny-1 {
+        for Ix in 0...Nx-1 {
+            let Expected = array3[Iy * Nx + Ix] + (Ix + Iy)
+            if (output3[Iy * Nx + Ix] != Expected) {
+                println("Error at \(Ix),\(Iy) Got \(output3[Iy * Nx + Ix]) expected \(Expected)")
+                break check
+            }
+        }
+    }
+
+    var info3 : mach_timebase_info = mach_timebase_info(numer: 0, denom: 0)
+    mach_timebase_info(&info3)
+
+    let total3 = (duration3 * UInt64(info3.numer) / UInt64(info3.denom)) / 1_000_000
+    println("1D array took:\(total3) ms.")
+
+default:
+    println ("Invalid option code. Must be 1,2, or 3")
+}
+

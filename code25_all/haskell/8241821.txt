@@ -1,0 +1,43 @@
+stunnel-style ssl-wrapper
+full-duplex tcp-port-forwarder:
+runProxy :: PortID -> AddrInfo -> IO ()
+runProxy localPort@(PortNumber lpn) serverAddrInfo = do
+  listener <- listenOn localPort
+
+  forever $ do
+    (sClient, clientAddr) <- accept listener
+
+    let finalize sServer = do
+            sClose sServer
+            sClose sClient
+
+    forkIO $ do
+        tidToServer <- myThreadId
+        bracket (connectToServer serverAddrInfo) finalize $ \sServer -> do
+            -- execute one 'copySocket' thread for each data direction
+            -- and make sure that if one direction dies, the other gets
+            -- pulled down as well
+            bracket (forkIO (copySocket sServer sClient
+                             `finally` killThread tidToServer))
+                    (killThread) $ \_ -> do
+                copySocket sClient sServer -- "controlling" thread
+
+ where
+  -- |Copy data from source to dest until EOF occurs on source
+  -- Copying may also be aborted due to exceptions
+  copySocket :: Socket -> Socket -> IO ()
+  copySocket src dst = go
+   where
+    go = do
+        buf <- B.recv src 4096
+        unless (B.null buf) $ do
+            B.sendAll dst buf
+            go
+
+  -- |Create connection to given AddrInfo target and return socket
+  connectToServer saddr = do
+    sServer <- socket (addrFamily saddr) Stream defaultProtocol
+    connect sServer (addrAddress saddr)
+    return sServer
+
+full-duplex ssl-wrapping tcp-forwarding proxy

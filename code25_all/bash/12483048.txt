@@ -1,0 +1,87 @@
+#!/bin/bash -
+
+# Necessario carregar as variaveis do CheckPoint:
+. /etc/profile.d/CP.sh
+
+# Description:
+# Log management
+
+# Crontab:
+#0 */1 * * * nohup /etc/scripts/log start 0<&- 1>> /var/log/LOG 2>&1 &
+
+# Vars:
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/etc/scripts
+FILE=/var/log/LOG
+SLEEP=600
+RUN_TIME=01
+LOG_DIR=$FWDIR/log
+GZIP_RET=1
+SCP_RET=1
+SCP_USR=openssh
+SCP_DEST_DIR=LOGS_RJ
+SCP_IP=192.168.1.41
+TIME=$(clock | awk {'print $4'} | cut -d ':' -f 1)
+CHECK=$(ps aux | grep 'log start' | grep -v grep | wc -l)
+DATE=$(date +%y%m%d)
+
+# Functions:
+
+usage() {
+    echo "Usage: $0 [start|stop]" >&2
+    exit 1
+}
+
+do_launch() {
+    if [ "$CHECK" -eq 2 ] ; then
+        set -x
+        #exec >> /var/log/LOG 2>&1
+    else
+        exit
+    fi
+}
+
+do_compression() {
+    SEARCH=`find "$LOG_DIR" -name '20*' -daystart -follow -mtime +$GZIP_RET | grep -v gz`
+    for i in $SEARCH ; do
+        gzip -f -9 $i ;
+    done
+}
+
+do_scp() {
+    SEARCH=`find "$LOG_DIR" -name '20*' -daystart -follow -mtime +$SCP_RET`
+    for i in $SEARCH ; do
+        scp $i $SCP_USR@$SCP_IP:$SCP_DEST_DIR && rm $i || break 1;
+    done
+}
+
+# Work
+if [ "$#" -ne 1 ]
+then
+    usage
+else
+    case "$@" in
+        start)
+            while true ; do
+                do_launch
+                while true ; do
+                    if [ "$TIME" -eq "$RUN_TIME" ] ; then
+                        do_scp
+                    else
+                        do_compression
+                    fi
+                    sleep $SLEEP
+                done
+            done
+            ;;
+        stop)
+            pkill -x log
+            ;;
+        *)
+        usage
+    esac
+fi
+
+exit
+
+nohup /etc/scripts/log start 0<&- 1>> /var/log/LOG 2>&1 &
+ps

@@ -1,0 +1,56 @@
+postRegisterR :: Handler ()
+postRegisterR = do email <- runInputPost $ ireq textField "email"
+                   user  <- runInputPost $ ireq textField "user"
+                   pwd   <- runInputPost $ ireq textField "pwd"
+                   cpwd  <- runInputPost $ ireq textField "cpwd"
+                   if pwd == cpwd && isValidEmail email
+                      then do
+                        tryInsert email user pwd
+                        setSession "user" user
+                        redirectUltDest SessionR
+                      else do
+                        redirect HomeR
+
+tryInsert :: Text -> Text -> Text -> Handler ()
+tryInsert email user pwd = do pwdbs <- liftIO $ hashedPwd pwd
+                              _ <- runDB $ insert $ User email user pwdbs
+                              return ()
+
+InternalServerError
+UniqueUser email username
+   Ambiguous type variable `e0' in the constraint:
+      (Exception e0) arising from a use of `catch'
+   Probable fix: add a type signature that fixes these type variable(s)
+
+tryInsert :: Text -> Text -> ByteString -> Handler Bool
+tryInsert email user pwd = HandlerT (\d -> catch (unHandlerT (runDB $ insert $ User email user pwd) d 
+                                                  >> return True)
+                                                 (\(e :: SomeException) -> return False))
+
+ScopedTypeVariables
+{-# LANGUAGE ScopedTypeVariables #-}
+import Control.Exception.Lifted (catch)
+import Control.Monad (void)
+
+postRegisterR :: Handler ()
+postRegisterR = do email <- runInputPost $ ireq textField "email"
+                   user  <- runInputPost $ ireq textField "user"
+                   pwd   <- runInputPost $ ireq textField "pwd"
+                   cpwd  <- runInputPost $ ireq textField "cpwd"
+                   if pwd == cpwd && isValidEmail email
+                      then do
+                        pwdbs <- liftIO $ hashedPwd pwd
+                        success <- tryInsert email user pwdbs
+                        case success of
+                          True -> do setSession "user" user
+                                     redirectUltDest SessionR
+                          False -> redirect HomeR
+                      else do
+                        redirect HomeR
+
+tryInsert :: Text -> Text -> ByteString -> Handler Bool
+tryInsert email user pwd = do void $ runDB $ insert $ User email user pwd
+                              return True
+                              `catch` (\(e :: SomeException) ->
+                                  do return False)
+

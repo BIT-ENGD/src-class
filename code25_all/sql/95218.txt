@@ -1,0 +1,67 @@
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER TRIGGER [dandb_raw_searchNames]
+    ON [dandb_raw]
+    FOR INSERT, UPDATE
+    AS
+
+SET NOCOUNT ON
+
+  select dunsId, name into #magic from inserted
+
+        UPDATE dandb
+            SET dandb.searchName = company_generateSearchName(dandb.name)
+            FROM (select dunsId, name from #magic) i
+            INNER JOIN dandb_raw dandb
+                on i.dunsId = dandb.dunsId
+
+
+        --Add new search matches
+        SELECT c.companyId, dandb.dunsId
+            INTO #newMatches
+            FROM dandb_raw dandb
+            INNER JOIN (select dunsId, name from #magic) a
+                on a.dunsId = dandb.dunsId
+            INNER JOIN companies c
+                ON dandb.searchName = c.searchBrand
+                --avoid url matches that are potentially wrong
+                AND (lower(dandb.url) = lower(c.url)
+                    OR dandb.url = ''
+                    OR c.url = ''
+                    OR c.url is null)
+
+
+        INSERT INTO #newMatches (companyId, dunsId)
+        SELECT c.companyId, max(dandb.dunsId) dunsId
+            FROM dandb_raw dandb
+            INNER JOIN
+                (
+                    select
+                    case when charindex('/',url) <> 0 then left(url, charindex('/',url)-1)
+                    else url
+                    end urlMatch, * from companies
+                ) c
+                ON dandb.url = c.urlMatch
+            where subsidiaryOf = 1 and isReported = 1 and dandb.url <> ''
+                and c.companyId not in (select companyId from #newMatches)
+            group by companyId
+            having count(dandb.dunsId) = 1
+
+        UPDATE cd
+            SET cd.dunsId = nm.dunsId
+            FROM companies_dandb cd
+            INNER JOIN #newMatches nm
+                ON cd.companyId = nm.companyId
+
+insert into  [dandb_raw](dunsId, name)
+    select 3442355, 'harper'
+    union all
+    select 34425355, 'har 466per'
+update [dandb_raw] set name ='grap6767e'
+
+Msg 213, Level 16, State 1, Procedure companies_contactInfo_updateTerritories, Line 20
+Insert Error: Column name or number of supplied values does not match table definition.
+

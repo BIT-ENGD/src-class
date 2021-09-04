@@ -1,0 +1,114 @@
+Generic Error in GDI+
+Bitmap.GetHbitmap()
+at System.Drawing.Bitmap.GetHbitmap(Color background)
+at System.Drawing.Bitmap.GetHbitmap()
+    at CSCI171_TermProject.G15.Tick(Single Interval) in C:\Users\Sukasa\CSCI171\Term Project\CSCI171-TermProject\G15.vb:line 45"
+
+Public Module G15
+    Private G15 As New G15Lib.G15Interface
+    Private G15BaseImage As New Bitmap("GFX\G15-BGImg.png")
+    Private G15Minimap As New Bitmap(43, 43, Imaging.PixelFormat.Format32bppArgb)
+    Private G15HeartMonitor As New Bitmap(44, 17, Imaging.PixelFormat.Format32bppArgb)
+    Private G15Heartbeat As New Bitmap("GFX\G15-HB.png")
+    Private G As Graphics = Graphics.FromImage(G15BaseImage)
+    Private G15On As Boolean = False
+
+    Public Sub Init()
+        If Not G15.G15Detected Then
+            Log.Write("Get extra content by connecting a G15")
+            Return
+        End If
+        G15On = True
+        G15.LCD.initLCD(AppName)
+        G15.LEDs.setKeyboardLight(2)
+        G15.LCD.showBitmap(G15BaseImage.GetHbitmap, 1)
+        Log.Write("Logitech G15 Features Enabled")
+    End Sub
+
+    Public Sub Tick(ByVal Interval As Single)
+        Const StepTime As Single = 0.09
+        If Not G15On Then Return
+
+        Static HeartTime As Single = StepTime
+        HeartTime -= Interval
+        If HeartTime <= 0 Then
+            HeartTime = StepTime
+            AnimateHeartbeat()
+        End If
+
+        MakeMinimap()
+
+        G.DrawImage(G15Minimap, New Rectangle(0, 0, 43, 43), New Rectangle(0, 0, 43, 43), GraphicsUnit.Pixel)
+        G.DrawImage(G15HeartMonitor, New Rectangle(116, 0, 44, 17), New Rectangle(0, 0, 44, 17), GraphicsUnit.Pixel)
+
+        Try
+            G15.LCD.showBitmap(G15BaseImage.GetHbitmap, 1)
+        Catch ex As Exception
+            G15On = False
+            G15.LCD.closeLCD()
+            Log.Write("GDI+ Error in G15 renderer")
+            Log.Write("G15 features disabled")
+        End Try
+
+    End Sub
+
+    Public Sub AnimateHeartbeat()
+        Static G As Graphics = Graphics.FromImage(G15HeartMonitor)
+        Static BMTemp As New Bitmap(44, 17, Imaging.PixelFormat.Format32bppArgb)
+        Static GTemp As Graphics = Graphics.FromImage(BMTemp)
+        Dim Columns As Integer = 13 + ((PlayerActor.HPMax - PlayerActor.iHP) / PlayerActor.HPMax) * 20
+        Static ColumnIndex As Integer = 0
+
+        GTemp.DrawImage(G15HeartMonitor, New Rectangle(0, 0, 44, 17), New Rectangle(1, 0, 44, 17), GraphicsUnit.Pixel)
+        G.DrawImage(BMTemp, New Rectangle(0, 0, 44, 17), New Rectangle(0, 0, 44, 17), GraphicsUnit.Pixel)
+
+        G.DrawLine(Pens.Black, 43, 0, 43, 17)
+
+        If ColumnIndex >= Columns Then
+            ColumnIndex = 0
+        End If
+
+        G.DrawImage(G15Heartbeat, New Rectangle(43, 4, 1, 8), New Rectangle(If(PlayerActor.iHP > 0, Math.Min(ColumnIndex, 7), 7), 0, 1, 8), GraphicsUnit.Pixel)
+
+        ColumnIndex += 1
+    End Sub
+
+    Public Sub MakeMinimap()
+        Static oPos As New XYPos(0, 0)
+        Dim iActorIndice As Int32 = 0
+
+        For Y = -21 To 21
+            For X = -21 To 21
+
+                G15Minimap.SetPixel(X + 21, Y + 21, Color.Black)
+                oPos.X = X + PlayerActor.PositionX
+                oPos.Y = Y + PlayerActor.PositionY
+                If oPos.Y < 0 OrElse oPos.X < 0 OrElse oPos.X >= iMapSize OrElse oPos.Y >= iMapSize Then
+                    G15Minimap.SetPixel(X + 21, Y + 21, Color.Black)
+                    Continue For
+                End If
+                If Main.Map.arrAccessiblityMap(oPos.AsOffset) Then
+                    G15Minimap.SetPixel(X + 21, Y + 21, Color.White)
+                Else
+                    G15Minimap.SetPixel(X + 21, Y + 21, Color.Black)
+                End If
+
+                For iActorIndice = iActorIndice To genActors.Count - 1
+                    Dim oActor As Actor = genActors(iActorIndice)
+                    If oPos.Y > oActor.PositionY Then
+                        Continue For
+                    ElseIf oPos.Y < oActor.PositionY Then
+                        Exit For
+                    ElseIf oPos.Y = oActor.PositionY AndAlso oPos.X < oActor.PositionX Then
+                        Exit For
+                    End If
+                    If oPos.X = oActor.PositionX AndAlso oPos.Y = oActor.PositionY Then
+                        G15Minimap.SetPixel(X + 21, Y + 21, Color.Black)
+                    End If
+                Next
+
+            Next
+        Next
+    End Sub
+End Module
+

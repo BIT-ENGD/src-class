@@ -1,0 +1,57 @@
+class ImmutableTypeException( Exception ): pass
+
+class Immutable( type ):
+   '''
+   Enforce some aspects of the immutability contract for new-style classes:
+    - attributes must not be created, modified or deleted after object construction
+    - immutable types must implement __eq__ and __hash__
+   '''
+
+   def __new__( meta, classname, bases, classDict ):
+      instance = type.__new__( meta, classname, bases, classDict )
+
+      # Make sure __eq__ and __hash__ have been implemented by the immutable type.
+      # In the case of __hash__ also make sure the object default implementation has been overridden. 
+      # TODO: the check for eq and hash functions could probably be done more directly and thus more efficiently
+      #       (hasattr does not seem to traverse the type hierarchy)
+      if not '__eq__' in dir( instance ):
+         raise ImmutableTypeException( 'Immutable types must implement __eq__.' )
+
+      if not '__hash__'  in dir( instance ):
+         raise ImmutableTypeException( 'Immutable types must implement __hash__.' )
+
+      if _methodFromObjectType( instance.__hash__ ):
+         raise ImmutableTypeException( 'Immutable types must override object.__hash__.' )
+
+      instance.__setattr__ = _setattr
+      instance.__delattr__ = _delattr
+
+      return instance
+
+   def __call__( self, *args, **kwargs ):
+
+      obj = type.__call__( self, *args, **kwargs )
+      obj.__immutable__ = True
+
+      return obj
+
+def _setattr( self, attr, value ):
+
+   if '__immutable__' in self.__dict__ and self.__immutable__:
+      raise AttributeError( "'%s' must not be modified because '%s' is immutable" % ( attr, self ) )
+
+   object.__setattr__( self, attr, value )
+
+def _delattr( self, attr ):
+   raise AttributeError( "'%s' must not be deleted because '%s' is immutable" % ( attr, self ) )
+
+def _methodFromObjectType( method ):
+   '''
+   Return True if the given method has been defined by object, False otherwise.
+   '''
+   try:
+      # TODO: Are we exploiting an implementation detail here? Find better solution! 
+      return isinstance( method.__objclass__, object )
+   except:
+      return False
+

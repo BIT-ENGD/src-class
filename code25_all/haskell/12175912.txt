@@ -1,0 +1,98 @@
+printf
+IO ()
+IO ()
+String
+Char
+ID Char
+State
+get >>= \s -> foo1adic (Constructor (idGet s id1) (idGet s id2))
+fooVariadic Constructor id1 id2
+> {-# LANGUAGE FlexibleContexts #-}
+> {-# LANGUAGE FlexibleInstances #-}
+> {-# LANGUAGE MultiParamTypeClasses #-}
+
+> import Control.Monad.Trans.State
+
+> data Foo = Foo0
+>          | Foo1 Char
+>          | Foo2 Bool Char
+>          | Foo3 Char Bool Char
+>    deriving Show
+
+> type Env = (String,[Bool])
+> newtype ID a = ID {unID :: Int}
+>    deriving Show
+
+> class InEnv a where envGet :: Env -> ID a -> a
+> instance InEnv Char where envGet (s,_) i = s !! unID i
+> instance InEnv Bool where envGet (_,b) i = b !! unID i
+
+> cid :: ID Char
+> cid = ID 1
+> bid :: ID Bool
+> bid = ID 2
+> env :: Env
+> env = ("xy", map (==1) [0,0,1])
+
+$ mkFoo env Foo0 :: Foo
+Foo0
+$ mkFoo env Foo3 cid bid cid :: Foo
+Foo3 'y' True 'y'
+
+:: Foo
+> mkFoo :: VarC a b => Env -> a -> b
+> mkFoo = variadic
+>
+> class VarC r1 r2 where
+>    variadic :: Env -> r1 -> r2
+>
+> -- Take the partially applied constructor, turn it into one that takes an ID
+> -- by using the given state.
+> instance (InEnv a, VarC r1 r2) => VarC (a -> r1) (ID a -> r2) where
+>    variadic e f = \aid -> variadic e (f (envGet e aid))
+>
+> instance VarC Foo Foo where
+>    variadic _ = id
+
+> type MyState = State Env
+
+variadicM :: r1 -> r2
+variadicM :: r1 -> MyState r2
+Env -> Foo
+MyState Foo
+> mkFooM :: VarMC r1 r2 => r1 -> r2
+> mkFooM = variadicM
+>
+> class VarMC r1 r2 where
+>    variadicM :: r1 -> r2
+>
+> -- I don't like this instance because it requires doing a "get" at each
+> -- stage. I'd like to do it only once, at the start of the whole computation
+> -- chain (ideally in mkFooM), but I don't know how to tie it all together.
+> instance (InEnv a, VarMC r1 r2) => VarMC (a -> r1) (ID a -> MyState r2) where
+>    variadicM f = \aid -> get >>= \e -> return$ variadicM (f (envGet e aid))
+>
+> instance VarMC Foo Foo where
+>    variadicM = id
+>
+> instance VarMC Foo (MyState Foo) where
+>    variadicM = return
+
+$ flip evalState env (variadicM Foo1 cid :: MyState Foo)
+Foo1 'y'
+$ flip evalState env (variadicM Foo2 cid bid :: MyState Foo)
+
+No instance for (VarMC (Bool -> Char -> Foo)
+                       (ID Bool -> ID Char -> MyState Foo))
+
+Foo
+Bool ->
+Char -> Foo
+ID Bool -> MyState (ID Char -> Foo)
+MyState
+ID Bool
+Bool
+idGet s
+liftA
+liftM
+(a -> b -> ... -> z -> ret) -> ID a -> ID b -> ... -> ID z -> MyState ret

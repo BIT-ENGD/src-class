@@ -1,0 +1,93 @@
+module ProgLang where
+import Data.Map as Map
+
+--  Classes
+class Runnable d where
+  run :: (Runnable a) => d -> Map String a -> Either [String] Integer
+
+--  Data
+data Name = Name String
+  deriving (Eq, Ord, Show)
+
+data Add a b = Add a b
+  deriving (Eq, Ord, Show)
+
+data Block a = Block (Map String a) a
+  deriving (Eq, Ord, Show)
+
+--  Instances
+--  Integers resolve to Right Integer
+instance Runnable Integer where
+  run v _ = Right v
+
+--  For Names
+--    look up their expression in the scope, then evaluate
+--    if name is out of scope, raise an error
+instance Runnable Name where
+  run (Name n) s = which (Map.lookup n s) where
+    which Nothing = Left ["Variable not in scope: " ++ n]
+    which (Just v) = run v s
+
+--  For Addition
+--    Run a, Run b, Add their results
+--    Raise appropriate errors where necessary
+instance (Runnable a, Show a, Runnable b, Show b) => Runnable (Add a b) where
+  run (Add a b) s = geta (run a s) where
+    geta (Left es) = Left (es ++ ["In lhs of expression: " ++ show (Add a b)])
+    geta (Right a') = getb a' (run b s)
+    getb _ (Left es) = Left (es ++ ["In rhs of expression: " ++ show (Add a b)])
+    getb a' (Right b') = Right (a' + b')
+
+--  For Blocks
+--    Run the block's expression under a new scope
+--      (merging the current with the block's scope definition)
+instance Runnable a => Runnable (Block a) where
+  run (Block s' e) s = result $ run e (Map.union s' s) where
+    result (Left es) = Left (es ++ ["In block: " ++ show (Block s' e)])
+    result (Right v) = Right v
+
+(Runnable a) => Either [String] a
+run
+Left
+Right
+--  run 5 Map.empty
+--  => Right 5
+
+--  run (Name "a") Map.empty
+--  => Left ["Variable not in scope: a"]
+
+--  run (Name "a") (fromList [("a", 6)])
+--  => Right 6
+
+--  run (Add 6 3) Map.empty
+--  => Right 9
+
+--  run (Add (Name "a") 7) (fromList [("a", 10)])
+--  => Right 17
+
+--  run (Block (fromList [("a", 10)]) (Name "a")) Map.empty
+--  => Right 10
+
+progLang.hs:45:53:
+    Could not deduce (a1 ~ a)
+    from the context (Runnable a)
+      bound by the instance declaration at progLang.hs:44:10-41
+    or from (Runnable a1)
+      bound by the type signature for
+                 run :: Runnable a1 =>
+                        Block a -> Map String a1 -> Either [String] Integer
+      at progLang.hs:(45,3)-(47,30)
+      `a1' is a rigid type variable bound by
+           the type signature for
+             run :: Runnable a1 =>
+                    Block a -> Map String a1 -> Either [String] Integer
+           at progLang.hs:45:3
+      `a' is a rigid type variable bound by
+          the instance declaration at progLang.hs:44:19
+    Expected type: Map String a1
+      Actual type: Map String a
+    In the second argument of `union', namely `s'
+    In the second argument of `run', namely `(union s' s)'
+Failed, modules loaded: none.
+
+Map.union

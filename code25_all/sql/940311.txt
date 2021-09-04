@@ -1,0 +1,85 @@
+using System.Data;
+using System.Data.SqlClient;
+
+namespace DataAdapterTransaction
+{
+    class Program
+    {
+        private static string sqlConnectString = "Data Source=(local);" +
+            "Integrated security=SSPI;Initial Catalog=AdoDotNet35Cookbook;";
+
+        private static string sqlSelect = "SELECT * FROM DataAdapterTransaction";
+
+        static void Main(string[] args)
+        {
+            object[,] o1 = {{ "1", "field 1.1", "field 2.1" },
+                          { "2", "field 1.2", "field 2.2" }};
+            InsertRecords(o1);
+
+            object[,] o2 = {{ "3", "field 1.3", "field 2.3" },
+                           { null, "field 1.4", "field 2.4" }};
+            InsertRecords(o2);
+
+            // Retrieve and output the contents of the table
+            SqlDataAdapter daRead = new SqlDataAdapter(sqlSelect, sqlConnectString);
+            DataTable dtRead = new DataTable( );
+            daRead.Fill(dtRead);
+            Console.WriteLine("---TABLE DataAdapterTransaction---");
+            foreach (DataRow row in dtRead.Rows)
+                Console.WriteLine("Id = {0}\tField1 = {1}\tField2 = {2}",
+                    row["Id"], row["Field1"], row["Field2"]);
+
+            Console.WriteLine("\nPress any key to continue.");
+            Console.ReadKey( );
+        }
+
+        static void InsertRecords(object[,] o)
+        {
+            DataTable dt = new DataTable( );
+            SqlTransaction tran;
+
+            SqlConnection connection = new SqlConnection(sqlConnectString);
+
+            // Create a DataAdapter
+            SqlDataAdapter da = new SqlDataAdapter(sqlSelect, connection);
+            // Stop updating when an error is encountered for roll back.
+            da.ContinueUpdateOnError = false;
+            // Create CommandBuilder and generate updating logic.
+            SqlCommandBuilder cb = new SqlCommandBuilder(da);
+            // Create and fill a DataTable with schema and data
+            da.Fill(dt);
+            // Open the connection
+            connection.Open( );
+            // Begin a new transaction and assign it to the DataAdapter
+            tran = connection.BeginTransaction( );
+            da.SelectCommand.Transaction = tran;
+
+            // Add two rows that will succeed update
+            for (int i = 0; i <= o.GetUpperBound(0); i++)
+            {
+                dt.Rows.Add(new object[] { o[i, 0], o[i, 1], o[i, 2] });
+                Console.WriteLine(
+                    "=> Row with [Id = {0}] added to DataTable.", o[i, 0]);
+            }
+
+            Console.WriteLine("=> Updating data source using DataAdapter.");
+            try
+            {
+                da.Update(dt);
+                tran.Commit( );
+
+                Console.WriteLine("\nTRANSACTION COMMIT.\n");
+            }
+            catch (Exception ex)
+            {
+                tran.Rollback( );
+                Console.WriteLine("\nTRANSACTION ROLLBACK.\n{0}\n", ex.Message);
+            }
+            finally
+            {
+                connection.Close( );
+            }
+        }
+    }
+}
+

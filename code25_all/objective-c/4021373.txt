@@ -1,0 +1,171 @@
+NSURL *fileUrl = [NSURL fileURLWithPath:sourceFilePath];
+OSStatus error = noErr;
+
+//
+// Open the file
+//
+error = ExtAudioFileOpenURL((CFURLRef)fileUrl, &sourceFile);
+
+if(error){
+    NSLog(@"AudioClip: Error opening file at %@.  Error code %d", sourceFilePath, error);
+    return NO;
+}
+
+//
+// Store the number of frames in the file
+//
+SInt64 numberOfFrames = 0;
+UInt32 propSize = sizeof(SInt64);
+error = ExtAudioFileGetProperty(sourceFile, kExtAudioFileProperty_FileLengthFrames, &propSize, &numberOfFrames);
+
+if(error){
+    NSLog(@"AudioClip: Error retreiving number of frames: %d", error);
+    [self closeAudioFile];
+    return NO;
+}
+
+frameCount = numberOfFrames;
+
+//
+// Get the source file format info
+//
+propSize = sizeof(sourceFileFormat);
+memset(&sourceFileFormat, 0, sizeof(AudioStreamBasicDescription));
+
+error = ExtAudioFileGetProperty(sourceFile, kExtAudioFileProperty_FileDataFormat, &propSize, &sourceFileFormat);
+
+if(error){
+    NSLog(@"AudioClip: Error getting source audio file properties: %d", error);
+    [self closeAudioFile];
+    return NO;
+}
+
+//
+// Set the format for our read.  We read in PCM, clip, then write out mp3
+//
+memset(&readFileFormat, 0, sizeof(AudioStreamBasicDescription));
+
+readFileFormat.mFormatID            = kAudioFormatLinearPCM;
+readFileFormat.mSampleRate          = 44100;
+readFileFormat.mFormatFlags         = kAudioFormatFlagsCanonical | kAudioFormatFlagIsNonInterleaved;
+readFileFormat.mChannelsPerFrame    = 1;
+readFileFormat.mBitsPerChannel      = 8 * sizeof(AudioSampleType);
+readFileFormat.mFramesPerPacket     = 1;
+readFileFormat.mBytesPerFrame       = sizeof(AudioSampleType);
+readFileFormat.mBytesPerPacket      = sizeof(AudioSampleType);
+readFileFormat.mReserved            = 0;
+
+propSize = sizeof(readFileFormat);
+error = ExtAudioFileSetProperty(sourceFile, kExtAudioFileProperty_ClientDataFormat, propSize, &readFileFormat);
+
+if(error){
+    NSLog(@"AudioClip: Error setting read format: %d", error);
+    [self closeAudioFile];
+    return NO;
+}
+
+//
+// Set the format for the output file that we will write
+//
+propSize = sizeof(targetFileFormat);
+memset(&targetFileFormat, 0, sizeof(AudioStreamBasicDescription));
+
+targetFileFormat.mFormatID          = kAudioFormatMPEGLayer3;
+targetFileFormat.mChannelsPerFrame  = 1;
+
+//
+// Let the API fill in the rest
+//
+error = AudioFormatGetProperty(kAudioFormatProperty_FormatInfo, 0, NULL, &propSize, &targetFileFormat);
+
+if(error){
+    NSLog(@"AudioClip: Error getting target file format info: %d", error);
+    [self closeAudioFile];
+    return NO;
+}
+
+//
+// Create our target file
+//
+NSURL *writeURL = [NSURL fileURLWithPath:targetFilePath];
+
+error = ExtAudioFileCreateWithURL( (CFURLRef)writeURL, kAudioFileMP3Type, 
+                                  &targetFileFormat, NULL,
+                                  kAudioFileFlags_EraseFile, 
+                                  &targetFile);
+
+if(error){
+    NSLog(@"AudioClip: Error opening target file for writing: %d", error);
+    [self closeAudioFile];
+    return NO;
+}
+
+
+//
+// Set the client format for the output file the same as our client format for the input file
+//
+propSize = sizeof(readFileFormat);
+error = ExtAudioFileSetProperty(targetFile, kExtAudioFileProperty_ClientDataFormat, propSize, &readFileFormat);
+
+if(error){
+    NSLog(@"AudioClip: Error, cannot set client format for output file: %d", error);
+    [self closeAudioFile];
+    return NO;
+}
+
+NSInteger framesToRead = finalFrameNumber - startFrameNumber;
+
+while(framesToRead > 0){
+    //
+    // Read frames into our data
+    //
+    short *data = (short *)malloc(framesToRead * sizeof(short));
+    if(!data){
+        NSLog(@"AudioPlayer: Cannot init memory for read buffer");
+        [self notifyDelegateFailure];
+        [self closeAudioFile];
+        return;
+    }
+
+    AudioBufferList bufferList;
+    OSStatus error = noErr;
+    UInt32 loadedPackets = framesToRead;
+
+    bufferList.mNumberBuffers = 1;
+    bufferList.mBuffers[0].mNumberChannels = 1;
+    bufferList.mBuffers[0].mData = data;
+    bufferList.mBuffers[0].mDataByteSize = (framesToRead * sizeof(short));
+
+    NSLog(@"AudioClip: Before read nNumberBuffers = %d, mNumberChannels = %d, mData = %p, mDataByteSize = %d",
+          bufferList.mNumberBuffers, bufferList.mBuffers[0].mNumberChannels, bufferList.mBuffers[0].mData,
+          bufferList.mBuffers[0].mDataByteSize);
+
+    error = ExtAudioFileRead(sourceFile, &loadedPackets, &bufferList);
+
+    if(error){
+        NSLog(@"AudioClip: Error %d from ExtAudioFileRead", error);
+        [self notifyDelegateFailure];
+        [self closeAudioFile];
+        return;
+    }
+
+    //
+    // Now write the data to our file which will convert it into a mp3 file
+    //
+
+    NSLog(@"AudioClip: After read nNumberBuffers = %d, mNumberChannels = %d, mData = %p, mDataByteSize = %d",
+          bufferList.mNumberBuffers, bufferList.mBuffers[0].mNumberChannels, bufferList.mBuffers[0].mData,
+          bufferList.mBuffers[0].mDataByteSize);
+
+    error = ExtAudioFileWrite(targetFile, loadedPackets, &bufferList);
+
+    if(error){
+        NSLog(@"AudioClip: Error %d from ExtAudioFileWrite", error);
+        [self notifyDelegateFailure];
+        [self closeAudioFile];
+        return;
+    }
+
+    framesToRead -= loadedPackets;
+}
+

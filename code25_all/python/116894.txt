@@ -1,0 +1,76 @@
+class Record(object):
+    pass
+
+def calculate_pnl(records, node_prices):
+    for record in records:
+        try:
+            # fill RT and DA prices from the hash retrieved above
+            if hasattr(record, 'sink') and record.sink:
+                record.da = node_prices[record.sink][0] - node_prices[record.id][0]
+                record.rt = node_prices[record.sink][1] - node_prices[record.id][1]
+            else:
+                record.da = node_prices[record.id][0]
+                record.rt = node_prices[record.id][1]
+
+            # calculate dependent values: RT-DA and PNL
+            record.rtda = record.rt - record.da
+            record.pnl = record.rtda * record.mw
+        except:
+            print sys.exc_info()
+
+def map_rows(cursor, mappings, callback=None):
+    records = []
+    for row in cursor:
+        record = Record()
+        for field, attr in mappings.iteritems():
+            setattr(record, attr, getattr(row, field, None))
+        if not callback or callback(record):
+            records.append(record)
+
+    return records
+
+def get_positions(cursor):
+    # get the latest position time
+    cursor.execute("SELECT latest data time")
+    time = cursor.fetchone().time
+    hour = eelib.util.get_hour_ending(time)
+
+    # fetch the current positions
+    cursor.execute("SELECT stuff FROM atable", (hour))
+
+    # read the rows
+    nodes = {}
+    def record_callback(record):
+        if abs(record.mw) > 0:
+            if record.id: nodes[record.id] = None
+            return True
+        else:
+            return False
+    records = util.map_rows(cursor, {
+        'id': 'id',
+        'name': 'name',
+        'mw': 'mw'
+    }, record_callback)
+
+    # query prices
+    for node_id in nodes:
+        # RT price
+        row = cursor.execute("SELECT price WHERE ? ? ?", (node_id, time, time)).fetchone()
+        rt5 = row.lmp if row else None
+
+        # DA price
+        row = cursor.execute("SELECT price WHERE ? ? ?", (node_id, hour, hour)).fetchone()
+        da = row.da_lmp if row else None
+
+        # update the hash value
+        nodes[node_id] = (da, rt5)
+
+    # calculate the position pricing
+    calculate_pnl(records, nodes)
+
+    # sort
+    records.sort(key=lambda r: r.name)
+
+    # return the records
+    return records
+

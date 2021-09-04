@@ -1,0 +1,70 @@
+/*
+     To simplify use in double-linked lists, each bin header acts
+    as a malloc_chunk. This avoids special-casing for headers.
+    But to conserve space and improve locality, we allocate
+    only the fd/bk pointers of bins, and then use repositioning tricks
+    to treat these as the fields of a malloc_chunk*.
+*/
+
+typedef struct malloc_chunk* mbinptr;
+
+/* addressing -- note that bin_at(0) does not exist */
+#define bin_at(m, i) \
+  (mbinptr) (((char *) &((m)->bins[((i) - 1) * 2]))               \
+         - offsetof (struct malloc_chunk, fd))
+
+struct malloc_chunk {
+
+  INTERNAL_SIZE_T      prev_size;  /* Size of previous chunk (if free).  */
+  INTERNAL_SIZE_T      size;       /* Size in bytes, including overhead. */
+
+  struct malloc_chunk* fd;         /* double links -- used only if free. */
+  struct malloc_chunk* bk;
+
+  /* Only used for large blocks: pointer to next larger size.  */
+  struct malloc_chunk* fd_nextsize; /* double links -- used only if free. */
+  struct malloc_chunk* bk_nextsize;
+};
+
+typedef struct malloc_chunk* mbinptr;
+
+struct malloc_state {
+  /* Serialize access.  */
+  mutex_t mutex;
+
+  /* Flags (formerly in max_fast).  */
+  int flags;
+
+#if THREAD_STATS
+  /* Statistics for locking.  Only used if THREAD_STATS is defined.  */
+  long stat_lock_direct, stat_lock_loop, stat_lock_wait;
+#endif
+
+  /* Fastbins */
+  mfastbinptr      fastbinsY[NFASTBINS];
+
+  /* Base of the topmost chunk -- not otherwise kept in a bin */
+  mchunkptr        top;
+
+  /* The remainder from the most recent split of a small request */
+  mchunkptr        last_remainder;
+
+  /* Normal bins packed as described above */
+  mchunkptr        bins[NBINS * 2 - 2];
+
+  /* Bitmap of bins */
+  unsigned int     binmap[BINMAPSIZE];
+
+  /* Linked list */
+  struct malloc_state *next;
+
+#ifdef PER_THREAD
+  /* Linked list for free arenas.  */
+  struct malloc_state *next_free;
+#endif
+
+  /* Memory allocated from the system in this arena.  */
+  INTERNAL_SIZE_T system_mem;
+  INTERNAL_SIZE_T max_system_mem;
+};
+

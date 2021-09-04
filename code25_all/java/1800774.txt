@@ -1,0 +1,51 @@
+/**
+ * This subclass implements the processing log of the Master JMS Server to
+ * propagate the message to the Server (Slave) JMS queue.
+ *
+ * @author Marcos Paulino Roriz Junior
+ *
+ */
+public class ReceiveRequests implements MessageListener {
+    public void onMessage(Message msg) {
+        try {
+            ObjectMessage objMsg = (ObjectMessage) msg;
+
+            // Saves the destination where the master should answer
+            Destination originReplyDestination = objMsg.getJMSReplyTo();
+
+            // Creates session and a sender to the slaves
+            BankQueue slaveQueue = getSlaveQueue();
+            QueueSession session = slaveQueue.getQueueConnection()
+                    .createQueueSession(false, Session.AUTO_ACKNOWLEDGE);
+            QueueSender sender = session
+                    .createSender(slaveQueue.getQueue());
+
+            // Creates a tempQueue for the slave tunnel the message to this
+            // master and also create a masterConsumer for this tempQueue.
+            TemporaryQueue tempDest = session.createTemporaryQueue();
+            MessageConsumer masterConsumer = session
+                    .createConsumer(tempDest);
+
+            // Setting JMS Reply Destination to our tempQueue
+            msg.setJMSReplyTo(tempDest);
+
+            // Sending and waiting for answer
+            sender.send(msg);
+            Message msgReturned = masterConsumer.receive(getTimeout());
+
+            // Let's check if the timeout expired
+            while (msgReturned == null) {
+                sender.send(msg);
+                msgReturned = masterConsumer.receive(getTimeout());
+            }
+
+            // Sends answer to the client
+            MessageProducer producerToClient = session
+                    .createProducer(originReplyDestination);
+            producerToClient.send(originReplyDestination, msgReturned);
+        } catch (JMSException e) {
+            logger.error("NO REPLY DESTINATION PROVIDED", e);
+        }
+    }
+}
+

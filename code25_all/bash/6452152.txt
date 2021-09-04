@@ -1,0 +1,186 @@
+[ FAILED ]
+#!/bin/bash
+# chkconfig: 345 85 60
+# description: .
+# processname: xxx
+# pidfile: /var/run/xxx.pid
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+RETVAL=0
+
+PID_PATH=/tmp/
+PID_PREFIX=xxx
+LOCK_PATH=/tmp/
+
+PIDFILE_D=${PID_PATH}${PID_PREFIX}_dispatcher.pid
+PIDFILE_L=${PID_PATH}${PID_PREFIX}_launcher.pid
+PIDFILE_J=${PID_PATH}${PID_PREFIX}_jobselector.pid
+LOCK=${LOCK_PATH}${PID_PREFIX}
+
+BASEPATH=`dirname $0`
+echo $BASEPATH | grep -q "^/" && BASEPATH=`dirname $BASEPATH` || BASEPATH=$PWD/`dirname $BASEPATH`
+
+# -- snip ---
+
+stop() {
+        echo -n $"Shutting down Dispatcher: "
+        killproc -p $PIDFILE_D
+        RETVAL=$?
+        echo
+        [ $RETVAL -eq 0 ] && rm -f $PIDFILE_D
+
+        echo -n $"Shutting down Launcher: "
+
+        # launcher self terminates once it sees the dispatcher is not running
+        # grace period of 2 seconds before explicitly killing it
+        if [ -e "$PIDFILE_L" ]; then
+            local i pid
+            read pid < "$PIDFILE_L"
+            for i in 1 2; do
+                if checkpid $pid 2>&1; then
+                    sleep 1
+                fi
+            done
+
+            # if launcher still active after grace period, kill it
+            if checkpid $pid 2>&1; then
+                killproc -p $PIDFILE_L
+                RETVAL=$?
+            else
+                success $"$base shutdown"
+            fi
+        else
+            success $"$base shutdown"
+        fi
+        [ $RETVAL -eq 0 ] && rm -f $PIDFILE_L
+
+        echo -n $"Shutting down Job Selector: "
+        killproc -p $PIDFILE_J
+        RETVAL=$?
+        echo
+        [ $RETVAL -eq 0 ] && rm -f $PIDFILE_J
+
+        [ $RETVAL -eq 0 ] && rm -f $LOCK
+        return $RETVAL
+}
+
+$ sudo ./bin/program stop
+Shutting down Dispatcher:                             [  OK  ]
+Shutting down Job Selector:                           [  OK  ]
+
+killproc() {
+        local RC killlevel= base pid pid_file= delay
+
+        RC=0; delay=3
+        # Test syntax.
+        if [ "$#" -eq 0 ]; then
+                echo $"Usage: killproc [-p pidfile] [ -d delay] {program} [-signal]"
+                return 1
+        fi
+        if [ "$1" = "-p" ]; then
+                pid_file=$2
+                shift 2
+        fi
+        if [ "$1" = "-d" ]; then
+                delay=$2
+                shift 2
+        fi
+
+        # check for second arg to be kill level
+        [ -n "${2:-}" ] && killlevel=$2
+
+        # Save basename.
+        base=${1##*/}
+
+        # Find pid.
+        __pids_var_run "$1" "$pid_file"
+        if [ -z "$pid_file" -a -z "$pid" ]; then
+                pid="$(__pids_pidof "$1")"
+        fi
+
+        # Kill it.
+        if [ -n "$pid" ] ; then
+                [ "$BOOTUP" = "verbose" -a -z "${LSB:-}" ] && echo -n "$base "
+                if [ -z "$killlevel" ] ; then
+                       if checkpid $pid 2>&1; then
+                           # TERM first, then KILL if not dead
+                           kill -TERM $pid >/dev/null 2>&1
+                           usleep 100000
+                           if checkpid $pid && sleep 1 &&
+                              checkpid $pid && sleep $delay &&
+                              checkpid $pid ; then
+                                kill -KILL $pid >/dev/null 2>&1
+                                usleep 100000
+                           fi
+                        fi
+                        checkpid $pid
+                        RC=$?
+                        [ "$RC" -eq 0 ] && failure $"$base shutdown" || success $"$base shutdown"
+                        RC=$((! $RC))
+                # use specified level only
+                else
+                        if checkpid $pid; then
+                                kill $killlevel $pid >/dev/null 2>&1
+                                RC=$?
+                                [ "$RC" -eq 0 ] && success $"$base $killlevel" || failure $"$base $killlevel"
+                        elif [ -n "${LSB:-}" ]; then
+                                RC=7 # Program is not running
+                        fi
+                fi
+        else
+                if [ -n "${LSB:-}" -a -n "$killlevel" ]; then
+                        RC=7 # Program is not running
+                else
+                        failure $"$base shutdown"
+                        RC=0
+                fi
+        fi
+
+        # Remove pid file if any.
+        if [ -z "$killlevel" ]; then
+            rm -f "${pid_file:-/var/run/$base.pid}"
+        fi
+        return $RC
+}
+
+# Check if $pid (could be plural) are running
+checkpid() {
+        local i
+
+        for i in $* ; do
+                [ -d "/proc/$i" ] && return 0
+        done
+        return 1
+}
+
+# Log that something succeeded
+success() {
+  #if [ -z "${IN_INITLOG:-}" ]; then
+  #   initlog $INITLOG_ARGS -n $0 -s "$1" -e 1
+  #fi
+  [ "$BOOTUP" != "verbose" -a -z "${LSB:-}" ] && echo_success
+  return 0
+}
+
+echo_success() {
+  [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+  echo -n "["
+  [ "$BOOTUP" = "color" ] && $SETCOLOR_SUCCESS
+  echo -n $"  OK  "
+  [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+  echo -n "]"
+  echo -ne "\r"
+  return 0
+}
+
+echo -n $"Shutting down Launcher: "
+
+echo "RETVAL=$RETVAL"
+[ $RETVAL -eq 0 ] && rm -f $PIDFILE_L
+
+Shutting down Dispatcher:                             [FAILED]
+RETVAL=0 down Launcher:                               [  OK  ]
+Shutting down Job Selector:                           [FAILED]
+

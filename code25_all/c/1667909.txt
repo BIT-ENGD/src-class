@@ -1,0 +1,103 @@
+int
+initialize_paths(writer_t *w, unsigned max_paths)
+{
+int err = 0;
+reader_t *r = &(w->unpublished);
+
+close_table(r,PATH_TABLE);
+
+w->max_paths = max_paths;
+
+err = open_table(r, PATH_TABLE, O_RDWR | O_CREAT, max_paths, 0);
+
+return err;
+}
+
+static void
+close_table(reader_t *r, int table)
+{
+    if (r->path_table && r->path_table != MAP_FAILED) {
+       munmap(r->path_table,r->path_table->size);
+       r->path_table=NULL;
+    }
+    if (r->path_fd>0) { close(r->path_fd); r->path_fd=0; }
+}
+
+
+static int
+open_table(op_ppath_reader_t *r, int table, int rw, unsigned c, unsigned c2)
+{
+// Code omitted for clarity
+if (rw & O_CREAT) {
+    prot = PROT_READ | PROT_WRITE;
+} else {
+    // Note that this overrides the sizes set above.
+    // We will get the real sizes from the header.
+    prot = PROT_READ;
+    size1 = sizeof(op_ppath_header_t);
+    size2 = 0;
+}
+
+fd = shm_open(name, rw, 0644);
+if (fd < 0) {
+    _DBG_ERROR("Failed to open %s\n",name);
+    goto error;
+}
+
+if (rw & O_CREAT) {
+    /* Create the file at the specified size. */
+    if (ftruncate(fd, size1 + size2)) {
+        _DBG_ERROR("Unable to size %s\n",name);
+        goto error;
+    }
+}
+
+h = (op_ppath_header_t*)mmap(0, size1 + size2, prot, MAP_SHARED, fd, 0);
+if (h == MAP_FAILED) {
+    _DBG_ERROR("Unable to map %s\n",name);
+    goto error;
+}
+
+if (rw & O_CREAT) {
+    /*
+     * clear the table & set the maximum lengths.
+     */
+    memset((char*)h,0,size1+size2);  -- SIGBUS OCCURS HERE
+    h->s1 = size1;
+    h->s2 = size2;
+} else {
+// more code omitted for clarity.
+}
+
+NOTICE: Pass 783: Inserting records.
+NOTICE: Creating the path table.
+TRC: initialize_paths[
+TRC: close_table[
+TRC: close_table]
+TRC: open_table[
+DBG: h=0x0x2a956b2000, size1=2621536, size2=0
+
+NOTICE: Pass 782: Inserting records.
+NOTICE: Creating the path table.
+TRC: initialize_paths[
+TRC: close_table[
+TRC: close_table]
+TRC: open_ppath_table[
+DBG: h=0x0x2a956b2000, size1=2621536, size2=0
+TRC: open_ppath_table]
+TRC: op_ppath_initialize_paths]
+
+Program received signal SIGBUS, Bus error.
+[Switching to Thread 182895447776 (LWP 5328)]
+0x00000034a9371d20 in memset () from /lib64/tls/libc.so.6
+(gdb) where
+#0  0x00000034a9371d20 in memset () from /lib64/tls/libc.so.6
+#1  0x0000002a955949d0 in open_table (r=0x7fbffff188, table=1, rw=66,
+c=32768, c2=0) at ofedplus_path_private.c:294
+#2  0x0000002a95595280 in initialize_paths (w=0x7fbffff130,
+    max_paths=32768) at path_private.c:567
+#3  0x0000000000402050 in server (fname=0x7fbffff270 "gidtable", n=10000)
+    at opp_cache_test.c:202
+#4  0x0000000000403086 in main (argc=6, argv=0x7fbffff568)
+    at opp_cache_test.c:542
+

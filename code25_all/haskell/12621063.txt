@@ -1,0 +1,65 @@
+{-# LANGUAGE ExistentialQuantification, DeriveGeneric #-}
+
+import qualified Data.Serialize as DS (Get, Serialize, get, put)
+import Data.Serialize.Put (PutM)
+import Data.List (find)
+import Data.Maybe (fromJust, isNothing)
+import GHC.Generics ( Generic )
+
+class Agent a where
+  agentId :: a -> String
+  speciesId :: a -> String
+  -- other functions to be added
+
+-- This wrapper allows me to use Agents without knowing their type.
+data AgentBox = forall a. (DS.Serialize a, Agent a) => AgentBox a
+
+-- Instructions for deserialising an agent
+data ReaderSpec = ReaderSpec { tag :: String, getter :: DS.Get AgentBox }
+
+-- Serialise an AgentBox by putting the species tag, then the agent.
+putAgentBox :: AgentBox -> PutM ()
+putAgentBox (AgentBox a) = do
+  DS.put $ speciesId a
+  DS.put a
+
+-- Deserialise an agent by getting the species tag, looking up the getter
+-- for that species of agent, and then getting the agent itself.
+getAgentBox :: [ReaderSpec] -> DS.Get (Either String AgentBox)
+getAgentBox xs = do
+  s <- DS.get :: DS.Get String
+  let a = find (\x -> tag x == s) xs
+  if isNothing a
+     then return $ Left $ "No getter found for " ++ s
+     else do
+        let d = (getter . fromJust) a
+        t <- d
+        return $ Right t
+
+--
+-- Everything above this line is provided by the framework.
+-- The user of the framework would create their own instances of the class
+-- Agent, by writing something like this:
+--
+
+data Rock = Rock String Int deriving (Show, Generic)
+
+rockTag :: String
+rockTag = "Rock"
+
+readerSpec :: ReaderSpec
+readerSpec = ReaderSpec rockTag getRock
+
+instance Agent Rock where
+  agentId (Rock name _) = name
+  speciesId _ = rockTag
+  -- other functions to be added
+
+instance DS.Serialize Rock
+
+-- | Get the agent and wrap it in a box.
+getRock :: DS.Get AgentBox
+getRock = do
+  t <- DS.get :: DS.Get Rock
+  return $ AgentBox t
+

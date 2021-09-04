@@ -1,0 +1,179 @@
+Imports System.Runtime.Remoting
+Imports System.Runtime.Remoting.Channels
+' Remeber to add reference to System.Runtime.Remoting DLL !
+
+Public Class CrossAppDomainSingleton(Of T As {New})
+    Inherits MarshalByRefObject
+
+    Private Const _portnumber As Integer = 9999 ' adjust to suit taste
+    Private Shared _instance As T = Nothing
+    Private Shared _lock As Object = New Object
+    Private Shared _id As Guid = Nothing
+    Private Shared _myapp As String = System.Reflection.Assembly.GetExecutingAssembly().GetName.Name
+    Private Shared _myname As String = GetType(T).ToString
+    Private Shared _myfullname As String = _myapp & "/" & _myname
+
+    Protected Sub New()
+        _id = Guid.NewGuid
+        Console.WriteLine("New " & ID & " in " & AppDomain.CurrentDomain.FriendlyName)
+    End Sub
+    Public Function GetInstance() As T
+        If _instance Is Nothing Then
+            Console.WriteLine("GetInstance in " & AppDomain.CurrentDomain.FriendlyName)
+            _instance = New T
+        End If
+        Return _instance
+    End Function
+    Public ReadOnly Property ID As String
+        Get
+            Return _id.ToString
+        End Get
+    End Property
+    Public Overrides Function InitializeLifetimeService() As Object
+        Console.WriteLine("InitializeLifetimeService=infinite")
+        Return Nothing
+    End Function
+    Public Shared Function Instance() As T
+
+        Dim currentdomain As AppDomain
+        Dim uri As String
+        Dim registered As Boolean = False
+        Dim remotet As Object
+        Dim tcpchannel As Tcp.TcpChannel
+        Dim tcpprops As System.Collections.IDictionary
+        Dim sw As Stopwatch = New Stopwatch
+
+        Try
+            sw.Start()
+            SyncLock _lock
+                Console.WriteLine("Instance in " & AppDomain.CurrentDomain.FriendlyName)
+                If _instance Is Nothing Then
+                    currentdomain = AppDomain.CurrentDomain
+                    _instance = currentdomain.GetData(_myfullname)
+
+                    If _instance Is Nothing Then
+
+                        ' Build connection string "tcp://localhost:[_portnumber]/[myapp]/[myname]".
+                        uri = String.Format("tcp://localhost:{0}/{1}/{2}",
+                                            _portnumber.ToString,
+                                            _myapp,
+                                            _myname)
+                        registered = False
+                        Try
+                            remotet = RemotingServices.Connect(GetType(T), uri)
+                            _instance = remotet.GetInstance()
+                            currentdomain.SetData(_myfullname, _instance)
+                            registered = True
+                        Catch ex As Exception
+                        End Try
+
+                        If registered Then
+                            Console.WriteLine("... instanced with remoting")
+                        Else
+                            Try
+                                Dim ichannel As IChannel = ChannelServices.GetChannel(_myfullname)
+                                ChannelServices.UnregisterChannel(ichannel)
+                            Catch ex As Exception
+                            End Try
+                            tcpprops = New System.Collections.Hashtable
+                            tcpprops("port") = _portnumber.ToString
+                            tcpprops("name") = _myfullname
+                            tcpchannel = New Tcp.TcpChannel(tcpprops, Nothing, Nothing)
+                            ChannelServices.RegisterChannel(tcpchannel, False)
+                            RemotingConfiguration.ApplicationName = _myapp
+                            RemotingConfiguration.RegisterWellKnownServiceType(GetType(T),
+                                                                               _myname,
+                                                                               WellKnownObjectMode.Singleton)
+                            remotet = RemotingServices.Connect(GetType(T), uri)
+                            _instance = remotet.GetInstance()
+                            Console.WriteLine("... singleton instance created")
+                        End If
+                    Else
+                        Console.WriteLine("... instanced from AppDomain")
+                    End If
+                Else
+                    Console.WriteLine("... instanced statically")
+                End If
+            End SyncLock
+        Catch ex As Exception
+            Console.WriteLine(String.Format("Error in {0}.Instance: {1}", _myname, ex.Message))
+        End Try
+
+        Console.WriteLine("instance time=" & CLng(1000000 * sw.ElapsedTicks / Stopwatch.Frequency) & " µS")
+        sw.Stop()
+
+        Return _instance
+
+    End Function
+
+End Class
+
+Module Main
+    Public Class Common
+        Inherits CrossAppDomainSingleton(Of Common)
+        ' real application data goes here
+    End Class
+    Sub Main()
+        Dim common As Common
+        common = common.Instance
+        Dim defaultdomain As AppDomain = AppDomain.CurrentDomain
+        defaultdomain.DoCallBack(AddressOf ShowSingleton)
+
+        Dim domain1 As AppDomain = AppDomain.CreateDomain("One")
+        domain1.DoCallBack(AddressOf ShowSingleton)
+
+        Dim domain2 As AppDomain = AppDomain.CreateDomain("Two")
+        domain2.DoCallBack(AddressOf ShowSingleton)
+
+        defaultdomain.DoCallBack(AddressOf ShowSingleton)
+        domain1.DoCallBack(AddressOf ShowSingleton)
+        domain2.DoCallBack(AddressOf ShowSingleton)
+
+        Dim junk As Object = Console.ReadKey
+    End Sub
+    Private Sub ShowSingleton()
+        Console.WriteLine("ShowSingleton in " & AppDomain.CurrentDomain.FriendlyName)
+        Dim common As Common = common.Instance
+        Console.WriteLine("guid is " & common.ID)
+    End Sub
+End Module
+
+Instance in CrossAppDomainSingletonDemo.vshost.exe
+New 497696b6-71c7-4001-b232-39b379034385 in CrossAppDomainSingletonDemo.vshost.exe
+InitializeLifetimeService=infinite
+GetInstance in CrossAppDomainSingletonDemo.vshost.exe
+New 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4 in CrossAppDomainSingletonDemo.vshost.exe
+InitializeLifetimeService=infinite
+... singleton instance created
+instance time=2593865 µS ' AAAARRRRGGGGHHHHH !!!!!!!!!!!!!!
+ShowSingleton in CrossAppDomainSingletonDemo.vshost.exe
+Instance in CrossAppDomainSingletonDemo.vshost.exe
+... instanced statically
+instance time=38 µS
+guid is 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4
+ShowSingleton in One
+Instance in One
+... instanced with remoting
+instance time=440087 µS
+guid is 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4
+ShowSingleton in Two
+Instance in Two
+... instanced with remoting
+instance time=438821 µS
+guid is 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4
+ShowSingleton in CrossAppDomainSingletonDemo.vshost.exe
+Instance in CrossAppDomainSingletonDemo.vshost.exe
+... instanced statically
+instance time=111 µS
+guid is 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4
+ShowSingleton in One
+Instance in One
+... instanced statically
+instance time=106 µS
+guid is 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4
+ShowSingleton in Two
+Instance in Two
+... instanced statically
+instance time=105 µS
+guid is 3a3a7a9c-a4f7-46d4-9b16-35fdbfbdc6c4
+

@@ -1,0 +1,55 @@
+class Project < ActiveRecord::Base
+  has_many :notes, :dependent => :destroy
+  has_many :milestones, :dependent => :destroy
+
+  accepts_nested_attributes_for :milestones, :allow_destroy => true
+  accepts_nested_attributes_for :notes, :allow_destroy => true, :reject_if => proc { |attributes| attributes['content'].blank? }
+end
+
+class Milestone < ActiveRecord::Base
+  belongs_to :project
+  has_many :notes, :dependent => :destroy
+
+  accepts_nested_attributes_for :notes, :allow_destroy => true, :allow_destroy => true, :reject_if => proc { |attributes| attributes['content'].blank? }
+end
+
+class Note < ActiveRecord::Base
+  belongs_to :milestone
+  belongs_to :project
+
+  scope :newest, lambda { |*args| order('created_at DESC').limit(*args.first || 3) }
+end
+
+def add_fields_for_association(f, association, partial)
+  new_object = f.object.class.reflect_on_association(association).klass.new
+  fields = f.fields_for(association, new_object, :child_index => "new_#{association}") do |builder|
+    render(partial, :f => builder)
+  end
+end
+
+function addFields(link, association, content, func) {
+    var newID = new Date().getTime();
+    var regexp = new RegExp("new_" + association, "g");
+    var form = content.replace(regexp, newID);
+    var link = $(link).parent().next().before(form).prev();
+    if (func) {
+        func.call();
+    }
+    return link;
+}
+
+def create
+  respond_with(@note = @owner.notes.create(params[:note])) do |format|
+    format.js   { render :json => @owner.notes.newest(3).all.to_json }
+    format.html { redirect_to((@milestone ? [@project, @milestone, @note] : [@project, @note]), :notice => 'Note was successfully created.') }
+  end
+end
+
+def load_milestone
+  @milestone = @project.milestones.find(params[:milestone_id]) if params[:milestone_id]
+end
+
+def determine_owner
+  @owner = load_milestone || @project
+end
+

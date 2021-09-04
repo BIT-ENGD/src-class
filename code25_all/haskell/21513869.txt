@@ -1,0 +1,114 @@
+readStats
+-- main.hs
+import Record
+import Output
+import Stats
+
+import System.Environment    
+import Data.List
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C8
+
+readStats :: String -> IO Stats
+readStats p = do
+    f <- B.readFile p
+    return $ foldl' 
+               (\t l -> applyEither t (parseLogLine l)) 
+               emptyStats
+               (C8.lines f)
+    where applyEither t (Right rec) = applyRecord t rec 
+          applyEither t (Left err)  = applyError t err 
+
+main :: IO ()
+main = do
+    args <- getArgs
+    stats <- readStats $ head args 
+    putStrLn $ page stats 
+
+B.readFile
+f
+[Char]
+f
+parseLogLine
+data Trie a = Node Char (Trie a) (Trie a) (Trie a) (Maybe a)
+              | Empty deriving (Show, Eq) 
+
+sanify :: Trie a -> Trie a
+sanify (Node _ Empty Empty Empty Nothing) = Empty
+sanify (Node _ Empty lo    Empty Nothing) = lo
+sanify (Node _ Empty Empty hi    Nothing) = hi
+sanify t = t 
+
+update :: Trie a -> String -> (Maybe a -> Maybe a) -> Trie a
+update _ [] _ = error "Can not insert an empty string to a Trie"
+update Empty (x:[]) f = sanify $ Node x Empty Empty Empty (f Nothing) 
+update Empty (x:xs) f = sanify $ Node x (update Empty xs f) Empty Empty Nothing
+update (Node c eq lo hi val) xss@(x:xs) f = 
+    case x `compare` c of
+        LT -> sanify $ Node c eq (update lo xss f) hi val 
+        GT -> sanify $ Node c eq lo (update hi xss f) val 
+        EQ -> case xs of
+                [] -> sanify $ Node c eq lo hi (f val)
+                _  -> sanify $ Node c (update eq xs f) lo hi val 
+
+import Network.URL
+
+data Record = Record {
+    ip :: IP, 
+    date :: UTCTime,
+    method :: Method,
+    path :: URL,
+    referer :: Maybe URL,
+    status :: Integer,
+    userAgent :: String
+} deriving (Show, Eq) 
+
+parseRecord :: Parser Record
+parseRecord = do
+    ip <- parseIP
+    P8.skipWhile (/= '[')
+    date <- parseDate
+    P.string (B8.pack " \"")
+    method <- P8.takeWhile (/= ' ')
+    .....
+
+
+data LogError = LogError {msg :: String, line :: B8.ByteString}
+parseLogLine :: B8.ByteString -> Either LogError Record
+parseLogLine line = case parseOnly parseRecord line of
+                        Right a -> Right a
+                        Left msg -> Left $ LogError msg line
+
+type StringCounter = T.Trie Int 
+increment :: StringCounter -> String -> StringCounter
+increment t s = T.update t s incNode
+                where incNode n = case n of  
+                                    Nothing -> Just 1
+                                    Just i -> Just (i+1)
+
+sortCounter :: StringCounter -> [(String, Int)]
+sortCounter = sortWith (negate.snd) . T.toList
+
+data Stats = Stats {
+    paths :: StringCounter,
+    referers :: StringCounter,
+    errors :: [LogError]
+}
+
+emptyStats :: Stats
+emptyStats = Stats T.Empty T.Empty []
+
+buildStats :: [Record] -> Stats
+buildStats = foldl' applyRecord emptyStats 
+
+applyRecord :: Stats -> Record -> Stats
+applyRecord env rec = env {
+    paths = increment (paths env) (exportURL $ path rec),
+    referers = case referer rec of
+                 Nothing -> referers env 
+                 Just ref -> increment (referers env) (exportURL $ stripParams ref)
+    }   
+
+applyError :: Stats -> LogError -> Stats
+applyError env err = env { errors = err : errors env } 
+

@@ -1,0 +1,144 @@
+char * py_to_c_expr(char * py_expr,int line,bool do_brakets){
+    //Recursively converts python expression for use in C
+    /*
+     Order of evaluation. Top done last
+     lambda - Not implemented yet
+     if – else - Not implemented yet
+     or
+     and
+     not
+     in, not in, is, is not, <, <=, >, >=, <>, !=, == - in, not in and is not, not implemented yet
+     |
+     ^
+     &  Bitwise AND
+     <<, >>
+     +, -
+     *, /, //, %
+     +x, -x, ~x - Positive useless
+     **
+     x[index], x[index:index], x(arguments...), x.attribute - Not implemented yet
+     (expressions...), [expressions...], {key:datum...}, `expressions...` - Not implemented yet
+     */
+    char * find;
+    //Convert "or", "and" and "is" to other characters to prevent conversion output confliction during processing
+    char * scan;
+    if (do_brakets) {
+        py_expr = str_replace(py_expr, "or", "OR");
+        py_expr = str_replace(py_expr, "and", "AND");
+        py_expr = str_replace(py_expr, "is", "IS");
+        //Convert brakets
+        int nest = 0; //Amount of brakets gone into for processing
+        //Stack to keep track of braket positions
+        char ** left_bracket_ptr_stack;
+        int left_bracket_ptr_stack_size = 0;
+        scan = py_expr;
+        while (true) {
+            char * prior_scan;
+            prior_scan = scan;
+            scan = strstr(scan, "(");
+            if (scan) {
+                scan++;
+            }
+            if (scan) {
+                nest++;
+                //Entered braket. Add start position to stack
+                left_bracket_ptr_stack = realloc(left_bracket_ptr_stack, sizeof(char *)*left_bracket_ptr_stack_size);
+                left_bracket_ptr_stack[left_bracket_ptr_stack_size] = scan;
+                printf("During left bracket scan:\n\nLeft braket pointer - %lli\nPython expression pointer - %lli\n",left_bracket_ptr_stack[left_bracket_ptr_stack_size],py_expr);
+                left_bracket_ptr_stack_size++;
+                printf("Length of stack - %i\n\n\n",left_bracket_ptr_stack_size);
+            }else{
+                scan = prior_scan;
+                scan = strstr(scan, ")");
+                if (scan) {
+                    scan++;
+                }
+                if (scan) {
+                    if (!nest) {
+                        printf("Error: On line %i an expression closes too many brakets",line);
+                        exit(1);
+                    }
+                    nest--;
+                    //Exited bracket, process expression for braket
+                    puts("During right bracket scan and processing:\n\n");
+                    int len = scan - left_bracket_ptr_stack[left_bracket_ptr_stack_size - 1];
+                    char * inner_braket = malloc(sizeof(char) * (len - 1));
+                    strncpy(inner_braket,left_bracket_ptr_stack[left_bracket_ptr_stack_size - 1],len - 1); //Changes here
+                    char * bracket_expression = py_to_c_expr(inner_braket,line,true);
+                    char * new_py_expr = malloc(sizeof(char) * (strlen(py_expr) - strlen(inner_braket) + strlen(bracket_expression)));
+                    free(inner_braket);
+                    printf("Left bracket pointer - %lli\n",left_bracket_ptr_stack[left_bracket_ptr_stack_size -1]);
+                    printf("Length of stack - %i\n",left_bracket_ptr_stack_size);
+                    printf("Python Expression pointer - %lli\n\n\n",py_expr);
+                    strncpy(new_py_expr,py_expr,left_bracket_ptr_stack[left_bracket_ptr_stack_size - 1] - py_expr - 1);
+                    new_py_expr[left_bracket_ptr_stack[left_bracket_ptr_stack_size- 1] - py_expr - 1] = '\0';
+                    strcat(new_py_expr,bracket_expression);
+                    free(bracket_expression);
+                    strcat(new_py_expr,scan);
+                    free(py_expr);
+                    py_expr = new_py_expr;
+                }else{
+                    scan = prior_scan;
+                    if (nest) {
+                        printf("Error: On line %i an expression does not close all brakets",line);
+                        exit(1);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    //Find operators and replace them with the functions. Recursively process each side.
+    char * new_expr;
+    scan = py_expr; //Reset scan to begining of the expression now that brakets are done
+    scan = strstr(scan, "OR");
+    if (scan) {
+        char * left_side = malloc(sizeof(char) * (scan - py_expr + 1));
+        char * right_side = malloc(sizeof(char) * (strlen(py_expr) - strlen(scan)));
+        strncpy(left_side,py_expr,scan - py_expr);
+        left_side[scan-py_expr] = '\0';
+        strcpy(right_side,scan + 3);
+        char * new_left_side = py_to_c_expr(left_side,line,false); //Recursively process left
+        char * new_right_side = py_to_c_expr(right_side,line,false); //and right operands
+        new_expr = malloc(sizeof(char) * (strlen(new_left_side) + strlen(new_right_side) + 5));
+        strcpy(new_expr,"or(");
+        strcat(new_expr,new_left_side);
+        strcat(new_expr,",");
+        strcat(new_expr,new_right_side);
+        strcat(new_expr,")");
+        return new_expr;
+    }
+    return py_expr;
+}
+
+During left braket scan:
+
+Left braket pointer - 4296016033
+Python expression pointer - 4296016032
+Length of stack - 1
+
+
+During left braket scan:
+
+Left braket pointer - 4296016034
+Python expression pointer - 4296016032
+Length of stack - 2
+
+
+During left braket scan:
+
+Left braket pointer - 4296016035
+Python expression pointer - 4296016032
+Length of stack - 3
+
+
+During right braket scan and processing:
+
+
+Left braket pointer - 3473436750496411705
+Length of stack - 3
+Python Expression pointer - 4296016032
+
+
+Program received signal:  “EXC_BAD_ACCESS”.
+

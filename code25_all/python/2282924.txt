@@ -1,0 +1,88 @@
+REQUEST_TOKEN_URL = 'https://www.google.com/accounts/OAuthGetRequestToken'
+AUTHORIZATION_URL = 'https://www.google.com/accounts/OAuthAuthorizeToken'
+ACCESS_TOKEN_URL = 'https://www.google.com/accounts/OAuthGetAccessToken'
+
+CALLBACK = 'http://localhost:8000/mappr/mappr/oauth/' #will become real server when deployed
+
+OAUTH_CONSUMER_KEY = 'anonymous'
+OAUTH_CONSUMER_SECRET = 'anonymous'
+
+signature_method = oauth.SignatureMethod_HMAC_SHA1()
+consumer = oauth.Consumer(key=OAUTH_CONSUMER_KEY, secret=OAUTH_CONSUMER_SECRET)
+client = oauth.Client(consumer)
+
+request_token = oauth.Token('','') #hackish way to be able to access the token in different functions, I know this is bad, but I just want it to get working in the first place :)
+
+def authorize(request):
+    if request.GET == {}:
+        tokens = OAuthGetRequestToken()
+        return HttpResponseRedirect(AUTHORIZATION_URL + '?' + tokens)
+    elif request.GET['oauth_verifier'] != '':
+        oauth_token = request.GET['oauth_token']
+        oauth_verifier = request.GET['oauth_verifier']
+        OAuthAuthorizeToken(oauth_token)
+        OAuthGetAccessToken(oauth_token, oauth_verifier)
+        #I need to add a Django return object but I am still debugging other phases.
+
+def OAuthGetRequestToken():
+    print '*** OUTPUT OAuthGetRequestToken ***'
+    params = {
+    'oauth_consumer_key': OAUTH_CONSUMER_KEY, 
+    'oauth_nonce':  oauth.generate_nonce(),
+    'oauth_signature_method': 'HMAC-SHA1',
+    'oauth_timestamp': int(time.time()), #The timestamp should be expressed in number of seconds after January 1, 1970 00:00:00 GMT.
+    'scope': 'https://www.google.com/analytics/feeds/',
+    'oauth_callback': CALLBACK,
+    'oauth_version': '1.0'
+    }
+
+    # Sign the request.
+    req = oauth.Request(method="GET", url=REQUEST_TOKEN_URL, parameters=params)
+    req.sign_request(signature_method, consumer, None)
+
+    tokens =client.request(req.to_url())[1]
+    params = ConvertURLParamstoDictionary(tokens)
+    request_token.key  = params['oauth_token']
+    request_token.secret =  params['oauth_token_secret']
+    return tokens
+
+def OAuthAuthorizeToken(oauth_token):
+    print '*** OUTPUT OAuthAuthorizeToken ***'
+    params ={
+    'oauth_token' :oauth_token,
+    'hd': 'default'
+    }
+    req = oauth.Request(method="GET", url=AUTHORIZATION_URL, parameters=params)
+    req.sign_request(signature_method, consumer, request_token)
+    response =client.request(req.to_url())
+    print response #for debugging purposes
+
+def OAuthGetAccessToken(oauth_token, oauth_verifier):
+    print '*** OUTPUT OAuthGetAccessToken ***'
+    params = {
+    'oauth_consumer_key':  OAUTH_CONSUMER_KEY,
+    'oauth_token': oauth_token,
+    'oauth_verifier': oauth_verifier,
+    'oauth_token_secret': request_token.secret,
+    'oauth_signature_method': 'HMAC-SHA1',
+    'oauth_timestamp': int(time.time()),
+    'oauth_nonce': oauth.generate_nonce(),
+    'oauth_version': '1.0',    
+    }
+
+    req = oauth.Request(method="GET", url=ACCESS_TOKEN_URL, parameters=params)
+    req.sign_request(signature_method, consumer, request_token)
+
+    response =client.request(req.to_url())
+    print response
+    return req
+
+def ConvertURLParamstoDictionary(tokens):
+    params = {}
+    tokens = tokens.split('&')
+    for token in tokens:
+        token = token.split('=')
+        params[token[0]] = token[1]
+
+    return params
+

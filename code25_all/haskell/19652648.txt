@@ -1,0 +1,32 @@
+getFilesList :: Maybe ByteString -> AppHandler [Document]
+getFilesList cat = do
+  let selection = maybe [] (\c -> ["category" =: T.decodeUtf8 c]) cat
+  r <- eitherWithDB $ rest =<< find (select selection "files") {project = ["blob" =: 0]}
+  return $ either (const []) id r
+
+listFiles :: AppHandler [Document]
+listFiles = do
+  cat <- getParam "cat"
+  let r = maybe Nothing (\c -> if c == "all" then Nothing else Just c) cat
+  render "files/list-files"
+  getFilesList r
+
+("/files/:cat",           method GET    listFiles)
+
+listFilesS :: Splices (Splice (Handler App App))
+listFilesS = "files" ## files
+  where
+    files = manyWithSplices runChildren file $ lift listFiles -- Feed data here
+    file = do
+      "file-name"     ## (pureSplice . textSplice $ at "name")
+      "file-oid"      ## (pureSplice . textSplice $ id)
+      "file-date"     ## (pureSplice . textSplice $ dateFromDoc)
+      "file-size"     ## (pureSplice . textSplice $ fsize)
+      "file-type"     ## (pureSplice . textSplice $ at "type")
+      "file-auth"     ## (pureSplice . textSplice $ const "admin")
+      "file-link"     ## (pureSplice . textSplice $ flink)
+      "file-category" ## (pureSplice . textSplice $ at "category")
+      where id = T.pack . show . valueAt "_id"
+        fsize = T.pack . show . round . (flip (/) 1024) . (at "size")
+        flink = T.append "/files/" . id
+

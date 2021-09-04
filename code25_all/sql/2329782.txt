@@ -1,0 +1,99 @@
+DECLARE @COMNO CHAR(3), @CUNO VARCHAR(6)
+SELECT @COMNO='020',@CUNO ='000022'
+select * from ftItemsOfCustomer(@COMNO,@CUNO) 
+
+select * from ftItemsOfCustomer'020','000022') 
+
+GO
+/****** Object:  UserDefinedFunction [dbo].[ftItemsOfCustomer]    Script Date: 02/24/2010 10:23:25 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+--
+--ALTER FUNCTION [dbo].[ftItemsOfCustomer](@COMNO CHAR(3),@T$CUNO CHAR(6)) RETURNS TABLE AS RETURN 
+--/*--------------------------------------------------------------------------
+Declare @t$cuno char(6),@comno char(3),@ovrideQtyDisc bit;select @t$cuno='000022',@comno='020',@ovrideQtyDisc=1;
+select @t$cuno='000310',@comno='020'
+select @t$cuno='200252'
+select @t$cuno='000680'
+--select @t$cuno='000694'
+--SELECT T$CPLS FROM TTCCOM010NNN WHERE T$CUNO=@T$cuno and comno=@comno
+
+-- 1 Customer /item discount---------(30)
+-- 2 customer / pricegroup/discount--(31)
+-- 3 customer /discount -------------(31)
+-- 4 price list /item            ----(32) -- no discount here only list pirce and pricelist
+-- 5 pricelist /price group/discount-(33)
+-- 6 pricelist /discount-------------(33)
+
+----------------------------------------------------------------------------*/
+--1). 030 CUSTOMER AND ITEM FOR DISCOUNT  
+--2). 031 CUSTOMER AND PRICEGROUP
+--3). 031 Customer only - blanket - not implemented (as of 24th Feb 2010)
+--4). 033 PRICELIST and priceGroup
+--5). 033 pricelist and priceGroup=null
+
+--1) 33 for Discounts via cpgs          DISCOUNT (G) 33g.t$cpgs = itm.cpgs and 33g.t$cpls=
+--2) 32 for price List & item for       DISCOUNT (P)
+--3) 32 for item (no Price List) for    PRICE    (I)
+--4) 30 for customer & Item For         DISCOUNT (C)
+-- Discount prescedance 1=C, 2=P ,3=G
+SELECT  distinct 
+        ItemCode            =   P.T$ITEM
+        ,UPC_Code           =   U.UPC   
+        ,Description        =   U.t$dsca
+        ,ciDesc             =   T.t$dsca
+        ,ListPrice          =   I.t$Pric
+        ,Multiplier         =   Isnull(convert(decimal(6,4),1.0000-(COALESCE(NULLIF(C.T$DISC,0.000),NULLIF(CPG.T$DISC,0.000),NULLIF(P.T$DISC,0.000),NULLIF(G.T$DISC,0.000),NULLIF(NOPG.T$DISC,0.000))/100.000)),1.000)
+        --,NetPrice         =   Round(I.t$pric*Convert(decimal(10,3),1.00-(COALESCE(NULLIF(C.T$DISC,0.00),NULLIF(P.T$DISC,0.00),NULLIF(G.T$DISC,0.00))/100.00)),0)
+        ,NetPrice           =   Convert(decimal(10,2),Round(I.t$pric*Isnull(Convert(decimal(10,4),1.00-(COALESCE(NULLIF(C.T$DISC,0.00),NULLIF(CPG.T$DISC,0.00),NULLIF(P.T$DISC,0.00),NULLIF(G.T$DISC,0.00),NULLIF(NOPG.T$DISC,0.00))/100.00)),1),2))
+        ,ShippingIndicator  =   U.T$ship
+        ,Weight             =   T.t$wght
+        ,t$cpgs             =   T.t$cpgs
+        ,GDISC=G.t$dISC
+        ,Discount           =   COALESCE(NULLIF(C.T$DISC,0.00),NULLIF(CPG.T$DISC,0.00),NULLIF(P.T$DISC,0.00),NULLIF(G.T$DISC,0.00))
+        ,Gdisc              =   g.t$disc
+        ,pdisc              =   p.t$disc
+        ,cdisc              =   c.t$disc
+        ,cpgDisc            =   cpg.t$disc
+        ,DiscountSource     =   CASE COALESCE(NULLIF(C.T$DISC,0.00),NULLIF(CPG.T$DISC,0.00),NULLIF(P.T$DISC,0.00),NULLIF(G.T$DISC,0.00),NULLIF(noPg.T$disc,0.0))    
+                                    WHEN C.T$DISC       THEN 'Disc(30)[cuno,item]'
+                                    WHEN P.T$DISC       THEN 'DISC(32)[CPGS]'
+                                    WHEN G.T$DISC       THEN 'DISC(33)[CPLS,CPGS]'
+                                    WHEN NOPG.T$DISC    THEN 'DISC(33)[CPLS]'
+                                    WHEN CPG.T$DISC     THEN 'DISC(31)'
+                                    ELSE '?'
+                                END
+
+        ,cpls               =   P.t$cpls
+        ,t$QANP             =   P.t$QANP
+        ,Ccuno              =   com.t$cuno
+        ,noPg.*
+        FROM        TTCCOM010nnn        COM WITH (iNdex(IX_COMNO_TTCCOM010NNN)) 
+        JOIN        TTDSLS032nnn        P   WITH (INDEX(IX_T$CPLS_TTDSLS032NNN)) ON P.T$CPLS    =   COM.T$CPLS  
+        JOIN        TTDSLS032nnn        I   WITH (INDEX(IX_T$ITEM_TTDSLS032NNN),INDEX(IX_COMNO_TTDSLS032NNN)) ON    I.t$item    =   P.t$item    
+                                        AND i.comno         =   p.comno 
+                                        AND 1               =   dbo.fnIsDateInRange(i.t$stdt,i.t$tdat) 
+                                        AND i.t$cpls        =   ''
+LEFT    JOIN        TTDSLS030nnn        C  WITH (INDEX(IX_T$ITEM_TTDSLS030NNN),INDEX(IX_COMNO_TTDSLS030NNN))    ON  c.t$item    =   i.t$Item    
+                                        AND c.Comno         =   i.comno AND c.t$cuno    =   @t$cuno
+                                        AND 1               =   dbo.fnIsDateInRange(c.t$stdt,c.t$tdat)  
+        JOIN        TTIITM001nnn        T       WITH(INDEX(IX_T$ITEM_TTIITM001nnn),INDEX(IX_COMNO_TTIITM001NNN)) on t.t$item    =   p.T$item    AND t.comno     =   p.Comno
+LEFT    JOIN        TTDSLS033nnn        G       WITH(INDEX(IX_T$CPGS_TTDSLS033NNN)) ON  G.t$CPGS    =   T.T$CPGS    AND g.t$cpls    =   P.t$cpls and g.comno=@COMNO  and g.t$cpgs is not null
+--LEFT  JOIN        TTDSLS033nnn        noPG    WITH(INDEX(IX_T$CPLS_TTDSLS033NNN)) ON  noPg.T$CPLS=com.T$CPLS AND noPG.t$cpgs is null  
+Left    JOIN        TTDSLS033nnn        noPG    WITH(INDEX(IX_T$CPLS_TTDSLS033NNN)) on noPG.t$cpgs is null 
+        JOIN        TTDUPC001nnn        U   WITH(INDEX(IX_T$ITEM_TTDUPC001NNN),index(ix_comno_TTDUPC001NNN)) ON U.t$item    =   p.t$item    AND U.comno     =   p.Comno
+--Limit Items to display based on Price list (introduced on 27th June 09)
+        JOIN        ftItemGroupsOfCustomer(@comno,@t$cuno)  pl   ON PL.T$CPGS   =   T.T$CPGS    AND PL.T$CUNO   =   @T$CUNO
+                                        AND PL.COMNO        =   @COMNO  
+Left    JOIN        TTDSLS031NNN        CPG ON ltrim(rtrim(cpg.t$cpgs)) = pl.t$cpgs and cpg.t$cuno=pl.t$cuno and cpg.comno=pl.comno
+        AND         1               =   dbo.fnIsDateInRange(cpg.t$stdt,cpg.t$tdat)
+
+        WHERE               COM.COMNO       =   @COMNO          AND COM.T$CUNO  =   @T$CUNO AND
+                            P.t$cpls        =   COM.T$CPLS      AND p.comno     =   @comno      
+                    AND     noPg.comno      = @comno            and nopg.t$cpls =   com.t$cpls
+
+                    --noPg.t$cpls       =   com.t$cpls
+        AND         1               =   dbo.fnIsDateInRange(p.t$stdt,p.t$tdat)
+

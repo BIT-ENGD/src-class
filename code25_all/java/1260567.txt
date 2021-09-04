@@ -1,0 +1,211 @@
+CREATE TABLE `default_values` (
+   `id` INT UNSIGNED NOT auto_increment,
+   `is_default` BOOL DEFAULT false,
+   PRIMARY KEY(`id`)
+);
+
+public class DefaultDeleter implements Runnable
+{
+
+    public synchronized void deleteDefault() throws SQLException
+    {
+        Connection conn = null;
+        Statement deleteStmt = null;
+        Statement selectStmt = null;
+        PreparedStatement updateStmt = null;
+        ResultSet selectSet = null;
+
+        try
+        {
+            conn = DriverManager.getConnection("jdbc:mysql://localhost/xtest", "root", "");
+            conn.setAutoCommit(false);
+            conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+
+            // Deleting current default entry
+            deleteStmt = conn.createStatement();
+            deleteStmt.executeUpdate("DELETE FROM `default_values` WHERE `is_default` = true");
+
+            // Selecting first non default entry
+            selectStmt = conn.createStatement();
+            selectSet = selectStmt.executeQuery("SELECT `id` FROM `default_values` ORDER BY `id` LIMIT 1");
+
+            if (selectSet.next())
+            {
+                int id = selectSet.getInt("id");
+
+                // Updating found entry to set it default
+                updateStmt = conn.prepareStatement("UPDATE `default_values` SET `is_default` = true WHERE `id` = ?");
+                updateStmt.setInt(1, id);
+                if (updateStmt.executeUpdate() == 0)
+                {
+                    System.err.println("Failed to set new default value.");
+                    System.exit(-1);
+                }
+            }
+            else
+            {
+                System.err.println("Ooops! I've deleted them all.");
+                System.exit(-1);
+            }
+
+            conn.commit();
+            conn.setAutoCommit(true);
+        }
+        catch (SQLException e)
+        {
+            try { conn.rollback(); } catch (SQLException ex)
+            {
+                ex.printStackTrace();
+            }
+
+            throw e;
+        }
+        finally
+        {
+            try { selectSet.close(); } catch (Exception e) {}
+            try { deleteStmt.close(); } catch (Exception e) {}
+            try { selectStmt.close(); } catch (Exception e) {}
+            try { updateStmt.close(); } catch (Exception e) {}
+            try { conn.close(); } catch (Exception e) {}
+        }
+    }
+
+    public void run()
+    {
+        while (true)
+        {
+            try
+            {
+                deleteDefault();
+            }
+            catch (SQLException e)
+            {
+                e.printStackTrace();
+                System.exit(-1);
+            }
+
+            try
+            {
+                Thread.sleep(20);
+            }
+            catch (InterruptedException e) {}
+        }
+    }
+
+}
+
+public class DefaultReader implements Runnable
+{
+
+    public synchronized void readDefault() throws SQLException
+    {
+        Connection conn = null;
+        Statement stmt = null;
+        ResultSet rset = null;
+
+        try
+        {
+            conn = DriverManager.getConnection("jdbc:mysql://localhost/xtest", "root", "");
+
+            conn.setAutoCommit(false);
+            conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+
+            stmt = conn.createStatement();
+            rset = stmt.executeQuery("SELECT * FROM `default_values` WHERE `is_default` = true");
+
+            int count = 0;
+            while (rset.next()) { count++; }
+
+            if (count == 0)
+            {
+                System.err.println("Default entry not found. Fail.");
+                System.exit(-1);
+            }
+            else if (count > 1)
+            {
+                System.err.println("Count is " + count + "! Wtf?!");
+            }
+
+            conn.commit();
+            conn.setAutoCommit(true);
+        }
+        catch (SQLException e)
+        {
+            try { conn.rollback(); } catch (Exception ex)
+            {
+                ex.printStackTrace();
+            }
+
+            throw e;
+        }
+        finally
+        {
+            try { rset.close(); } catch (Exception e) {}
+            try { stmt.close(); } catch (Exception e) {}
+            try { conn.close(); } catch (Exception e) {}
+        }
+    }
+
+    public void run()
+    {
+        while (true)
+        {
+            try
+            {
+                readDefault();
+            }
+            catch (SQLException e)
+            {
+                e.printStackTrace();
+                System.exit(-1);
+            }
+
+            try
+            {
+                Thread.sleep(20);
+            }
+            catch (InterruptedException e) {}
+        }
+    }
+
+}
+
+public class Main
+{
+
+    public static void main(String[] args)
+    {
+        try
+        {
+            Driver driver = (Driver) Class.forName("com.mysql.jdbc.Driver")
+                    .newInstance();
+            DriverManager.registerDriver(driver);
+
+            Connection conn = null;
+            try
+            {
+                conn = DriverManager.getConnection("jdbc:mysql://localhost/xtest", "root", "");
+                System.out.println("Is transaction isolation supported by driver? " +
+                        (conn.getMetaData()
+                        .supportsTransactionIsolationLevel(
+                        Connection.TRANSACTION_SERIALIZABLE) ? "yes" : "no"));
+            }
+            finally
+            {
+                try { conn.close(); } catch (Exception e) {}
+            }
+
+            (new Thread(new DefaultReader())).start();
+            (new Thread(new DefaultDeleter())).start();
+
+            System.in.read();
+            System.exit(0);
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+        }
+    }
+
+}
+

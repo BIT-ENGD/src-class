@@ -1,0 +1,111 @@
+error_log stderr notice;
+daemon off;
+
+events{}
+
+http {
+lua_code_cache on;
+#lua_package_cpath '/usr/local/cuda/include/?.so;;';
+init_by_lua_file 'evaluate.lua';
+server {
+
+listen 6788;
+lua_code_cache on;
+lua_need_request_body on;
+client_body_buffer_size 10M;
+client_max_body_size 10M;
+location /ff {
+# only permit POST requests
+if ($request_method !~ ^(POST)$ ) {
+return 403;
+}
+
+content_by_lua '
+local body = ngx.req.get_body_data()
+
+if body == nil then
+ngx.say("empty body")
+else
+local resp =FeedForward(body)
+ngx.say(cjson.encode({result=resp}))
+end
+';
+}
+}
+}
+
+-- load the required lua models
+torch = require("torch")
+nn = require("nn")
+gm = require("image")
+cutorch = require "cutorch"
+cunn = require "cunn"
+cjson = require("cjson")
+-- model
+modelPath='./model.t7'
+
+ninputs = 3
+model = nn.Sequential()
+model:add(nn.Linear(ninputs,2))
+
+-- let’s save a dummy model
+-- to demonstrate the functionality
+torch.save(modelPath, model)
+
+-- load a pretrained model
+net = torch.load(modelPath)
+net:cuda()
+net:evaluate()
+
+-- our end point function
+-- this function is called by the ngx server
+-- accepts a json body
+function FeedForward(json)
+print("starting")
+-- decode and extract field x
+local data = cjson.decode(json)
+local input = torch.Tensor(data.x)
+
+local response = {}
+-- example checks
+if input == nil then
+print("No input given")
+elseif input:size(1) ~=ninputs then
+print("Wrong input size")
+else
+-- evaluat the input and create a response
+local output = net:forward(input:cuda()):float()
+-- from tensor to table
+for i=1,output:size(1) do
+response[i] = output[i]
+end
+end
+-- return response
+return response
+end
+
+/usr/local/openresty/nginx/sbin/nginx -p "$(pwd)" -c "nginx.conf"
+
+curl
+curl -H  "Content-Type: application/json" -X POST -d '{"x":[1,2,3]}' http://localhost:6788/ff
+
+2016/09/29 12:59:59 [notice] 10355#0: *1 [lua] evaluate.lua:28: FeedForward(): starting, client: 127.0.0.1, server: , request: "POST /ff HTTP/1.1", host: "localhost:6788"
+
+THCudaCheck FAIL file=/tmp/luarocks_cutorch-scm-1-700/cutorch/lib/THC/generic/THCStorage.cu line=40 error=3 : initialization error
+
+2016/09/29 12:59:59 [error] 10355#0: *1 lua entry thread aborted: runtime error: unknown reason
+
+stack traceback:
+coroutine 0:
+        [C]: in function 'resize'
+        /home/ubuntu/torch/install/share/lua/5.1/cutorch/Tensor.lua:14: in function 'cuda'
+       /rootpath/evaluate.lua:41: in function 'FeedForward'
+        content_by_lua(nginx.conf:31):7: in function <content_by_lua(nginx.conf:31):1>, client: 127.0.0.1, server: , request: "POST /ff HTTP/1.1", host: "localhost:6788"
+
+net:cuda()
+
+local output = net:forward(input:cuda()):float()
+
+local output = net:forward(input):float()
+
+th

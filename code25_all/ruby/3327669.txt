@@ -1,0 +1,41 @@
+require 'open-uri'
+
+class Asset < ActiveRecord::Base
+  belongs_to :theme
+  attr_accessor :old_id
+  has_attached_file :file,
+                    :storage => "s3",
+                    :s3_credentials => YAML.load_file("#{RAILS_ROOT}/config/aws.yml")[RAILS_ENV],
+                    :bucket => "flavorpulse-" + RAILS_ENV,
+                    :path => ":class/:id/:style.:extension"
+  validates_attachment_presence :file
+  validates_attachment_size :file, :less_than => 5.megabytes
+
+  before_save :delete_assets_in_same_theme_with_same_name
+  after_create :copy_from_cloned_asset
+
+  private
+  def delete_assets_in_same_theme_with_same_name
+    Asset.destroy_all({:theme_id => self.theme_id, :file_file_name => self.file_file_name})
+  end
+
+  def copy_from_cloned_asset
+    if (!old_id.blank?)
+      if (old_id > 0)
+        old_asset = Asset.find(old_id)
+        if (!old_asset.blank?)
+          self.file = do_download_remote_image(old_asset.file.url)
+          self.file.save
+        end
+      end
+    end
+  end
+
+  def do_download_remote_image (image_url)
+    io = open(URI.parse(image_url))
+    def io.original_filename; base_uri.path.split('/').last; end
+    io.original_filename.blank? ? nil : io
+  rescue # catch url errors with validations instead of exceptions (Errno::ENOENT, OpenURI::HTTPError, etc...)
+  end
+end
+

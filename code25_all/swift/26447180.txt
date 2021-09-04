@@ -1,0 +1,84 @@
+ //Add the device to the session, get the video feed it produces and add it to the video feed layer
+    func initSessionFeed()
+    {
+_session = AVCaptureSession()
+        _session.sessionPreset = AVCaptureSessionPresetPhoto
+        updateVideoFeed()
+
+        _videoPreviewLayer = AVCaptureVideoPreviewLayer(session: _session)
+        _videoPreviewLayer.frame = CGRectMake(0,0, self.frame.width, self.frame.width) //the live footage IN the video feed view
+        _videoPreviewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill
+        self.layer.addSublayer(_videoPreviewLayer)//add the footage from the device to the video feed layer
+    }
+
+    func initOutputCapture()
+    {
+        //set up output settings
+        _stillImageOutput = AVCaptureStillImageOutput()
+        var outputSettings:Dictionary = [AVVideoCodecJPEG:AVVideoCodecKey]
+        _stillImageOutput.outputSettings = outputSettings
+        _session.addOutput(_stillImageOutput)
+        _session.startRunning()
+    }
+
+    func configureDevice()
+    {
+        if _currentDevice != nil
+        {
+            _currentDevice.lockForConfiguration(nil)
+            _currentDevice.focusMode = .Locked
+            _currentDevice.unlockForConfiguration()
+        }
+    }
+
+    func captureImage(callback:(iImage)->Void)
+    {
+        if(_captureInProcess == true)
+        {
+            return
+        }
+        _captureInProcess = true
+
+        var videoConnection:AVCaptureConnection!
+        for connection in _stillImageOutput.connections
+        {
+            for port in (connection as AVCaptureConnection).inputPorts
+            {
+                if (port as AVCaptureInputPort).mediaType == AVMediaTypeVideo
+                {
+                    videoConnection = connection as AVCaptureConnection
+                    break;
+                }
+
+                if videoConnection != nil
+                {
+                    break;
+                }
+            }
+        }
+
+        if videoConnection  != nil
+        {
+            _stillImageOutput.captureStillImageAsynchronouslyFromConnection(videoConnection)
+            {
+                (imageSampleBuffer : CMSampleBuffer!, _) in
+                let imageDataJpeg = AVCaptureStillImageOutput.jpegStillImageNSDataRepresentation(imageSampleBuffer)
+                var pickedImage = UIImage(data: imageDataJpeg, scale: 1)
+                UIGraphicsBeginImageContextWithOptions(pickedImage.size, false, pickedImage.scale)
+                pickedImage.drawInRect(CGRectMake(0, 0, pickedImage.size.width, pickedImage.size.height))
+                pickedImage = UIGraphicsGetImageFromCurrentImageContext() //this returns a normalized image
+                if(self._currentDevice == self._frontCamera)
+                {
+                    var context:CGContextRef = UIGraphicsGetCurrentContext()
+                    pickedImage = UIImage(CGImage: pickedImage.CGImage, scale: 1.0, orientation: .UpMirrored)
+                    pickedImage.drawInRect(CGRectMake(0, 0, pickedImage.size.width, pickedImage.size.height))
+                    pickedImage = UIGraphicsGetImageFromCurrentImageContext()
+                }
+                UIGraphicsEndImageContext()
+                var image:iImage = iImage(uiimage: pickedImage)
+                self._captureInProcess = false
+                callback(image)
+            }
+        }
+    }
+

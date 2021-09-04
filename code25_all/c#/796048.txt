@@ -1,0 +1,135 @@
+private void OnGetBalanceCompleted(object sender, SIPPhoneLibraryEventArgs e)
+    {
+        try
+        {
+            //If the balance starts with 'null' there has been an error trying to get the balance.
+            if (e.Balance.StartsWith("null"))
+            {
+                statusDisplay1.CurrentBalance = CATWinSIP_MsgStrings.BalanceError;
+            }
+            else
+            {
+                // Display the current balance and round to 2 decimal places.
+                statusDisplay1.CurrentBalance = Math.Round(Convert.ToDecimal(e.Balance), 2).ToString();
+
+                //If the balance is zero display in the status message
+                if (decimal.Parse(e.Balance) == 0)
+                {
+                    this.statusDisplay1.CallStatus = "Zero Balance";
+                }
+            }
+            //Remove the event as no longer needed
+            siplibrary.GetBalanceCompletedEvent -= new EventHandler<SIPPhoneLibraryEventArgs>(OnGetBalanceCompleted);
+        }
+        catch (WebException ex)
+        {
+            MessageBox.Show(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message);
+        }
+    }
+
+
+
+
+//Control library for all importing functions
+public class Balance : IDisposable
+{
+    //Constructor
+    WebClient wc;
+    public Balance()
+    {
+        using (wc = new WebClient())
+        {
+            //Create event handler for the progress changed and download completed events
+            wc.DownloadProgressChanged += new DownloadProgressChangedEventHandler(wc_DownloadProgressChanged);
+            wc.DownloadStringCompleted += new DownloadStringCompletedEventHandler(wc_DownloadStringCompleted);
+        }
+    }
+
+    ~Balance()
+    {
+        this.Dispose(false);
+    }
+
+    //Event handler and the method that handlers the event
+    public EventHandler<SIPPhoneLibraryEventArgs> GetBalanceCompletedEvent;
+
+    //The method that raises the event
+    public void OnGetBalanceCompleted(SIPPhoneLibraryEventArgs e)
+    {
+        if (GetBalanceCompletedEvent != null)
+        {
+            GetBalanceCompletedEvent(this, e);
+        }
+    }
+
+    //Get the current balance for the user that is logged in.
+    //If the balance returned from the server is NULL display error to the user.
+    //Null could occur if the DB has been stopped or the server is down.       
+    public void GetBalance(string sipUsername)
+    {
+        //Remove the underscore ( _ ) from the username, as this is not needed to get the balance.
+        sipUsername = sipUsername.Remove(0, 1);
+
+        string strURL = string.Format("http://xxx.xxx.xx.xx:xx/voipbilling/servlet/advcomm.voipbilling.GetBalance?CustomerID={0}", sipUsername);
+
+        //Download only when the webclient is not busy.
+        if (!wc.IsBusy)
+        { 
+            // Sleep for 1/2 second to give the server time to update the balance.
+            System.Threading.Thread.Sleep(500);
+            // Download the current balance.
+            wc.DownloadStringAsync(new Uri(strURL));
+        }
+        else
+        {
+            System.Windows.Forms.MessageBox.Show("Busy please try again");
+        }
+    }
+
+    //return and display the balance after the download has fully completed
+    void wc_DownloadStringCompleted(object sender, DownloadStringCompletedEventArgs e)
+    {
+        //Pass the result to the event handler
+        this.OnGetBalanceCompleted(new SIPPhoneLibraryEventArgs(e.Result));
+    }
+
+    //Progress state of balance.
+    void wc_DownloadProgressChanged(object sender, DownloadProgressChangedEventArgs e)
+    {
+        //Write the details to the screen.
+        Console.WriteLine(e.TotalBytesToReceive);
+        Console.WriteLine(e.BytesReceived);
+        Console.WriteLine(e.ProgressPercentage);
+    }
+
+
+    //Dispose of the balance object
+    public void Dispose()
+    {
+        Dispose(true);
+
+        GC.SuppressFinalize(this);
+    }
+
+    //Remove the event handlers
+    private bool isDisposed = false;
+    private void Dispose(bool disposing)
+    {
+        if (!this.isDisposed)
+        {
+            if (disposing)
+            {
+                wc.DownloadProgressChanged -= new DownloadProgressChangedEventHandler(wc_DownloadProgressChanged);
+                wc.DownloadStringCompleted -= new DownloadStringCompletedEventHandler(wc_DownloadStringCompleted);
+
+                wc.Dispose();
+            }               
+            isDisposed = true;
+        }
+    }
+}
+

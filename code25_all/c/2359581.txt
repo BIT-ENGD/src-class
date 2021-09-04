@@ -1,0 +1,90 @@
+A
+B
+C
+ps -eo pid,cmd,wchan
+ptrace_stop
+hrtimer_nanosleep
+SIGCHLD
+SIGCHLD
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+
+static void a(){
+  while(1){
+    printf ("A\n");
+    fflush(stdout);
+    sleep(1);
+  }
+}
+
+static void b(){
+  while(1){
+    printf ("B\n");
+    fflush(stdout);
+    sleep(1);
+  }
+}
+
+static void c(){
+  while(1){
+    printf ("C\n");
+    fflush(stdout);
+    sleep(1);
+  }
+}
+
+static void sigchld_handler(int sig){
+  int result;
+  pid_t child_pid = wait(NULL); // find who send us this SIGCHLD
+
+  printf("SIGCHLD on %d\n", child_pid);
+  result=ptrace(PTRACE_CONT, child_pid, sig, NULL);
+  if(result) {
+    perror("continuing after SIGCHLD");
+  }
+}
+
+int main(int  argc,
+         char **argv){
+
+  pid_t mychild_pid;
+  int   result;
+
+  printf("pidA = %d\n", getpid());
+
+  signal(SIGCHLD, sigchld_handler);
+
+  mychild_pid = fork();
+
+  if (mychild_pid) {
+    printf("pidB = %d\n", mychild_pid);
+    result = ptrace(PTRACE_ATTACH, mychild_pid, NULL, NULL);
+    if(result==-1){
+      perror("outer ptrace");
+    }
+    a();
+  }
+  else {
+    mychild_pid = fork();
+
+    if (mychild_pid) {
+      printf("pidC = %d\n", mychild_pid);
+
+      result = ptrace(PTRACE_ATTACH, mychild_pid, NULL, NULL);
+      if(result==-1){
+        perror("inner ptrace");
+      }
+      b();
+    }
+    else {
+      c();
+    }
+  }
+
+  return 0;
+}
+

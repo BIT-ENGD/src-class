@@ -1,0 +1,57 @@
+Public Shared Function renameUser(ByVal curUsername As String, ByVal newUsername As String) As Boolean
+    Dim emailSuffix As String = "@here.com"
+    Dim userPrincipalSuffix As String = "@here.now"
+
+    Dim user As New DirectoryEntry
+    Dim oSearcher As DirectorySearcher = Nothing
+    Dim oRoot As DirectoryEntry = Nothing
+    Dim oResult As SearchResult
+    Try
+        oRoot = New DirectoryEntry("LDAP://" & "ldapserver" & _
+                  "/" & "OU=OUWithUsersToChange,OU=Site Users,DC=here,DC=now")
+        oSearcher = New DirectorySearcher(oRoot)
+        oSearcher.SearchScope = SearchScope.Subtree
+
+        oSearcher.Filter = "(&(objectCategory=person)(sAMAccountName=" & curUsername & "))"
+        oSearcher.PropertiesToLoad.Add("uid")
+        oSearcher.PropertiesToLoad.Add("mail")
+        oSearcher.PropertiesToLoad.Add("mailNickname")
+        oSearcher.PropertiesToLoad.Add("userPrincipalName")
+        oSearcher.PropertiesToLoad.Add("sAMAccountName")
+        oSearcher.PropertiesToLoad.Add("proxyAddresses")
+        oSearcher.PropertiesToLoad.Add("textEncodedORAddress")
+        oSearcher.PropertiesToLoad.Add("legacyExchangeDN")
+
+        oResult = oSearcher.FindOne
+        user = oResult.GetDirectoryEntry
+
+        Dim lNewList As New List(Of String)
+        For Each sAddress As String In user.Properties("proxyAddresses")
+            lNewList.Add(sAddress.Replace(curUsername, newUsername))
+        Next
+        Dim sTextEncodedORAddress As String = user.Properties.Item("textEncodedORAddress").Value
+        Dim sLegacyExchangeDN As String = user.Properties.Item("legacyExchangeDN").Value
+
+        user.Properties.Item("uid").Value = newUsername
+        user.Properties.Item("mail").Value = newUsername & emailSuffix
+        user.Properties.Item("mailNickname").Value = newUsername
+        user.Properties.Item("userPrincipalName").Value = newUsername & userPrincipalSuffix
+        user.Properties.Item("sAMAccountName").Value = newUsername
+        user.Properties("proxyAddresses").Value = lNewList.ToArray
+        user.Properties.Item("textEncodedORAddress").Value = sTextEncodedORAddress.Replace(curUsername, newUsername)
+        user.Properties.Item("legacyExchangeDN").Value = sLegacyExchangeDN.Replace(curUsername, newUsername)
+
+        user.CommitChanges()
+        user.Rename("CN=" & newUsername)
+
+        Return True
+    Catch ex As Exception
+        Return False
+    Finally
+        user.Dispose()
+        oRoot.Dispose()
+        oSearcher.Dispose()
+        oResult = Nothing
+    End Try
+End Function
+

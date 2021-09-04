@@ -1,0 +1,99 @@
+#include <some/Windows/headerfile.h>
+int foo_for_Windows_c(int a,double b)
+{
+  do_windows_stuff();
+  return 42;
+}
+
+#include <path/to/linux/headerfile.h>
+int foo_for_linux_c(int a,double b)
+{
+  do_linux_stuff(7);
+  return 42;
+}
+
+#include <some/headerfile/that/might/not/even/exist.h>
+int bar_for_solaris_c(int a,double b)
+{
+  call_solaris_library_that_might_be_installed_here(11);
+  return 19;
+}
+
+$^O
+Inline::C
+Inline::C
+eval
+Module::Build
+ACTION_build
+my $builderclass = Module::Build->subclass(
+ class => 'My::Custom::Builder',
+ code => <<'__CUSTOM_BUILD_CODE__,',
+ sub ACTION_build {
+   use File::Copy;
+   my $self = shift;
+
+   ### STEP 1: Compile all .xs files, remove the ones that fail ###    
+   if (! -f "./lib/xs/step1") {
+     unlink <lib/xs/*>;
+     foreach my $contrib_file (glob("contrib/*.xs")) {
+       File::Copy::copy($contrib_file, "lib/xs/");
+     }
+     open my $failed_units_fh, '>', 'lib/xs/step1';
+     local $@ = undef;
+     do {
+       my $r = eval { $self->ACTION_code() };
+       if ($@ =~ /error building (\S+\.o) from/i
+          || $@ =~ /error building dll file from '(\S+\.c)'/i) {
+        my $bad_file = $1;
+        $bad_file =~ s!\\!/!g;
+        my $bad_xs = $bad_file;
+        $bad_xs =~ s/.[oc]$/.xs/;
+
+        print STDERR "ERROR COMPILING UNIT $bad_xs ... removing\n\n";
+        unlink $bad_xs;
+        print $failed_units_fh "$bad_xs\n";
+      } elsif ($@) {
+         print STDERR "Compile error not handled in $^O:   $@\n";
+       }
+     } while $@;
+     print "Removed all uncompilable units from lib/xs/\n";
+     close $failed_units_fh;
+   }
+
+   ### STEP 2: Combine valid .xs files into a single .xs file ###
+   if (! -f "./lib/xs/step2") {
+     open my $valid_units_fh, '>', "lib/xs/step2";
+     my (@INCLUDE,%INCLUDE,$MODULE,@PREMOD,@POSTMOD);
+     foreach my $xs (glob("lib/xs/*.xs")) {
+       open my $xs_fh, '<', $xs;
+       while (<$xs_fh>) {
+         if (m/#include/) {
+           next if $INCLUDE{$_}++;
+           push @INCLUDE, $_;
+         } elsif (/^MODULE/) {
+           $MODULE = $_;
+           push @POSTMOD, <$xs_fh>;
+         } else {
+           push @PREMOD, $_;
+         }
+       }
+       close $xs_fh;
+       print $valid_units_fh "$xs\n";
+     }
+     close $valid_units_fh;
+     unlink <lib/xs/*>, <blib/arch/auto/xs/*/*>;
+     unlink 'lib/My/Module.xs';
+     open my $xs_fh, '>', 'lib/My/Module.xs' or croak $!;
+     print $xs_fh @INCLUDE, @PREMOD, $MODULE, @POSTMOD;
+     close $xs_fh;
+     print "Assembled remaining XS files into lib/My/Module.xs\n";
+   }
+
+   ### STEP 3: Clean all .xs stuff and compile My/Module.xs ###
+   unlink <lib/xs/*>;
+   $self->ACTION_code();
+   return $self->SUPER::ACTION_build(@_);
+  }
+}
+
+$@

@@ -1,0 +1,176 @@
+case class UserProfile(id: Pk[Long] = NotAssigned, useraccountid: Option[Long], name:
+String, date_of_birth: Date, gender: String, image: String,status:String)
+object UserProfile{
+  val simple = {
+    get[Pk[Long]]("user_profile.id") ~
+      get[Option[Long]]("user_profile.user_account_id") ~
+      get[String]("user_profile.name") ~
+      get[Date]("user_profile.date_of_birth") ~
+      get[String]("user_profile.gender") ~
+      get[String]("user_profile.image") ~
+      get[String]("user_profile.status") map {
+        case id ~ user_account_id ~ name ~ date_of_birth ~ gender ~ image ~ status =>
+          UserProfile(id, user_account_id, name, date_of_birth, gender, image,status )
+      }
+  }
+     /**
+       * Parse a userProfile from a MyFriend
+       */
+      val withMyFriend =UserProfile.simple ~ (MyFriend.simple ?) map{
+        case userprofile  ~ myfriend  => (userprofile, myfriend)
+      }
+      /**
+       * Register a new useraccount.
+       *
+       * @param useraccount.
+       */
+      def insert(userProfile: UserProfile): Long = {
+        DB.withConnection { implicit connection =>
+          SQL(
+            """
+              insert into USER_PROFILE(USER_ACCOUNT_ID ,NAME,DATE_OF_BIRTH,GENDER,IMAGE,STATUS) values (
+                {user_account_id}, {name},{date_of_birth},{gender},{image},{status}
+              )
+            """).on(
+              'user_account_id -> userProfile.useraccountid.get,
+              'name -> userProfile.name,
+              'date_of_birth -> userProfile.date_of_birth,
+              'gender -> userProfile.gender,
+              'image -> userProfile.image,
+              'status -> userProfile.status).executeUpdate()
+        }
+      }
+    }
+
+case class Post(id: Pk[Long]= NotAssigned, name:String, image:String, time:Date)
+
+    object Post{
+
+      /**
+       * Parse a Post from a Resultset
+       */
+      val simple ={
+        get[Pk[Long]]("post.id") ~
+        get[String]("post.name")~
+        get[String]("post.image")~
+        get[Date]("post.time") map {
+          case id ~ name ~ image ~ time=> Post(id,name,image,time)
+        }
+      }
+      /**
+       * Parse a Post from a UserPost
+       */
+      val withUserPost = Post.simple ~ (UserPost.simple ?) map{
+        case post ~ userpost => (post, userpost)
+      }
+
+       /**
+       * Register a new post.
+       *
+       * @param post 
+       */
+      def insert(post: Post): Long = {
+        DB.withConnection { implicit connection =>
+          SQL(
+            """
+              insert into POST(NAME,IMAGE,TIME) values (
+                {name}, {image}, {time}
+              )
+            """).on(
+              'name -> post.name,
+              'image -> post.image,
+              'time -> post.time).executeUpdate()
+        }
+      }
+
+
+ /**
+   * Authonticate
+   */
+  def authenticate(post: Post) = {
+    DB.withConnection { implicit connection =>
+      val postFound = SQL(
+        """
+          select * from POST 
+          where ID = (id}
+        """).on(
+          'Id -> post.id
+          ).as(Post.simple.singleOpt)
+      postFound
+    }
+  }
+}/** * Find Post With UserPost */ def userPost(post_id: Long) = { DB.withConnection { implicit connection => val userPost = SQL( """ select * from USER_POST where USER_POST_ID = {user_post_id} """).on( 'post_id -> post_id).as(UserPost.simple.singleOpt) userPost } }
+
+     /* Authenticate User For CreatePost*/
+
+  def authendticatePost = Action { implicit request =>
+    val alert: Alert = new Alert("", "")
+    Common.setAlert(alert)
+    createPostForm.bindFromRequest.fold(
+      errors => BadRequest(views.html.createPost(errors, "There is some error")),
+      post => {
+        val postOpt = Post.authenticate(post)
+        postOpt match {
+          case None =>
+
+            val alert: Alert = new Alert("error", "Invalid Credentials")
+            Common.setAlert(alert)
+            val invalidCredentialsForm = Application.createPostForm.fill(Post(NotAssigned, post.name,post.image,post.time))
+            Ok(views.html.createPost(invalidCredentialsForm, "Invalid Credentials"))
+          case Some(authpost: Post) =>
+            val userSession = request.session + ("Id" -> authpost.id.toString)
+            val createPostOpt = Post.userPost(authpost.id.get)
+            createPostOpt match {
+              case None => Ok(views.html.createPost(Application.createPostForm, "")).withSession(userSession)
+              case Some(postFound: Post) =>
+                val createPostFormWithDetails = Application.createPostForm.fill(postFound)
+                Ok(views.html.createPost(createPostFormWithDetails, "")).withSession(userSession)
+            }
+
+        }
+      })
+
+  }
+
+
+  /**
+    Create Post*/
+  def createPost = Action { implicit request =>
+
+
+    val alert: Alert = new Alert("", "")
+    Common.setAlert(alert)
+    createPostForm.bindFromRequest.fold(
+      errors => BadRequest(views.html.createPost(errors, "There is some error")),
+      post => {
+        Post.findByPostName(post.name).isEmpty match {
+          case true =>
+            val createpost = Post(NotAssigned, post.name, post.image, post.time)
+            Post.insert(createpost)
+            Common.setAlert(alert)
+          case false =>
+            val createpost = Post(NotAssigned, post.name, post.image, post.time)
+            Post.insert(createpost)
+            Common.setAlert(alert)
+        }
+        Results.Redirect("/post")
+
+      })
+  }
+/** Redirect To  post**/
+
+  def post = Action { implicit request =>
+     Ok(views.html.createPost(Application.createPostForm, "post"))
+  }
+
+POST /createPost        controllers.Application.createPost
+GET  /post              controllers.Application.post
+
+ pattern type is incompatible with expected type; found : object None required: Unit 
+    : pattern type is incompatible with expected type;
+     found   : object None
+      required: Unit
+    Error occurred in an application involving default arguments.
+                 case None =>
+                      ^
+

@@ -1,0 +1,110 @@
+;===============================================================================
+;
+; Function Name:    __IEControlGetObjFromHWND()
+; Description:      Returns a COM Object Window reference to an embebedded Webbrowser control
+; Parameter(s):     $hWin       - HWND of a Internet Explorer_Server1 control obtained for example:
+;                   $hwnd = ControlGetHandle("MyApp","","Internet Explorer_Server1")
+; Requirement(s):   Windows XP, Windows 2003 or higher.
+;                   Windows 2000; Windows 98; Windows ME; Windows NT may install the
+;                   Microsoft Active Accessibility 2.0 Redistributable:
+;                   http://www.microsoft.com/downloads/details.aspx?FamilyId=9B14F6E1-888A-4F1D-B1A1-DA08EE4077DF&displaylang=en
+; Return Value(s):  On Success  - Returns DOM Window object
+;                   On Failure  - 0  and sets @ERROR = 1
+; Author(s):        Larry with thanks to Valik
+;
+;===============================================================================
+
+Func __IEControlGetObjFromHWND(ByRef $hWin)
+    DllCall("ole32.dll", "int", "CoInitialize", "ptr", 0)
+    Local Const $WM_HTML_GETOBJECT = __IERegisterWindowMessage("WM_HTML_GETOBJECT")
+    Local Const $SMTO_ABORTIFHUNG = 0x0002
+    Local $lResult, $typUUID, $aRet, $oIE
+MsgBox(0, "msg", $WM_HTML_GETOBJECT)
+
+
+    __IESendMessageTimeout($hWin, $WM_HTML_GETOBJECT, 0, 0, $SMTO_ABORTIFHUNG, 1000, $lResult)
+
+    $typUUID = DllStructCreate("int;short;short;byte[8]")
+    DllStructSetData($typUUID, 1, 0x626FC520)
+    DllStructSetData($typUUID, 2, 0xA41E)
+    DllStructSetData($typUUID, 3, 0x11CF)
+    DllStructSetData($typUUID, 4, 0xA7, 1)
+    DllStructSetData($typUUID, 4, 0x31, 2)
+    DllStructSetData($typUUID, 4, 0x0, 3)
+    DllStructSetData($typUUID, 4, 0xA0, 4)
+    DllStructSetData($typUUID, 4, 0xC9, 5)
+    DllStructSetData($typUUID, 4, 0x8, 6)
+    DllStructSetData($typUUID, 4, 0x26, 7)
+    DllStructSetData($typUUID, 4, 0x37, 8)
+
+
+    MsgBox(0, "lResult", $lResult)
+
+
+    $aRet = DllCall("oleacc.dll", "long", "ObjectFromLresult", "lresult", $lResult, "ptr", DllStructGetPtr($typUUID), _
+            "wparam", 0, "idispatch*", 0)
+MsgBox(0, "aRet4", $aRet[4])
+    If IsObj($aRet[4]) Then
+        $oIE = $aRet[4] .Script()
+        ; $oIE is now a valid IDispatch object
+        Return $oIE.Document.parentwindow
+    Else
+        SetError(1)
+        Return 0
+    EndIf
+EndFunc   ;==>__IEControlGetObjFromHWND
+;===============================================================================
+; Function Name:    __IERegisterWindowMessage()
+; Description:      Required by __IEControlGetObjFromHWND()
+; Author(s):        Larry with thanks to Valik
+;===============================================================================
+Func __IERegisterWindowMessage($sMsg)
+    Local $aRet = DllCall("user32.dll", "int", "RegisterWindowMessage", "str", $sMsg)
+    If @error Then Return SetError(@error, @extended, 0)
+    Return $aRet[0]
+EndFunc   ;==>__IERegisterWindowMessage
+
+;===============================================================================
+; Function Name:    __IESendMessageTimeout()
+; Description:      Required by __IEControlGetObjFromHWND()
+; Author(s):        Larry with thanks to Valik
+;===============================================================================
+Func __IESendMessageTimeout($hWnd, $msg, $wParam, $lParam, $nFlags, $nTimeout, ByRef $vOut, $r = 0, $t1 = "int", $t2 = "int")
+    Local $aRet
+    $aRet = DllCall("user32.dll", "long", "SendMessageTimeout", "hwnd", $hWnd, "int", $msg, $t1, $wParam, _
+            $t2, $lParam, "int", $nFlags, "int", $nTimeout, "int*", "")
+    If @error Then
+        $vOut = 0
+        Return SetError(@error, @extended, 0)
+    EndIf
+    $vOut = $aRet[7]    
+    If $r >= 0 And $r <= 4 Then Return $aRet[$r]
+    Return $aRet
+EndFunc   ;==>__IESendMessageTimeout
+
+def get_control_from_hwnd(hnd)  
+    Win32API.new("ole32", "CoInitialize", ['P'] , 'I').call(0)
+
+    reg_msg = Win32API.new("user32", "RegisterWindowMessage", ['P'] ,'I').call("WM_HTML_GETOBJECT")
+    puts "msg: " + reg_msg.to_s
+    result=" "*16 
+    aInt = [0xA7, 0x31, 0x0, 0xA0, 0xC9, 0x8, 0x26, 0x37].pack 'I*'
+    a = [0x626FC520, 0xA41E, 0x11CF, aInt].pack 'IIIP'
+
+    sendMessagetimeout = Win32API.new("user32", "SendMessageTimeout", ['L','I','I','I','I','I','P'] , 'L')
+    sendMessagetimeout.call(hnd.hex, reg_msg, 0, 0, SMTO_ABORTIFHUNG, 1000, result)
+
+    puts "result unpacked: " + result.unpack("L").to_s  #i can confirm this is the same as the lResult from the autoit functioin
+
+    idisp=0 
+    #the problem is likely either here or the next line afterwards
+    oIE = Win32API.new("oleacc", "ObjectFromLresult", ['P','P','I','P'] , 'L')
+
+
+    oIE.call(result, a, 0, idisp)
+    puts "idisp: " + idisp.to_s
+    # returning zero
+    puts idisp.unpack("L")  
+
+end
+

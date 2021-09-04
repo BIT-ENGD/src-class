@@ -1,0 +1,288 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
+#include <stdbool.h>
+
+#include "sdbm.h"
+
+FILE *db;
+bool opened = false, needNewDB = false;
+int err = 0, keyLen = 0;
+char *filename;
+
+typedef struct Key_{
+  char *name;
+  char *val;
+  long offset;
+  struct Key_ *next;
+} Key;
+
+Key *head = NULL,*tail = NULL, *lastHas = NULL, *beforeLastHas = NULL;
+/**
+ * Create new database with given name. You still have
+ * to sdbm_open() the database to access it. Return true
+ * on success, false on failure.
+ */
+void listAdd() {
+  if (tail != NULL) {
+    tail->next = (Key *) malloc(sizeof(Key));
+    tail = tail->next;
+  }
+  else {
+    tail = (Key *)malloc(sizeof(Key));
+    head = tail;
+  }
+  tail->next = NULL;
+  tail->name = NULL;
+  tail->val = NULL;
+}
+
+bool sdbm_create( const char *name ) { //Errors: 1) fopen failed 2) fclose failed on new db
+  filename = malloc(sizeof(*name));
+  strcpy(filename,name);
+  FILE *temp = fopen(name, "w");
+  if (temp == NULL) {
+    printf("Couldn't create file %s\n",name);
+    err = 1;
+    return false;
+  }
+  if (fclose(temp) == EOF) {
+    printf("Couldn't close created file %s\n",name);
+    err = 2;
+    return false;
+  }
+  return true;
+}
+/**
+ * Open existing database with given name. Return true on
+ * success, false on failure.
+ */
+bool sdbm_open( const char *name ) { //Errors: 3) couldn't open database
+  db = fopen(name,"r+");
+  if (db == NULL) {
+    err = 3;
+    printf("Couldn't open database file %s\n",name);
+    return false;
+  }
+  opened = true;
+  int c;
+  bool inKey = true;
+  char currKey[MAX_KEY_LENGTH];
+  while ((c = getc(db)) != EOF)  {
+    if (!inKey && c == '\0') {
+      inKey = true;
+    }
+    else if (inKey && c == '\0') {
+      currKey[keyLen] = '\0';
+      listAdd();
+      tail->offset = ftell(db);
+      tail->name = malloc(sizeof(*currKey));
+      strcpy(tail->name,currKey);
+      keyLen = 0;
+      inKey = false;
+    }
+    else if (inKey) { 
+      currKey[keyLen] = c;
+      keyLen++;
+    }
+  }
+  Key *curr = head;
+  while (curr != NULL) {
+    printf("Key: %s\n",curr->name);
+    curr = curr->next;
+  }
+
+  return true;
+}
+void readVal(char *value, long offset) {
+  fseek(db,offset,SEEK_SET);
+  int c;
+  for (int i = 0; (c = getc(db)) != '\0'; i++) {
+    *(value + i) = c;
+  }
+}
+
+/**
+ * Synchronize all changes in database (if any) to disk.
+ * Useful if implementation caches intermediate results
+ * in memory instead of writing them to disk directly.
+ * Return true on success, false on failure.
+ */
+bool sdbm_sync() {
+  if (!needNewDB) {
+    Key *curr = head;
+    fseek(db,0,SEEK_END);
+    while (curr != NULL) {
+      if (curr->val != NULL) {
+        fprintf(db,"%s%c%s%c",curr->name,'\0',curr->val,'\0');
+      }
+      curr = curr->next;
+    }
+  }
+  else {
+    FILE *temp;
+    sdbm_create("tRpdxD.p4ed");
+    temp = fopen("tRpdxD.p4ed","w");
+    Key *curr = head;
+    while (curr != NULL) {
+      if (curr->val != NULL) {
+        fprintf(temp,"%s%c%s%c",curr->name, '\0', curr->val, '\0');
+      }else {
+        char *tempS = malloc(MAX_VALUE_LENGTH);
+        readVal(tempS, curr->offset);
+        fprintf(temp,"%s%c%s%c",curr->name,'\0',tempS,'\0');
+        free(tempS);
+      }
+      fflush(temp);
+      fflush(db);
+      curr = curr->next;
+    }
+    fclose(db);
+    remove(filename);
+    rename("tRpdxD.p4ed",filename);
+    db = fopen(filename,"r+");
+  }
+  fflush(db);
+  return true;
+}
+/**
+ * Close database, synchronizing changes (if any). Return
+ * true on success, false on failure.
+ */
+bool sdbm_close() { // Errors: 5) Couldn't close database
+  sdbm_sync();
+  Key *tmp = head;
+  while (head->next != NULL) {
+    tmp = head;
+    head = head->next;
+    free(tmp->name);
+    if (tmp->val != NULL) {
+      free(tmp->val);
+    }
+    free(tmp);
+  }
+  if (fclose(db) == EOF) {
+    err = 5;
+    printf("Couldn't close database.\n");
+    return false;
+  }
+  return true;
+}
+/**
+ * Return error code for last failed database operation.
+ */
+int sdbm_error() {
+  return err;
+}
+
+/**
+ * Is given key in database?
+ */
+bool sdbm_has( const char *key ) {
+  if (head == NULL) {
+    return false;
+  }
+  Key *curr = head;
+  lastHas = NULL;
+  beforeLastHas = NULL;
+  while (curr != NULL) {
+    if (!strcmp(curr->name,key)) {
+
+      lastHas = curr;
+      return true;
+    }
+    beforeLastHas = curr;
+    curr = curr->next;
+  }
+  return false;
+}
+
+/**
+ * Get value associated with given key in database.
+ * Return true on success, false on failure.
+ *
+ * Precondition: sdbm_has(key)
+ */
+bool sdbm_get( const char *key, char *value ) { //Errors: 6)Don't have key
+  if (!sdbm_has(key)) {
+    printf("Precondition sdbm_has(%s) failed", key);
+    err = 6;
+    return false;
+  }
+  readVal(value, lastHas->offset);
+  return true;
+}
+
+/**
+ * Update value associated with given key in database
+ * to given value. Return true on success, false on
+ * failure.
+ *
+ * Precondition: sdbm_has(key)
+ */
+bool sdbm_put( const char *key, const char *value ) {
+  if (!sdbm_has(key)) {
+    printf("Precondition !sdbm_has(%s) failed",key);
+    err = 7;
+    return false;
+  }
+  sdbm_remove(key);
+  sdbm_insert(key,value);
+  return true;
+}
+/**
+ * Insert given key and value into database as a new
+ * association. Return true on success, false on
+ * failure.
+ *
+ * Precondition: !sdbm_has(key)
+ */
+bool sdbm_insert( const char *key, const char *value ) { //Errors: 7)Already have key 8)Invalid key or value length
+  if (sdbm_has(key)) {
+    printf("Precondition !sdbm_has(%s) failed",key);
+    err = 7;
+    return false;
+  }
+  if (strlen(key) < MIN_KEY_LENGTH || strlen(key) > MAX_KEY_LENGTH || strlen(value) < MIN_VALUE_LENGTH || strlen(value) > MAX_VALUE_LENGTH) {
+    printf("Invalid key or value length");
+    err = 8;
+    return false;
+  }
+  listAdd();
+  tail->name = (char *)key;
+  tail->val = malloc(sizeof(*value));
+  strcpy(tail->val,value);
+  return true;
+}
+
+/**
+ * Remove given key and associated value from database.
+ * Return true on success, false on failure.
+ *
+ * Precondition: sdbm_has(key)
+ */
+bool sdbm_remove( const char *key ) {
+  if (!sdbm_has(key)) {
+    printf("Precondition !sdbm_has(%s) failed",key);
+    err = 7;
+    return false;
+  }
+  needNewDB = true;
+  if (beforeLastHas == NULL) {
+    head = lastHas->next;
+  }
+  else if (lastHas->next == NULL) {
+    tail = beforeLastHas;
+  }
+  else {
+    beforeLastHas->next = lastHas->next;
+  }
+  if (lastHas->val != NULL) {
+    free(lastHas->val);
+  }
+  free(lastHas->name);
+  free(lastHas);
+  return true;
+}
+

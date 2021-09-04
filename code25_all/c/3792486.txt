@@ -1,0 +1,54 @@
+#include <dtrace.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <mach/mach.h>
+#include <mach-o/loader.h>
+#include <mach-o/dyld.h>
+#include <mach-o/fat.h>
+#include <sys/sysctl.h>
+#include <signal.h>
+
+static const char *g_prog =
+  "pid86138::write:entry"
+  "{"
+  "  printf(\"process pid = %d\\n\", pid);"
+  "}";
+
+static int dcmdbuffered(const dtrace_bufdata_t *bufdata, void *arg) {
+  if((bufdata->dtbda_recdesc != NULL) && (bufdata->dtbda_recdesc->dtrd_action == DTRACEACT_PRINTF))
+    printf("BUF: %s\n", bufdata->dtbda_buffered);
+
+  return DTRACE_HANDLE_OK;
+}
+
+static int chew(const dtrace_probedata_t *data, void *arg) {
+  return DTRACE_CONSUME_THIS;
+}
+
+static int chewrec(const dtrace_probedata_t *data, const dtrace_recdesc_t *rec, void *arg) {
+  if(rec == NULL)
+    return (DTRACE_CONSUME_NEXT);
+  return (DTRACE_CONSUME_THIS);
+}
+
+int main(int argc, char **argv) {
+  int err, done = 0;
+  dtrace_proginfo_t info;
+
+  dtrace_hdl_t *g_dtp = dtrace_open(DTRACE_VERSION, DTRACE_O_ILP32, &err);
+  dtrace_prog_t *prog = dtrace_program_strcompile(g_dtp, g_prog, DTRACE_PROBESPEC_NAME, 0, 0, NULL);
+  dtrace_handle_buffered(g_dtp, dcmdbuffered, NULL);
+  dtrace_program_exec(g_dtp, prog, &info);
+  dtrace_setopt(g_dtp, "strsize", "4096");
+  dtrace_setopt(g_dtp, "bufsize", "4m");
+  dtrace_setopt(g_dtp, "arch", "x86_64");
+  dtrace_go(g_dtp);
+
+  while(dtrace_work(g_dtp, NULL, chew, chewrec, NULL) == DTRACE_WORKSTATUS_OKAY)
+    dtrace_sleep(g_dtp);
+
+  dtrace_stop(g_dtp);
+  dtrace_close(g_dtp);
+  return 0;
+}
+

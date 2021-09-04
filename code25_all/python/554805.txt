@@ -1,0 +1,84 @@
+ab -n 100000 -c 50 http://192.168.0.192/
+import socket
+import select
+import stackless
+import time
+
+class socket_wrapper(object):
+    def __init__(self, sock, sockets):
+        super(socket_wrapper, self).__init__()
+        self.sock = sock
+        self.fileno = sock.fileno
+        self.sockets_list = sockets
+        self.channel = stackless.channel()
+        self.writable = False
+        self.error = False
+
+    def remove(self):
+        self.sock.close()
+        self.sockets_list.remove(self)
+
+    def send(self, data):
+        self.sock.send(data)
+
+    def push(self, bytes):
+        self.channel.send(self.sock.recv(bytes))
+
+def stackless_accept(accept, handler, recv_size=1024, timeout=0):
+    sockets = [accept]
+
+    while True:
+        read, write, error = select.select(sockets, sockets, sockets, timeout)
+
+        for sock in read:
+            if sock is accept:
+                # Accept socket and create wrapper
+                sock = socket_wrapper(sock.accept()[0], sockets)
+
+                # Create tasklett for this connection
+                tasklet = stackless.tasklet(handler)
+                tasklet.setup(sock)
+
+                # Store socket
+                sockets.append(sock)
+
+            else:
+                # Send data to handler
+                sock.push(recv_size)
+
+        # Tag all writable sockets
+        for sock in write:
+            if sock is not accept:
+                sock.writable = True
+
+        # Tag all faulty sockets
+        for sock in error:
+            if sock is not accept:
+                sock.error = True
+            else:
+                pass # should do something here if the main socket is faulty
+
+        timeout = 0 if socket else 1
+        stackless.schedule() 
+
+def simple_handler(tsock):
+    data = ""
+
+    while data[-4:] != "\r\n\r\n":
+        data += tsock.channel.receive()
+
+    while not tsock.writable and not tsock.error:
+        stackless.schedule()
+
+    if not tsock.error:
+        tsock.send("HTTP/1.1 200 OK\r\nContent-length: 8\r\n\r\nHi there")
+        tsock.remove()
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("192.168.0.192", 8000))
+sock.listen(5)
+
+stackless.tasklet(stackless_accept)(sock, simple_handler)
+stackless.run()
+

@@ -1,0 +1,31 @@
+cert = File.read(options[:cert])
+ctx = OpenSSL::SSL::SSLContext.new
+ctx.key = OpenSSL::PKey::RSA.new(cert, options[:passphrase])
+ctx.cert = OpenSSL::X509::Certificate.new(cert)
+
+sock = TCPSocket.new(options[:host], options[:port])
+ssl = OpenSSL::SSL::SSLSocket.new(sock, ctx)
+ssl.sync = true
+ssl.connect
+
+messages.each do |message|
+  ssl.write(message.to_apn)
+end
+
+if read_buffer = ssl.read(6)
+  process_error_response(read_buffer)
+end
+
+Thread.new() {
+  while data = ssl.read(6)
+    process_error_response(data)
+  end
+}
+
+messages.each do |message|
+  ssl.write(message.to_apn)
+end
+
+ssl.close
+sock.close
+

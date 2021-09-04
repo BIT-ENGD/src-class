@@ -1,0 +1,302 @@
+CREATE TABLE PageLogSample (
+    id INT NOT NULL PRIMARY KEY IDENTITY
+,   userid INT
+,   courseid INT
+,   sessionid INT
+,   requestdate DATETIME
+);
+
+TRUNCATE TABLE PageLogSample;
+
+INSERT INTO PageLogSample (userid, courseid, sessionid, requestdate)
+-- [0, 10] = 10 minutes
+          SELECT 1, 1, 1, '00:00:00'
+UNION ALL SELECT 1, 1, 1, '00:10:00'
+-- [0, 12] - [3, 5] = 10 minutes
+-- or ... [0, 3] + [5, 12] = 10 minutes
+UNION ALL SELECT 2, 1, 2, '00:00:00'
+UNION ALL SELECT 2, 2, 2, '00:03:00'
+UNION ALL SELECT 2, 2, 2, '00:05:00'
+UNION ALL SELECT 2, 1, 2, '00:12:00'
+-- [0, 12] - [3, 5] = 10 minutes
+-- or ... [0, 3] + [5, 12] = 10 minutes
+UNION ALL SELECT 3, 1, 3, '00:00:00'
+UNION ALL SELECT 3, 2, 3, '00:03:00'
+UNION ALL SELECT 3, 2, 3, '00:05:00'
+UNION ALL SELECT 3, 1, 3, '00:12:00'
+UNION ALL SELECT 3, 2, 3, '00:15:00'
+-- [1, 13] - [3, 5] = 10 minutes
+-- or ... [1, 3] + [5, 13] = 10 minutes
+UNION ALL SELECT 4, 2, 4, '00:00:00'
+UNION ALL SELECT 4, 1, 4, '00:01:00'
+UNION ALL SELECT 4, 2, 4, '00:03:00'
+UNION ALL SELECT 4, 2, 4, '00:05:00'
+UNION ALL SELECT 4, 1, 4, '00:13:00'
+UNION ALL SELECT 4, 2, 4, '00:15:00'
+-- [0, 5] + [10, 15] = 10 minutes
+UNION ALL SELECT 5, 1, 5, '00:00:00'
+UNION ALL SELECT 5, 1, 5, '00:05:00'
+UNION ALL SELECT 5, 1, 6, '00:10:00'
+UNION ALL SELECT 5, 1, 6, '00:15:00'
+-- [0, 10] = 10 minutes (ignoring everything inbetween)
+UNION ALL SELECT 6, 1, 7, '00:00:00'
+UNION ALL SELECT 6, 1, 7, '00:03:00'
+UNION ALL SELECT 6, 1, 7, '00:05:00'
+UNION ALL SELECT 6, 1, 7, '00:07:00'
+UNION ALL SELECT 6, 1, 7, '00:10:00'
+-- [0, 11] - [5, 6] = 10 minutes
+-- or ... [0, 3] + [7, 11] = 6 minutes (good)
+-- or ... [0, 5] + [7, 11] = 9 minutes (better)
+UNION ALL SELECT 7, 1, 8, '00:00:00'
+UNION ALL SELECT 7, 1, 8, '00:03:00'
+UNION ALL SELECT 7, 2, 8, '00:05:00'
+UNION ALL SELECT 7, 2, 8, '00:06:00'
+UNION ALL SELECT 7, 1, 8, '00:07:00'
+UNION ALL SELECT 7, 1, 8, '00:11:00'
+-- [0, 1] + [2, 4] + [5, 7] + [8, 13] = 10
+UNION ALL SELECT 8, 1, 9, '00:00:00'
+UNION ALL SELECT 8, 2, 9, '00:01:00'
+UNION ALL SELECT 8, 1, 9, '00:02:00'
+UNION ALL SELECT 8, 1, 9, '00:03:00'
+UNION ALL SELECT 8, 2, 9, '00:04:00'
+UNION ALL SELECT 8, 1, 9, '00:05:00'
+UNION ALL SELECT 8, 1, 9, '00:06:00'
+UNION ALL SELECT 8, 2, 9, '00:07:00'
+UNION ALL SELECT 8, 1, 9, '00:08:00'
+UNION ALL SELECT 8, 1, 9, '00:13:00'
+;
+
+DECLARE @courseid INT;
+SET @courseid = 1;
+
+SELECT subquery.userid
+, COUNT(DISTINCT subquery.sessionid) AS sessioncount
+, SUM(subquery.duration) AS duration
+, CASE SUM(subquery.duration) 
+    WHEN 10 THEN 'ok' 
+    ELSE 'ERROR' 
+END
+FROM (
+    SELECT userid
+    , sessionid
+    , DATEDIFF(MINUTE, MIN(requestdate), MAX(requestdate)) AS duration
+    FROM PageLogSample
+    WHERE courseid = @courseid
+    GROUP BY userid
+    , sessionid
+) subquery
+GROUP BY subquery.userid
+ORDER BY subquery.userid;
+
+-- userid  sessioncount  duration   
+-- 1       1             10       ok
+-- 2       1             12       ERROR
+-- 3       1             12       ERROR
+-- 4       1             12       ERROR
+-- 5       2             10       ok
+
+DECLARE @courseid INT;
+SET @courseid = 1;
+
+WITH cte (userid, courseid, sessionid, start, finish, duration)
+AS (
+    SELECT userid
+    , courseid
+    , sessionid
+    , MIN(requestdate)
+    , MAX(requestdate)
+    , DATEDIFF(MINUTE, MIN(requestdate), MAX(requestdate))
+    FROM PageLogSample
+    GROUP BY userid
+    , courseid
+    , sessionid
+)
+SELECT naive.userid
+, naive.sessioncount
+, naive.duration AS naiveduration
+, correction.duration AS correctionduration
+, naive.duration - ISNULL(correction.duration, 0) AS duration
+, CASE naive.duration - ISNULL(correction.duration, 0)
+    WHEN 10 THEN 'ok' 
+    ELSE 'ERROR' 
+END
+FROM (
+    SELECT cte.userid
+    , COUNT(DISTINCT cte.sessionid) AS sessioncount
+    , SUM(cte.duration) AS duration
+    FROM cte
+    WHERE cte.courseid = @courseid
+    GROUP BY cte.userid
+) naive
+LEFT JOIN (
+    SELECT errors.userid
+    , SUM(errors.duration) AS duration
+    FROM cte errors
+    WHERE errors.courseid <> @courseid
+    AND EXISTS (
+        SELECT *
+        FROM cte
+        WHERE cte.start <= errors.start
+        AND cte.finish >= errors.finish
+        AND cte.courseid = @courseid
+    )
+    GROUP BY errors.userid
+) correction
+ON naive.userid = correction.userid
+;
+
+-- userid  sessioncount  naiveduration  correctionduration  duration
+-- 1       1             10             NULL                10        ok
+-- 2       1             12             2                   10        ok
+-- 3       1             12             NULL                12        ERROR
+-- 4       1             12             NULL                12        ERROR
+-- 5       2             10             NULL                10        ok
+
+DECLARE @courseid INT;
+SET @courseid = 1;
+
+WITH numberedcte (rn, id, userid, courseid, sessionid, requestdate)
+AS (
+    SELECT ROW_NUMBER() OVER (PARTITION BY sessionid, userid ORDER BY id)
+    , id
+    , userid
+    , courseid
+    , sessionid
+    , requestdate
+    FROM PageLogSample
+)
+, typedcte (rowtype, id, userid, courseid, sessionid, requestdate, nextrequestdate)
+AS (
+    SELECT CASE
+        WHEN previousrequest.courseid = nextrequest.courseid
+            THEN 'between'
+        WHEN previousrequest.courseid IS NULL
+            OR nextrequest.courseid = numberedcte.courseid
+            THEN 'begin'
+        WHEN nextrequest.courseid IS NULL
+            OR previousrequest.courseid = numberedcte.courseid
+            THEN 'end'
+        ELSE 'error?'
+    END AS rowtype
+    , numberedcte.id
+    , numberedcte.userid
+    , numberedcte.courseid
+    , numberedcte.sessionid
+    , numberedcte.requestdate
+    , nextrequest.requestdate
+    FROM numberedcte
+    LEFT JOIN numberedcte previousrequest
+        ON previousrequest.userid = numberedcte.userid
+        AND previousrequest.sessionid = numberedcte.sessionid
+        AND previousrequest.rn = numberedcte.rn - 1
+    LEFT JOIN numberedcte nextrequest
+        ON nextrequest.userid = numberedcte.userid
+        AND nextrequest.sessionid = numberedcte.sessionid
+        AND nextrequest.rn = numberedcte.rn + 1
+    WHERE numberedcte.courseid = @courseid
+    AND (
+        nextrequest.courseid = @courseid
+        OR previousrequest.courseid = @courseid
+    )
+)
+, beginsum (userid, value)
+AS (
+    SELECT userid, SUM(DATEPART(MINUTE, requestdate))
+    FROM typedcte
+    WHERE rowtype = 'begin'
+    GROUP BY userid
+)
+, endsum (userid, value)
+AS (
+    SELECT userid, SUM(DATEPART(MINUTE, ISNULL(nextrequestdate, requestdate)))
+    FROM typedcte
+    WHERE rowtype = 'end'
+    GROUP BY userid
+)
+SELECT beginsum.userid
+, endsum.value - beginsum.value AS duration
+FROM beginsum
+INNER JOIN endsum
+    ON beginsum.userid = endsum.userid
+;
+
+-- userid  duration
+-- 1       10
+-- 5       10
+-- 6       10
+-- 7       9
+-- 8       9
+
+DECLARE @courseid INT;
+SET @courseid = 1;
+
+WITH numberedcte (rn, userid, courseid, sessionid, requestdate)
+AS (
+    SELECT ROW_NUMBER() OVER (PARTITION BY sessionid, userid ORDER BY id)
+    , userid
+    , courseid
+    , sessionid
+    , requestdate
+    FROM PageLogSample
+)
+, valuecte (value, userid, courseid, sessionid)
+AS (
+    SELECT CASE
+        --alone
+        WHEN ( previousrequest.courseid IS NULL
+            OR previousrequest.courseid <> numberedcte.courseid
+            )
+            AND nextrequest.courseid <> numberedcte.courseid
+            THEN DATEDIFF(MINUTE, numberedcte.requestdate, nextrequest.requestdate)
+        --between
+        WHEN previousrequest.courseid = nextrequest.courseid
+            THEN 0
+        --begin
+        WHEN previousrequest.courseid IS NULL
+            OR nextrequest.courseid = numberedcte.courseid
+            THEN -1 * DATEPART(MINUTE, numberedcte.requestdate)
+        --ignored (end with no next request)
+        WHEN nextrequest.courseid IS NULL
+            AND previousrequest.courseid <> numberedcte.courseid
+            THEN 0
+        --end
+        WHEN nextrequest.courseid IS NULL
+            OR previousrequest.courseid = numberedcte.courseid
+            THEN DATEPART(MINUTE, ISNULL(nextrequest.requestdate, numberedcte.requestdate))
+        --impossible?
+        ELSE 0
+    END
+    , numberedcte.userid
+    , numberedcte.courseid
+    , numberedcte.sessionid
+    FROM numberedcte
+    LEFT JOIN numberedcte previousrequest
+        ON previousrequest.userid = numberedcte.userid
+        AND previousrequest.sessionid = numberedcte.sessionid
+        AND previousrequest.rn = numberedcte.rn - 1
+    LEFT JOIN numberedcte nextrequest
+        ON nextrequest.userid = numberedcte.userid
+        AND nextrequest.sessionid = numberedcte.sessionid
+        AND nextrequest.rn = numberedcte.rn + 1
+    WHERE numberedcte.courseid = @courseid
+)
+SELECT userid
+, courseid
+, COUNT(DISTINCT sessionid) AS sessioncount
+, SUM(value) AS duration
+FROM valuecte
+GROUP BY userid
+, courseid
+ORDER BY userid
+;
+
+-- userid  courseid  sessioncount  duration
+-- 1       1         1             10
+-- 2       1         1              3
+-- 3       1         1              6
+-- 4       1         1              4
+-- 5       1         2             10
+-- 6       1         1             10
+-- 7       1         1              9
+-- 8       1         1             10
+

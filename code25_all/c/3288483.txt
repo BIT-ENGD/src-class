@@ -1,0 +1,120 @@
+  1 #include  <stdlib.h>
+  2 #include  <stdio.h>
+  3 
+  4 int main (int argc, char *argv[]) {
+  6   int i = 0, j;
+  7   unsigned char buf[512];
+  8   unsigned char x;
+  9 
+ 10   while ((x = getchar()) != '\n') {
+ 11     buf[i] = x;
+ 12     i++;
+ 13   }
+ 14 
+ 16   for (j = 0; j < i; j++) {
+ 17     printf("%x ", buf[j]);
+ 18   }
+ 19   printf ( "\n" );
+ 20 
+ 21   return EXIT_SUCCESS;
+ 22 }  // end of function main
+
+$ bc
+bc 1.06.95
+Copyright 1991-1994, 1997, 1998, 2000, 2004, 2006 Free Software Foundation, Inc.
+This is free software with ABSOLUTELY NO WARRANTY.
+For details type `warranty'. 
+2+2
+4
+
+$ ./wrapper bc
+2+2
+enter
+4
+
+dup2(pipefd[0], 0);  // Set the read end of the pipe as stdin.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <assert.h>
+
+int main(int argc, char const *argv[]) {
+
+  int cpid;
+  int pipefd[2];
+
+
+  if (pipe(pipefd) == -1) { perror("pipe.\n"); exit(errno); }
+
+
+  cpid = fork();
+  if (cpid == -1) { perror("fork."); exit(errno); }
+
+
+  if (cpid) {
+    // Parent --------------------------------------------------------
+
+    int buf_size = 8192;
+    char buf[buf_size];
+    size_t file;
+
+    // Close the unused read end of the pipe.
+    close(pipefd[0]);
+
+    // Leave a bit of time to the child to display its initial input.
+    sleep(2);
+
+    while (1) {
+      gets(buf);
+
+      if (strcmp("enter", buf) == 0) {
+        write(pipefd[1], "\n", 1);
+
+      } else if (-1 != (file = open(buf, O_RDONLY))) {
+        // Dump the output of the file to the child's stdin.
+        char c;
+        while(read(file, &c, 1) != 0) {
+          switch(c) {
+            case '\n':
+              printf("(skipped \\n)");
+              break;
+            default:
+              printf("%c", c);
+              write(pipefd[1], &c, 1);
+          }; 
+        }
+        printf("\n");
+
+      } else {
+        // Dump input to the child's stdin, without trailing '\n'.
+        for (int i = 0; (buf[i] != 0); i++) {
+          write(pipefd[1], buf + i, 1);
+        }
+      }
+    }
+
+    // Wait for the child to exit.
+    printf("Waiting for child to exit.\n");
+    wait(NULL);
+
+  } else {
+    // Child ---------------------------------------------------------
+
+    // Close the unused write end of the pipe.
+    close(pipefd[1]);
+    // Set the read end of the pipe as stdin.
+    dup2(pipefd[0], 0);  // Set the read end of the pipe as stdin.
+
+    char** program_arguments = (char**)(argv + 1);
+    if (execvp(argv[1], program_arguments) < 0) {
+      perror("execvp.\n");
+      exit(errno);
+    }
+  }
+}
+

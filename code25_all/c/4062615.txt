@@ -1,0 +1,140 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ipc.h>
+#include <sys/types.h>
+#include <sys/sem.h>
+#include "header.h"
+
+//BEGIN MAIN FUNCTION
+main()
+{
+    int id;             //ID to data shmem
+    struct StudentInfo *infoptr;    //ptr to data
+    int found = 0;          //found 'boolean'
+    char input[15];         //user input buffer
+    struct StudentInfo *beginptr;   //ptr to beginning of data
+    int rcid;           //Read count ID to shmem
+    int *rcptr;         //RC ptr
+    int sema_set;           //ID to shared semaphores
+
+    //Find the shmem at our ID
+        id = shmget(KEY,SEGSIZE,0);
+        if(id < 0)
+        {
+                perror("Query: shmget failed");
+                exit(1);
+        }
+
+    //set the ptr to our shared mem and attach to program
+        infoptr = (struct StudentInfo *)shmat(id,0,0);
+        if(infoptr <= (struct StudentInfo *)(0))
+        {
+                perror("Query: shmat failed");
+                exit(1);
+        }
+
+    //Get our RC in shared memory 
+    rcid = shmget(RCKEY,READCOUNT,0);
+    if(rcid < 0)
+    {
+        perror("Query: shmget failed");
+        exit(1);
+    }
+    //Set ptr to shmem and attach to process
+    rcptr = (int*)shmat(rcid,0,0);
+    if(rcptr <= (int*)(0))
+    {
+        perror("Print: Shmat failed");
+        exit(1);
+    }
+
+    //Get semaphores
+    sema_set = semget(SEMA_KEY,NUM_SEMAPHS,0);
+    if(sema_set < 0)
+    {
+        perror("Query: Semget failed");
+        exit(1);
+    }   
+
+    //Set program to queue up to wait
+    Wait(sema_set,1);
+
+    //Increment the read counter
+    *rcptr += 1;
+
+    //If we are the first reader, stop writers
+    if(*rcptr == 1)
+    Wait(sema_set,0);
+
+    //Signal readers
+    Signal(sema_set,1);
+
+    //Set our begin ptr
+    beginptr = infoptr;
+
+    //Begin user input loop
+    while(1)
+    {
+    //Ask user for input IT DOESN"T EVEN GET TO HERE <--
+    printf("Please input a student ID :");
+    scanf("%s",input);
+
+    //While the record is not found search  
+    while(strcmp(infoptr->Name,"")!=0 && found != 1)
+    {
+        //If record found, print the record
+        if((strncmp(input,infoptr->ID,9)) == 0)
+        {
+            //Set found
+            found = 1;
+
+            printf("\n%s\n",infoptr->Name);
+                    printf("%s\n",infoptr->telNumber);
+                    printf("%s\n",infoptr->Address);
+                    printf("%s\n\n",infoptr->ID);
+        }
+        else
+            infoptr++;
+    }
+
+    //If not found, print error message
+    if(found == 0)
+        printf("Record not found.\n");
+
+    //Wait on readers
+    Wait(sema_set,1);
+    //Decrement
+    *rcptr--;
+    //If no readers left
+    if(*rcptr == 0)
+        Signal(sema_set,0); //Signal writers
+    //Signal readers
+    Signal(sema_set,1);
+    exit(0);        
+    }
+}
+
+#define KEY  ((key_t)(11111)) /*change it to last five digits of your SSN*/
+#define SEGSIZE  sizeof(struct StudentInfo)
+
+#define NUM_SEMAPHS 2
+#define SEMA_KEY   ((key_t)(1111)) /* change this to last four digits of SSN */
+
+#define READCOUNT sizeof(int)   //Set the size of shmem for read count
+#define RCKEY ((key_t)(4003))   //Set the key of the shmem for RCount
+
+//Struct student info
+struct StudentInfo{
+  char Name[20];
+  char ID[15];
+  char Address[50];
+  char telNumber[15];
+};
+
+//Checks the semaphore whether or not to wait
+void Wait(int semaph, int n);
+//Signals that it's ok to run
+void Signal(int semaph, int n);
+//Gets the semaphore information
+int GetSemaphs(key_t k, int n);
+

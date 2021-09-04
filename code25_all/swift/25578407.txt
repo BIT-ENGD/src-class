@@ -1,0 +1,185 @@
+import UIKit
+import CoreData
+
+@UIApplicationMain
+class AppDelegate: UIResponder, UIApplicationDelegate {
+
+    var window: UIWindow?
+
+    var objectContext:NSManagedObjectContext?
+
+
+   func application(application: UIApplication!, didFinishLaunchingWithOptions launchOptions: NSDictionary!) -> Bool {
+    self.objectContext = self.createMainQueueManagedObjectContext()
+    self.testModel()
+    return true
+}
+
+func testModel(){
+    var photoModel: Photo? = NSEntityDescription.insertNewObjectForEntityForName("Photo", inManagedObjectContext: self.objectContext!) as? Photo
+    photoModel!.title = "hi"
+    photoModel!.subtitle = "subtitle"
+    self.objectContext!.insertObject(photoModel)
+    self.objectContext!.save(nil)
+    println(self.objectContext!.persistentStoreCoordinator.persistentStores[0].objects)
+}
+
+
+    func createManagedObjectModel()-> NSManagedObjectModel{
+        var managedObjectModel:NSManagedObjectModel?
+        let modelURL:NSURL = NSBundle.mainBundle().URLForResource("PhotoModel", withExtension: "momd")
+        managedObjectModel = NSManagedObjectModel(contentsOfURL: modelURL)
+        return managedObjectModel!
+    }
+
+    func createPersistentStoreCoordinator()-> NSPersistentStoreCoordinator{
+        var persistentStoreCoordinator:NSPersistentStoreCoordinator?
+        var managedObjectModel:NSManagedObjectModel = self.createManagedObjectModel()
+        let storeURL:NSURL = self.applicationDocumentsDirectory().URLByAppendingPathComponent("MOC.sqlite")
+        var error:NSError?
+        persistentStoreCoordinator = NSPersistentStoreCoordinator(managedObjectModel: managedObjectModel)
+        if (persistentStoreCoordinator?.addPersistentStoreWithType(NSSQLiteStoreType as String, configuration: nil, URL: storeURL, options: nil, error: &error) == nil){
+            NSLog("unresolved error %@, %@", error!, error!.userInfo)
+            abort()
+        }
+        return persistentStoreCoordinator!
+
+    }
+
+    func applicationDocumentsDirectory()-> NSURL{
+        var hello:NSURL = NSFileManager().URLsForDirectory(NSSearchPathDirectory.DocumentDirectory, inDomains: NSSearchPathDomainMask.UserDomainMask).last as NSURL
+        return hello
+    }
+
+    func createMainQueueManagedObjectContext()->NSManagedObjectContext{
+        var managedObjectContext:NSManagedObjectContext?
+        var coordinator:NSPersistentStoreCoordinator = self.createPersistentStoreCoordinator()
+        if (coordinator != nil){
+            managedObjectContext = NSManagedObjectContext(concurrencyType: NSManagedObjectContextConcurrencyType.MainQueueConcurrencyType)
+            managedObjectContext!.persistentStoreCoordinator = coordinator
+        }
+        return managedObjectContext!
+    }
+}
+
+class MyViewController: UITableViewController {
+
+
+    @IBOutlet weak var refresher: UIRefreshControl?
+
+    let appDelegate:AppDelegate = UIApplication.sharedApplication().delegate as AppDelegate
+
+
+    var objectContext:NSManagedObjectContext?{
+        didSet{
+            self.fetchDatabasePhotos()
+        }
+    }
+
+    var fetchController:NSFetchedResultsController?{
+        didSet{
+            self.tableView.reloadData()
+        }
+    }
+
+
+
+    override func viewDidLoad() {
+         self.objectContext = self.appDelegate.objectContext
+        super.viewDidLoad()
+
+    }
+
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        // Dispose of any resources that can be recreated.
+    }
+
+    func fetchDatabasePhotos(){
+        let request:NSFetchRequest = NSFetchRequest(entityName: "Photo")
+        request.predicate = nil
+        request.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
+        self.fetchController = NSFetchedResultsController(fetchRequest: request, managedObjectContext: self.objectContext, sectionNameKeyPath: nil, cacheName: nil)
+        println(self.fetchController!)
+       // println(self.fetchController!.fetchedObjects)
+    }
+}
+
+override func prepareForSegue(segue: UIStoryboardSegue!, sender: AnyObject!) {
+    let indexPath:NSIndexPath = self.tableView.indexPathForCell(sender as UITableViewCell)
+    if (segue.identifier == "Display Photo"){
+        if (segue.destinationViewController.isKindOfClass(ImageViewController)){
+            self.prepareImageViewController(segue.destinationViewController as ImageViewController, photo: self.photos[indexPath.row] as NSDictionary)
+        }
+    }
+}
+
+
+func prepareImageViewController(ivc:ImageViewController, photo:NSDictionary){
+    ivc.imageURL = FlickrFetcher.URLforPhoto(photo, format: FlickrPhotoFormatLarge)
+    ivc.title = photo.valueForKeyPath(FLICKR_PHOTO_TITLE) as String
+    var photoModel: Photo! = NSEntityDescription.insertNewObjectForEntityForName("Photo", inManagedObjectContext: self.objectContext) as Photo
+    photoModel!.title = photo.valueForKeyPath(FLICKR_PHOTO_TITLE) as String
+    photoModel!.subtitle = photo.valueForKeyPath(FLICKR_PHOTO_DESCRIPTION) as String
+    photoModel!.photoURL = FlickrFetcher.URLforPhoto(photo, format: FlickrPhotoFormatLarge).absoluteString
+   photoModel!.created_date = NSDate()
+    println(self.objectContext!)
+    var theVar:Bool = self.objectContext!.save(nil)
+    println(theVar)
+    self.fetchDatabasePhotos()
+}
+
+self.objectContext!.save(xx)
+self.objectContext.registeredObjects
+fetchcontroller.fetchedObjects
+import UIKit
+
+class RecentPhotosController: MyViewController {
+
+    override func viewDidAppear(animated: Bool) {
+        self.objectContext = self.appDelegate.createMainQueueManagedObjectContext()
+        super.viewDidAppear(animated)
+        println("I just appeared")
+
+    }
+
+    override func numberOfSectionsInTableView(tableView: UITableView!) -> Int {
+        var sections:Int = 0
+        let fetchSections = self.fetchController!.sections
+        if (fetchSections != nil){
+            sections = fetchSections.count
+        }
+        return sections
+    }
+
+    override func tableView(tableView: UITableView!, numberOfRowsInSection section: Int) -> Int {
+        var rows:Int = 0
+        let fetchRows = self.fetchController!.fetchedObjects
+        if (fetchRows != nil){
+            rows = fetchRows.count
+        }
+        return rows
+
+    }
+
+    override func tableView(tableView: UITableView!, cellForRowAtIndexPath indexPath: NSIndexPath!) -> UITableViewCell! {
+        let cell = tableView.dequeueReusableCellWithIdentifier("Recent Photo", forIndexPath: indexPath) as UITableViewCell
+        let photo:Photo = self.fetchController!.objectAtIndexPath(indexPath)! as Photo
+        cell.textLabel.text = photo.title as String
+        cell.detailTextLabel.text = photo.subtitle as String
+        return cell
+    }
+}
+
+import Foundation
+import CoreData
+
+class Photo: NSManagedObject {
+
+    @NSManaged var title: String
+    @NSManaged var subtitle: String
+    @NSManaged var created_date: NSDate
+    @NSManaged var photoURL: String
+
+}
+

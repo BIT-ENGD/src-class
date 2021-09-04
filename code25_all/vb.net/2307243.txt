@@ -1,0 +1,419 @@
+<Scrollviewer Name="MyScroll">
+  <ItemsControl Name="MyItemsControl">
+
+        .....standard itemscontrol code here, using <StackPanel> as presenter (VirtualizingStackPanel did not change my problem, btw)
+       .........
+
+       ..DataTemplate has three textboxes and a textblock
+
+  </ItemsControl>
+
+Code:
+
+Class MyScroll
+
+   Dim myOBSCol as ObservableCollection(StudyUnit) 'studyunit is the core object of my application
+                             'just holds a series of text properties as  Dependency Properties
+
+   Sub New()
+      'create studyunit objects
+      For x as integer = 0 to 50
+         Dim SU as new StudyUnit
+         '.then I Set studyunit properties (i.e. Su.Text = "...", Su.IDNum = "2", etc...)
+         OBSCol.add(SU)
+      Next
+
+    MyItemsControl.ItemsSource=myOBSCol
+   End Sub
+
+End Class
+
+Private Sub ObservableCollectionChanged(ByVal sender As Object, ByVal e As System.Collections.Specialized.NotifyCollectionChangedEventArgs)
+    If e.Action = NotifyCollectionChangedAction.Remove Then 'q removed
+        Dim oldDict As IList = e.OldItems
+        If Not TryCast(oldDict(0), studyUnit) Is Nothing Then
+            Try
+
+            Catch ex As Exception
+
+            End Try
+        Else
+
+        End If
+
+    ElseIf e.Action = NotifyCollectionChangedAction.Add Then   'q added
+        'FIND ITEM IN LIST WITH NEW ITEM ID
+        Dim newQ As studyUnit
+        newQ = e.NewItems(0)
+
+        'set the location to provide focus after the new question is added
+        focusIndex = _ObsCol.getObjPosition(newQ)
+        Console.WriteLine("fi" + focusIndex.ToString)
+    ElseIf e.Action = NotifyCollectionChangedAction.Reset Then 'list "reset"
+        'call function that gives focus to the new control. (didn't affect memory issue when commented out'
+            giveFocus(focusIndex)
+
+
+
+    End If
+
+ Dim sentText As TextBox = sender
+
+
+    'get qid of sender from "tag" object of the sender textbox
+    Dim senderQID As String = CInt(sentText.Tag)
+
+    'find  this 'sender' question in the existing observable collection
+    Dim senderQuestion As studyUnit
+    For Each su As studyUnit In _ObsCol
+        If su.QID = senderQID Then
+            senderQuestion = su
+            Exit For
+        End If
+    Next
+
+
+    Dim newQuestionSortOrder As Integer
+    If location = eInsertQuestion.Before Then
+        newQuestionSortOrder = CInt(senderQuestion.sortOrder)  'will take over the sortorder of the previous question
+    ElseIf location = eInsertQuestion.After Then
+        'insert new question before
+        newQuestionSortOrder = CInt(senderQuestion.sortOrder) + 1
+    End If
+
+
+    'create the new question
+    Dim newQ As New studyUnit
+    'new "sort order"
+    newQ.sortOrder = CStr(newQuestionSortOrder)
+    'new "displayed order"
+    newQ.displayedOrder = generateNewQuestionDisplayedOrder(senderQuestion.displayedOrder) 'create a random question # for the new quesiton
+    'set HID to the sender's HID
+    newQ.HID = CStr(senderQuestion.HID)
+    'set type to "Question"  //possibly not needed
+    'newQ.Add("suType", eSUnitType.Question)
+
+
+
+
+
+    'now send this studyunit to the database (then we can get its QID in the database)
+    My.Application.dComm.insertQuestion(newQ)
+    'set "NEW Q" = the exact data inserted in the database (as a best practice)
+    newQ = Nothing
+    newQ = My.Application.dComm.getNewestQuestionStudyUnit()
+
+
+    'AddHandler newQ.studyUnitChangedEvent, AddressOf StudyUnitAltered
+
+
+    'add to main question collection...
+    'find position of sender question
+    Dim senderIndex As Integer = Me._ObsCol.getObjPosition(senderQuestion)
+    Dim newLocation As Integer = senderIndex + location  '("location" will be equal to +1 (after) or 0 (before)
+
+    'insert before or after that one
+    If newLocation < _ObsCol.Count Then
+        _ObsCol.Insert(newLocation, newQ)
+    Else
+        _ObsCol.Add(newQ)  'can't "insert" if index is greater than the current size of the collection, use add function instead
+    End If
+
+
+    For x As Integer = newLocation + 1 To _ObsCol.Count - 1 'obscol is zero-based
+        Dim thisQ As studyUnit = CType(_ObsCol(x), studyUnit)
+
+        If thisQ.suType = eSUnitType.Question Then
+
+            'increase each question's sort order by 1
+            thisQ.sortOrder = CStr(CInt(thisQ.sortOrder) + 1)
+        Else
+            'else: do nothing, this study unit is a heading or section, does not get a change in sortOrder
+        End If
+    Next
+
+    Me.SP_ItemsControl.ItemsSource = Nothing
+    Me.SP_ItemsControl.Items.Clear()
+    Me.SP_ItemsControl.ItemsSource = _ObsCol
+
+
+End Sub
+
+<local:BindableRTBConverter x:Key="RTBConverter" />
+<local:ColorConverter x:Key="myColorConverter"/>
+<local:HeadingsNameConverter x:Key="myHeadingConverter"/>
+
+
+<!-- Styles that can be used throughout all three datatemplates here-->
+
+<Style x:Key="borderStyleSettings" TargetType="Border">
+    <Setter Property="Border.Margin" Value="5,5,5,5"/>
+    <Setter Property="Border.BorderBrush" Value="{Binding Source={StaticResource ApplicationUserSettings}, Path=borderColor, Converter={StaticResource myColorConverter}}" />
+    <Setter Property="Border.BorderThickness" Value=".9"/>
+    <Setter Property="Border.CornerRadius" Value="6"/>
+</Style>
+
+
+<Style x:Key="textStyleSettings" TargetType="TextBlock">
+    <Setter Property="TextBlock.FontSize" Value="{Binding Source={StaticResource ApplicationUserSettings}, Path=fontSize}" />
+    <Setter Property="TextBlock.TextWrapping" Value="Wrap" />
+    <Setter Property="TextBlock.VerticalAlignment" Value="Center"/>
+</Style>
+
+<!--end of styles-->
+
+
+<!--Section RN Template-->
+<DataTemplate x:Key="RNSectionTemplate">
+    <DataTemplate.Resources>
+
+    </DataTemplate.Resources>
+
+        <Border Tag="{Binding Path=SID, Mode=OneTime}" Style="{StaticResource borderStyleSettings}">
+        <StackPanel>
+            <TextBlock Margin="3,3,3,0" Foreground="Black" FontStyle="Italic" FontWeight="Bold" HorizontalAlignment="Center" Style="{StaticResource textStyleSettings}">
+                 <TextBlock.Text> 
+                       <MultiBinding Converter="{StaticResource myHeadingConverter}" 
+                                     ConverterParameter="getRNSectionTitle" Mode="OneWay">
+                           <Binding Path="num"/>
+                           <Binding Path="name"/>
+                       </MultiBinding>         
+                    </TextBlock.Text>
+            </TextBlock>       
+        </StackPanel>
+        </Border>
+
+
+</DataTemplate>
+
+<!--Heading RN Template-->
+<DataTemplate x:Key="RNHeadingTemplate">
+    <DataTemplate.Resources>
+
+    </DataTemplate.Resources>
+
+    <Border Tag="{Binding Path=HID, Mode=OneTime}" Style="{StaticResource borderStyleSettings}">
+        <StackPanel>
+            <TextBlock Margin="3,3,3,0" Foreground="Black" FontWeight="Bold" HorizontalAlignment="Left" Style="{StaticResource textStyleSettings}">
+                 <TextBlock.Text> 
+                       <MultiBinding Converter="{StaticResource myHeadingConverter}" 
+                                     ConverterParameter="getRNHeadingTitle" Mode="OneWay">
+                           <Binding Path="num"/>
+                           <Binding Path="name"/>
+                       </MultiBinding>         
+                    </TextBlock.Text>
+            </TextBlock>
+        </StackPanel>
+    </Border>
+</DataTemplate>
+
+
+
+
+
+<!--Question RN Template-->
+<DataTemplate x:Key="RNQuestionTemplate">
+    <DataTemplate.Resources>
+        <Style TargetType="local:BindableRTB">
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Foreground" Value="Black"/>
+            <Setter Property="FontFamily" Value="{Binding Source={StaticResource ApplicationUserSettings}, Path=fontName}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <!--Sets changes container of textbox control from ScrollViewer to Adorner Decorator, as an attempt to
+                        reduce the memory waste in "scrollbar" instances.  Didn't help much.  Also didn't impact my memory leak.-->
+                    <ControlTemplate TargetType="{x:Type TextBoxBase}">
+                        <Border 
+                                  Name="Border"
+                                  CornerRadius="0" 
+                                  Padding="0"
+                                  Background="White"
+                                  BorderThickness="0"
+                         >
+                            <AdornerDecorator Margin="0" x:Name="PART_ContentHost"></AdornerDecorator>
+
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="BorderThickness" Value="3"/>
+            <Setter Property="FontFamily" Value="{Binding Source={StaticResource ApplicationUserSettings}, Path=fontName}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type TextBoxBase}">
+                        <Border 
+                                  Name="Border"
+                                  CornerRadius="0" 
+                                  Padding="0"
+                                  Background="White"
+                                  BorderThickness="0"
+                         >
+                            <AdornerDecorator Margin="0" x:Name="PART_ContentHost"></AdornerDecorator>
+
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBlock">
+            <Style.Setters>
+                <Setter Property="Foreground" Value="Purple"></Setter>
+                <Setter Property="FontFamily" Value="{Binding Source={StaticResource ApplicationUserSettings}, Path=fontName}"/>
+            </Style.Setters>
+        </Style>
+
+    </DataTemplate.Resources>
+
+    <!-- Main border -->
+    <Border Style="{StaticResource borderStyleSettings}">
+        <Grid Name="myStack" HorizontalAlignment="Stretch"  Margin="4" Tag="{Binding Path=QID, Mode=OneTime}">
+            <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+               <!-- last column for controls to be added later, if wanted-->
+            </Grid.ColumnDefinitions>
+
+
+      <!--Row 0-->
+
+            <!-- Displayed Order textbox (editable) -->
+                <TextBox Grid.Column="0" Grid.Row="0" Grid.ColumnSpan="1" IsTabStop="False" BorderThickness="0">
+                    <TextBox.Text>
+                        <Binding Path="displayedOrder"  Mode="TwoWay"  UpdateSourceTrigger="LostFocus"/>
+                    </TextBox.Text>
+                </TextBox>
+
+            <!-- delete button -->
+            <Ellipse  Grid.Column="2" Grid.Row="0" Tag="{Binding Path=QID, Mode=OneTime}" Name="ellipseDelete" Height="12" Width="12"  Stroke="Black" 
+                      Fill="LightGray" Stretch="Fill" HorizontalAlignment="Right"></Ellipse>
+
+
+      <!-- Row 1 -->
+
+            <!-- Main text area -->
+            <local:BindableRTB Name="myRTB" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2">
+                <local:BindableRTB.Document>
+                    <Binding Converter="{StaticResource RTBConverter}" Path="Question" Mode="TwoWay" UpdateSourceTrigger="LostFocus"/>
+                </local:BindableRTB.Document>
+            </local:BindableRTB>
+
+            <!--Page Ref-->
+
+            <TextBox Name="txtPageRef" Grid.Column="2" Grid.Row="1" Grid.ColumnSpan="1" IsTabStop="False">
+                <TextBox.Text>
+                    <Binding Path="pageRef"  Mode="TwoWay"  UpdateSourceTrigger="LostFocus"/>
+                </TextBox.Text>
+            </TextBox>
+
+      <!-- Row 2 -->
+
+
+            <!-- New question textbox -->
+            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" HorizontalAlignment="Stretch">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Style.Setters>
+                            <Setter Property="Background" Value="Transparent" />
+                        </Style.Setters>
+                        <Style.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter Property="Background" Value="LightGreen"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+
+                <!-- Binding the questions "QID" to the 'new quesiton' textbox.  For the bubbling  keydown event,
+                This information can help determine where to insert the new question, and then give focus
+                to that new question-->
+                <TextBox Name="newQuestionTextBox" Tag="{Binding Path=QID, Mode=OneTime}" Background="Transparent" IsReadOnly="True" BorderThickness="0" FontSize="10" HorizontalAlignment="Left">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Style.Triggers>
+                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                    <Setter Property="FontStyle" Value="Italic"/>
+                                    <Setter Property="Text" Value="(Start typing to create a new question. Press the ALT key to insert a new question above.)"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+            </StackPanel>
+
+            <!-- Endof New question textbox -->
+
+        </Grid>
+    </Border>
+
+</DataTemplate>
+<!--End of reviewnote Templates-->
+
+Public Overrides Function SelectTemplate(ByVal item As Object, ByVal container As System.Windows.DependencyObject) As System.Windows.DataTemplate
+
+    Dim sUnit As studyUnit = DirectCast(item, studyUnit)
+
+    Dim mainWindow As R2_CoreWindow = CType(My.Application.MainWindow, R2_CoreWindow)
+
+    If sUnit.suType = eSUnitType.Heading Then
+        Return mainWindow.WpfEditor.FindResource("RNHeadingTemplate")
+    ElseIf sUnit.suType = eSUnitType.Section Then
+
+        Return mainWindow.WpfEditor.FindResource("RNSectionTemplate")
+
+    ElseIf sUnit.suType = eSUnitType.Question Then
+        Return mainWindow.WpfEditor.FindResource("RNQuestionTemplate")
+    End If
+End Function
+
+<!-- Scrollviewer_Keydown is looking for bubbling keydown event from New Quesitons-->
+
+<ScrollViewer.Resources>
+    <!-- Template selector for each Data Template -->
+    <local:typeDataTemplateSelector x:Key="myTempSelector"></local:typeDataTemplateSelector>
+</ScrollViewer.Resources>
+
+<ItemsControl Name="SP_ItemsControl" ItemTemplateSelector="{StaticResource myTempSelector}">
+    <!--Set the itemssource in code later-->
+    <ItemsControl.Template>
+        <ControlTemplate TargetType="ItemsControl">
+            <ItemsPresenter/>
+        </ControlTemplate>
+    </ItemsControl.Template>
+    <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+
+            <StackPanel></StackPanel>
+
+            <!-- Use of virtualizingstackpanel didn't help -->
+            <!--<VirtualizingStackPanel VirtualizingStackPanel.IsVirtualizing="True" VirtualizingStackPanel.VirtualizationMode="Recycling" />-->
+
+        </ItemsPanelTemplate>
+    </ItemsControl.ItemsPanel>
+
+</ItemsControl>
+
+Public Property Question() As String
+    Get
+        Return GetValue(QuestionProperty)
+    End Get
+    Set(ByVal value As String)
+        SetValue(QuestionProperty, value)
+    End Set
+End Property
+Public Shared QuestionProperty As DependencyProperty = DependencyProperty.Register("Question", GetType(String), _
+    GetType(DependencyObject), New PropertyMetadata(Nothing, New PropertyChangedCallback(AddressOf OnQuestionPropertyChanged)))
+Private Shared Sub OnQuestionPropertyChanged(ByVal d As DependencyObject, ByVal e As DependencyPropertyChangedEventArgs)
+

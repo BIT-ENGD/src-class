@@ -1,0 +1,41 @@
+processReview :: Int -> [Review] -> String -> IO [Review]
+processReview n stack file = do !raw <- B.readFile file
+                                !newr <- extractReview n raw
+                                return $ newr : stack
+
+extractReview :: Int -> B.ByteString -> IO Review
+extractReview n  r = do  !new_ngrams <- count_ngrams n body
+                         return $ Review {ngrams = new_ngrams, url = safeNode url, isbns = map strContent isbns} 
+                     where (Just !elem) = parseXMLDoc r
+                           !body = cleanUTF8 $ B8.pack $ safeNode $ findElement (QName "body" Nothing Nothing) elem
+                           !isbns = findElements (QName "isbn" Nothing Nothing) elem
+                           !url = findElement (QName "url" Nothing Nothing) elem
+                           safeNode = maybe "" (\m -> strContent m)
+
+count_ngrams :: Int -> BL.ByteString -> IO Ngrams
+count_ngrams n rbody = do !new_list <- H.new
+                          !ngrams <- foldM (\h w -> let !w' = lowercase w in if elem w' ignore_words then return h                                                                                                                               
+                                                                                                     else increment_ngram 1 h w') new_list word_list
+                          return ngrams
+                        where !just_words = BL.filter (\c -> c == 32 || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)) (rbody)
+                              !word_list = BL.split 32 just_words
+
+increment_ngram :: Int -> Ngrams -> BL.ByteString -> IO Ngrams
+increment_ngram amount ns word = do count <- H.lookup ns word
+                                    case count of
+                                         (Just i) -> H.insert ns word (i + amount)
+                                         Nothing -> H.insert ns word amount
+                                    return ns
+
+sumNgrams :: [Review] -> IO Ngrams
+sumNgrams reviews = do dict <- H.new
+                       mapM_ (\r -> H.mapM_ (\(k,v) -> increment_ngram 1 dict k) (ngrams r)) reviews 
+                       return dict                        
+
+
+main = do
+       [n] <- getArgs
+       ngrams <- H.new :: IO (H.BasicHashTable Review Ngrams)
+       reviews <- fmap (map (\c -> "./reviews/" ++ c) . filter (isInfixOf "xml") . take 500) $ getDirectoryContents "./reviews"
+       analyzed_reviews <- foldM (\stack r -> processReview (read n) stack r) [] reviews
+

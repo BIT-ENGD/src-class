@@ -1,0 +1,64 @@
+Invoice
+-------
+iInvoiceID int PK not null
+dtCompleted datetime null
+
+InvoiceItem
+-----------
+iInvoiceItemID int PK not null
+iInvoiceID int FK (Invoice.iInvoiceID) not null
+dtCompleted datetime null
+
+CREATE PROCEDURE dbo.spuCompleteInvoiceItem
+    @iInvoiceItemID INT 
+AS
+BEGIN
+    BEGIN TRAN
+
+        UPDATE InvoiceItem 
+        SET dtCompleted = GETDATE()
+        WHERE iInvoiceItemID = @iInvoiceItemID
+
+        IF EXISTS(SELECT * FROM InvoiceItem WHERE dtCompleted IS NULL 
+                  AND iInvoiceID = (SELECT iInvoiceID FROM InvoiceItem
+                                   WHERE iInvoiceItemID=@iInvoiceItemID))
+            SELECT 'NotComplete' AS OverallInvoice
+        ELSE
+            SELECT 'Complete' AS OverallInvoice
+    COMMIT
+END
+
+CREATE PROCEDURE dbo.spuCompleteInvoiceItem
+        @iInvoiceItemID INT 
+    AS
+    BEGIN
+        IF @iInvoiceItemID IS NULL RAISERROR('@iInvoiceItemID cannot be null.', 16, 1)
+
+        BEGIN TRAN
+
+            SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+
+            DECLARE @iInvoiceID INT
+
+            SELECT @iInvoiceID = iInvoiceID
+            FROM InvoiceItem
+            WHERE dtCompleted IS NULL 
+            AND iInvoiceID = (SELECT iInvoiceID FROM InvoiceItem WHERE iInvoiceItemID=@iInvoiceItemID)
+
+            IF @iInvoiceID IS NULL
+            BEGIN
+                -- Should never happen
+                SELECT 'AlreadyComplete' AS Result
+            END
+            ELSE
+            BEGIN
+                UPDATE InvoiceItem SET dtCompleted = GETDATE() WHERE iInvoiceItemID = @iInvoiceItemID
+
+                IF EXISTS(SELECT * FROM InvoiceItem WHERE iInvoiceID=@iInvoiceID AND dtCompleted IS NULL)
+                    SELECT 'NotComplete' AS Result
+                ELSE
+                    SELECT 'Complete' AS Result
+            END
+
+        COMMIT
+

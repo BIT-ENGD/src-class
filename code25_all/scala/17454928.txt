@@ -1,0 +1,31 @@
+partitionedData
+case Some(partitionedData)
+private def dispatchSerializedData(messages: Seq[KeyedMessage[K,Message]]): Seq[KeyedMessage[K, Message]] = {
+    val partitionedDataOpt = partitionAndCollate(messages)
+    partitionedDataOpt match {
+      case Some(partitionedData) =>
+        val failedProduceRequests = new ArrayBuffer[KeyedMessage[K,Message]]
+        try {
+          for ((brokerid, messagesPerBrokerMap) <- partitionedData) {
+            if (logger.isTraceEnabled)
+              messagesPerBrokerMap.foreach(partitionAndEvent =>
+                trace("Handling event for Topic: %s, Broker: %d, Partitions: %s".format(partitionAndEvent._1, brokerid, partitionAndEvent._2)))
+            val messageSetPerBroker = groupMessagesToSet(messagesPerBrokerMap)
+
+            val failedTopicPartitions = send(brokerid, messageSetPerBroker)
+            failedTopicPartitions.foreach(topicPartition => {
+              messagesPerBrokerMap.get(topicPartition) match {
+                case Some(data) => failedProduceRequests.appendAll(data)
+                case None => // nothing
+              }
+            })
+          }
+        } catch {
+          case t: Throwable => error("Failed to send messages", t)
+        }
+        failedProduceRequests
+      case None => // all produce requests failed
+        messages
+    }
+  }
+

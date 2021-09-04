@@ -1,0 +1,117 @@
+public class DatabaseBean {
+
+private static final Logger logger = Logger.getLogger(DatabaseBean.class);
+
+private Connection conn;
+private PreparedStatement prepStmt;
+
+/**
+ * Zero argument constructor
+ * Setup generic databse connection in here to avoid redundancy
+ * The connection details are in /META-INF/context.xml
+ */
+public DatabaseBean() {
+    try {
+        InitialContext initContext = new InitialContext();
+        DataSource ds = (DataSource) initContext.lookup("java:/comp/env/jdbc/mysite");
+        conn = ds.getConnection();
+    }
+    catch (SQLException SQLEx) {
+        logger.fatal("There was a problem with the database connection.");
+        logger.fatal(SQLEx);
+        logger.fatal(SQLEx.getCause());
+    }
+    catch (NamingException nameEx) {
+        logger.fatal("There was a naming exception");
+        logger.fatal(nameEx);
+        logger.fatal(nameEx.getCause());
+    }
+}
+
+/**
+ * Execute a query. Do not use for statements (update delete insert etc).
+ *
+ * @return A ResultSet of the execute query. A set of size zero if no results were returned. It is never null.
+ * @see #executeUpdate() for running update, insert delete etc.
+ */
+
+public ResultSet executeQuery() {
+    ResultSet result = null;
+    try {
+        result = prepStmt.executeQuery();
+        logger.debug(prepStmt.toString());
+    }
+    catch (SQLException SQLEx) {
+        logger.fatal("There was an error running a query");
+        logger.fatal(SQLEx);
+    }
+    return result;
+}
+
+public void close() {
+    try {
+        prepStmt.close();
+        prepStmt = null;
+
+        conn.close();
+        conn = null;
+    } catch (SQLException SQLEx) {
+        logger.warn("There was an error closing the database connection.");
+    }
+}
+}
+
+public LinkedList<ImportantNoticeBean> getImportantNotices() {
+
+    DatabaseBean noticesDBBean = new DatabaseBean();
+    LinkedList<ImportantNoticeBean> listOfNotices = new LinkedList<ImportantNoticeBean>();
+
+    try {
+        PreparedStatement preStmt = noticesDBBean.getConn().prepareStatement("SELECT pseudonym, message, date_to, date_from " +
+                "FROM importantnotices, users " +
+                "WHERE importantnotices.username = users.username " +
+                "AND NOW() >= date_from AND NOW() <= date_to;");
+
+        noticesDBBean.setPrepStmt(preStmt);
+        ResultSet result = noticesDBBean.executeQuery();
+
+        while (result.next()) {
+            ImportantNoticeBean noticeBean = new ImportantNoticeBean();
+
+            noticeBean.setAuthor(result.getString("pseudonym"));
+            noticeBean.setMessage(result.getString("message"));
+            noticeBean.setDateTo(result.getDate("date_to"));
+            noticeBean.setDateFrom(result.getDate("date_from"));
+
+            listOfNotices.add(noticeBean);
+        }
+
+        result.close();
+
+    } catch (SQLException SQLEx) {
+        logger.error("There was an error in ImportantNoticesBean.getImportantNotices()");
+        logger.error(SQLEx);
+    } finally {
+        noticesDBBean.close();
+    }
+    return listOfNotices;
+}
+
+<Context reloadable="true">
+
+    <Resource name="jdbc/mysite"
+              auth="Container"
+              type="javax.sql.DataSource"
+              username="user"
+              password="password"
+              driverClassName="com.mysql.jdbc.Driver"
+              url="jdbc:mysql://localhost:3306/mysite"
+              maxActive="10"
+              maxIdle="5"
+              maxWait="6000"
+              removeAbandoned="true"
+              logAbandoned="false"
+              removeAbandonedTimeout="20"
+            />
+</Context>
+

@@ -1,0 +1,93 @@
+{-# LANGUAGE RankNTypes #-}
+module Test where
+
+--  Simple type class based on parser combinators.
+class Gen g where
+  get :: g x -> [(x, g x)]
+
+instance Gen [] where
+  get [] = []
+  get (x:xs) = [(x, xs)]
+
+--  Proxy type - holds a pair containing...
+--    - a value of some type that supports Gen
+--    - a function to indicate when an item should be skipped
+newtype PROXY nestedgen x = Proxy (nestedgen x, x -> Bool)
+
+proxyskip :: Gen nestedgen => PROXY nestedgen r -> Bool
+proxyskip (Proxy (g, predf)) = case get g of
+                                 []        -> False
+                                 ((r,_):_) -> predf r
+
+proxyget :: Gen nestedgen => PROXY nestedgen r -> [(r, PROXY nestedgen r)]
+proxyget pr@(Proxy (sg, predf)) = if proxyskip pr
+                                    then [(r2, g2) | (_, g1) <- get sg, (r2,g2) <- proxyget (Proxy (g1, predf))]
+                                    else [(r3, Proxy (g3, predf)) | (r3,g3) <- get sg]
+
+--  Instance of Gen for PROXY - get skips items where appropriate
+instance Gen nestedgen => Gen (PROXY nestedgen) where
+  get = proxyget
+
+--  Test "parser"
+--  Get the specified number of items, providing them as a list (within
+--  the list of nondeterministic (result, state) pairs).
+getN :: Gen g => Int -> g x -> [([x], g x)]
+getN n g | (n < 0)  = error "negative n"
+         | (n == 0) = [([], g)]
+         | True     = [(r1:r2, g2) | (r1, g1) <- get g, (r2, g2) <- getN (n-1) g1]
+
+--  Wrap some arbitrary "parser" in a PROXY that skips over the letter 'l'
+proxyNotL :: Gen gb => gb Char -> PROXY gb Char
+proxyNotL gg = (Proxy (gg, \ch -> (ch /= 'l')))
+
+call_f0 :: Gen gb => (Gen ga => ga Char -> [(r, ga Char)]) -> gb Char -> [(r, PROXY gb Char)]
+call_f0 f0 g0 = f0 (proxyNotL g0)
+
+test :: Gen gb => (Gen ga => ga Char -> [(r, ga Char)]) -> gb Char -> [(r, gb Char)]
+test f0 g0 = [(r, g2) | (r, Proxy (g2, _)) <- call_f0 f0 g0]
+
+call_f0 f0 g0 = f0 (proxyNotL g0)
+[1 of 1] Compiling Test             ( Test.hs, Test.o )
+
+Test.hs:44:21:
+    Could not deduce (ga ~ PROXY gb)
+    from the context (Gen gb)
+      bound by the type signature for
+                 call_f0 :: Gen gb =>
+                            (Gen ga => ga Char -> [(r, ga Char)])
+                            -> gb Char
+                            -> [(r, PROXY gb Char)]
+      at Test.hs:44:1-33
+      `ga' is a rigid type variable bound by
+           the type signature for
+             call_f0 :: Gen gb =>
+                        (Gen ga => ga Char -> [(r, ga Char)])
+                        -> gb Char
+                        -> [(r, PROXY gb Char)]
+           at Test.hs:44:1
+    Expected type: ga Char
+      Actual type: PROXY gb Char
+    In the return type of a call of `proxyNotL'
+    In the first argument of `f0', namely `(proxyNotL g0)'
+    In the expression: f0 (proxyNotL g0)
+
+call_f0 :: Gen gb => (Gen ga => ga Char -> [(r, ga Char)]) -> gb Char -> [(r, PROXY gb Char)]
+call_f0 f0 g0 = f0 (proxyNotL g0)
+
+f0
+Gen ga => ga Char -> [(r, ga Char)]
+proxyNotL
+PROXY gb Char
+instance Gen nestedgen => Gen (PROXY nestedgen) where ...
+PROXY gb Char
+Gen
+gb
+Gen
+call_f0
+f0
+PROXY gb
+Gen
+PROXY
+gb
+ga
+Proxy gb

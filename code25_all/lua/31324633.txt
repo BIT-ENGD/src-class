@@ -1,0 +1,258 @@
+th> perceptron_general
+nn.Sequential {
+  [input -> (1) -> output]
+  (1): nn.ParallelTable {
+    input
+      |`-> (1): nn.Sequential {
+      |      [input -> (1) -> (2) -> output]
+      |      (1): nn.ParallelTable {
+      |        input
+      |          |`-> (1): nn.Sequential {
+      |          |      [input -> (1) -> (2) -> (3) -> (4) -> (5) -> output]
+      |          |      (1): nn.Linear(6 -> 3)
+      |          |      (2): nn.Tanh
+      |          |      (3): nn.Dropout
+      |          |      (4): nn.Linear(3 -> 2)
+      |          |      (5): nn.Tanh
+      |          |    }
+      |          |`-> (2): nn.Sequential {
+      |          |      [input -> (1) -> (2) -> (3) -> (4) -> (5) -> output]
+      |          |      (1): nn.Linear(6 -> 3)
+      |          |      (2): nn.Tanh
+      |          |      (3): nn.Dropout
+      |          |      (4): nn.Linear(3 -> 2)
+      |          |      (5): nn.Tanh
+      |          |    }
+      |           ... -> output
+      |      }
+      |      (2): nn.CosineDistance
+      |    }
+      |`-> (2): nn.Sequential {
+      |      [input -> (1) -> (2) -> output]
+      |      (1): nn.ParallelTable {
+      |        input
+      |          |`-> (1): nn.Sequential {
+      |          |      [input -> (1) -> (2) -> (3) -> (4) -> (5) -> output]
+      |          |      (1): nn.Linear(6 -> 3)
+      |          |      (2): nn.Tanh
+      |          |      (3): nn.Dropout
+      |          |      (4): nn.Linear(3 -> 2)
+      |          |      (5): nn.Tanh
+      |          |    }
+      |          |`-> (2): nn.Sequential {
+      |          |      [input -> (1) -> (2) -> (3) -> (4) -> (5) -> output]
+      |          |      (1): nn.Linear(6 -> 3)
+      |          |      (2): nn.Tanh
+      |          |      (3): nn.Dropout
+      |          |      (4): nn.Linear(3 -> 2)
+      |          |      (5): nn.Tanh
+      |          |    }
+      |           ... -> output
+      |      }
+      |      (2): nn.CosineDistance
+      |    }
+       ... -> output
+  }
+}
+
+-- rounds a real number num to the number having idp values after the dot
+function round(num, idp)
+  local mult = 10^(idp or 0)
+  return math.floor(num * mult + 0.5) / mult
+end
+
+idp = 4
+
+-- change the sign of an array
+function changeSignToArray(array)
+
+  newArray={}
+  for i=1,#array do
+    newArray[i]= -1 * array[i]
+  end
+
+  return newArray;
+end
+
+
+-- subtable function
+function subtable(table, lower_index, upper_index)
+
+  return_table = {}
+  k = 1
+  for i=lower_index,upper_index do
+      return_table[k] = table[i]
+      k = k+1
+  end
+
+return return_table;
+
+end
+
+-- training
+function gradientUpdate(perceptron, dataset, target, learningRate)
+
+  temp_dataset = dataset
+  temp_target = target
+  temp_perceptron = perceptron
+
+  print("### new gradientUpdate() ###");
+
+  print("#dataset "..#dataset);
+  print("(#dataset[1][1])[1] "..(#dataset[1][1])[1]);
+  print("#target "..#target);
+
+  predictionValue = (perceptron:forward(dataset)[1])[1]
+  print('predictionValue '..predictionValue);
+
+  --   if predictionValue*target < 1 then
+
+  realTarget=changeSignToArray(target)
+  gradientWrtOutput = torch.Tensor(realTarget)
+  temp_gradient = gradientWrtOutput
+
+  perceptron:zeroGradParameters() 
+  perceptron:backward(dataset, gradientWrtOutput) 
+  perceptron:updateParameters(learningRate)
+  -- end
+
+    return perceptron;
+end
+
+require "os"
+require "nn"
+
+dropOutFlag=TRUE
+input_number=6
+hiddenUnits=3
+output_number=2
+hiddenLayers=5
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+-- LET'S PREPARE THE DATA -- -- -- -- -- -- --
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+
+
+dim = 483
+
+trainDataset = {}; 
+targetDataset = {}
+for i=1,dim do
+     trainDataset[i]={torch.rand(input_number),  torch.rand(input_number)}
+
+     if i%2==0 then targetDataset[i] = 1
+     else targetDataset[i] = -1 
+     end
+end
+function targetDataset:size() return #targetDataset end
+target = -1 -- the target for cosine similarity is +1 for genuine signatures, and -1 for forgeries
+
+io.write("#trainDataset="..#trainDataset.." \n");
+io.write("#trainDataset[1]="..#trainDataset[1].." \n");
+io.write("#targetDataset="..#targetDataset.." \n");
+
+
+-- matrix having 5 rows * 2 columns
+max_iterations = 25
+learnRate = 0.1
+minibatchSize = 10
+
+
+for m=30,1,-1 do
+  if (dim % m) == 0 then minibatchSize=m; break; end
+end
+minibatchSize = 2
+print('minibatchSize='..minibatchSize);
+span_number = dim/minibatchSize
+print('span_number '..span_number);
+
+
+minibatch_train = {torch.Tensor(span_number)}
+target_train = {torch.Tensor(span_number)}
+
+i=1
+for m=1, span_number do
+     minibatch_train[i] = torch.Tensor(minibatchSize)
+     target_train[i] = torch.Tensor(minibatchSize)
+
+     lower_index = 1+minibatchSize*(m-1)
+     upper_index = (m-1)*minibatchSize+minibatchSize
+     io.write("i= "..i.." lower_index ".. lower_index)
+     io.write(" upper_index "..upper_index.."\n")
+
+     minibatch_train[i] = subtable(trainDataset, lower_index, upper_index)
+     target_train[i] = subtable(targetDataset, lower_index, upper_index)
+
+     i = i + 1
+end
+
+print('\n#minibatch_train '.. #minibatch_train);
+print('#minibatch_train[1] '.. #minibatch_train[1]);
+print('#target_train '.. #target_train);
+print('#target_train[1] '.. #target_train[1]..'\n');
+
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+-- LET'S PREPARE THE SIAMESE NEURAL NETWORK -- 
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+
+
+-- imagine we have one network we are interested in, it is called "perceptronUpper"
+perceptronUpper= nn.Sequential()
+perceptronUpper:add(nn.Linear(input_number, hiddenUnits))
+perceptronUpper:add(nn.Tanh())
+if dropOutFlag==TRUE then perceptronUpper:add(nn.Dropout()) end
+
+-- for w=1, hiddenLayers do
+--   perceptronUpper:add(nn.Linear(hiddenUnits,hiddenUnits))
+--   perceptronUpper:add(nn.Tanh())
+--   if dropOutFlag==TRUE then perceptronUpper:add(nn.Dropout()) end
+-- end
+
+perceptronUpper:add(nn.Linear(hiddenUnits,output_number))
+perceptronUpper:add(nn.Tanh())
+
+
+-- But we want to push examples towards or away from each other
+-- so we make another copy of it called perceptronLower
+-- this *shares* the same weights via the set command, but has its own set of temporary gradient storage
+-- that's why we create it again (so that the gradients of the pair don't wipe each other)
+perceptronLower= perceptronUpper:clone('weight', 'gradWeights', 'gradBias', 'bias')
+-- updates the gradient weights and gradient bias
+
+-- we make a parallel table that takes a pair of examples as input. they both go through the same (cloned) perceptron
+-- ParallelTable is a container module that, in its forward() method, applies the i-th member module to the i-th input, and outputs a table of the set of outputs.
+parallel_table = nn.ParallelTable()
+parallel_table:add(perceptronUpper)
+parallel_table:add(perceptronLower)
+
+-- now we define our top level network that takes this parallel table and computes the cosine distance betweem
+-- the pair of outputs
+perceptron= nn.Sequential()
+perceptron:add(parallel_table)
+perceptron:add(nn.CosineDistance())
+
+
+-- For the minibatch
+general_parallel= nn.ParallelTable()
+for mb=1,minibatchSize do
+  general_parallel:add(perceptron)
+end
+
+perceptron_general = nn.Sequential() 
+perceptron_general:add(general_parallel)
+
+
+-- -- # TRAINING:
+-- -- training on only 1 example for TRUE
+
+for i = 1, max_iterations do
+
+    perceptron_general = gradientUpdate(perceptron_general, minibatch_train[1], target_train[1], learnRate)
+
+    perceptron_general = round((perceptron_general:forward(dataset)[1]),idp);
+    io.write("i="..i..") optimization predictionValue= "..prediction.."\n");
+    if(prediction==target) then io.write("\tprediction==target OUT"); break end
+
+end
+

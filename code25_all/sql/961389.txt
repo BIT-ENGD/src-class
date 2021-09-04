@@ -1,0 +1,68 @@
+PkId        
+-----
+1
+2
+3
+
+Id   ForeignKey  
+---- ----- 
+1    1
+2    2
+3    3
+4    1
+
+BEGIN TRAN eg
+
+    DELETE tblPrimaryKey WHERE PkId = 3     
+    INSERT INTO tblPrimaryKey  SELECT 3
+
+COMMIT TRAN eg
+
+CREATE PROC usp_SyncRecords
+(
+ @tableName1 as nvarchar(255),
+ @tableName2 as nvarchar(255), 
+ @joinClause as nvarchar(255),
+ @whereClause as nvarchar(1000)
+)
+-- this proc updates all fields in table 1 that have corresponding names 
+-- in table2 to the value of the field in table2.
+AS 
+BEGIN 
+    DECLARE @sqlClause nvarchar(4000)
+    DECLARE @curFieldName nvarchar(255)
+    DECLARE @sqlColumnCursorClause nvarchar(1000)
+    SET @sqlClause = 'UPDATE [' + @tableName1 + '] SET '
+
+    -- get FieldNames for second table 
+    SET @sqlColumnCursorClause = 
+        'DECLARE cur CURSOR FAST_FORWARD FOR SELECT name FROM syscolumns ' + 
+        'WHERE id=' + CAST(object_id(@tableName2) as nvarchar(50))
+
+    EXEC sp_executeSql @sqlColumnCursorClause
+
+
+    OPEN cur
+        -- compose sqlClause using fieldnames
+        FETCH NEXT FROM CUR INTO @curFieldName
+        WHILE @@fetch_status <> -1 
+        BEGIN 
+            SET @sqlClause = @sqlClause + @curFieldName  + '=' +
+                                                      @tableName2 +  '.' + @curFieldName  + ','
+            FETCH NEXT FROM CUR INTO @curFieldName
+        END
+
+    CLOSE cur 
+    DEALLOCATE cur 
+
+    -- drop last comma 
+    SET @sqlClause = LEFT(@sqlClause,LEN(@sqlClause) -1)
+
+    -- adding from/join/where clauses 
+    SET @sqlClause = @sqlClause + ' FROM [' + @tableName1 + '] INNER JOIN [' + @tableName2 + '] '
+               + 'ON ' + @joinClause +  ' WHERE '  +  @whereClause
+
+    EXEC sp_executeSQL @sqlClause
+
+END
+

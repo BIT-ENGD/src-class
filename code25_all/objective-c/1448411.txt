@@ -1,0 +1,59 @@
+#import <SystemConfiguration/SystemConfiguration.h>
+static inline BOOL addressReachable(const struct sockaddr_in *hostAddress);
+
+BOOL localWiFiAvailable()
+{
+    struct sockaddr_in localWifiAddress;
+    bzero(&localWifiAddress, sizeof(localWifiAddress));
+    localWifiAddress.sin_len = sizeof(localWifiAddress);
+    localWifiAddress.sin_family = AF_INET;
+    // IN_LINKLOCALNETNUM is defined in <netinet/in.h> as 169.254.0.0
+    localWifiAddress.sin_addr.s_addr = htonl(IN_LINKLOCALNETNUM);
+
+    return addressReachable(&localWifiAddress);
+}
+
+static inline BOOL addressReachable(const struct sockaddr_in *hostAddress)
+{
+    const SCNetworkReachabilityRef target =
+          SCNetworkReachabilityCreateWithAddress(kCFAllocatorDefault,
+                                                 (const struct sockaddr *)hostAddress);
+    if (target != NULL)
+    {
+        SCNetworkReachabilityFlags flags = 0;
+        const BOOL reachable = SCNetworkReachabilityGetFlags(target, &flags);
+        CFRelease(target);
+        return reachable && (flags & kSCNetworkFlagsReachable);
+    }
+    return NO;
+}
+
+#import <arpa/inet.h> // For AF_INET, etc.
+#import <ifaddrs.h> // For getifaddrs()
+#import <net/if.h> // For IFF_LOOPBACK
+
+BOOL localWiFiAvailable()
+{
+    struct ifaddrs *addresses;
+    struct ifaddrs *cursor;
+    BOOL wiFiAvailable = NO;
+    if (getifaddrs(&addresses) != 0) return NO;
+
+    cursor = addresses;
+    while (cursor != NULL) {
+        if (cursor -> ifa_addr -> sa_family == AF_INET
+            && !(cursor -> ifa_flags & IFF_LOOPBACK)) // Ignore the loopback address
+        {
+            // Check for WiFi adapter
+            if (strcmp(cursor -> ifa_name, "en0") == 0) {
+                wiFiAvailable = YES;
+                break;
+            }
+        }
+        cursor = cursor -> ifa_next;
+    }
+
+    freeifaddrs(addresses);
+    return wiFiAvailable;
+}
+

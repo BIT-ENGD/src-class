@@ -1,0 +1,61 @@
+@interface Db : NSObject {
+    NSString *path;
+    FMDatabase* theDb;
+    BOOL isOpen;
+}
+
+@property (retain, nonatomic) FMDatabase *theDb;
+@property (retain, nonatomic) NSString *path;
+@property (nonatomic) BOOL isOpen;
+--------
+static Db *currentDbSingleton = nil;
+#pragma mark Global access
+
++(id)currentDb {
+    @synchronized(self) {
+        if (!currentDbSingleton) {
+            NSString *reason = NSLocalizedString(@"The database is not set globally",
+                                                 @"Error Db: database is not set");
+            NSException *e = [NSException exceptionWithName:@"DBError"                        
+                                                     reason:reason;
+                                                   userInfo:nil];
+            @throw e;
+        }
+    }
+    return currentDbSingleton;  
+}
+
+- (void) fillCache:(NSString *)theTable {
+    [NSThread detachNewThreadSelector:@selector(fillCacheBackground:)
+                             toTarget:self
+                           withObject:theTable];
+}
+
+- (void)loadComplete {
+    [self.table reloadData];
+}
+
+- (void) fillCacheBackground:(NSString *)theTable {
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+    Db *db= [Db currentDb];
+    [db beginTransaction];
+        ..... STUFF HERE
+    [db commitTransaction];
+    //Tell our callback what we've done
+    [self performSelectorOnMainThread:@selector(loadComplete) 
+                           withObject:nil 
+                        waitUntilDone:YES];
+    [pool drain];
+}
+
+-(void) checkError {
+    if ([self.theDb hadError]) { // <====ERROR HERE
+        NSLog(@"Err %d: %@", [self.theDb lastErrorCode], [self.theDb]);
+    }
+}
+
+- (BOOL) hadError {
+    int lastErrCode = sqlite3_errcode(db);
+    return (lastErrCode > SQLITE_OK && lastErrCode < SQLITE_ROW);
+}
+

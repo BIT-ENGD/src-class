@@ -1,0 +1,131 @@
+search.Socrata.Views <- function(search = NULL, ## full
+                                 topic = NULL, ## description
+                                 name = NULL, ## title field search
+                                 tags = NULL,
+                                 category = NULL,
+                                 count = FALSE,
+                                 limit = 10, ## max 200
+                                 page = 1,
+                                 type = "json" ## can also be xml
+){
+
+  require('RCurl')
+  require('XML')
+  require('rjson')
+
+  ## setting curl options
+  capath = system.file("CurlSSL",package = "RCurl")
+  cainfo = system.file("CurlSSL", "ca-bundle.crt", package = "RCurl")
+
+  cookie = 'cookiefile.txt'
+  curl  =  getCurlHandle ( cookiefile = cookie,
+                           cookiejar = cookie,
+                           useragent =  "Mozilla/5.0 (Windows; U; Windows NT 5.1; en - US; rv:1.8.1.6) Gecko/20070725 Firefox/2.0.0.6",
+                           header = FALSE,
+                           verbose = TRUE,
+                           netrc = FALSE,
+                           maxredirs = as.integer(20),
+                           followlocation = TRUE,
+                           ssl.verifypeer = TRUE,
+                           cainfo = cainfo,
+                           timeout = 100
+                         )
+
+  ## capath doesn't work:: NEED cainfo!
+  ## test for existing cainfo:
+  if (!file.exists(cainfo)){
+    download.file('http://curl.haxx.se/ca/cacert.pem', cainfo )
+  }
+  ## test for age of cainfo, if older than 2 weeks get new.
+  if (file.exists(cainfo)){
+    file.inf.cainfo <- file.info(cainfo)
+    age.cainfo <- Sys.time() - file.inf.cainfo[["mtime"]]
+    if(as.numeric(age.cainfo, units="days") > 14 ){
+      download.file('http://curl.haxx.se/ca/cacert.pem', cainfo )
+    }
+  }
+
+  ### Make URL
+  baseSocrataUrl <- 'https://opendata.socrata.com/api/views.'
+
+  if(!is.null(category)){
+    category <- match.arg( category, c('Business', 'Fun', 'Personal', 'Education', 'Government'))
+  }
+  type <- match.arg( type, c('json', 'xml'))
+
+  ## Tag
+  if(is.null(tags)){
+    tags <- NULL
+  } else {
+    tags <- URLencode( paste('&tags=', tags, sep = ''))
+  }
+  ## Category
+  if(is.null(category)){
+    category <- NULL
+  } else {
+    category <- URLencode( paste('&category=', category, sep = ''))
+  }
+  ## Limit
+  if(limit > 200){
+    limit <- '&limit=200'
+  } else {
+    limit <- paste('&limit=', limit, sep = '')
+  }
+  ## search
+  if(is.null(search)){
+    search <- NULL
+  } else {
+    search <- URLencode( paste('&full=', search, sep = ''))
+  }
+  ## page
+  page <- paste('&page=', page, sep = '')
+  ## topic
+  if(is.null(topic)){
+    topic <- NULL
+  } else {
+    topic <- URLencode( paste('&description=', topic, sep = ''))
+  }
+  ## name
+  if(is.null(name)){
+    name <- NULL
+  } else {
+    name <- URLencode( paste('&name=', name, sep = ''))
+  }
+  ## count
+  if(count){
+    count <- '&count=TRUE'
+  } else {
+    count <- NULL
+  }
+
+  ### Retrieving html
+  SocrataUrl <- paste( baseSocrataUrl, type, '?', page, tags, category, limit, search, name, topic, count, sep = '')
+  SocrataHtml <- getURL(SocrataUrl, curl = curl)
+  assign('search.Socrata.Call', SocrataUrl, envir=.GlobalEnv)
+  if(type == 'json'){
+    SocrataTable <- fromJSON(SocrataHtml)
+    SocrataTable <- lapply( SocrataTable, function(x){data.frame( x, stringsAsFactors = FALSE) } )
+    SocrataTable.df <- data.frame( matrix( nrow = length( SocrataTable), ncol = max(unlist(lapply(SocrataTable, length) ) ) ) )
+    names(SocrataTable.df) <- names( SocrataTable [lapply( SocrataTable, length ) == max( unlist( lapply( SocrataTable, length) ) ) ] [[1]] )
+    for( i in 1: length( SocrataTable ) ){
+      for( j in 1: length( names( SocrataTable[[i]] ) ) ){
+        SocrataTable.df[i, names( SocrataTable[[i]] )[j]] <- SocrataTable[[i]][i, names( SocrataTable[[i]] ) [j] ]
+      }
+    }
+
+    rm(curl)
+    gc()
+
+    return(SocrataTable.df)
+  } else {
+
+    rm(curl)
+    gc()
+
+    return(SocrataHtml)
+  }
+}
+
+socrata.views <- search.Socrata.Views(topic = 'airplane')
+print(socrata.views)
+

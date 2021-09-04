@@ -1,0 +1,91 @@
+clone()
+print()
+require 'nn'
+require 'nngraph'
+require 'cutorch'
+require 'cunn'
+require 'optim'
+
+
+input = nn.Identity()()
+encoder = nn.Sequential():add(nn.Linear(100, 20)):add(nn.ReLU(true)):add(nn.Linear(20, 10))
+decoder = nn.Sequential():add(nn.Linear(10, 20)):add(nn.ReLU(true)):add(nn.Linear(20, 100))
+code = encoder(input)
+reconstruction = decoder(code)
+
+outsideCode = nn.Identity()()
+decoderCloned= decoder:clone('weight', 'bias', 'gradWeight', 'gradBias')
+outsideReconstruction = decoderCloned(nn.JoinTable(1)({code, outsideCode}))
+dumbNet = nn.Sequential():add(nn.Linear(100, 10))
+codeRecon = dumbNet(outsideReconstruction)
+
+input2 = nn.Identity()()
+encoderTestTime = encoder:clone('weight', 'bias', 'gradWeight', 'gradBias')
+decoderTestTime = decoder:clone('weight', 'bias', 'gradWeight', 'gradBias')
+codeTest = encoderTestTime(input2)
+reconTest = decoderTestTime(codeTest)
+
+gMod = nn.gModule({input, outsideCode}, {reconstruction, codeRecon})
+gModTest = nn.gModule({input2}, {reconTest})
+
+criterion1 = nn.BCECriterion()
+criterion2 = nn.MSECriterion()
+
+-- Okay, the module has been created. Now it's time to do some other stuff
+
+params, gParams = gMod:getParameters()
+
+numParams = params:nElement()
+memReqForParams = numParams * 5 * 4 / 1024 / 1024 -- Convert to MBs
+
+-- If enough memory on GPU, move stuff to the GPU
+if memReqForParams <= 1000 then
+    gMod = gMod:cuda()
+    gModTest = gModTest:cuda()
+    criterion1 = criterion1:cuda()
+    criterion2 = criterion2:cuda()
+    params, gParams = gMod:getParameters()
+end
+
+-- Data
+
+Data = torch.rand(200, 100):cuda()
+Data[Data:gt(0.5)] = 1
+Data[Data:lt(0.5)] = 0
+
+fakeCodes = torch.rand(400, 10):cuda()
+
+config = {learningRate = 0.001}
+state = {}
+
+-- Start training
+print ("\nEncoders before training: \n\tgMod's Encoder: " .. gMod:get(2):forward(torch.ones(1, 100):cuda()):sum() .. "\n\tgModTest's Encoder: " .. gModTest:get(2):forward(torch.ones(1, 100):cuda()):sum())
+print ("\nDecoders before training: \n\tgMod's Decoder: " .. gMod:get(3):forward(torch.ones(1, 10):cuda()):sum() .. "\n\tgModTest's Decoder: " ..  gModTest:get(3):forward(torch.ones(1, 10):cuda()):sum())
+
+
+gMod:training()
+for i=1, Data:size(1) do
+    local opfunc = function(x)
+        if x ~= params then
+            params:copy(x)
+        end
+        gMod:zeroGradParameters()
+        recon, outsideRecon = unpack(gMod:forward({Data[{{i}}], fakeCodes[{{i}}]}))
+        err = criterion1:forward(recon, Data[{{i}}])
+        df_dw = criterion1:backward(recon, Data[{{i}}])
+
+        errFake = criterion2:forward(outsideRecon, fakeCodes[{{i*2-1, i * 2}}])
+        df_dwFake = criterion2:backward(outsideRecon, fakeCodes[{{i*2-1, i * 2}}])
+
+        errorGrads = {df_dw, df_dwFake}
+        gMod:backward({Data[{{i}}], fakeCodes[{{i*2-1, i * 2}}]}, errorGrads)
+
+        return err, gParams
+    end
+
+    x, reconError = optim.adam(opfunc, params, config, state)
+end
+
+print ("\n\nEncoders after training: \n\tgMod's Encoder: " .. gMod:get(2):forward(torch.ones(1, 100):cuda()):sum() .. "\n\tgModTest's Encoder: " .. gModTest:get(2):forward(torch.ones(1, 100):cuda()):sum())
+print ("\nDecoders after training: \n\tgMod's Decoder: " .. gMod:get(3):forward(torch.ones(1, 10):cuda()):sum() .. "\n\tgModTest's Decoder: " ..  gModTest:get(3):forward(torch.ones(1, 10):cuda()):sum())
+

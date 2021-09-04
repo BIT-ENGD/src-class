@@ -1,0 +1,149 @@
+module Main where
+
+import Control.Monad ( filterM
+                     , liftM
+                     )
+import Data.Maybe ( fromJust )
+import Network.HTTP ( RequestMethod(GET)
+                    , rspBody
+                    , simpleHTTP
+                    )
+import Network.HTTP.Base ( Request(..) )
+import Network.URI ( parseURI )
+import System.Directory ( doesFileExist )
+import System.Environment ( getArgs )
+import System.IO ( hClose
+                 , hPutStr
+                 , hPutStrLn
+                 , IOMode(WriteMode)
+                 , openFile
+                 , stderr
+                 )
+import Text.Printf ( printf )
+
+indices :: [String]
+indices =
+  map format1 [0..9] ++ map format2 [0..14] ++ ["40001-41284" :: String]
+  where
+    format1 index =
+      printf "%d-%d" ((index * 1000 + 1) :: Int)
+                     (((index + 1) * 1000) :: Int)
+    format2 index =
+      printf "%d-%d" ((10000 + 2 * index * 1000 + 1) :: Int)
+                     ((10000 + (2 * index + 2) * 1000) :: Int)
+
+main :: IO ()
+main = do
+  [dir] <- getArgs
+  updateDownloads dir
+
+updateDownloads :: FilePath -> IO ()
+updateDownloads path = do
+  let
+    fileNames = map (\index ->
+      (index, path ++ "/tv_and_movie_freqlist" ++ index ++ ".html")) indices
+  missing <-
+    filterM (\(_, fileName) -> liftM not $ doesFileExist fileName) fileNames
+  mapM_ (\(index, fileName) -> do
+    let
+      url =
+        "http://en.wiktionary.org/wiki/Wiktionary:Frequency_lists/TV/2006/" ++
+        index
+      request =
+        Request
+          { rqURI = fromJust $ parseURI url
+          , rqMethod = GET
+          , rqHeaders = []
+          , rqBody = ""
+          }
+    hPutStrLn stderr $ "Downloading " ++ show url
+    resp <- simpleHTTP request
+    case resp of
+      Left _ -> hPutStrLn stderr $ "Error connecting to " ++ show url
+      Right response -> do
+        let
+          html = rspBody response
+        file <- openFile fileName WriteMode
+        hPutStr file html
+        hClose file
+    return ()) missing
+
+par
+IO
+Control.Concurrent.Async
+mapConcurrently
+module Main where
+
+import Control.Concurrent.Async ( mapConcurrently )
+import Control.Monad ( filterM
+                     , liftM
+                     )
+import Data.Maybe ( fromJust )
+import Network.HTTP ( RequestMethod(GET)
+                    , rspBody
+                    , simpleHTTP
+                    )
+import Network.HTTP.Base ( Request(..) )
+import Network.URI ( parseURI )
+import System.Directory ( doesFileExist )
+import System.Environment ( getArgs )
+import System.IO ( hClose
+                 , hPutStr
+                 , hPutStrLn
+                 , IOMode(WriteMode)
+                 , openFile
+                 , stderr
+                 )
+import Text.Printf ( printf )
+
+indices :: [String]
+indices =
+  map format1 [0..9] ++ map format2 [0..14] ++ ["40001-41284" :: String]
+  where
+    format1 index =
+      printf "%d-%d" ((index * 1000 + 1) :: Int)
+                     (((index + 1) * 1000) :: Int)
+    format2 index =
+      printf "%d-%d" ((10000 + 2 * index * 1000 + 1) :: Int)
+                     ((10000 + (2 * index + 2) * 1000) :: Int)
+
+main :: IO ()
+main = do
+  [dir] <- getArgs
+  updateDownloads dir
+
+updateDownloads :: FilePath -> IO ()
+updateDownloads path = do
+  let
+    fileNames = map (\index ->
+      (index, path ++ "/tv_and_movie_freqlist" ++ index ++ ".html")) indices
+  missing <-
+    filterM (\(_, fileName) -> liftM not $ doesFileExist fileName) fileNames
+  pages <-
+    mapConcurrently (\(index, fileName) -> getUrl index fileName) missing
+  mapM_ (\(fileName, html) -> do
+    handle <- openFile fileName WriteMode
+    hPutStr handle html
+    hClose handle) pages
+  where
+    getUrl :: String -> FilePath -> IO (FilePath, String)
+    getUrl index fileName = do
+      let
+        url =
+          "http://en.wiktionary.org/wiki/Wiktionary:Frequency_lists/TV/2006/" ++
+          index
+        request =
+          Request
+          { rqURI = fromJust $ parseURI url
+          , rqMethod = GET
+          , rqHeaders = []
+          , rqBody = ""
+          }
+      resp <- simpleHTTP request
+      case resp of
+        Left _ -> do
+          hPutStrLn stderr $ "Error connecting to " ++ show url
+          return ("", "")
+        Right response ->
+          return (fileName, rspBody response)
+

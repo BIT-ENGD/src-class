@@ -1,0 +1,32 @@
+my @tbls = qx(mysql -u foo -pf00 --database $dbsrc -h $node --port 3306 -ss -e "show tables");
+my $dbh = DBI->connect("DBI:mysql:database=$dbsrc;host=$node;port=3306",'foo','f00');
+
+# Creating a logfile
+open (MYLOG, ">$dmpdir$node-mytstdmp-$dt.log") || die "cannot append";
+
+# Loop through each table and create its own data file
+foreach my $tbls (@tbls)
+{
+   chomp $tbls;
+   print MYLOG "START Time ==> ", &dt2, "\n";
+   extract_data($dbh, $tbls);
+   print MYLOG "TIME END  ==> ", &dt2, "\n";
+};
+$dbh->disconnect;
+close (MYLOG);
+
+sub extract_data
+{
+     my($dbh, $tbls) = @_;
+     my $out_file = "$dmpdir$node-$tbls.$dt.out";
+     open (my $gzip_fh, "| /bin/gzip -c > $out_file.gz") or die "error starting gzip $!";
+     print MYLOG "Creating dmp file ==> $out_file.gz\n";
+     my $sth = $dbh->prepare("SELECT UUID(), '$node', 1, 2, flg, upd, vts FROM $tbls");
+     $sth->execute();
+     while (my($uid, $hostnm,$1,$2,$flg,$upd,$vts) = $sth->fetchrow_array() ) {
+       print $gzip_fh "_key_$uid^Ehost^A$hostnm^E1^A$1^E2^A$2^Eflg^A$flg^Eupd^A$upd^Evts^A$vts^D";
+     }
+     $sth->finish;
+     close $gzip_fh or die "Failed to close file: $!";
+};
+

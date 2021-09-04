@@ -1,0 +1,105 @@
+init_arg
+package Test {
+    use Moose;
+    has attr => (
+       is => 'ro',
+       isa => 'Str',
+       init_arg => 'attribute'
+    );
+}
+
+Test->new({ attribute => 'foo' });
+
+Test->new({ attr => 'foo' });
+
+around initialize_instance_slot
+BUILDARGS
+has attr => (
+   is => 'ro',
+   isa => 'Str',
+   alt_init_arg => 'attribute'
+);
+
+use 5.014;
+use warnings;
+
+package MooseX::Meta::Attribute::Trait::OtherName {
+    use Moose::Role;
+    use Carp;
+
+    has other_name => (
+        isa       => 'Str',
+        predicate => 'has_other_name',
+        required  => 1,
+        is        => 'ro',
+    );
+
+    around initialize_instance_slot => sub {
+        my $orig = shift;
+        my $self = shift;
+
+        my ( $meta_instance, $instance, $params ) = @_;
+
+        confess 'actually calling this code';
+
+        return $self->$orig(@_)
+            unless $self->has_other_name && $self->has_init_arg;
+
+        if ( $self->has_other_name ) {
+            $params->{ $self->init_arg }
+                = delete $params->{ $self->other_name };
+        }
+    };
+}
+
+package Moose::Meta::Attribute::Custom::Trait::OtherName {
+    sub register_implementation { 'MooseX::Meta::Attribute::Trait::OtherName' }
+}
+
+package Message {
+    use Moose;
+#   use MooseX::StrictConstructor;
+
+    has attr => (
+        traits    => [ 'OtherName' ],
+        is        => 'ro',
+        isa       => 'Str',
+        other_name => 'Attr',
+    );
+
+    __PACKAGE__->meta->make_immutable;
+}
+
+package Client {
+    use Moose;
+
+    sub serialize {
+        my ( $self, $message ) = @_;
+
+        confess 'no message' unless defined $message;
+
+        my %h;
+        foreach my $attr ( $message->meta->get_all_attributes ) {
+            if (
+                    $attr->does('MooseX::Meta::Attribute::Trait::OtherName')
+                    && $attr->has_other_name
+                ) {
+                $h{$attr->other_name} = $attr->get_value( $message );
+            }
+        }
+        return \%h;
+    }
+    __PACKAGE__->meta->make_immutable;
+}
+
+my $message = Message->new( Attr => 'foo' );
+
+my $ua = Client->new;
+
+my %h = %{ $ua->serialize( $message )};
+
+use Data::Dumper::Concise;
+
+say Dumper \%h
+
+around

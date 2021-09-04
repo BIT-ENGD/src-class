@@ -1,0 +1,40 @@
+-- This raises the exception only once and the lock is successfully restored:
+main1 = do
+    lock <- newMVar ()
+    lockPrint "good1" lock
+    takeMVar lock 
+    putStrLn "main: took lock but didn't return it!"
+    -- exception is raised and lock is restored here:
+    lockPrint "good2" lock
+    -- no exception raised:
+    lockPrint "good3" lock
+    readMVar lock
+    putStrLn "great success"
+
+lockPrint :: String -> MVar () -> IO ()
+lockPrint name v =  takePrint `finally` put 
+    where put = putMVar v () >> putStrLn (name++": replaced lock")
+          takePrint = do
+               e <- try $ takeMVar v :: IO (Either BlockedIndefinitelyOnMVar ())
+               let printExc = putStrLn . ((name++": ")++) . show
+                   printSuccess = const $ putStrLn (name++": success")
+               either printExc printSuccess e
+
+main0 = do
+    lock <- newMVar ()
+    forkIO $ lockPrint "good1" lock
+
+    threadDelay 100000
+    takeMVar lock
+    putStrLn "main: took lock but didn't return it!"
+
+    -- raises blocked indefinitely exception
+    forkIO $ lockPrint "good2" lock
+
+    -- this should raise no exception if we were successful above:
+    putStrLn "main: long pause..."
+    threadDelay 2000000
+    readMVar lock
+    putStrLn "great success"
+
+ghc --make -threaded -fforce-recomp experiments.hs

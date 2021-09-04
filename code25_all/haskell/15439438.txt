@@ -1,0 +1,28 @@
+import Control.Proxy.Attoparsec
+import Control.Proxy.Trans.Either
+import Data.Attoparsec as P
+import Data.Attoparsec.Binary
+import qualified Data.ByteString as BS
+
+parser = do
+    size <- fromIntegral <$> anyWord32le
+
+    -- alternative 1 (ignore the Either for simplicity):
+    Right result <- parseOnly blockParser <$> P.take size
+    return result
+
+    -- alternative 2
+    (result, trackedSize) <- blockparser
+    when (size /= trackedSize) $ fail "size mismatch"
+    return result
+
+blockParser = undefined
+
+main = withBinaryFile "bin" ReadMode go where
+    go h = fmap print . runProxy . runEitherK $ session h
+    session h = printD <-< parserD parser <-< throwParsingErrors <-< parserInputD <-< readChunk h 128
+    readChunk h n () = runIdentityP go where
+        go = do
+            c <- lift $ BS.hGet h n
+            unless (BS.null c) $ respond c *> go
+

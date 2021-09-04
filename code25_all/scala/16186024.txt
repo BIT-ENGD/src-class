@@ -1,0 +1,29 @@
+def toList[T <: Indexed[String]](content: Iterable[String], klass: Class[T]) = {
+    val ref = new TypeReference[List[T]] {}
+    content.flatMap(JsonUtils.toObject(_, ref)).toList
+}
+
+flow {
+    val objects = toList(content, klass)
+    val hasRefs = klass.getFields.filter(it => it.getAnnotation(classOf[Ref]) != null)
+    hasRefs.foreach {injectRef(_, objects)}
+    promise << objects
+}
+
+def injectRef[T <: Indexed[String]](field: Field, objects: List[T]) {
+    val anno = field.getAnnotation(classOf[Ref])
+    val refKlass = anno.klass()
+
+    def setField(o: T) {
+        val original = field.isAccessible
+        field.setAccessible(true)
+        val f = field.get(o)
+        val found = promises.get(refKlass)().find(it => it.index() == f)
+        field.set(o, found)
+        field.setAccessible(original)
+    }
+    objects.foreach { o =>
+        setField(o) // here, compile error
+    }
+}
+

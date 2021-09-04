@@ -1,0 +1,44 @@
+use strict;
+use warnings;
+use HTTP::Proxy qw( :log );
+use HTTP::Proxy::HeaderFilter::simple;
+use LWP::UserAgent;
+my $ua = LWP::UserAgent->new();
+$ua->proxy(['http'],'http://127.0.0.1:29999');
+$ua->timeout(10);
+$ua->agent('Mozilla/5.0 (Windows NT 6.1) AppleWebKit/534.24 (KHTML, like Gecko)   Chrome/11.0.696.60 Safari/534.24');
+
+open ( LOGFILE, ">>", "/var/log/repeater.log");
+my $proxy = HTTP::Proxy->new(
+            port => '38374',
+            agent => $ua,
+            logfh => <LOGFILE>,
+            );
+ #HTTP::Proxy->new(@ARGV); #<- ???
+ $proxy->logmask( ALL );
+
+
+ $proxy->push_filter(
+          host     => 'google.com', # only apply to this domain
+          response => HTTP::Proxy::HeaderFilter::simple->new( sub { my ( $self,    $headers, $response ) = @_;
+     # skip non redirects
+       return if $response->code !~ /^3/;
+     # pick up location
+        my $location = $headers->header('Location');
+     # find bad redirections
+        if ( $location =~ m{google.com/sorry.*} ) {
+
+    # change the redirect
+        my $new_location = $location ;
+        $new_location =~ s/.*(\/sorry\/\?continue=.*)/$1/gx ;
+        $new_location =~ s/\/sorry\/\?continue=//;
+        $headers->header( Location => $new_location );
+    # print some logging information
+        $self->proxy->log( ALL,
+                      LOCATION => "$location => $new_location"  );
+            }
+         }
+     )
+ );
+ $proxy->start;
+

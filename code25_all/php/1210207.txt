@@ -1,0 +1,86 @@
+<?PHP
+$memcache= new Memcache();
+$memcache->connect('127.0.0.1', 11211);
+
+$rows2= $memcache->get('therows1');
+if($rows2 == ''){
+    $myfriends = findfriend2(); // this function gets our array from mysql
+    $memcache->set('therows1', $myfriends, 0, 30);
+    echo '<pre>';
+    print_r($myfriends); // print the mysql version
+    echo '</pre>';
+}else{
+    echo '<pre>';
+    print_r($rows2); //print the cached version
+    echo '</pre>';
+}
+?>
+
+<?PHP
+// {{{ locked_mecache_update($memcache,$key,$updateFunction,$expiryTime,$waitUTime,$maxTries)
+/**
+ * A function to do ensure only one thing can update a memcache at a time.
+ *
+ * Note that there are issues with the $expiryTime on memcache not being
+ * fine enough, but this is the best I can do. The idea behind this form
+ * of locking is that it takes advantage of the fact that
+ * {@link memcache_add()}'s are atomic in nature.
+ *
+ * It would be possible to be a more interesting limiter (say that limits
+ * updates to no more than 1/second) simply by storing a timestamp or
+ * something of that nature with the lock key (currently stores "1") and
+ * not deleitng the memcache entry.
+ *
+ * @package TGIFramework
+ * @subpackage functions
+ * @copyright 2009 terry chay
+ * @author terry chay &lt;tychay@php.net&gt;
+ * @param $memcache memcache the memcache object
+ * @param $key string the key to do the update on
+ * @param $updateFunction mixed the function to call that accepts the data
+ *  from memcache and modifies it (use pass by reference).
+ * @param $expiryTime integer time in seconds to allow the key to last before
+ *  it will expire. This should only happen if the process dies during update.
+ *  Choose a number big enough so that $updateFunction will take much less
+ *  time to execute.
+ * @param $waitUTime integer the amount of time in microseconds to wait before
+ *  checking for the lock to release
+ * @param $maxTries integer maximum number of attempts before it gives up
+ *  on the locks. Note that if $maxTries is 0, then it will RickRoll forever
+ *  (never give up). The default number ensures that it will wait for three
+ *  full lock cycles to crash before it gives up also.
+ * @return boolean success or failure
+ */
+function locked_memcache_update($memcache, $key, $updateFunction, $expiryTime=3, $waitUtime=101, $maxTries=100000)
+{
+    $lock = 'lock:'.$key;
+
+    // get the lock {{{
+    if ($maxTries>0) {
+        for ($tries=0; $tries< $maxTries; ++$tries) {
+            if ($memcache->add($lock,1,0,$expiryTime)) { break; }
+            usleep($waitUtime);
+        }
+        if ($tries == $maxTries) {
+            // handle failure case (use exceptions and try-catch if you need to be nice)
+            trigger_error(sprintf('Lock failed for key: %s',$key), E_USER_NOTICE);
+            return false;
+        }
+    } else {
+        while (!$memcache->add($lock,1,0,$expiryTime)) {
+            usleep($waitUtime);
+        }
+    }
+    // }}}
+    // modify data in cache {{{
+    $data = $memcache->get($key, $flag);
+    call_user_func($updateFunction, $data); // update data
+    $memcache->set($key, $data, $flag);
+    // }}}
+    // clear the lock
+    $memcache->delete($lock,0);
+    return true;
+}
+// }}}
+?>
+

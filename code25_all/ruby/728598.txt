@@ -1,0 +1,62 @@
+undefined method `banned?' for "127.0.0.1":String
+
+6:     <th>Last_ip</th>
+7:     <th>Date</th>
+8:   </tr>
+9: <% if request.remote_ip.banned? == true %>banned<% else %>ok<% end %>
+10: <% for banned_ip in @banned_ips %>
+11:   <tr>
+12:     <td><%=h banned_ip.first_ip %></td>
+
+module Infrid
+  class IPAddress
+    include Comparable
+    def initialize(address)
+      @address = address
+    end
+    def split
+      @address.split(‘.‘).map {|s| s.to_i }
+    end
+    def <=>(other)
+      split <=> other.split
+    end
+    def to_s
+      @address
+    end
+  end
+end
+
+class BannedIp < ActiveRecord::Base
+    @banned_ips # hash of ips and masks
+    validates_presence_of :first_ip, :message =>"first address is needed"
+    validates_presence_of :last_ip, :message =>"last address is needed"
+    validates_format_of :first_ip, :with => REG_IP, :message => "is invalid (must be x.x.x.x where x is 0-255)", :if => Proc.new {|ar| !ar.first_ip.blank? }
+    validates_format_of :last_ip, :with => REG_IP, :message => "is invalid (must be x.x.x.x where x is 0-255)", :if => Proc.new {|ar| !ar.last_ip.blank? }
+
+    def self.banned?(ip)
+      reload_banned_ips if @banned_ips.nil?
+      begin
+          ip = Infrid::IPAddress.new(ip)
+          @banned_ips.each { |b|
+            return true if ip.between?(b[0], b[1])
+          }
+      rescue
+          logger.info "IP FORMAT ERROR"
+          return true
+      end
+      false
+    end
+    def self.banned_ips
+        reload_banned_ips if @banned_ips.nil?
+        @banned_ips.collect {|b| b[0].to_s + ".." + b[1].to_s }.join"\n"
+    end
+    #keeps a cache of all banned ip ranges
+    def self.reload_banned_ips
+      r = connection.select_all("select first_ip, last_ip from banned_ips")
+      if !r
+        @banned_ips=[] 
+      end
+      @banned_ips = r.map {|item| [Infrid::IPAddress.new(item["first_ip"]),Infrid::IPAddress.new(item["last_ip"])] }
+    end
+end
+

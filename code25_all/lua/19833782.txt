@@ -1,0 +1,133 @@
+/usr/lib/lua/luci/dispatcher.lua:448: Failed to execute firstchild dispatcher target for entry '/admin/network/amld'.
+The called action terminated with an exception:
+/usr/lib/lua/luci/dispatcher.lua:448: Failed to execute cbi dispatcher target for entry '/admin/network/amld/amld_status'.
+The called action terminated with an exception:
+/usr/lib/lua/luci/cbi.lua:75: /usr/lib/lua/luci/model/cbi/amld/amld_status.lua:122: 'end' expected (to close 'if' at line 78) near '<eof>'
+stack traceback:
+    [C]: in function 'assert'
+    /usr/lib/lua/luci/dispatcher.lua:448: in function 'dispatch'
+    /usr/lib/lua/luci/dispatcher.lua:195: in function </usr/lib/lua/luci/dispatcher.lua:194>
+
+local fs = require "nixio.fs"
+local sys = require "luci.sys"
+local uci = require "luci.model.uci".cursor()
+
+registered_s = uci.get("amld_cbi", "amld", "registered")
+m = Map("amld_cbi", translate("amld"))
+if registered_s == "true" then
+
+    s = m:section(TypedSection, "amld_conf", "Status")
+
+    fqdn = s:option(DummyValue, "fqdn", "concentrator")
+
+    local updown = s:option( Button, "_updown", translate("Start / Stop") )
+    updown._state = false
+    function updown.cbid(self, section)
+        local pid = fs.readfile("/var/run/amld.pid")
+        self._state = pid and #pid > 0 and sys.process.signal(pid, 0)
+        self.option = self._state and "stop" or "start"
+        return AbstractValue.cbid(self, section)
+    end
+    function updown.cfgvalue(self,section)
+        self.title = self._state and "stop" or "start"
+        self.inputstyle = self._state and "reset" or "reload"
+    end
+    function updown.write(self,section,value)
+        if self.option == "stop" then
+            luci.sys.call("killall -HUP amld")
+        else
+            args = build_run_time_args()
+            luci.sys.call("amld " .. args)
+        end
+    end
+
+elseif registered_s == "false" then
+
+    s = m:section(TypedSection, "amld_conf", "Register amld")
+
+    username = d:option(Value, "username","Username");username.optional=false;
+    password = d:option(Value, "password","Password");password.optional=false;
+
+    m.on_after_commit = function(self) -- Make sure this doesn't get called if registered = true
+        register_device()
+end
+
+function build_run_time_args()
+    local args = ""
+
+    username_s = uci.get("amld_cbi", "amld", "username")
+    if username_s ~= nil and username_s ~= "" then
+        args = args .. " -u " .. username_s .. " "
+    end
+
+    password_s = uci.get("amld_cbi", "amld", "password")
+    if password_s ~= nil and password_s ~= "" then
+        args = args .. " -p " .. password_s .. " "
+    end
+
+    passphrase_s = uci.get("amld_cbi", "amld", "passphrase")
+    if passphrase_s ~= nil and passphrase_s ~= "" then
+        args = args .. " -P " .. passphrase_s .. " "
+    end
+
+    tun_dev_s = uci.get("amld_cbi", "amld", "tun_dev")
+    if tun_dev_s ~= nil and tun_dev_s ~= "" then
+        args = args .. " -t " .. tun_dev_s .. " "
+    end
+
+    interface_s = uci.get("amld_cbi", "amld", "interface")
+    if interface_s ~= nil and interface_s ~= "" then
+        args = args .. " -i " .. interface_s .. " "
+    end
+
+    gateway_s = uci.get("amld_cbi", "amld", "gateway")
+    if gateway_s ~= nil and gateway_s ~= "" then
+        args = args .. " -g " .. gateway_s .. " "
+    end
+
+    cacert_s = uci.get("amld_cbi", "amld", "cacert")
+    if cacert_s ~= nil and cacert_s ~= "" then
+        args = args .. " -C " .. cacert_s .. " "
+    end
+
+    test_s = uci.get("amld_cbi", "amld", "test")
+    if test_s ~= nil and test_s == "1" then
+        args = args .. " -T "
+    end
+
+    foreground_s = uci.get("amld_cbi", "amld", "foreground")
+    if foreground_s ~= nil and foreground_s == "1" then
+        args = args .. " -f "
+    end
+
+    debug_s = uci.get("amld_cbi", "amld", "debug")
+    if debug_s ~= nil and debug_s == "1" then
+        args = args .. " -x "
+    end
+
+    bundle_s = uci.get("amld_cbi", "amld", "bundle")
+    if bundle_s ~= nil and bundle_s ~= "" then
+        args = args .. " " .. bundle_s .. " "
+    end
+
+    fqdn_s = uci.get("amld_cbi", "amld", "fqdn")
+    if fqdn_s ~= nil and fqdn_s ~= "" then
+        args = args .. " " .. fqdn_s .. " "
+    end
+
+    sysconf_s = io.open("/etc/config/amld.sysconf", "r")
+    if sysconf_s ~= nil then
+        args = args .. " -s " .. " /etc/config/amld.sysconf "   
+        io.close(sysconf_s)
+    end
+    return args
+end
+
+function register_device()
+
+    --run aml in test mode, if success, set registered, else ...?
+    uci.set("amld_cbi", "amld", "registered", "true")
+end
+
+return m
+

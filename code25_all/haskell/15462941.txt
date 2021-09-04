@@ -1,0 +1,177 @@
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+ ------------------------------------------------------------------------------
+-- | This module defines nicEditor snaplet, just a short example to show,
+-- how snaplets can be defined together with splices.
+-- License: BSD3. 
+-- Here are hopefully easy instructions, how to use or try:
+-- 
+-- 1. Make a directory, we'll use "netry" below, go there.
+--  Initialize a project, e.g. "snap init default".
+-- 2. Copy this file to netry/src-directory as SnapNic.hs.
+-- 3. Add "import SnapNic" to Site.hs and to Application.hs
+-- 4. Add ", _niced :: Snaplet Nicsnap" to data App in Application.hs 
+-- 
+-- 5. Add "n <- nestSnaplet "niced" niced nicsnapInit" to 
+--    app :: SnapletInit App App in Site.hs. 
+-- 6. Add "addNicEditSplices n" to the same function as in step 5.
+-- 7. Change the return-line of the same function as in step 5: 
+--      "return $ App h s a n" 
+--    that is, add "n" into the end. We need this because of step 4.
+-- 
+-- 8. Make route, e.g. ", ("/netext",   with auth handleNEtext)" to
+--    routes-function in Site.hs
+-- 
+-- 9. And then add handler into Site.hs:
+--    handleNEtext :: Handler App v ()
+--    handleNEtext = method GET handleForm <|> method POST handleFormSubmit
+--      where
+--       handleForm = render "textedit"
+--       handleFormSubmit = do 
+--        p <- getParam "ots"
+--        writeText "Submitting text from textarea...\n"
+--        writeText (T.pack (show p))
+-- 
+-- 10. Last, add the following 2 templates to "netry/snaplets/heist/templates".
+--    (This could be made simpler, but this works as an example of apply-tag.)
+--    textedit.tpl:
+--      <apply template="base">
+--         <apply template="_textedit" />
+--      </apply>
+--    _textedit.tpl:
+--       <h2>Your nic editor</h2>
+--         <form method="post" action="netext">
+--           <neTA/>
+--           <button name="ne" value="ne" type="Submit">Send text</button>
+--         </form>
+--         <neScript/>
+-- 
+-- 11. Compile everything "cabal install -fdevelopment". After that, 
+--     if everything compiled, "netry -p 8000", start your browser and go
+--     to "localhost:8000/netext".
+-- 
+-- TODO! This could use the config-files at least for some parameters, and more
+-- tags,please. Tags could use some attributes (for example, size parameters
+-- could be given as attributes of tags)...
+-- 
+module SnapNic 
+  ( Nicsnap (..)
+  , nicsnapInit
+  , addNicEditSplices
+  ) where
+
+------------------------------------------------------------------------------
+import           Control.Lens   (makeLenses, view, (^.))
+import qualified Data.Text as T (Text, append, pack)
+import           Data.Maybe     (fromJust, fromMaybe)
+import           Snap.Core      (MonadSnap)
+import           Snap.Snaplet   (Snaplet
+                                , makeSnaplet
+                                , snapletValue
+                                , SnapletInit
+                                , Initializer
+                                )
+import           Snap.Snaplet.Heist     (HasHeist, addSplices)
+import qualified Text.XmlHtml as X      (Node (Element, TextNode))
+import qualified Heist.Interpreted as I (Splice)
+
+------------------------------------------------------------------------------
+-- | Nicsnap has fields that can be used to set some basic properties.
+-- The editor can have a title and its size can be set. Javascript can be
+-- local or remote.
+data Nicsnap = Nicsnap
+  { _nicsnap  :: T.Text       -- title
+  , _areaSize :: (Int,Int)    -- rows, cols
+  , _areaRef  :: T.Text       -- how to apply nicEditors? 
+  -- (This may not be sufficient in order to refer in some other way, TODO!)
+  , _localR   :: Maybe T.Text -- local route to nicEdit.js
+  , _webR     :: T.Text       -- route to nicEdit's javascript source. 
+  }
+
+makeLenses ''Nicsnap          -- makes webR and other lenses
+
+
+------------------------------------------------------------------------------
+-- | Configurations are given here. This could use config-files...
+-- What other things to configure?
+-- If you want to make a local copy of the nicEdit, then add a static route
+-- to the "routes"-function. 
+nicsnapInit :: SnapletInit b Nicsnap
+nicsnapInit = makeSnaplet "nicsnap" "NicEditor snaplet " Nothing $ do
+   let m  = "Nic editor title"
+       aS = (20,80)::(Int,Int) -- rows, cols
+       aR = "nicEditors.allTextAreas" -- TODO! We need to be able to tell,
+       -- which textareas have editors in a page.
+       lR = Nothing 
+       -- lR = Just "/nicEdit.js" 
+       -- If localR is nothing, then webR is used with the following addr.
+       wR = "http://js.nicedit.com/nicEdit-latest.js"
+   return $ Nicsnap m aS aR lR wR
+
+------------------------------------------------------------------------------
+
+-- | Internal, this makes the script-tag.
+-- Input could be e.g. txt = "/nicEdit.js"
+srcElem :: T.Text -> X.Node
+srcElem txt = X.Element "script" 
+   [("src",txt),("type","text/javascript")] []
+
+-- | Internal, this makes the script-tag. At the moment this changes all
+-- textareas to niceditors, if the example input below is used. TODO!...
+-- Input could be e.g.  txt = "nicEditors.allTextAreas"
+srcOnLoad :: T.Text -> X.Node
+srcOnLoad txt = X.Element "script" [("type","text/javascript")] 
+   [X.TextNode (T.append (T.append "bkLib.onDomLoaded(" txt) ");")] 
+
+
+-- | Internal, used to define "divs", where we give a label and size to 
+-- textarea. Also ids and names.
+-- TODO! ids and names could be parameters.
+divLabelTX :: T.Text -> T.Text -> T.Text -> X.Node
+divLabelTX title r c =  X.Element "div" [("class", "required")]
+   [ X.Element "label" [("for","ots")] 
+        [X.TextNode title]
+   , X.Element "textarea" 
+        [("id","ots"), ("name","ots"), ("cols",c), ("rows",r)] 
+        [X.TextNode " "]
+   ]
+
+-- | Internal, this can be used in splice-definition.
+-- TODO! ids and names could be parameters, too.
+nicTextAreaAdd :: MonadSnap m => T.Text -> (Int,Int) -> I.Splice m
+nicTextAreaAdd title (r,c) = return [divLabelTX 
+  title
+  (T.pack . show $ r) 
+  (T.pack . show $ c)]
+
+-- | Add script-tags to web page with splice that tell, what javascript
+-- library to use... 
+nicEditAdd :: MonadSnap m => T.Text -> T.Text -> I.Splice m
+nicEditAdd src edElems = return (srcElem src : [srcOnLoad edElems])
+
+------------------------------------------------------------------------------
+
+-- | Get the route to the javascript library that is applied (either local
+-- library or construct a link to a web address).
+nicRoute :: Nicsnap -> T.Text
+nicRoute ns = let mlR = ns ^. localR in fromMaybe (ns ^. webR) mlR
+
+------------------------------------------------------------------------------
+
+-- | neTextAreaTag and neScripTag are used in addSplices to define the tags
+-- to be used in templates.
+-- What other tags could be useful? Maybe a way to add a nicEditor directly
+-- with one or more button bind to it ("send", "clear", etc). TODO!
+neTextAreaTag = "neTA"     :: T.Text
+neScriptTag   = "neScript" :: T.Text
+
+-- | Make the tags to be used in templates. At the moment, only the above
+-- tags are defined. 
+addNicEditSplices :: HasHeist b => Snaplet Nicsnap -> Initializer b v ()
+addNicEditSplices n = let m = view snapletValue n in addSplices
+  [(neTextAreaTag, nicTextAreaAdd (m ^. nicsnap) (m ^. areaSize))
+  ,(neScriptTag,   nicEditAdd (nicRoute m) (m ^. areaRef) )
+  ]
+------------------------------------------------------------------------------
+

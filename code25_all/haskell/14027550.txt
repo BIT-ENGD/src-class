@@ -1,0 +1,33 @@
+encode shows
+{-# LANGUAGE Arrows, NoMonomorphismRestriction, OverloadedStrings #-}
+import Network.HTTP
+import Text.XML.HXT.Core
+import Data.Aeson
+import qualified Data.ByteString.Lazy.Char8 as LazyByteString
+
+openUrl :: String -> IO String
+openUrl url = getResponseBody =<< simpleHTTP (getRequest url)
+
+composeSearch :: String -> String
+composeSearch query = "http://services.tvrage.com/feeds/search.php?show=" ++ urlEncode query
+
+searchShow :: String -> IO String
+searchShow query = openUrl $ composeSearch query
+
+data TvShow = TvShow { showName, showId :: String } deriving (Show)
+
+getShow = deep (isElem >>> hasName "show") >>>
+    proc x -> do
+        name <- getText <<< getChildren <<< deep (hasName "name")  -< x
+        id <- getText <<< getChildren <<< deep (hasName "showid") -< x 
+        returnA -< TvShow { showName = name, showId = id }
+
+instance ToJSON TvShow where
+    toJSON (TvShow name id) = object ["name" .= name, "id" .= id]
+
+main :: IO ()
+main = do
+    results <- searchShow "Always Sunny" 
+    shows <- runX (readString [ withValidate  no ] results >>> getShow)
+    putStrLn (LazyByteString.unpack (encode shows))
+

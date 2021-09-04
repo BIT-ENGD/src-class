@@ -1,0 +1,84 @@
+        describe "status feed" do
+
+        it "should have a feed" do
+          @user.should respond_to(:feed)
+        end
+
+        it "should include the user's microposts" do
+          @user.feed.include?(@mp1).should be_true
+          @user.feed.include?(@mp2).should be_true
+        end
+
+        it "should not include a different user's microposts" do
+          mp3 = Factory(:micropost,
+                        :user => Factory(:user, :email => Factory.next(:email)))
+          @user.feed.include?(mp3).should be_false
+        end
+      end
+    end  
+
+ 1) status feed should have a feed
+ Failure/Error: @user.should respond_to(:feed)
+   expected nil to respond to :feed
+ # ./spec/models/user_spec.rb:170
+
+ 2) status feed should include the user's microposts
+   Failure/Error: @user.feed.should include(@mp1)
+    NoMethodError:
+     undefined method `feed' for nil:NilClass
+    # ./spec/models/user_spec.rb:174
+
+ 3) status feed should not include a different user's microposts
+    Failure/Error: @user.feed.should_not include(mp3)
+    NoMethodError:
+    undefined method `feed' for nil:NilClass
+    # ./spec/models/user_spec.rb:181
+
+  4) status feed should include the microposts of followed users
+   Failure/Error: @user.follow!(followed)
+   NoMethodError:
+    undefined method `follow!' for nil:NilClass
+    # ./spec/models/user_spec.rb:187
+
+class Micropost < ActiveRecord::Base
+attr_accessible :content
+
+belongs_to :user
+
+validates :content, :presence => true, :length => { :maximum => 140 }
+validates :user_id, :presence => true
+
+def self.from_users_followed_by(user)
+  followed_ids = user.following.map(&:id).join(", ")
+  where("user_id IN (#{followed_ids}) OR user_id = ?", user)
+end
+
+default_scope :order => 'microposts.created_at DESC'
+
+# Return microposts from the users being followed by the given user.
+scope :from_users_followed_by, lambda { |user| followed_by(user) }
+
+private
+
+  # Return an SQL condition for users followed by the given user.
+  # We include the user's own id as well.
+  def self.followed_by(user)
+    followed_ids = %(SELECT followed_id FROM relationships
+                     WHERE follower_id = :user_id)
+    where("user_id IN (#{followed_ids}) OR user_id = :user_id",
+          { :user_id => user })
+  end
+end 
+
+def home
+@title = "Home"
+if signed_in?
+  @micropost = Micropost.new
+  @feed_items = current_user.feed.paginate(:page => params[:page])
+ end
+end
+
+    def feed
+     Micropost.from_users_followed_by(self)
+    end
+

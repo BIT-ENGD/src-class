@@ -1,0 +1,60 @@
+# --- !Ups
+
+create table user (
+  name        varchar(255) not null primary key,
+  password    varchar(255) not null
+);
+
+insert into user values ('demo', 'demo');
+insert into user values ('kuki', 'pass');
+
+
+# --- !Downs
+
+drop table if exists user;
+
+db.default.driver=org.h2.Driver
+db.default.url=jdbc:h2:mem:play
+
+case class User(name: String, password: String)
+object User {
+
+  val simple = {
+    get[String]("user.name") ~/
+    get[String]("user.password") ^^ {
+      case name~password => User(name, password)
+    }
+  }
+
+  def findByName(name: String): Option[User] = {
+    DB.withConnection { implicit connection =>
+     SQL("select * from user where name = {name}").on(
+        'name -> name
+      ).as(User.simple ?)
+    }
+  }
+}
+
+object User extends Table[(String, String)]("user") {
+
+  lazy val database = Database.forDataSource(DB.getDataSource())
+
+  def name = column[String]("name", O PrimaryKey, O NotNull)
+  def password = column[String]("password", O NotNull)
+  def * = name ~ password
+
+  def findByName(name: String) = database withSession {
+    implicit db: Session =>
+      (for (u <- this if u.name === name) yield u.name ~ u.password).list
+  }
+}
+
+[JdbcSQLException: Tablela "user" nie istnieje Table "user" not found; 
+SQL statement: SELECT "t1"."name","t1"."password" FROM "user" "t1" WHERE ("t1"."name"='input_name') [42102-158]]
+
+database withSession {
+  implicit db: Session =>
+    User.ddl.create
+    User.insert("demo", "demo")
+}
+

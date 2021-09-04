@@ -1,0 +1,135 @@
+network = createNetwork() -- loading a pre-trained network. 
+function train()
+    for i=1,#trainingsamples do
+        local ip = loadInput()
+        local ip_1 = someImageProcessing(ip)
+        local ip_2 = someImageProcessing(ip)
+        network:forward( ...some manipulation on ip_1,ip_2...)
+        network:backward()
+        collectgarbage('collect')
+        print debug.getlocal -- all local variables.
+        end
+end
+
+network = createNetwork()
+
+function trainNetwork()
+
+local parameters,gradParameters = network:getParameters()
+network:training()    -- set flag for dropout
+
+local bs = 1 
+
+local lR = params.learning_rate / torch.sqrt(bs) 
+local optimConfig = {learningRate = params.learning_rate,
+                   momentum = params.momentum,
+                   learningRateDecay = params.lr_decay,
+                   beta1 = params.optim_beta1,
+                   beta2 = params.optim_beta2,
+                   epsilon = params.optim_epsilon}
+
+ local nfiles = getNoofFiles('train')
+
+ local weights = torch.Tensor(params.num_classes):fill(1)
+
+ criterion =  nn.ClassNLLCriterion(weights)
+
+for ep=1,params.epochs do
+
+
+IMAGE_SEQ = 1
+
+while (IMAGE_SEQ <= nfiles) do
+
+  xlua.progress(IMAGE_SEQ, nfiles)
+  local input, inputd2
+  local color_image, depth_image2, target_image
+
+
+  local nextInput = loadNext('train')
+  color_image = nextInput.data.rgb
+  depth_image2 = nextInput.data.depth
+  target_image = nextInput.data.labels
+
+  input = network0:forward(color_image)       -- process RGB
+  inputd2 = networkd:forward(depth_image2):squeeze()   -- HHA
+
+  local input_concat = torch.cat(input,inputd2,1):squeeze()  -- concat RGB,  HHA
+  collectgarbage('collect')
+
+
+  target = target_image:reshape(params.imWidth*params.imHeight) -- reshape target as vector
+
+
+  -- create closure to evaluate f(X) and df/dX
+  local loss = 0
+  local feval = function(x)
+    -- get new parameters
+  if x ~= parameters then parameters:copy(x) end
+    collectgarbage()
+
+    -- reset gradients
+    gradParameters:zero()
+    -- f is the average of all criterions
+    -- evaluate function for complete mini batch
+
+
+    local output = network:forward(input_concat)    -- run forward pass
+    local err = criterion:forward(output, target)   -- compute loss
+
+    loss = loss + err
+
+
+-- estimate df/dW
+    local df_do = criterion:backward(output, target)
+
+    network:backward(input_concat, df_do)           -- update parameters
+
+      local _,predicted_labels = torch.max(output,2)
+      predicted_labels = torch.reshape(predicted_labels:squeeze():float(),params.imHeight,params.imWidth)
+
+
+    return err,gradParameters
+  end -- feval
+
+  pm('Training loss: '.. loss, 3)
+
+  _,current_loss = optim.adam(feval, parameters, optimConfig)
+  print ('epoch / current_loss ',ep,current_loss[1])
+
+  os.execute('cat /proc/$PPID/status | grep RSS')
+
+  collectgarbage('collect')
+
+  -- for memory leakage debugging
+
+  print ('locals')
+  for x, v in pairs(locals()) do
+      if type(v) == 'userdata' then
+        print(x, v:size())
+      end
+  end
+
+  print ('upvalues')
+  for x,v in pairs(upvalues()) do
+     if type(v) == 'userdata' then
+        print(x, v:size())
+      end
+  end
+
+end -- ii
+
+print(string.format('Loss: %.4f  Epoch: %d   grad-norm: %.4f',
+current_loss[1], ep, torch.norm(parameters)/torch.norm(gradParameters)))
+
+if (current_loss[1] ~= current_loss[1] or gradParameters ~= gradParameters) then
+    print ('nan loss or gradParams. quiting...')
+    abort()
+end
+
+ -- some validation code here
+ end --epochs
+ print('Training completed')
+
+ end
+

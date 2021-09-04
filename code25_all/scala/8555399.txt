@@ -1,0 +1,50 @@
+class SeqMPJ[T](indexedSeq: IndexedSeq[T]) {
+
+  val seq = indexedSeq.view //Lazy
+  val freeRanks = MPJEnv.getFreeRanks(seq.size)
+  //Get n free ranks
+  val commGroup = MPI.COMM_WORLD.group.Incl(freeRanks.toArray)
+  //Communicator for this sequence
+  val comm = MPI.COMM_WORLD.Create(commGroup)
+
+  val opIndex = globalRank % seq.size
+  var operand: Any = seq(opIndex)
+
+  if (!isOnline)
+    error("Cannot use MPJ-abstractions outside parallelize body...")
+
+  //Only works for p=n now
+  def mapMPJ[U](f: (T) => U): SeqMPJView[U] = {
+    if (freeRanks.contains(globalRank)) { //Process is part of this operation
+      operand = f(operand.asInstanceOf[T])
+    }
+    return new SeqMPJView(operand.asInstanceOf[U], comm, freeRanks)
+  }
+
+mapMPJ[U](f: (T) => U):SeqMPJView[U]
+val M = 2
+val N = 2
+
+val A = Array(
+  Array(1.0, 2.0),
+  Array(3.0, 4.0))
+
+val B = Array(
+  Array(1.0, 2.0),
+  Array(3.0, 4.0))
+
+val Bt = B.transpose
+
+/*
+ * DNS using underlying MPI
+ */
+parallelize(args) {
+
+  for (i <- 0 until M; j <- 0 until N)
+    A(i) zip Bt(j) mapMPJ { case (a, b) => a * b } reduceMPJ (_ + _)
+
+  if (globalRank == 0)
+    println("CHECK RESULT:\n" + Matrix(A) * Matrix(B))
+
+}
+

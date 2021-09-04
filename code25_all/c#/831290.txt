@@ -1,0 +1,119 @@
+    using System;
+    using System.Collections.Generic;
+    using System.Text;
+    using log4net;
+    using log4net.Config;
+    using System.Data;
+    using System.Data.SqlClient;
+    using System.Threading;
+    using System.Reflection;
+    using System.Reflection.Emit;
+
+    namespace GenerateAssemblies
+    {
+
+      class Program
+      {
+
+        private static readonly ILog logger =
+             LogManager.GetLogger ( typeof ( Program ) );
+
+
+        static void Main ( string[] args )
+        {
+          DOMConfigurator.Configure();  //tis configures the logger 
+          logger.Debug ( "APP START" );
+
+          DataTable dtTables = Program.GetTablesFromDb ( "POC" ) ;
+          foreach (DataRow dr in dtTables.Rows)
+          {
+            string strTableName = dr[0].ToString () ;
+            CodeEmitGeneratingAssemblies.DllGenerator.WriteXmlAndTxtFileOutOfDataTableByName (  strTableName);
+            CodeEmitGeneratingAssemblies.DllGenerator.CreateAssembly ( strTableName );
+          }
+
+
+          Console.WriteLine ( " Should have now all the dll's " );
+          Console.ReadLine ();
+        } //eof method 
+
+
+
+        static DataTable GetTablesFromDb ( string strDbName )
+        {
+
+
+          DataTable dt = new DataTable ( "tables" );
+
+          string connectionString = "Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=" + strDbName + ";Data Source=ysg";
+
+          using (SqlConnection connection = new SqlConnection ( connectionString ))
+          {
+            SqlCommand command = connection.CreateCommand ();
+
+            command.CommandText = string.Format ( "SELECT name from sys.tables" );
+
+            connection.Open ();
+            dt.Load ( command.ExecuteReader ( CommandBehavior.CloseConnection ) );
+          }
+          return dt;
+        } //eof method 
+
+
+      } //eof class 
+
+
+    namespace CodeEmitGeneratingAssemblies
+    {
+      public class DllGenerator
+      {
+        private static readonly ILog logger =
+             LogManager.GetLogger ( typeof ( DllGenerator ) );
+
+
+
+
+        public static void WriteXmlAndTxtFileOutOfDataTableByName (string strDataTableName)
+        {
+          DOMConfigurator.Configure ();  //tis configures the logger 
+          DataTable tableData = new DataTable ( strDataTableName );
+
+          string connectionString = "Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=POC;Data Source=ysg";
+
+          using (SqlConnection connection = new SqlConnection ( connectionString ))
+          {
+            SqlCommand command = connection.CreateCommand ();
+
+            command.CommandText = string.Format ( "SELECT * FROM [" + strDataTableName + "]");
+            logger.Debug ( "command.CommandText is " + command.CommandText );
+            connection.Open ();
+            tableData.Load ( command.ExecuteReader ( CommandBehavior.CloseConnection ) );
+          }
+
+          tableData.WriteXml ( strDataTableName + ".xml" );
+          tableData.WriteXmlSchema ( strDataTableName + ".xsd" );
+        } //eof method 
+
+
+        public static void CreateAssembly ( string strDataTableName )
+        {
+          AppDomain currentDomain = Thread.GetDomain ();
+
+          AssemblyName myAssemblyName = new AssemblyName ( );
+          myAssemblyName.Name = strDataTableName;
+
+          AssemblyBuilder builder = currentDomain.DefineDynamicAssembly (
+                              myAssemblyName,
+                              AssemblyBuilderAccess.RunAndSave );
+
+          builder.AddResourceFile ( "TableXml", strDataTableName + ".xml" );
+          builder.AddResourceFile ( "TableXsd", strDataTableName + ".xsd" );
+
+          builder.Save ( strDataTableName + ".dll" );
+        }
+
+      } //eof class 
+    } //eof namespace 
+
+    } //eof namespace 
+

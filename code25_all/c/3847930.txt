@@ -1,0 +1,134 @@
+getifaddrs
+in_addr
+in6_addr
+IP_MULTICAST_IF
+$ ifconfig wlan0 | grep inet6
+          inet6 addr: fe80::1e4b:d6ff:fe6e:f846/64 Scope:Link
+
+$ ifconfig wlan0 | grep inet
+          inet addr:192.168.0.13  Bcast:192.168.0.255  Mask:255.255.255.0
+          inet6 addr: fe80::1e4b:d6ff:fe6e:f846/64 Scope:Link
+
+$ ./findif 192.168.0.13
+
+found: wlan0
+
+$ ./findif fe80::1e4b:d6ff:fe6e:f846
+
+name: lo
+ifa:      00000000000000000000000000000001
+provided: fe800000000000001e4bd6fffe6ef846
+
+name: wlan0
+ifa:      fe800000000000001e4bd6fffe6ef846
+provided: fe800000000000001e4bd6fffe6ef846
+
+found: wlan0
+
+$ ifconfig en0 | grep inet
+  inet6 fe80::20d:XXXX:XXXX:XXXX%en0 prefixlen 64 scopeid 0x4 
+  inet 132.XXX.XX.XX netmask 0xffffff00 broadcast 132.XXX.XX.255
+
+$ ./findif 132.XXX.XX.XX
+
+found: en0
+
+$ ./findif fe80::XXX:XXXX:XXXX:XXXX
+
+name: lo0
+ifa:      00000000000000000000000000000001
+provided: fe800000000000000XXXXXXXXXXXXXXX
+
+name: lo0
+ifa:      fe800001000000000000000000000001
+provided: fe800000000000000XXXXXXXXXXXXXXX
+
+name: en0
+ifa:      fe800004000000000XXXXXXXXXXXXXXX
+provided: fe800000000000000XXXXXXXXXXXXXXX
+
+name: en1
+ifa:      fe800005000000000YYYYYYYYYYYYYYY
+provided: fe800000000000000YYYYYYYYYYYYYYY
+
+X
+Y
+ifconfig
+memcmp
+findif.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <string.h>
+
+void printipv6(const void* ipv6)
+{
+    int i;
+    for (i=0; i<16; i++)
+        printf("%02x", ((unsigned char*)ipv6)[i]);
+}
+
+int find_iface(const char *ip)
+{
+    union {
+        struct in_addr addr;
+        struct in6_addr addr6;
+    } a;
+
+    int rc = inet_pton(AF_INET6, ip, &a.addr6);
+ int fam = AF_INET6;
+    if (rc==0) {
+        rc = inet_pton(AF_INET, ip, &a.addr);
+  fam = AF_INET;
+ }
+    if (rc < 0) {
+        perror("inet_pton");
+        return 1;
+    }
+
+    struct ifaddrs *ifa, *ifa_list;
+    if (getifaddrs(&ifa_list)==-1) {
+        perror("getifaddrs");
+        return 1;
+    }
+    ifa = ifa_list;
+
+    int i=0;
+    while (ifa) {
+        if (ifa->ifa_addr) {
+            if (ifa->ifa_addr->sa_family == AF_INET && fam == AF_INET)
+            {
+                if (memcmp(&((struct sockaddr_in*)ifa->ifa_addr)->sin_addr,
+                           &a.addr, sizeof(struct in_addr))==0) {
+                    printf("\nfound: %s\n", ifa->ifa_name);
+                    break;
+                }
+            }
+            else if (ifa->ifa_addr->sa_family == AF_INET6 && fam == AF_INET6)
+            {
+                struct in6_addr *p = &((struct sockaddr_in6*)ifa->ifa_addr)->sin6_addr;
+                printf("\nname: %s\n", ifa->ifa_name);
+                printf("ifa:      "); printipv6(p);        printf("\n");
+                printf("provided: "); printipv6(&a.addr6); printf("\n");
+                if (memcmp(p, &a.addr6, sizeof(struct in6_addr))==0) {
+                    printf("\nfound: %s\n", ifa->ifa_name);
+                    break;
+                }
+            }
+        }
+        ifa = ifa->ifa_next;
+        i++;
+    }
+    freeifaddrs(ifa_list);
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc > 1)
+        return find_iface(argv[1]);
+    return 0;
+}
+

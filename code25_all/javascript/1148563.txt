@@ -1,0 +1,171 @@
+<!--
+  Simple task list application used to illusrate Firefox's offline/DOMStorage capabilities
+
+  Author: Mark Finkle
+-->
+
+<html manifest="todo.manifest">
+  <head>
+    <title>TODO - Offline Demo</title>
+    <script type="text/javascript" src="json.js"></script>
+    <script language="javascript">
+    var taskStorage = "[]";
+    var storageDomain = location.hostname;
+    if (storageDomain == "localhost")
+      storageDomain += ".localdomain";
+
+    function loaded() {
+      updateOnlineStatus("load", false);
+      document.body.addEventListener("offline", function () { updateOnlineStatus("offline", true) }, false);
+      document.body.addEventListener("online", function () { updateOnlineStatus("online", true) }, false);
+
+      if (typeof globalStorage != "undefined") {
+        var storage = globalStorage[storageDomain];
+        if (storage && storage.taskStorage) {
+          taskStorage = storage.taskStorage;
+        }
+      }
+
+      fetchList();
+    }
+
+    function updateOnlineStatus(msg, allowUpdate) {
+      var status = document.getElementById("status");
+      status.innerHTML = (navigator.onLine ? "[online]" : "[offline]");
+
+      var log = document.getElementById("log");
+      log.appendChild(document.createTextNode("Event: " + msg + "\n"));
+
+      if (navigator.onLine && allowUpdate) {
+        update();
+        log.appendChild(document.createTextNode("Updated server\n"));
+      }
+
+    }
+
+    function httpRequest(type, data, callback) {
+      var httpreq = new XMLHttpRequest();
+      httpreq.onreadystatechange = function() { if (httpreq.readyState == 4) callback(httpreq.readyState, httpreq.status, httpreq.responseText); };
+      httpreq.open(type, "todo-server.php", true);
+      if (type == "POST") {
+        httpreq.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+      }
+      httpreq.send(data);
+    }
+
+    function loadList(readyState, status, responseText) {
+      if (readyState == 4) {
+        if (status == 200) {
+          taskStorage = responseText;
+          var tasks = eval("(" + taskStorage + ")");
+          var html = "";
+          for (var i=0; i<tasks.length; i++) {
+            html += "<input type='checkbox' id='" + tasks[i].name + "'/><label for='" + tasks[i].name + "'>" + tasks[i].data + "</label><br/>";
+          }
+          document.getElementById("tasklist").innerHTML = html;
+
+
+          if (typeof globalStorage != "undefined") {
+            globalStorage[storageDomain].taskStorage = taskStorage;
+          }
+        }
+      }
+    }
+
+    function fetchList() {
+      if (navigator.onLine) {
+        httpRequest("GET", null, loadList);
+      }
+      else {
+        loadList(4, 200, taskStorage);
+      }
+    }
+
+    function addItem() {
+      var data = document.getElementById("data").value;
+      document.getElementById("data").value = "";
+
+      var tasks = eval("(" + taskStorage + ")");
+      tasks.push({"name": Date.now(), "data": data });
+
+      taskStorage = tasks.toJSONString();
+      update();
+    }
+
+    function removeItems() {
+      var tasks = eval("(" + taskStorage + ")");
+      var newTasks = [];
+
+      var items = document.getElementById("tasklist").getElementsByTagName("input");
+      for (var i=0; i<items.length; i++) {
+        if (items[i].checked == false) {
+          newTasks.push(tasks[i]);
+        }
+      }
+
+      taskStorage = newTasks.toJSONString();
+      update();
+    }
+
+    function completeItems() {
+      var tasks = eval("(" + taskStorage + ")");
+
+      var items = document.getElementById("tasklist").getElementsByTagName("input");
+      for (var i=0; i<items.length; i++) {
+        if (items[i].checked) {
+          var task = tasks[i].data;
+          if (task.indexOf("<strike>") != -1) {
+            task = task.replace("<strike>", "");
+            task = task.replace("</strike>", "");
+          }
+          else {
+            task = "<strike>" + task + "</strike>";
+          }
+          tasks[i].data = task;
+        }
+      }
+
+      taskStorage = tasks.toJSONString();
+      update();
+    }
+
+    function update() {
+      if (navigator.onLine) {
+        var post = "action=update&data=";
+        post += encodeURIComponent(taskStorage);
+        httpRequest("POST", post, function(readyState, status, json) { fetchList(); });
+      }
+      else {
+        loadList(4, 200, taskStorage);
+      }
+    }
+    </script>
+
+    <style type="text/css">
+      body          { font-family: verdana,tahoma, arial; }
+      div#container { width: 300px; }
+      div#title     { font-size: 120%; }
+      div#subtitle  { font-size: 80%; }
+      div#tasklist  { margin-bottom: .5em; }
+      div#log       { font-size: 90%; background-color: lightgray; margin-top: 1em; white-space: pre; }
+    </style>
+
+  </head>
+  <body onload="loaded();">
+    <div id="container">
+      <div id="title">Task Helper - <span id="status">ONLINE</span></div>
+      <div id="subtitle">simple online/offline demo application</div>
+      <hr />
+      <div id="tasklist">
+      </div>
+      <input type="text" id="data" size="35" />
+      <input type="button" value="Add" onclick="addItem();"/>
+      <hr />
+      <input type="button" value="Remove" onclick="removeItems();"/>
+      <input type="button" value="Complete" onclick="completeItems();"/>
+      <div id="log"><strong>Event Log</strong>
+      </div>
+    </div>
+  </body>
+</html>
+

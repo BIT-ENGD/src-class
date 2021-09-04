@@ -1,0 +1,90 @@
+Data.Text.Lazy.Builder
+{-# LANGUAGE OverloadedStrings #-}
+import Data.Text (Text, unpack)
+import Text.XML.Light
+import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.Builder as LB
+
+import Data.Foldable (foldMap)
+import Data.Monoid (mconcat)
+
+data Tag = Tag !Text
+
+data Artist = Artist { artistName :: !Text , artistTags :: ![Tag] }
+
+class ToXML a where toXML :: a -> Content
+
+instance ToXML Artist where
+  toXML a = Elem $
+    Element (unqual "artist") []
+      [ text (artistName a)
+      , Elem $ Element (unqual "tag-list") []
+          (map toXML (artistTags a))
+          Nothing
+      ]
+      Nothing
+
+instance ToXML Tag where
+  toXML (Tag t) = Elem $ Element (unqual "tag") [] [ text t ] Nothing
+
+text :: Text -> Content
+text t = Text $ CData CDataText (unpack t) Nothing
+
+render :: Content -> LB.Builder
+render (Elem e) = renderElement e
+render (Text s) = LB.fromString (cdData s)
+
+renderElement :: Element -> LB.Builder
+renderElement element = mconcat
+  [ LB.singleton '<'
+  , LB.fromString . qName . elName $ element
+  , LB.singleton '>'
+  , foldMap render (elContent element)
+  , LB.fromText "</"
+  , LB.fromString . qName .elName $ element
+  , LB.singleton '>'
+  ]
+
+main :: IO ()
+main = let artist = Artist "Nirvana" (replicate 5000000 (Tag "Hi"))
+           xml = Element (unqual "metadata") [] [ toXML artist ] Nothing
+       in print (LT.length . LB.toLazyText . renderElement $ xml)
+
++RTS -s
+   7,368,153,472 bytes allocated in the heap
+   2,625,983,944 bytes copied during GC
+     708,149,024 bytes maximum residency (13 sample(s))
+      21,954,496 bytes maximum slop
+            1443 MB total memory in use (0 MB lost due to fragmentation)
+
+                                    Tot time (elapsed)  Avg pause  Max pause
+  Gen  0     14270 colls,     0 par    1.65s    1.69s     0.0001s    0.0009s
+  Gen  1        13 colls,     0 par    2.57s    2.80s     0.2157s    1.2388s
+
+  TASKS: 3 (1 bound, 2 peak workers (2 total), using -N1)
+
+  SPARKS: 0 (0 converted, 0 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+  INIT    time    0.00s  (  0.00s elapsed)
+  MUT     time    1.81s  (  1.84s elapsed)
+  GC      time    4.22s  (  4.50s elapsed)
+  EXIT    time    0.07s  (  0.09s elapsed)
+  Total   time    6.11s  (  6.43s elapsed)
+
+  Alloc rate    4,064,658,288 bytes per MUT second
+
+  Productivity  30.8% of total user, 29.3% of total elapsed
+
++RTS -p
+hp2ps
++RTS -l
+XML.Light
+String
+Text
+main
+main :: IO ()
+main = let artist = Artist "Nirvana" (replicate 5000000 (Tag "Hi"))
+           xml = Element (unqual "metadata") [] [ toXML artist ] Nothing
+       in print (LT.length $ LB.toLazyText $ mconcat $ map (render.toXML) $ artistTags artist)
+
+toXML

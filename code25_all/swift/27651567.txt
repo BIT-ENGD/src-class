@@ -1,0 +1,103 @@
+class Proxy {
+
+     func configureProxy(proxy: String) -> NSURLSessionConfiguration {
+        let proxyArr = proxy.componentsSeparatedByString(":")
+
+        let host = proxyArr[0]
+        let port = proxyArr[1].toInt()
+
+        if let p  = port{
+            return newSession(host, port: p)
+        }
+
+        return NSURLSessionConfiguration.defaultSessionConfiguration()
+    }
+
+     func newSession(host: String, port: Int) -> NSURLSessionConfiguration  {
+
+
+        let proxyInfo = [
+            kCFStreamPropertyHTTPProxyHost : host as NSString,
+            kCFStreamPropertyHTTPProxyPort : port,
+            kCFNetworkProxiesHTTPEnable as NSString : true
+        ]
+
+        let config = NSURLSessionConfiguration.defaultSessionConfiguration()
+        config.connectionProxyDictionary = proxyInfo
+
+
+        return config
+    }
+} 
+
+class Service {
+
+    var res      = ResponseHandler()
+    var alamofireManager : Alamofire.Manager?
+
+
+    init(){
+        let ipconfig = Proxy()
+        let config = ipconfig.configureProxy(VALIDPROXY)
+        alamofireManager = Alamofire.Manager(configuration: config)
+    }
+
+    func createRequest(Router : routes, type : String, completion:(response: ResponseHandler) -> Void){
+
+        if let manager = alamofireManager {
+            println(manager.session.configuration.connectionProxyDictionary)
+
+        switch(type){
+            case "download":
+                manager.request(Router).responseImage() {
+                    (_, _, image, error) in
+
+                    self.res.image   = image
+                    self.res.success = true
+                    completion(response: self.res)
+                }
+                break;
+            case "upload":
+                manager.upload(Router, data: uploadData)
+                    .responseJSON { (request,response, JSON, error) in
+                        self.res = self.getResponse(JSON, error : error)
+                    }.responseString{ (_,_,string,error) in
+                        if (error != nil){
+                            println(error)
+                        }
+                        self.res.responseString = string
+                        completion(response: self.res)
+            }
+            default:
+                manager.request(Router)
+                    .responseJSON { (request,response, JSON, error) in
+                        self.res = self.getResponse(JSON, error : error)
+                    }.responseString{ (_,_,string,error) in
+                        self.res.responseString = string
+                        println(error)
+                        println(string)
+                        completion(response: self.res)
+            }
+        }
+        }
+
+    }
+
+
+    func getResponse(serverData : AnyObject?, error: NSError?)-> ResponseHandler{
+
+        if let data: AnyObject = serverData {
+
+            self.res.response = SwiftyJSON.JSON(data.0)
+            if(error == nil){
+                self.res.success = true
+            }
+            else{
+                self.res.error   = error
+                println(error)
+            }
+        }
+        return self.res
+    }
+}
+

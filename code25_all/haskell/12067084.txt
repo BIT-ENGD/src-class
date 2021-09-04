@@ -1,0 +1,190 @@
+module FRep.Tree
+   (Tree(‥)
+   ,Primitive(‥)
+   ,UnaryOp(‥)
+   ,BinaryOp(‥)
+   ,TernaryOp(‥)
+   ,sphere
+   ,block
+   ,transform
+   ,union
+   ,intersect
+   ,subtract
+   ,eval
+   ) where
+
+
+
+import Data.Vect.Double
+--import qualified Data.Foldable as F
+import Prelude hiding (subtract)
+--import Data.Monoid
+
+
+data Tree = Leaf    Primitive
+          | Unary   UnaryOp   Tree
+          | Binary  BinaryOp  Tree Tree
+          | Ternary TernaryOp Tree Tree Tree
+          deriving (Show)
+
+sphere ∷  Double → Tree
+sphere a = Leaf (Sphere a)
+
+block ∷  Vec3 → Tree
+block v = Leaf (Block v)
+
+transform ∷  Proj4 → Tree → Tree
+transform m t1 = Unary (Transform m) t1
+
+union ∷  Tree → Tree → Tree
+union t1 t2 = Binary Union t1 t2
+
+intersect ∷  Tree → Tree → Tree
+intersect t1 t2 = Binary Intersect t1 t2
+
+subtract ∷  Tree → Tree → Tree
+subtract t1 t2 = Binary Subtract t1 t2
+
+
+data Primitive = Sphere { radius ∷  Double }
+               | Block  { size   ∷  Vec3   }
+               | Cone   { radius ∷  Double
+                        , height ∷  Double }
+               deriving (Show)
+
+
+data UnaryOp = Transform Proj4
+             deriving (Show)
+
+data BinaryOp = Union
+              | Intersect
+              | Subtract
+              deriving (Show)
+
+data TernaryOp = Blend Double Double Double
+               deriving (Show)
+
+
+primitive ∷  Primitive → Vec3 → Double
+primitive (Sphere r) (Vec3 x y z) = r - sqrt (x*x + y*y + z*z)
+primitive (Block (Vec3 w h d)) (Vec3 x y z) = maximum [inRange w x, inRange h y, inRange d z]
+   where inRange a b = abs b - a/2.0
+primitive (Cone r h) (Vec3 x y z) = undefined
+
+
+
+
+
+unaryOp ∷  UnaryOp → Vec3 → Vec3
+unaryOp (Transform m) v = trim (v' .* (fromProjective (inverse m)))
+   where v' = extendWith 1 v ∷  Vec4
+
+
+binaryOp ∷  BinaryOp → Double → Double → Double
+binaryOp Union f1 f2     = f1 + f2 + sqrt (f1*f1 + f2*f2)
+binaryOp Intersect f1 f2 = f1 + f2 - sqrt (f1*f1 + f2*f2)
+binaryOp Subtract f1 f2  = binaryOp Intersect f1 (negate f2)
+
+
+ternaryOp ∷  TernaryOp → Double → Double → Double → Double
+ternaryOp (Blend a b c) f1 f2 f3 = undefined
+
+
+eval ∷  Tree → Vec3 → Double
+eval (Leaf a) v             = primitive a v
+eval (Unary a t) v          = eval t (unaryOp a v)
+eval (Binary a t1 t2) v     = binaryOp a (eval t1 v) (eval t2 v)
+eval (Ternary a t1 t2 t3) v = ternaryOp a (eval t1 v) (eval t2 v) (eval t3 v)
+
+
+--Here's the Zipper--------------------------
+
+
+module FRep.Tree.Zipper
+   (Zipper
+   ,down
+   ,up
+   ,left
+   ,right
+   ,fromZipper
+   ,toZipper
+   ,getFocus
+   ,setFocus
+   ) where
+
+
+import FRep.Tree
+
+
+
+type Zipper = (Tree, Context)
+
+data Context = Root
+             | Unary1   UnaryOp   Context
+             | Binary1  BinaryOp  Context Tree
+             | Binary2  BinaryOp  Tree    Context
+             | Ternary1 TernaryOp Context Tree    Tree
+             | Ternary2 TernaryOp Tree    Context Tree
+             | Ternary3 TernaryOp Tree    Tree    Context
+
+
+down ∷  Zipper → Maybe (Zipper)
+down (Leaf p, c)             = Nothing
+down (Unary o t1, c)         = Just (t1, Unary1 o c)
+down (Binary o t1 t2, c)     = Just (t1, Binary1 o c t2)
+down (Ternary o t1 t2 t3, c) = Just (t1, Ternary1 o c t2 t3)
+
+
+up ∷  Zipper → Maybe (Zipper)
+up (t1, Root)               = Nothing
+up (t1, Unary1 o c)         = Just (Unary o t1, c)
+up (t1, Binary1 o c t2)     = Just (Binary o t1 t2, c)
+up (t2, Binary2 o t1 c)     = Just (Binary o t1 t2, c)
+up (t1, Ternary1 o c t2 t3) = Just (Ternary o t1 t2 t3, c)
+up (t2, Ternary2 o t1 c t3) = Just (Ternary o t1 t2 t3, c)
+up (t3, Ternary3 o t1 t2 c) = Just (Ternary o t1 t2 t3, c)
+
+
+left ∷  Zipper → Maybe (Zipper)
+left (t1, Root)               = Nothing
+left (t1, Unary1 o c)         = Nothing
+left (t1, Binary1 o c t2)     = Nothing
+left (t2, Binary2 o t1 c)     = Just (t1, Binary1 o c t2)
+left (t1, Ternary1 o c t2 t3) = Nothing
+left (t2, Ternary2 o t1 c t3) = Just (t1, Ternary1 o c t2 t3)
+left (t3, Ternary3 o t1 t2 c) = Just (t2, Ternary2 o t1 c t3)
+
+
+right ∷  Zipper → Maybe (Zipper)
+right (t1, Root)               = Nothing
+right (t1, Unary1 o c)         = Nothing
+right (t1, Binary1 o c t2)     = Just (t2, Binary2 o t1 c)
+right (t2, Binary2 o t1 c)     = Nothing
+right (t1, Ternary1 o c t2 t3) = Just (t2, Ternary2 o t1 c t3)
+right (t2, Ternary2 o t1 c t3) = Just (t3, Ternary3 o t1 t2 c)
+right (t3, Ternary3 o t1 t2 c) = Nothing
+
+
+fromZipper ∷  Zipper → Tree
+fromZipper z = f z where
+   f ∷  Zipper → Tree
+   f (t1, Root)               = t1
+   f (t1, Unary1 o c)         = f (Unary o t1, c)
+   f (t1, Binary1 o c t2)     = f (Binary o t1 t2, c)
+   f (t2, Binary2 o t1 c)     = f (Binary o t1 t2, c)
+   f (t1, Ternary1 o c t2 t3) = f (Ternary o t1 t2 t3, c)
+   f (t2, Ternary2 o t1 c t3) = f (Ternary o t1 t2 t3, c)
+   f (t3, Ternary3 o t1 t2 c) = f (Ternary o t1 t2 t3, c)
+
+
+toZipper ∷  Tree → Zipper
+toZipper t = (t, Root)
+
+
+getFocus ∷  Zipper → Tree
+getFocus (t, _) = t
+
+
+setFocus ∷  Tree → Zipper → Zipper
+setFocus t (_, c) = (t, c)
+

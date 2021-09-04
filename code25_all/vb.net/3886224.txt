@@ -1,0 +1,197 @@
+Dim r = c.SubObj
+
+'---- the field is an OBJECT type field  
+Dim mc = New MethodCallMessageWrapper(Msg)  
+
+'---- create the object  
+Dim o = Activator.CreateInstance(t)  
+'---- and construct the return message with that object  
+Dim r = New ReturnMessage(o, mc.Args, mc.Args.Length, mc.LogicalCallContext, mc)  
+Return r  
+
+'----------------------------------------------------------------------------
+Imports System.Security.Permissions
+Imports System.Diagnostics
+Imports System.Reflection
+Imports System.Runtime.CompilerServices
+Imports System.Runtime.Serialization
+Imports System.Runtime.Remoting
+Imports System.Runtime.Remoting.Activation
+Imports System.Runtime.Remoting.Messaging
+Imports System.Runtime.Remoting.Proxies
+
+
+Public Module RPTest
+    Public Sub RPTest()
+        '---- create a new object that is automatically proxied
+        '     See the RPProxyAttribute for details
+        Dim c = New RPTestA
+
+        Dim x = c.Name
+        'x is returned as a string value just fine
+        Dim r = c.SubObj
+        '********* PROBLEM IS HERE, r ends up nothing
+    End Sub
+End Module
+
+
+'ROOT test object
+Public Class RPTestA
+    Inherits RPBase
+
+    Public Name As String = "Test Name"
+    Public SubObj As RPTestB
+
+End Class
+
+
+'SUB OBJECT which should be returned as a field value from the root object above
+Public Class RPTestB
+    Inherits RPBase
+
+    Public SubProperty As String = "SubObj Test Property"
+End Class
+
+
+''' <summary>
+''' Base proxyable object class
+''' </summary>
+''' <remarks></remarks>
+<RPProxy()> _
+Public MustInherit Class RPBase
+    Inherits ContextBoundObject
+
+End Class
+
+
+<PermissionSet(SecurityAction.Demand, Name:="FullTrust")> _
+Public Class RPProxy
+    Inherits RealProxy
+
+    Private m_target As MarshalByRefObject
+
+
+    Public Sub New()
+        m_target = DirectCast(Activator.CreateInstance(GetType(ConfigRP)), MarshalByRefObject)
+        Dim myObjRef = RemotingServices.Marshal(m_target)
+    End Sub
+
+    Public Sub New(ByVal classToProxy As Type)
+        MyBase.New(classToProxy)
+    End Sub
+
+
+    Public Sub New(ByVal ClassToProxy As Type, ByVal targetObject As MarshalByRefObject)
+        m_target = targetObject
+        Dim myObjRef = RemotingServices.Marshal(m_target)
+    End Sub
+
+
+    Public Overrides Function Invoke(ByVal msg As IMessage) As IMessage
+        Dim returnMsg As IMethodReturnMessage = Nothing
+
+        If TypeOf msg Is IConstructionCallMessage Then
+            '---- handle constructor calls
+            Dim ConstructionCallMessage = DirectCast(msg, IConstructionCallMessage)
+            returnMsg = InitializeServerObject(ConstructionCallMessage)
+            Me.m_target = Me.GetUnwrappedServer()
+            SetStubData(Me, Me.m_target)
+            Return returnMsg
+
+        ElseIf TypeOf msg Is IMethodCallMessage Then
+            '---- handle all other method calls
+            Dim methodCallMessage = DirectCast(msg, IMethodCallMessage)
+
+            '---- before message processing
+            preprocess(methodCallMessage)
+
+            '---- execute the method call
+            Dim rawReturnMessage = RemotingServices.ExecuteMessage(Me.m_target, methodCallMessage)
+
+            '---- and postprocess
+            returnMsg = postprocess(methodCallMessage, rawReturnMessage)
+
+        Else
+            Throw New NotSupportedException()
+        End If
+
+        Return returnMsg
+    End Function
+
+
+    'Called BEFORE the actual method is invoked
+    Private Sub PreProcess(ByVal msg As IMessage)
+        Console.WriteLine("before method call...")
+    End Sub
+
+
+    'Called AFTER the actual method is invoked
+    Private Function PostProcess(ByVal Msg As IMethodCallMessage, ByVal msgReturn As ReturnMessage) As ReturnMessage
+        Dim r As ReturnMessage
+        If Msg.MethodName = "FieldGetter" Then
+            r = FieldGetter(Msg, msgReturn)
+        ElseIf Msg.MethodName = "FieldSetter" Then
+            'na
+            r = msgReturn
+        ElseIf Msg.MethodName.StartsWith("get_") Then
+            'na
+            r = msgReturn
+        ElseIf Msg.MethodName.StartsWith("set_") Then
+            'na
+            r = msgReturn
+        Else
+            r = msgReturn
+        End If
+        Return r
+    End Function
+
+
+    Private Function FieldGetter(ByVal Msg As IMethodCallMessage, ByVal msgReturn As IMethodReturnMessage) As IMethodReturnMessage
+        Dim t = Me.Target.GetType
+
+        '---- This retrieves the type of the field that the getter should retrieve
+        t = t.GetField(Msg.InArgs(1), BindingFlags.Instance Or BindingFlags.Public).FieldType
+
+        If t.Name = "String" Then
+            '---- just return what the object returned as a result of ExecuteMessage
+            Return msgReturn
+
+        ElseIf t.BaseType.Equals(GetType(RPBase)) Then
+            '---- the field is an OBJECT type field
+            Dim mc = New MethodCallMessageWrapper(Msg)
+            '---- create the object
+            Dim o = Activator.CreateInstance(t)
+            '---- and construct the return message with that object
+            Dim r = New ReturnMessage(o, mc.Args, mc.Args.Length, mc.LogicalCallContext, mc)
+            Return r
+
+        Else
+            Return msgReturn
+        End If
+    End Function
+
+
+    Public Property Target() As Object
+        Get
+            Return Me.m_target
+        End Get
+        Set(ByVal value As Object)
+            Me.m_target = value
+        End Set
+    End Property
+End Class
+
+
+<AttributeUsage(AttributeTargets.Class)> _
+<SecurityPermissionAttribute(SecurityAction.Demand, Flags:=SecurityPermissionFlag.Infrastructure)> _
+Public Class RPProxyAttribute
+    Inherits ProxyAttribute
+
+
+    Public Overrides Function CreateInstance(ByVal Type As Type) As MarshalByRefObject
+        Dim proxy = New RPProxy(Type)
+        Dim transparentProxy = DirectCast(proxy.GetTransparentProxy(), MarshalByRefObject)
+        Return transparentProxy
+    End Function
+End Class
+

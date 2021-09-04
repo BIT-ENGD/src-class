@@ -1,0 +1,331 @@
+public Invoice createInvoice(String invoiceNo, CreateInvoiceGroupTemplate template, Collection serviceCalculations)
+        throws Exception
+{
+    manager.setFlushMode(FlushModeType.COMMIT);
+
+    if (glDao.isInvoiceNoInUse(manager, invoiceNo))
+        throw new NonUniqueInvoiceNoException(invoiceNo);
+
+    Invoice invoice = new Invoice();
+    invoice.setNo(invoiceNo);
+    invoice.setInvoiceDate(template.getMinimumInvoiceDate());
+    Date paymentDay = findInvoicePaymentDay(template);
+    invoice.setPaymentDate(paymentDay);
+    invoice.setFormBeginDate(template.getFormBeginDate());
+    invoice.setFormEndDate(template.getFormEndDate());
+
+    Currency currency = new Currency();
+    currency.setId(template.getCurrencyId());
+    invoice.setCurrency((Currency) dao.findByPrimaryKey(manager, currency));
+
+    Customer customer = new Customer();
+    customer.setId(template.getCustomerId());
+    invoice.setCustomer((Customer) dao.findByPrimaryKey(manager, customer));
+
+    if (template.getRepresentativeId() > 0)
+    {
+        Representative representative = new Representative();
+        representative.setId(template.getRepresentativeId());
+        invoice.setRepresentative((Representative) dao.findByPrimaryKey(manager, representative));
+    }
+
+    if (template.getAccountingGroupId() != 0)
+    {
+        AccountingGroup accountingGroup = new AccountingGroup();
+        accountingGroup.setId(template.getAccountingGroupId());
+        invoice.setAccountingGroup((AccountingGroup) dao.findByPrimaryKey(manager, accountingGroup));
+    }
+
+    if (template.getAirlineGroupId() > 0)
+    {
+        AirlineGroup airlineGroup = new AirlineGroup();
+        airlineGroup.setId(template.getAirlineGroupId());
+        invoice.setAirlineGroup((AirlineGroup) dao.findByPrimaryKey(manager, airlineGroup));
+    }
+
+    if (template.getAirportId() != 0)
+    {
+        Airport airport = new Airport();
+        airport.setId(template.getAirportId());
+        invoice.setAirport((Airport) dao.findByPrimaryKey(manager, airport));
+    }
+
+    //automatically create new address based on the last invoice for this customer and representative
+    InvoiceAddress oldInvoiceAddress = glDao.findAddressForLastInvoice(manager, invoice);
+    if (oldInvoiceAddress != null)
+    {
+        InvoiceAddress invoiceAddress = (InvoiceAddress) oldInvoiceAddress.copyEntity();
+        invoice.setInvoiceAddress(invoiceAddress);
+    }
+
+    HashMap invoiceDetails = new HashMap();
+    String key = "";
+
+    try
+    {
+        Collection mappings = invoice.getInvoiceMappings();
+        InvoiceMapping invoiceMapping = null;
+        ServiceCalculation serviceCalculation = null;
+        ServiceCalculation refreshedServiceCalculation = null;
+        Iterator itr = serviceCalculations.iterator();
+        while (itr.hasNext())
+        {
+            serviceCalculation = (ServiceCalculation) itr.next();
+            invoiceMapping = new InvoiceMapping();
+
+            refreshedServiceCalculation = (ServiceCalculation) dao.findByPrimaryKey(manager, serviceCalculation);
+            refreshedServiceCalculation.setInvoiced(true);
+            refreshedServiceCalculation.setVatRateModified(serviceCalculation.isVatRateModified());
+
+            if (refreshedServiceCalculation instanceof CalculatedService)
+                invoiceMapping.setCalculatedService((CalculatedService) refreshedServiceCalculation);
+            else if (refreshedServiceCalculation instanceof CalculatedRoyalty)
+                invoiceMapping.setCalculatedRoyalty((CalculatedRoyalty) refreshedServiceCalculation);
+            else if (refreshedServiceCalculation instanceof CalculatedCommission)
+                invoiceMapping.setCalculatedCommission((CalculatedCommission) refreshedServiceCalculation);
+
+            mappings.add(invoiceMapping);
+
+            serviceCalculation = (ServiceCalculation) dao.saveOrUpdateEntity(manager, refreshedServiceCalculation);
+
+            key = createKey(serviceCalculation);
+            processInvoiceDetail(invoiceDetails, key, serviceCalculation);
+        }
+
+        ArrayList processedInvoiceDetails = clearInvoiceDetails(invoiceDetails.values());
+        invoice.getInvoiceDetails().addAll(processedInvoiceDetails);
+
+        updateExchangeRate(invoice);
+
+        invoice = (Invoice) dao.saveOrUpdateEntity(manager, invoice);
+
+        glDao.initializeInvoice(invoice);
+    }
+    catch (ApplicationException exc)
+    {
+        logger.error(exc);
+        ctx.setRollbackOnly();
+        throw exc;
+    }
+    catch (Exception exc)
+    {
+        logger.error(exc);
+        ctx.setRollbackOnly();
+        throw exc;
+    }
+
+    return invoice;
+}
+
+public ServerResponse synchronizeInvoice(GridData gridData) throws Exception
+{
+    ServerResponse response = new ServerResponse();
+
+    try
+    {
+        manager.setFlushMode(FlushModeType.COMMIT);
+
+        Invoice loadedInvoice = null;
+
+        //boolean invoiceRemoved=false;
+
+        Collection entitiesToRemove = gridData.getGarbageData();
+        Iterator itr = entitiesToRemove.iterator();
+        Object temp = null;
+        Invoice invoice = null;
+        InvoiceDetail invoiceDetail = null;
+        while (itr.hasNext())
+        {
+            temp = itr.next();
+
+            if (temp instanceof Invoice)
+            {
+                invoice = (Invoice) temp;
+                loadedInvoice = (Invoice) dao.findByPrimaryKey(manager, invoice);
+                if (loadedInvoice.getStatus() == Invoice.INVOICE_FINALIZED
+                        || loadedInvoice.getStatus() == Invoice.INVOICE_CANCELLED)
+                    throw new InvoiceFinalizedException();
+                else
+                {
+                    updateMappingsAsNotInvoiced(invoice);
+                    dao.removeEntity(manager, invoice);
+                }
+            }
+            else
+            {
+                //instance of invoice detail
+                invoiceDetail = (InvoiceDetail) temp;
+                dao.removeEntity(manager, invoiceDetail);
+            }
+        }
+
+        Collection updatedEntity = gridData.getNewUpdatedBuffer();
+        updatedEntity.addAll(gridData.getUpdatedBuffer());
+
+        itr = updatedEntity.iterator();
+        if (itr.hasNext())
+        {
+            temp = itr.next();
+            invoice = (Invoice) temp;
+            loadedInvoice = (Invoice) dao.findByPrimaryKey(manager, invoice);
+            if(loadedInvoice!=null)
+            {
+                if ((loadedInvoice.getStatus() == Invoice.INVOICE_FINALIZED && invoice.getStatus() != Invoice.INVOICE_CANCELLED)
+                        || loadedInvoice.getStatus() == Invoice.INVOICE_CANCELLED)
+                    throw new InvoiceFinalizedException();
+                else
+                {
+                    if (invoice.getStatus() == Invoice.INVOICE_FINALIZED)
+                    {
+                        JMSHelper helper = new JMSHelper();
+                        helper.sendMessage("queue/InvoiceFinalizeEvent", invoice);
+                        finalizeInvoice(invoice);
+                    }
+                    else if (invoice.getStatus() == Invoice.INVOICE_CANCELLED)
+                    {
+                        JMSHelper helper = new JMSHelper();
+                        helper.sendMessage("queue/InvoiceFinalizeEvent", invoice);
+                        cancelInvoice(invoice);
+                    }
+                    else
+                    {
+                        updateExchangeRate(invoice);
+                        invoice=(Invoice) dao.saveOrUpdateEntity(manager, invoice);
+                    }
+
+                    response.addData(invoice);
+                }
+            }               
+        }
+        else
+        {
+            Iterator synchronizedData=gridData.getSynchBuffer().iterator();
+            if(synchronizedData.hasNext())
+            {
+                invoice = (Invoice) synchronizedData.next();
+                response.addData(invoice);
+            }
+        }
+    }
+    catch (ApplicationException exc)
+    {
+        ctx.setRollbackOnly();
+        response.addException(exc);
+        return response;
+    }
+    catch (Exception exc)
+    {
+        ctx.setRollbackOnly();
+        throw exc;
+    }
+
+    return response;
+}
+
+Exception in thread "AWT-EventQueue-0" java.lang.NoClassDefFoundError: Lorg/hibernate/type/AbstractComponentType;
+at java.lang.Class.getDeclaredFields0(Native Method)
+at java.lang.Class.privateGetDeclaredFields(Class.java:2291)
+at java.lang.Class.getDeclaredField(Class.java:1880)
+at java.io.ObjectStreamClass.getDeclaredSUID(ObjectStreamClass.java:1610)
+at java.io.ObjectStreamClass.access$700(ObjectStreamClass.java:52)
+at java.io.ObjectStreamClass$2.run(ObjectStreamClass.java:425)
+at java.security.AccessController.doPrivileged(Native Method)
+at java.io.ObjectStreamClass.<init>(ObjectStreamClass.java:413)
+at java.io.ObjectStreamClass.lookup(ObjectStreamClass.java:310)
+at java.io.ObjectStreamClass.initNonProxy(ObjectStreamClass.java:547)
+at java.io.ObjectInputStream.readNonProxyDesc(ObjectInputStream.java:1583)
+at java.io.ObjectInputStream.readClassDesc(ObjectInputStream.java:1496)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1732)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.defaultReadFields(ObjectInputStream.java:1945)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1869)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.readObject(ObjectInputStream.java:351)
+at java.util.ArrayList.readObject(ArrayList.java:593)
+at sun.reflect.GeneratedMethodAccessor28.invoke(Unknown Source)
+at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:25)
+at java.lang.reflect.Method.invoke(Method.java:597)
+at java.io.ObjectStreamClass.invokeReadObject(ObjectStreamClass.java:974)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1846)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.defaultReadFields(ObjectInputStream.java:1945)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1869)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.defaultReadFields(ObjectInputStream.java:1945)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1869)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.readObject(ObjectInputStream.java:351)
+at java.util.ArrayList.readObject(ArrayList.java:593)
+at sun.reflect.GeneratedMethodAccessor28.invoke(Unknown Source)
+at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:25)
+at java.lang.reflect.Method.invoke(Method.java:597)
+at java.io.ObjectStreamClass.invokeReadObject(ObjectStreamClass.java:974)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1846)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.defaultReadFields(ObjectInputStream.java:1945)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1869)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.readObject(ObjectInputStream.java:351)
+at org.jboss.aop.joinpoint.InvocationResponse.readExternal(InvocationResponse.java:122)
+at java.io.ObjectInputStream.readExternalData(ObjectInputStream.java:1792)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1751)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.defaultReadFields(ObjectInputStream.java:1945)
+at java.io.ObjectInputStream.readSerialData(ObjectInputStream.java:1869)
+at java.io.ObjectInputStream.readOrdinaryObject(ObjectInputStream.java:1753)
+at java.io.ObjectInputStream.readObject0(ObjectInputStream.java:1329)
+at java.io.ObjectInputStream.readObject(ObjectInputStream.java:351)
+at org.jboss.remoting.serialization.impl.java.JavaSerializationManager.receiveObjectVersion2_2(JavaSerializationManager.java:239)
+at org.jboss.remoting.serialization.impl.java.JavaSerializationManager.receiveObject(JavaSerializationManager.java:133)
+at org.jboss.remoting.marshal.serializable.SerializableUnMarshaller.read(SerializableUnMarshaller.java:120)
+at org.jboss.remoting.transport.socket.MicroSocketClientInvoker.versionedRead(MicroSocketClientInvoker.java:943)
+at org.jboss.remoting.transport.socket.MicroSocketClientInvoker.transport(MicroSocketClientInvoker.java:584)
+at org.jboss.remoting.MicroRemoteClientInvoker.invoke(MicroRemoteClientInvoker.java:122)
+at org.jboss.remoting.Client.invoke(Client.java:1550)
+at org.jboss.remoting.Client.invoke(Client.java:530)
+at org.jboss.aspects.remoting.InvokeRemoteInterceptor.invoke(InvokeRemoteInterceptor.java:62)
+at org.jboss.aop.joinpoint.MethodInvocation.invokeNext(MethodInvocation.java:101)
+at org.jboss.aspects.tx.ClientTxPropagationInterceptor.invoke(ClientTxPropagationInterceptor.java:61)
+at org.jboss.aop.joinpoint.MethodInvocation.invokeNext(MethodInvocation.java:101)
+at org.jboss.aspects.security.SecurityClientInterceptor.invoke(SecurityClientInterceptor.java:53)
+at org.jboss.aop.joinpoint.MethodInvocation.invokeNext(MethodInvocation.java:101)
+at org.jboss.ejb3.remoting.IsLocalInterceptor.invoke(IsLocalInterceptor.java:72)
+at org.jboss.aop.joinpoint.MethodInvocation.invokeNext(MethodInvocation.java:101)
+at org.jboss.ejb3.stateless.StatelessRemoteProxy.invoke(StatelessRemoteProxy.java:103)
+at $Proxy5.synchronizeInvoice(Unknown Source)
+at com.celebi.ikarus.gl.bdo.GLBusinessDelegator.synchronizeInvoice(GLBusinessDelegator.java:116)
+at com.celebi.ikarus.gl.window.WInvoice.saveButtonPressed(WInvoice.java:303)
+at com.celebi.ikarus.main.component.toolbar.MainToolBar$5.actionPerformed(MainToolBar.java:129)
+at javax.swing.AbstractButton.fireActionPerformed(AbstractButton.java:1995)
+at javax.swing.AbstractButton$Handler.actionPerformed(AbstractButton.java:2318)
+at javax.swing.DefaultButtonModel.fireActionPerformed(DefaultButtonModel.java:387)
+at javax.swing.DefaultButtonModel.setPressed(DefaultButtonModel.java:242)
+at javax.swing.plaf.basic.BasicButtonListener.mouseReleased(BasicButtonListener.java:236)
+at java.awt.AWTEventMulticaster.mouseReleased(AWTEventMulticaster.java:272)
+at java.awt.Component.processMouseEvent(Component.java:6038)
+at javax.swing.JComponent.processMouseEvent(JComponent.java:3260)
+at java.awt.Component.processEvent(Component.java:5803)
+at java.awt.Container.processEvent(Container.java:2058)
+at java.awt.Component.dispatchEventImpl(Component.java:4410)
+at java.awt.Container.dispatchEventImpl(Container.java:2116)
+at java.awt.Component.dispatchEvent(Component.java:4240)
+at java.awt.LightweightDispatcher.retargetMouseEvent(Container.java:4322)
+at java.awt.LightweightDispatcher.processMouseEvent(Container.java:3986)
+at java.awt.LightweightDispatcher.dispatchEvent(Container.java:3916)
+at java.awt.Container.dispatchEventImpl(Container.java:2102)
+at java.awt.Window.dispatchEventImpl(Window.java:2429)
+at java.awt.Component.dispatchEvent(Component.java:4240)
+at java.awt.EventQueue.dispatchEvent(EventQueue.java:599)
+at java.awt.EventDispatchThread.pumpOneEventForFilters(EventDispatchThread.java:273)
+at java.awt.EventDispatchThread.pumpEventsForFilter(EventDispatchThread.java:183)
+at java.awt.EventDispatchThread.pumpEventsForHierarchy(EventDispatchThread.java:173)
+at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:168)
+at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:160)
+at java.awt.EventDispatchThread.run(EventDispatchThread.java:121)
+

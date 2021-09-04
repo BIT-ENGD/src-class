@@ -1,0 +1,85 @@
+#include <iostream>
+#include <sstream>
+
+#include <tbb/tbb_thread.h>//intel parallel studio class for parel
+
+#include "libpq-fe.h"
+#include "libpq/libpq-fs.h"
+
+class Inserter{
+public:
+    void operator()(){
+        PGconn* conn = PQconnectdb("user=postgres password=1234");
+        int i=0;
+        while(1){
+            std::stringstream insert;
+            insert << "INSERT INTO tmp (value) VALUES (" << i%250 << ");";
+            PGresult* res=PQexec(conn,insert.str().c_str());
+            if (PQresultStatus(res) == PGRES_FATAL_ERROR){
+                std::cout << "Error in inserting data:\nError code: " << PQresStatus(PQresultStatus(res)) << "Error Message: " << PQerrorMessage(conn);
+                PQclear(res);
+                PQfinish(conn);
+                return;
+            }
+            PQclear(res);
+            i++;
+        }
+    }
+
+};
+class Queryer{
+public:
+    void operator()(){
+        PGconn* conn = PQconnectdb("user=postgres password=1234");
+        int j=0;
+        while (1){
+            std::stringstream query;
+            query << "SELECT * FROM tmp WHERE id>" << j%1000 << ";";
+            PGresult* res=PQexec(conn,query.str().c_str());
+            if (PQresultStatus(res) == PGRES_FATAL_ERROR){
+                std::cout << "Error in searching data:\nError code: " << PQresStatus(PQresultStatus(res)) << "Error Message: " << PQerrorMessage(conn);
+                PQclear(res);
+                PQfinish(conn);
+                return;
+            }
+            PQclear(res);
+            Sleep(10);
+            j++;
+        }
+    }
+
+};
+
+void main(){
+    //connect to Database
+    PGconn* conn = PQconnectdb("user=postgres password=1234");
+
+    //create table
+    std::cout << "Creating table...\n";
+    PGresult* res=PQexec(conn,"CREATE TABLE tmp (id SERIAL8 PRIMARY KEY,value INT);");
+    if (PQresultStatus(res) == PGRES_FATAL_ERROR){
+        std::cout << "Error in Creating table:\nError code: " << PQresStatus(PQresultStatus(res)) << "Error Message: " << PQerrorMessage(conn);
+        //PQclear(res);
+        //PQfinish(conn);
+        //return;
+    }
+    PQclear(res);
+    PQfinish(conn);
+
+    std::cout << "Starting table filling thread...\n";
+    //fill table with some data
+    Inserter ins;
+    tbb::tbb_thread filling(ins);
+    Sleep(1000);
+    // searching table ... here is where the memory leak is
+    std::cout << "Starting table searching thread...\n";
+    Queryer que;
+    tbb::tbb_thread searching(que);
+
+    while(true)
+    {
+        tbb::tick_count::interval_t t(1.0);
+        tbb::this_tbb_thread::sleep(t);
+    }
+}
+

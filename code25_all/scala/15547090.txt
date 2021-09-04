@@ -1,0 +1,80 @@
+import akka.actor._
+//example from answer to https://stackoverflow.com/questions/15527193/keeping-references-to-two-actors
+// by Patrick Nordwall
+case object JoinMsg
+case class Msg(s: String)
+
+class Server extends Actor {
+
+  def receive = {
+    case JoinMsg =>
+      println("got player 1")
+      sender ! Msg("Waiting for player 2")
+      context.become(waitingForPlayer2(sender))
+  }
+
+  def waitingForPlayer2(client1: ActorRef): Actor.Receive = {
+    case JoinMsg =>
+      println("got player 2")
+      sender ! Msg("hi")
+      client1 ! Msg("hi")
+      context.become(ready(client1, sender))
+  }
+
+  def ready(client1: ActorRef, client2: ActorRef): Actor.Receive = {
+    case m: Msg if sender == client1 => client2 ! m
+    case m: Msg if sender == client2 => client1 ! m
+  }
+}
+
+/* I want to run this once for each "player" */
+object Demo extends App {
+  val system = ActorSystem("Game")
+  val server = system.actorOf(Props[Server], "server")
+
+  system.actorOf(Props(new Actor {
+    server ! JoinMsg
+    def receive = {
+      case Msg(s) => println(s)
+    }
+  }))
+
+  /* Rather than connecting twice from the same node, I want to run this
+     program twice from different nodes 
+    system.actorOf(Props(new Actor {
+    server ! JoinMsg
+    def receive = {
+      case Msg(s) => println(s)
+    }
+  }))*/
+}
+
+akka {
+  actor {
+    provider = "akka.remote.RemoteActorRefProvider"
+  }
+  remote {
+    transport = "akka.remote.netty.NettyRemoteTransport"
+    netty {
+      hostname = "localhost"
+      port = 9000
+    }
+ }
+}
+
+Exception in thread "main" java.lang.ExceptionInInitializerError
+    at akkademo.main(akkademo.scala)
+Caused by: org.jboss.netty.channel.ChannelException: Failed to bind to: localhost/127.0.0.1:9000
+    at org.jboss.netty.bootstrap.ServerBootstrap.bind(ServerBootstrap.java:298)
+    at akka.remote.netty.NettyRemoteServer.start(Server.scala:54)
+    at akka.remote.netty.NettyRemoteTransport.start(NettyRemoteSupport.scala:90)
+    at akka.remote.RemoteActorRefProvider.init(RemoteActorRefProvider.scala:94)
+    at akka.actor.ActorSystemImpl._start(ActorSystem.scala:588)
+    at akka.actor.ActorSystemImpl.start(ActorSystem.scala:595)
+    at akka.actor.ActorSystem$.apply(ActorSystem.scala:111)
+    at akka.actor.ActorSystem$.apply(ActorSystem.scala:93)
+    at akkademo$.<init>(akkademo.scala:4)
+    at akkademo$.<clinit>(akkademo.scala)
+    ... 1 more
+Caused by: java.net.BindException: Address already in use
+

@@ -1,0 +1,136 @@
+public partial class MainForm : Form
+{
+    MethodInvoker _startInvoker = null;
+    MethodInvoker _stopInvoker = null;
+    bool _started = false;
+
+    LongRunningProcess _lrp = null;
+
+    private void btnAction_Click(object sender, EventArgs e)
+    {
+        // This button acts as a Start/Stop switch.
+        // GUI handling (changing button text etc) omitted
+        if (!_started)
+        {
+            _started = true;
+            var lrp = new LongRunningProcess();
+
+            _startInvoker = new MethodInvoker((Action)(() => Start(lrp)));
+            _startInvoker.BeginInvoke(new AsyncCallback(TransferEnded), null);
+        }
+        else
+        {
+            _started = false;
+            _stopInvoker = new MethodInvoker(Stop);
+                _stopInvoker.BeginInvoke(Stopped, null);
+        }
+    }
+
+    private void Start(LongRunningProcess lrp)
+    {
+        // Store a reference to the process
+        _lrp = lrp;
+
+        // This is the same technique used by BackgroundWorker
+        // The long running process calls this event when it 
+        // reports its progress
+        _lrp.ProgressChanged += new ProgressChangedEventHandler(_lrp_ProgressChanged);
+        _lrp.RunProcess();
+    }
+
+    private void Stop()
+    {
+        // When this flag is set, the LRP will stop processing
+        _lrp.CancellationPending = true;
+    }
+
+    // This method is called when the process completes
+    private void TransferEnded(IAsyncResult asyncResult)
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action<IAsyncResult>(TransferEnded), asyncResult);
+        }
+        else
+        {
+            _startInvoker.EndInvoke(asyncResult);
+            _started = false;
+            _lrp = null;
+        }
+    }
+
+    private void Stopped(IAsyncResult asyncResult)
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action<IAsyncResult>(Stopped), asyncResult);
+        }
+        else
+        {
+            _stopInvoker.EndInvoke(asyncResult);
+            _lrp = null;
+        }
+    }
+
+    private void _lrp_ProgressChanged(object sender, ProgressChangedEventArgs e)
+    {
+        // Update the progress
+        // if (progressBar.InvokeRequired) etc...
+    }
+}
+
+public class LongRunningProcess
+{
+    SendOrPostCallback _progressReporter;
+    private readonly object _syncObject = new object();
+    private bool _cancellationPending = false;
+
+    public event ProgressChangedEventHandler ProgressChanged;
+
+    public bool CancellationPending
+    {
+        get { lock (_syncObject) { return _cancellationPending; } }
+        set { lock (_syncObject) { _cancellationPending = value; } }
+    }
+
+    private void ReportProgress(int percentProgress)
+    {
+        this._progressReporter(new ProgressChangedEventArgs(percentProgress, null));
+    }
+
+    private void ProgressReporter(object arg)
+    {
+        this.OnProgressChanged((ProgressChangedEventArgs)arg);
+    }
+
+    protected virtual void OnProgressChanged(ProgressChangedEventArgs e)
+    {
+        if (ProgressChanged != null)
+            ProgressChanged(this, e);
+    }
+
+    public bool RunProcess(string data)
+    {
+        // This code should be in the constructor
+        _progressReporter = new SendOrPostCallback(this.ProgressReporter);
+
+        for (int i = 0; i < LARGE_NUMBER; ++i)
+        {
+            if (this.CancellationPending)
+                break;
+
+            // Do work....
+            // ...
+            // ...
+
+            // Update progress
+            this.ReportProgress(percentageComplete);
+
+            // Allow other threads to run
+            Thread.Sleep(0)
+        }
+
+        return true;
+    }
+}
+

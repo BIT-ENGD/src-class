@@ -1,0 +1,148 @@
+use strict; 
+use warnings; 
+use XML::Twig; 
+
+my $FALSE = 0;
+my $TRUE = 1;
+my $name = 'KurtsProgram';
+my $task = 'MainTask';
+my $hidden_char = "\xBF";
+my $data = $hidden_char . 
+'(*********************************************
+  Data-File-Header-Junk
+**********************************************)
+
+    PROGRAM MainProgram ()
+    END_PROGRAM
+
+    TASK SecondaryTask ()
+    END_TASK
+
+    TASK MainTask ()
+        MainProgram;
+    END_TASK
+';
+my $new_data = insertProgram( $name, $task, $data );
+
+# test to see if results start out as expected
+if ( $new_data =~ m/^\Q$hidden_char\E/ ) {
+    print "SUCCESS\n";
+}
+else {
+    print STDERR "ERROR: What happened?\n";
+    print STDERR "ORIGINAL: \n$data\n";
+    print STDERR "MODIFIED: \n$new_data\n";
+}
+
+sub insertProgram {
+    my ( $local_name, $local_task, $local_data ) = @_;
+
+    # get program section from XML template
+    my $twig = new XML::Twig;
+    $twig->parse( '<?xml version="1.0"?>
+<TemplateSet>
+    <PROGRAM>PROGRAM <Name>ProgramNameGoesHere</Name> ()
+    END_PROGRAM</PROGRAM>
+    <TASK>TASK <Name>TaskNameGoesHere</Name> ()
+    END_TASK</TASK>
+</TemplateSet>
+' );   
+    my $program = $twig->root->first_child('PROGRAM');
+
+    # replace program name in XML template
+    $program->first_child('Name')->set_text($local_name);
+    my $insert = $program->text();
+
+    # stick modified program into data
+    if ( $local_data =~ s/(\s+PROGRAM\s+[^\s]+\s+\()/\n\n    $insert $1/ ) {
+        # found it and inserted new program
+    }
+    else {
+        # not found
+        return;
+    }
+
+    # add program name to task list
+    my $added_program_to_task = $FALSE;
+    my $found_start = $FALSE;
+    my $found_end = $FALSE;
+    my $new_data = "";
+    # open string as a filehandle for line by line processing
+    my $filehandle;
+    open( $filehandle, '<', \$local_data )
+        or die("Can't open string as a filehandle: $!");
+    while (defined (my $line = <$filehandle>)) {
+        # look for start of our task
+        if ( 
+               ( !$found_start ) &&
+               ( $line =~ m/\s+TASK\s+\Q$local_task\E\s+\(/ )
+            ) {
+            # found the task!
+            $found_start = $TRUE;
+        }
+
+        # look for end of our task
+        if (
+                ( $found_start ) && ( !$found_end ) &&
+                ( $line =~ m/\s+END_TASK/ )
+            )
+        {
+            # found the end tag for the task section!
+            $found_end = $TRUE;
+
+            # add the program name to the bottom of the list
+            $line = "        " . $local_name . ";\n" . $line;
+            $added_program_to_task = $TRUE;
+        }
+
+        # compile new data from processed line or original line
+        $new_data = $new_data . $line;
+    }
+    close($filehandle);
+
+    if ($added_program_to_task) {
+        # success
+    }
+    else {
+        # unable to find task
+        return;
+    }
+
+    return $new_data;
+}
+
+ERROR: What happened?
+ORIGINAL: 
+¿(*********************************************
+      Data-File-Header-Junk
+    **********************************************)
+
+        PROGRAM MainProgram ()
+        END_PROGRAM
+
+        TASK SecondaryTask ()
+        END_TASK
+
+        TASK MainTask ()
+            MainProgram;
+        END_TASK
+
+MODIFIED: 
+Â¿(*********************************************
+      Data-File-Header-Junk
+    **********************************************)
+
+        PROGRAM KurtsProgram ()
+        END_PROGRAM 
+
+        PROGRAM MainProgram ()
+        END_PROGRAM
+
+        TASK SecondaryTask ()
+        END_TASK
+
+        TASK MainTask ()
+            MainProgram;
+            KurtsProgram;
+        END_TASK
+

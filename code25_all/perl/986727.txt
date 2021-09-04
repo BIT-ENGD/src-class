@@ -1,0 +1,63 @@
+Gtk2
+LWP
+# Attach to the "message received" event
+Foo::hook('msgRx', \&updateMsg);
+
+# ...
+
+Gtk2->main();
+
+sub updateMsg {
+    my ($msg) = @_;
+    print "New message: $msg\n";
+    # append to a GTK TextView -- code is also used elsewhere and works fine
+    appendMsg($msg); 
+}
+
+# ...
+my %hooks = ();
+my $ev_pid = undef;
+
+sub hook($&) {
+    my ($name, $sub) = @_;
+    $hooks{$name} = $sub;
+}
+
+sub call_hook {
+    my ($name, @args) = @_;
+    print ">>> CALLING HOOK $name\n";
+    return $hooks{$name}->(@args) if (defined($hooks{$name}));
+}
+
+sub eventThread {
+    while (1) {
+        my $res = $browser->post("$baseurl/events", ['id' => $convid]);
+        my $content = $res->content;
+
+        last if ($content eq 'null');
+
+        my $events = from_json($content);
+        foreach (@$events) {
+            my $ev_type = shift @$_;
+            my @ev_args = @$_;
+            print "Event type: $ev_type\n";
+            print Data::Dumper->Dump([@ev_args]);
+            handleEvent($ev_type, @ev_args);
+        }
+    }
+}
+
+sub doConnect() {
+    # ...
+    $ev_pid = fork;
+    if (!defined $ev_pid) {
+        print "ERROR forking\n";
+        disconnect();
+        return;
+    }
+    if (!$ev_pid) {
+        eventThread;
+        exit;
+    }
+}
+

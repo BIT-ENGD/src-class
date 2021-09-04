@@ -1,0 +1,92 @@
+openssl genrsa -out app_key.pem 1024
+
+openssl req -new -key app_key.pem -x509 -days 365 -out app_cert.pem
+
+app_cert.pem
+development:
+  user: seller_1259814545_biz@somedomain.com
+  action_url: https://www.sandbox.paypal.com/cgi-bin/webscr 
+  paypal_cert_file: certs/paypal_sandbox_cert.pem
+  app_cert_file: certs/app_cert.pem
+  app_key_file: certs/app_key.pem
+  cert_id: CBDFN7JXBM2ZQ
+  secret: dfasdkjh3453
+
+test:
+  user: seller_1259814545_biz@somedomain.com
+  action_url: https://www.sandbox.paypal.com/cgi-bin/webscr 
+  paypal_cert_file: certs/paypal_sandbox_cert.pem
+  app_cert_file: certs/app_cert.pem
+  app_key_file: certs/app_key.pem
+  cert_id: CBDFN7JXBM2ZQ
+  secret: dfasdkjh3453
+
+staging:
+  user: seller_1259814545_biz@somedomain.com
+  action_url: https://www.sandbox.paypal.com/cgi-bin/webscr 
+  paypal_cert_file: certs/paypal_sandbox_cert.pem
+  app_cert_file: certs/app_cert.pem
+  app_key_file: certs/app_key.pem
+  cert_id: CBDFN7JXBM2ZQ
+  secret: dfasdkjh3453
+
+production:
+  user: business@somedomain.com
+  action_url: https://www.paypal.com/cgi-bin/webscr 
+  paypal_cert_file: certs/paypal_cert.pem
+  app_cert_file: certs/app_cert.pem
+  app_key_file: certs/app_key.pem
+  cert_id: QG2TTZZM9DUH6
+  secret: dfasdkjh3453
+
+class Cart < ActiveRecord::Base
+  has_many :line_items, :dependent => :destroy
+
+  PAYPAL_CERT_PEM = File.read("#{Rails.root}/#{PAYPAL_CONFIG[:paypal_cert_file]}")
+  APP_CERT_PEM = File.read("#{Rails.root}/#{PAYPAL_CONFIG[:app_cert_file]}")
+  APP_KEY_PEM = File.read("#{Rails.root}/#{PAYPAL_CONFIG[:app_key_file]}")
+
+  ...
+
+  def paypal_data(return_url, notify_url)
+    values = {
+      :business => PAYPAL_CONFIG[:user],
+      :cert_id => PAYPAL_CONFIG[:cert_id],
+      :custom => PAYPAL_CONFIG[:secret],
+      :cmd => '_cart',
+      :upload => 1,
+      :return => return_url,
+      :notify_url => notify_url,
+      :invoice => id,
+      :currency_code => 'AUD'
+    }
+    line_items.each_with_index do |item, i|
+      values.merge!({
+        "amount_#{i+1}" => "%.2f" % item.unit_price_ex_gst,
+        "tax_#{i+1}" => "%.2f" % item.unit_gst,
+        "item_name_#{i+1}" => item.product.full_name,
+        "item_number_#{i+1}" => item.id,
+        "quantity_#{i+1}" => item.quantity
+      })
+    end
+    encrypt_for_paypal(values)
+  end
+
+  def encrypt_for_paypal(values)
+    signed = OpenSSL::PKCS7::sign(OpenSSL::X509::Certificate.new(APP_CERT_PEM), 
+      OpenSSL::PKey::RSA.new(APP_KEY_PEM, ''), 
+      values.map { |key, value| "#{key}=#{value}" }.join("\n"), [], OpenSSL::PKCS7::BINARY)
+    OpenSSL::PKCS7::encrypt([OpenSSL::X509::Certificate.new(PAYPAL_CERT_PEM)], 
+      signed.to_der, 
+      OpenSSL::Cipher::Cipher::new("DES3"), 
+      OpenSSL::PKCS7::BINARY).to_s.gsub("\n", '')
+  end
+end
+
+- form_tag PAYPAL_CONFIG[:action_url] do
+  %div
+    = hidden_field_tag :cmd, '_s-xclick'
+    = hidden_field_tag :encrypted, cart.paypal_data(thanks_payments_url, payments_url)
+    = image_submit_tag 'paypal-checkout.gif', :alt => 'Check out with PayPal: The safer, easier way to pay'
+
+certs

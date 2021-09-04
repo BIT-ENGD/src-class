@@ -1,0 +1,61 @@
+    Foo
+        xStart Int
+        yStart Int
+
+/foos/#Int/#Int/*FooId FoosReturnR GET
+    module Handler.FoosReturn where
+
+    import Import
+
+    selectWindowSize :: Int 
+    selectWindowSize = 10000
+
+    getFoosReturnR :: Int -> Int -> [FooId] -> Handler RepPlain
+    getFoosReturnR x y withoutIds = do
+        foos <- runDB $ selectList [FooId /<-. withoutIds, 
+               FooXStart <. x + selectWindowSize,
+               FooXStart >=. x - selectWindowSize, 
+               FooYStart <. y + selectWindowSize,
+               FooYStart >=. y - selectWindowSize] [] 
+        return $ RepPlain $ toContent $ show foos
+
+/foos/#Int/#Int/#String FoosReturnR GET
+    module Handler.FoosReturn where
+
+    import Import
+    import Data.List.Split
+    import qualified Data.Text.Lazy as TL
+
+    selectWindowSize :: Int 
+    selectWindowSize = 10000
+
+    getFoosReturnR :: Int -> Int -> String -> Handler RepPlain
+    getFoosReturnR x y withoutIds = do
+        app <- getYesod
+        liftIO $ logLazyText (getLogger app) ("getFoosReturnR('" `TL.append` (TL.pack $ (show x) ++ "', '" ++ (show y) ++ "', '" ++ withoutIds ++ "') "))
+        foos <- runDB $ selectList [FooId /<-. (map (\a -> read a :: FooId) $ splitOn "," withoutIds), 
+               FooXStart <. x + selectWindowSize,
+               FooXStart >=. x - selectWindowSize, 
+               FooYStart <. y + selectWindowSize,
+               FooYStart >=. y - selectWindowSize] [] 
+        return $ RepPlain $ toContent $ show foos
+
+    data FooIds = FooIds [FooId] deriving (Show, Read, Eq)
+
+    instance MultiPiece FooIds where
+        toMultiPiece (FooIds fooList) = map (Data.Text.pack . show) fooList
+        fromMultiPiece texts = 
+            if length (filter isNothing listOfMaybeFooId) > 0
+                then Nothing
+                else Just $ FooIds $ map fromJust listOfMaybeFooId
+            where 
+                listOfMaybeFooId = map constructMaybeFooId texts
+                constructMaybeFooId :: Text -> Maybe FooId
+                constructMaybeFooId x = case reads (Data.Text.unpack x) :: [(FooId,String)] of
+                        [(foo,_)] -> Just foo
+                        _         -> Nothing
+
+/foos/#Int/#Int/*FooIds FoosReturnR GET
+    getFoosReturnR :: Int -> Int -> FooIds -> Handler RepPlain
+    getFoosReturnR coordX coordY (FooIds withoutIds) = do
+

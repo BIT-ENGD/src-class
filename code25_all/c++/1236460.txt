@@ -1,0 +1,121 @@
+asio::io_service ioservice; 
+asio::windows::stream_handle in(ioservice); 
+int main()
+{
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    try
+    {
+        //create pipe
+        pipe = CreateNamedPipe("\\\\.\\pipe\\FLTest",
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
+            255, 50000,50000, 0, 0);
+        if(pipe == INVALID_HANDLE_VALUE)
+        {
+            printWinError();
+            return -1;
+        }
+        in.assign(pipe); 
+        std::cout << "Created pipe" << std::endl;
+        //spawn child
+        STARTUPINFO         startInfo;
+        ZeroMemory(&startInfo, sizeof(STARTUPINFO));
+        startInfo.cb = sizeof(STARTUPINFO);
+        PROCESS_INFORMATION procInfo;
+        ZeroMemory(&procInfo, sizeof(PROCESS_INFORMATION));
+        if(CreateProcess(0, "slave.exe", 0,0, FALSE, CREATE_NEW_CONSOLE,
+            0, 0, &startInfo, &procInfo))
+        {
+            std::cout << "Slave process created" << std::endl;
+        }
+        else
+        {
+            printWinError();
+            DisconnectNamedPipe(pipe);
+            return -1;
+        }
+
+        OVERLAPPED overlapped = {0};
+        overlapped.hEvent = CreateEvent(0,TRUE,FALSE,0);
+        if(ConnectNamedPipe(pipe, &overlapped) == FALSE)
+        {
+            unsigned error = GetLastError();
+            if(error != ERROR_PIPE_CONNECTED &&
+                error != ERROR_IO_PENDING)
+            {
+                printWinError();
+                DisconnectNamedPipe(pipe);
+                return -1;
+            }
+        }
+        WaitForSingleObject(overlapped.hEvent, INFINITE);
+        CloseHandle(overlapped.hEvent);
+        std::cout << "Pipe connected" << std::endl;
+
+        for(int i = 0; i < 100; ++i)
+        {
+            boost::system::error_code error;
+            unsigned n = i * 5;
+            asio::write(in,asio::buffer((char*)&n, sizeof(unsigned)),
+                asio::transfer_all(), error);
+            if(error)throw boost::system::system_error(error);
+        }
+        std::cout << "Sent data" << std::endl;
+
+        FlushFileBuffers(pipe);
+        DisconnectNamedPipe(pipe);
+        system("pause");
+        return 0;
+    }
+    catch(const std::exception &e)
+    {
+        std::cout << e.what() << std::endl;
+        if(pipe != INVALID_HANDLE_VALUE)
+            DisconnectNamedPipe(pipe);
+        system("pause");
+        return -1;
+    }
+}
+
+asio::io_service ioservice; 
+asio::windows::stream_handle in(ioservice); 
+int main()
+{
+    try
+    {
+        WaitNamedPipe("\\\\.\\pipe\\FLTest", NMPWAIT_WAIT_FOREVER);
+
+        std::cout << "Pipe avaible" << std::endl;
+        HANDLE pipe = CreateNamedPipe("\\\\.\\pipe\\FLTest",
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
+            255, 50000,50000,0,0);
+        if(pipe == INVALID_HANDLE_VALUE)
+        {
+            printWinError();
+            return -1;
+        }
+
+        in.assign(pipe); 
+        std::cout << "Pipe connected" << std::endl;
+
+        for(int i = 0; i < 100; ++i)
+        {
+            std::cout << "i: " << i << std::endl;
+            boost::system::error_code error;
+            unsigned n;
+            asio::read(in,asio::buffer((char*)&n,sizeof(unsigned)),
+                asio::transfer_all(), error);
+            if(error)throw boost::system::system_error(error);
+        }
+        system("pause");
+        return 0;
+    }
+    catch(const std::exception &e)
+    {
+        std::cout << e.what() << std::endl;
+        system("pause");
+        return -1;
+    }
+}
+

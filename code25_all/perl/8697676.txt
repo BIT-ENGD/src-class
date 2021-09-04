@@ -1,0 +1,120 @@
+say $valid $1;
+
+#!/usr/bin/perl
+use 5.012;
+use strict;
+use warnings;
+use LWP::Simple;
+
+open my $input, '<', 'c:\perl\015_JiraGet\addrHDP.txt' or die "Cannot read: $!\n";
+open my $valid, '<', 'c:\perl\015_JiraGet\valid.txt' or die "Cannot read: $!\n";
+my @totalReport;
+my $eachAddr;
+my $copyFile;
+my $copyFilePath = 'c:\perl\015_JiraGet\HADOOP XML\\';
+my $tempFile;
+my $tempFilePath = 'c:\perl\015_JiraGet\temp.txt';
+my $analyzed;
+my $analyzedPath = 'c:\perl\015_JiraGet\analyzed - HADOOP.txt';
+my $undefCheck;
+my $i = 0;
+my $j = 0;
+my $title = 'temp';
+my $dup = 0;
+
+while(<$input>) { chomp; push @totalReport, $_; }
+foreach(@totalReport)
+{
+    $eachAddr = $_;
+    $undefCheck = get($eachAddr);
+    if(defined($undefCheck) == 0) { next; }
+
+    # Copy one XML file to 'temp.txt' and then close the file.
+    open $tempFile, '>', $tempFilePath or die "Cannot open 1: $!\n";
+    print $tempFile get($eachAddr);
+    close $tempFile;
+
+    # If the entry is a duplicate, go on to the next entry
+    open $tempFile, '<', $tempFilePath or die "Cannot open 2: $!\n";
+    ($title, $dup) = isDuplicate($tempFile, $title);
+    if($dup == 1) { close $tempFile; next; }
+    close $tempFile;
+    say ++$i . "th report!!!";
+
+    # Copy one XML file to HDD.
+    if($eachAddr =~ /.*\/(.*)/)
+    {
+        say $valid $1;
+        open $copyFile, '>', $copyFilePath . $1 or die "Cannot open 3: $!\n";
+        print $copyFile get($eachAddr);
+        close $copyFile;
+    }
+
+    # If the entry is NOT fixed or resolved, go on to the next entry
+    open $tempFile, '<', $tempFilePath or die "Cannot open 4: $!\n";
+    if(isFixCloseResolve($tempFile) == 0) { close $tempFile; next; }
+    close $tempFile;
+
+    # Analyze one entry
+    open $tempFile, '<',  $tempFilePath or die "Cannot open 5: $!\n";
+    open $analyzed, '>>', $analyzedPath or die "Cannot open 6: $!\n";
+    analyzeOneReport($tempFile, $analyzed);
+    close $tempFile;
+    close $analyzed;
+    say '                      ' . ++$j . "th fixed & closed report!!!";
+}
+say "$i total reports.";
+say "$j total fixed & closed reports.";
+close $input;
+close $valid;
+say "Finished!";
+
+sub isDuplicate
+{
+    my $iReport = $_[0];
+    my $title = 'temp';
+    my $dup = 0;
+
+    while(<$iReport>)
+    {
+        if ($_ =~ /.*\<title>(.*)\<\/title>/)
+        {
+            if($1 ne 'ASF JIRA') { $title = $1; if($title eq $_[1]) { $dup = 1; } last; }
+        }
+    }
+    return ($title, $dup);
+}
+
+# returns 1 if an entry is a Bug and Fixed and Closed
+sub isFixCloseResolve
+{
+    my $iReport = $_[0];
+    my $isCloseResolve = 0;
+    my $isFixed = 0;
+    while(<$iReport>)
+    {
+        if   ($_ =~ /.*\<status[^>]*>(.*)\<\/status>/) { if(($1 eq 'Closed')||($1 eq 'Resolved')) { $isCloseResolve = 1;} }
+        elsif($_ =~ /.*\<resolution[^>]*>(.*)\<\/resolution>/) { if($1 eq 'Fixed') { $isFixed = 1;} }
+    }
+    return $isCloseResolve * $isFixed;
+}
+
+sub analyzeOneReport
+{
+    my $iReport = $_[0];
+    my $oReport = $_[1];
+
+    while(<$iReport>)
+    {
+        chomp;
+        if   ($_ =~ /.*\<title>(.*)\<\/title>/) { if($1 ne 'ASF JIRA') { say $oReport "Title   : $1"; } }
+        elsif($_ =~ /.*\<assignee username="(.*)">.*\<\/assignee>/) { say $oReport "Assignee: $1"; }
+        elsif($_ =~ /.*\<reporter username="(.*)">.*\<\/reporter>/) { say $oReport "Reporter: $1"; }
+        elsif($_ =~ /.*\<type[^>]*>(.*)\<\/type>/)         { say $oReport "Type    : $1"; }
+        elsif($_ =~ /.*\<priority[^>]*>(.*)\<\/priority>/) { say $oReport "Priority: $1"; }
+        elsif($_ =~ /.*\<created>(.*)\<\/created>/)        { say $oReport "Created : $1"; }
+        elsif($_ =~ /.*\<resolved>(.*)\<\/resolved>/)      { say $oReport "Resolved: $1"; }
+    }
+    say $oReport '--------------------------------------------';
+}
+

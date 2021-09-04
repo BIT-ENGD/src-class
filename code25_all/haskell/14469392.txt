@@ -1,0 +1,60 @@
+type Mapper k1 v1 k2 v2 = k1 -> v1 -> IO [(k2,v2)]
+
+type Reducer k1 v1 k2 v2 = k1 -> [v1] -> IO [(k2,v2)]
+
+data Iteration k1 v1 k3 v3 = forall k2 v2 . Iteration (Mapper k1 v1 k2 v2) (Reducer k2 v2 k3 v3)
+
+data Job k1 v1 k3 v3 = EmptyJob | forall k2 v2 . ConsJob (Iteration k1 v1 k2 v2) (Job k2 v2 k3 v3)
+
+type IterationNumber = Int
+data IterationPhase = IterationMapper | IterationReducer
+
+runJobIteration :: Job k1 v1 k2 v2 -> IterationNumber -> IterationPhase -> IO ()
+runJobIteration EmptyJob _ _ = return ()
+runJobIteration (ConsJob (Iteration m r) _) 0 IterationMapper = runMapper m
+runJobIteration (ConsJob (Iteration m r) _) 0 IterationReducer = runReducer r
+runJobIteration (ConsJob (Iteration m r) j) i p = runJobIteration j (i-1) p
+
+runMapper :: (Parsable k1, Parsable v1, Showable v2, Showable k2) => Mapper k1 v1 k2 v2 ->   IO ()
+runMapper mapper = do
+    contents <- getContents
+    mapOutput <- mapM (uncurry mapper . parseKeyValue) $ lines contents
+    mapM_ putStrLn $ map showKeyValue $ concat mapOutput
+
+
+runReducer :: (Parsable k1, Parsable v1, Eq k1, Eq v1, Showable v2, Showable k2) =>    Reducer k1 v1 k2 v2 -> IO ()
+runReducer reducer = do
+    contents <- getContents
+    reduceOutput <- mapM (uncurry reducer) $ groupMapOutput $ map parseKeyValue $ lines contents
+    mapM_ putStrLn $ map showKeyValue $ concat reduceOutput
+
+parseKeyValue :: (Parsable k, Parsable v) => String -> (k,v)
+parseKeyValue = (parse *** parse) . split (== '\t')
+
+
+split :: (a -> Bool) -> [a] -> ([a], [a])
+split p xs = let (group, rest) = break p xs
+             in (group, tail rest)
+
+showKeyValue :: (Showable k, Showable v) => (k,v) -> String
+showKeyValue (k,v) = showit k ++ "\t" ++ showit v
+
+groupMapOutput :: (Eq k, Eq v) => [(k,v)] -> [(k,[v])]
+groupMapOutput kvs = groupMapOutput' kvs []
+groupMapOutput' kvs gs
+    | kvs == [] = gs
+    | otherwise = groupMapOutput' rest (gs ++ [(k, map snd group)])
+        where 
+            k = fst (head kvs)
+            (group, rest) = span ((== k) . fst) kvs
+
+No instances for (Showable k4,
+                    Showable v4,
+                    Parsable v1,
+                    Parsable k1)
+    arising from a use of `runMapper'
+  In the expression: runMapper m
+  In an equation for `runJobIteration':
+      runJobIteration (ConsJob (Iteration m r) _) 0 IterationMapper
+        = runMapper m
+

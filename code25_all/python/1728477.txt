@@ -1,0 +1,113 @@
+#!/usr/bin/env python
+
+from Crypto.Cipher import AES
+from optparse import OptionParser
+import os, base64, time, sys, hashlib, pickle, threading, timeit, Queue
+
+
+BLOCK_SIZE = 32 #32 = 256-bit | 16 = 128-bit
+TFILE = 'mytestfile.bin'
+CHUNK_SIZE = 2048 * 2048
+KEY = os.urandom(32)
+
+class DataSplit():
+    def __init__(self,fileObj, chunkSize):
+
+        self.fileObj = fileObj
+        self.chunkSize = chunkSize
+
+    def split(self):
+        while True:
+            data = self.fileObj.read(self.chunkSize)
+            if not data:
+                break
+            yield data
+
+class encThread(threading.Thread):
+    def __init__(self, seg_queue,result_queue, cipher):
+        threading.Thread.__init__(self)
+        self.seg_queue = seg_queue
+        self.result_queue = result_queue
+        self.cipher = cipher
+
+    def run(self):
+        while True:
+            #Grab a data segment from the queue
+            data = self.seg_queue.get()
+            encSegment = []           
+            for lines in data:
+            encSegment.append(self.cipher.encrypt(lines))
+            self.result_queue.put(encSegment)
+            print "Segment Encrypted"
+            self.seg_queue.task_done()
+
+start = time.time()
+def main():
+    seg_queue = Queue.Queue()
+    result_queue = Queue.Queue()
+    estSegCount = (os.path.getsize(TFILE)/CHUNK_SIZE)+1
+    cipher = AES.new(KEY, AES.MODE_CFB)
+    #Spawn threads (one for each segment at the moment)
+    for i in range(estSegCount):
+        eT = encThread(seg_queue, result_queue, cipher)
+        eT.setDaemon(True)
+        eT.start()
+        print ("thread spawned")
+
+    fileObj = open(TFILE, "rb")
+    splitter = DataSplit(fileObj, CHUNK_SIZE)
+    for data in splitter.split():
+        seg_queue.put(data)
+        print ("Data sent to thread")
+
+    seg_queue.join()
+    #result_queue.join()
+    print ("Seg Q: {0}".format(seg_queue.qsize()))
+    print ("Res Q: {0}".format(result_queue.qsize()))
+
+
+
+main()
+print ("Elapsed Time: {0}".format(time.time()-start))
+
+#!/usr/bin/env python
+
+from Crypto.Cipher import AES
+from optparse import OptionParser
+import os, base64, time, sys, hashlib, pickle, threading, timeit, Queue
+
+TFILE = 'mytestfile.bin'
+CHUNK_SIZE = 2048 * 2048
+
+class EncSeries():
+    def __init(self):
+        pass
+
+    def loadFile(self,path):
+        openFile = open(path, "rb")
+        #fileData = openFile.readlines()
+        fileData = openFile.read(CHUNK_SIZE)
+        openFile.close()
+        return fileData
+
+    def encryptData(self,key, data):
+        cipher = AES.new(key, AES.MODE_CFB)
+        newData = []
+        for lines in data:
+            newData.append(cipher.encrypt(lines))
+        return newData
+
+
+start = time.time()
+def main():
+    print ("Start")
+    key = os.urandom(32)
+    run = EncSeries()
+    fileData = run.loadFile(TFILE)
+
+    encFileData=run.encryptData(key, fileData)
+    print("Finish")
+
+main()
+print ("Elapsed Time: {0}".format(time.time()-start))
+

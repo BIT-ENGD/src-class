@@ -1,0 +1,104 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use IO::Socket;
+
+my $port = 8888;
+my $server = new IO::Socket::INET(  Proto => 'tcp',
+                                    LocalPort => $port,
+                                    Listen => SOMAXCONN,
+                                    ReuseAddr => 1)
+            or die "Unable to create server socket";
+
+# Server loop
+while(my $client = $server->accept())
+{
+    my $client_info;
+    my $faviconRequest = 0;
+    while(<$client>)
+    {
+        last if /^\r\n$/;
+        $faviconRequest = 1 if ($_ =~ m/favicon/is);
+        print "\n$_" if ($_ =~ m/GET/is);
+        $client_info .= $_;
+    }
+
+    if ($faviconRequest == 1)
+    {
+        #Ignore favicon requests for now
+        print "Favicon request, ignoring and closing client";
+        close($client);
+    }
+    incoming($client, $client_info) if ($faviconRequest == 0);
+}
+
+sub incoming
+{
+    print "\n=== Incoming Request:\n";
+    my $client = shift;
+    print $client &buildResponse($client, shift);
+    print "Closing \$client";
+    close($client);
+}
+
+sub buildResponse
+{
+    my $client = shift;
+    my $client_info = shift;
+    my $re1='.*?';
+    my $re2='(hh\\.ogg)';
+    my $re=$re1.$re2;
+
+    print "client info is $client_info";
+
+    # Send the file over socket if it's the ogg the browser wants.
+    return sendFile($client) if ($client_info =~ m/$re/is);
+
+    my $r = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n
+            <html>
+            <head>
+                <title>Hello!</title>
+            </head>
+            <body>
+            Hello World.
+            <audio src=\"hh.ogg\" controls=\"controls\" preload=\"none\"></audio>
+            </body>
+            </html>";
+    return $r;
+}
+
+sub sendFile
+{
+    print "\n>>>>>>>>>>>>>>>>>>>>>>> sendFile";
+    my $client = shift;
+    open my $fh, '<' , 'hh.ogg';
+    my $size = -s $fh;
+    print "\nsize: $size";
+
+    print $client "Allow: GET\015\012";
+    print $client "Accept-Ranges: none\015\012";
+    print $client "Content-Type: \"audio/ogg\"\015\012";
+    print $client "Content-Length: $size\015\012";
+    print "\nsent headers before sending file";
+
+    ############################################
+    #Take the filehandle and send it over the socket.
+    my $scalar = do {local $/; <$fh>};
+    my $offset = 0;
+    while(1)
+    {
+        print "\nsyswriting to socket. Offset: $offset";
+        $offset += syswrite($client, $scalar, $size, $offset);
+        last if ($offset >= $size);
+    }
+    print "Finished writing to socket.";
+    close $fh;
+    return "";
+}
+
+print $client "Accept-Ranges: none\015\012";
+
+Use of uninitialized value in addition (+) at ./test.pl line 91, <$fh> line 1.
+
+$offset += syswrite($client, $scalar, $size, $offset);
+

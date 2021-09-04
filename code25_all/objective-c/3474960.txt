@@ -1,0 +1,80 @@
++(NSManagedObjectContext *)managedObjectContext {
+    MyAppDelegate *delegate = (MyAppDelegate *)[[UIApplication sharedApplication] delegate];
+    NSManagedObjectContext *moc = delegate.managedObjectContext;
+
+    NSThread *thread = [NSThread currentThread];
+
+    if ([thread isMainThread]) {
+        return moc;
+    }
+
+    // a key to cache the context for the given thread
+    NSString *threadKey = [NSString stringWithFormat:@"%p", thread];
+
+    // delegate.managedObjectContexts is a mutable dictionary in the app delegate
+    NSMutableDictionary *managedObjectContexts = delegate.managedObjectContexts;
+
+    if ( [managedObjectContexts objectForKey:threadKey] == nil ) {
+        // create a context for this thread
+        NSManagedObjectContext *threadContext = [[[NSManagedObjectContext alloc] init] autorelease];
+        [threadContext setPersistentStoreCoordinator:[moc persistentStoreCoordinator]];
+        // cache the context for this thread
+        [managedObjectContexts setObject:threadContext forKey:threadKey];
+    }
+
+    return [managedObjectContexts objectForKey:threadKey];
+}
+
+commit
++(void)commit {
+    // get the moc for this thread
+    NSManagedObjectContext *moc = [self managedObjectContext];
+
+    NSThread *thread = [NSThread currentThread];
+
+    if ([thread isMainThread] == NO) {
+        // only observe notifications other than the main thread
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(contextDidSave:)
+                                                 name:NSManagedObjectContextDidSaveNotification
+                                               object:moc];
+    }
+
+    NSError *error;
+    if (![moc save:&error]) {
+        // fail
+    }
+
+    if ([thread isMainThread] == NO) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self 
+                                                    name:NSManagedObjectContextDidSaveNotification 
+                                                  object:moc];
+    }
+}
+
+contextDidSave:
+commit
++(void)contextDidSave:(NSNotification*)saveNotification {
+    MyAppDelegate *delegate = (MyAppDelegate *)[[UIApplication sharedApplication] delegate];
+    NSManagedObjectContext *moc = delegate.managedObjectContext;
+
+    [moc performSelectorOnMainThread:@selector(mergeChangesFromContextDidSaveNotification:)
+                      withObject:saveNotification
+                   waitUntilDone:YES];
+}
+
++(void)initialize {
+    [[NSNotificationCenter defaultCenter] addObserver:self 
+                                             selector:@selector(threadExit) 
+                                                 name:NSThreadWillExitNotification 
+                                               object:nil]; 
+}
+
++(void)threadExit {
+    MyAppDelegate *delegate = (MyAppDelegate *)[[UIApplication sharedApplication] delegate];
+    NSString *threadKey = [NSString stringWithFormat:@"%p", [NSThread currentThread]];  
+    NSMutableDictionary *managedObjectContexts = delegate.managedObjectContexts;    
+
+    [managedObjectContexts removeObjectForKey:threadKey];
+}
+

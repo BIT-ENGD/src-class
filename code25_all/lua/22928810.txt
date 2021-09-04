@@ -1,0 +1,338 @@
+local composer = require( "composer" )
+local scene = composer.newScene()
+local physics = require( "physics" )
+physics.start()
+
+local image, text1
+
+local function onSceneTouch( self, event )
+    if event.phase == "began" then      
+        composer.gotoScene( "startScreen", "fade", 400  )       
+        return true
+    end
+end
+
+function scene:create( event )
+    local sceneGroup = self.view
+
+    -- Variable
+    ---------------------------------------
+    sW = display.contentWidth
+    sH = display.contentHeight
+
+    -- trying to reset gameStatus on restart
+    gameStatus = "ended"
+    gameStatus = "running"
+
+
+    --------------------------------------------------------
+    backgroundTiles = {}
+
+    drawBackground = function()
+        cieling = display.newRect( 0, 0, 2 * sW, sH * 0.05)
+        physics.addBody( cieling, "static", { density=0, friction=0, bounce=0 } )
+        cieling.x, cieling.y = cieling.contentWidth / 4, cieling.contentHeight * 0.25
+        cieling.alpha = 0
+        cieling.name = "ceiling"
+
+        ground = display.newRect( 0, sH, 2 * sW, sH * 0.05)
+        physics.addBody( ground, "static", { density=3, friction=1, bounce=0.1 } )
+        ground.x, ground.y = ground.contentWidth / 4, sH - ground.contentHeight * 0.25
+        ground.alpha = 0
+        ground.name = "ground"
+
+    end
+
+    drawBackground()
+    --------------------------------------------------------
+
+
+    --------------------------------------------------------
+    drawBird = function()
+        bird = display.newImageRect( "a/img/hero/hero.png", 80, 58)
+        bird.x, bird.y = 0 - sW * 0.1, ground.y - ground.contentHeight - 10
+        bird.isFixedRotation = true; bird.angularVelocity = 0;
+        physics.addBody( bird, { density=1, friction=0.5, bounce=0.1 } )
+        bird.name = "bird"
+        sceneGroup:insert( bird )
+
+        bird:addEventListener( "collision", onCollision )
+    end
+
+    coinsCollected, tokensCollected = 0, 0
+
+    birdFlight = function()
+        if ( gameStatus == "running" ) then
+            transition.to(bird, {
+                y = bird.y - 75,
+                transition = easing.outQuad,
+                onComplete = function() end
+            })
+            function birdFlight()
+                --transition.to( bird, { rotation=-45, time=300 } )
+            end
+            birdFlight()
+            function birdFall()
+                --transition.to( bird, { rotation=90, time=300 } )
+            end
+            timer.performWithDelay(700, birdFall, 1)
+        end
+    end
+    display.currentStage:addEventListener( "tap", birdFlight )
+
+    function onCollision(event)
+        if event.phase == "began" then
+            if event.other.name == "coin" then
+                coinsCollected = coinsCollected + 1
+            end
+            if event.other.name == "token" then
+                tokensCollected = tokensCollected + 1
+            end
+            if event.other.name == "missile" or event.other.name == "laser" or event.other.name == "rod" then
+               -- game ended
+            end
+        end
+    end
+
+    drawBird()
+
+    function atFrame(event)
+        if gameStatus == "running" then
+            bird.x,bird.y = sW / 3,bird.y + 9
+            if ( bird.y > sH - 70) then bird.y = sH - 70 end
+            if ( gameStatus == "ended" ) then bird.y = bird.y + 15 end
+        end
+    end
+    Runtime:addEventListener( "enterFrame", atFrame )
+
+    --------------------------------------------------------
+
+
+
+    --------------------------------------------------------
+    missile, missileAlert, missileMoving = {}, {}, {}
+
+    function removeMissile(i)
+        local onEnterFrame = function( event )
+            if missile[i] ~= nil and missile[i].x ~= nil and gameStatus == "running" then
+                if missile[i].x < -100 then
+                    display.remove( missile[i] )
+                    missile[i] = nil
+                end
+            end
+        end
+        Runtime:addEventListener( "enterFrame", onEnterFrame )
+
+        print(gameStatus)
+
+        if gameStatus == "ended" then
+            Runtime:removeEventListener( "enterFrame", onEnterFrame )
+        end 
+    end
+
+
+    function flyMissile(i)
+        local onEnterFrame = function( event )
+            if missile[i] ~= nil and missile[i].x ~= nil and missile[i].y ~= nil and gameStatus == "running" then
+                if missileMoving[i] == true then
+                    missile[i].y = bird.y
+                end
+                missile[i].x = missile[i].x - 5
+                if missileAlert[i] ~= nil then
+                    if missileMoving[i] == true then
+                        missileAlert[i].y = bird.y
+                    end                 
+                    if missile[i].x < sW then
+                        display.remove( missileAlert[i] )
+                        missileAlert[i] = nil
+                    end                 
+                end
+            end
+        end
+        Runtime:addEventListener( "enterFrame", onEnterFrame )
+
+        print(gameStatus)
+
+        if gameStatus == "ended" then
+            Runtime:removeEventListener( "enterFrame", onEnterFrame )
+        end 
+    end
+
+
+    function holdMissile(i)
+        local onEnterFrame = function( event )
+            if missile[i] ~= nil and missile[i].x ~= nil and gameStatus == "running" then
+                if missile[i].x < sW * 1.5 then
+                    if missileAlert[i] ~= nil then
+                        missileAlert[i]:setFillColor(1,1,0)
+                    end
+                    missileMoving[i] = false
+                end
+            end
+        end
+        Runtime:addEventListener( "enterFrame", onEnterFrame )
+
+        print(gameStatus)
+
+        if gameStatus == "ended" then
+            Runtime:removeEventListener( "enterFrame", onEnterFrame )
+        end 
+    end
+
+
+    function spawnMissile(i)
+
+        missile[i] = display.newRect( sW*2, sH/2, 80, 80 )
+        missileAlert[i] = display.newRect( sW-80, bird.y, 80, 80 )
+        physics.addBody(missile[i],"kinematic",{isSensor=true})
+        missile[i].name = "missile"
+        sceneGroup:insert( missile[i] )
+        sceneGroup:insert( missileAlert[i] )
+
+        missileMoving[i] = true
+
+        flyMissile(i)
+        removeMissile(i)
+        holdMissile(i)
+
+    end
+
+    spawnMissile(1)
+    --------------------------------------------------------
+
+
+    --------------------------------------------------------
+    laser = {}
+
+    function moveAndRemovelaser(i)
+        local onEnterFrame = function( event )
+            if laser[i] ~= nil and laser[i].x ~= nil and gameStatus == "running" then               
+                laser[i].x = laser[i].x - 5
+                if laser[i].x < 0 - sW / 2 then
+                    display.remove( laser[i] )
+                    laser[i] = nil
+                end
+            end
+        end
+        Runtime:addEventListener( "enterFrame", onEnterFrame )
+
+        print(gameStatus)
+
+        if gameStatus == "ended" then
+            Runtime:removeEventListener( "enterFrame", onEnterFrame )
+        end 
+    end
+
+    function spawnlaser(i)
+
+        laserSize = math.random(1,2)
+        laserPosition = math.random(1,3)
+        laserRotation = math.random(1,4)
+
+        if laserSize == 1 then
+            laser[i] = display.newRect( 100,100,50,sH/3 )
+        else
+            laser[i] = display.newRect( 100,100,50,sH/2 )
+        end
+
+        sceneGroup:insert( laser[i] )
+
+        laser[i].x = sW * 2
+        laser[i].y = sH / 2
+        laser[i].name = "laser"
+
+        if laserPosition == 1 and laserRotation ~= 4 then
+            laser[i].y = sH * 0.05 + 12
+            laser[i].anchorY = 0
+        elseif laserPosition == 3 and laserRotation ~= 4 then
+            laser[i].y = sH * 0.95 - 12
+            laser[i].anchorY = 1
+        end
+
+        if laserPosition == 1 and laserRotation == 4 then
+            laser[i].y = sH * 0.05 + laser[i].contentHeight / 2
+        elseif  laserPosition == 3 and laserRotation == 4 then
+            laser[i].y = sH * 0.95 - laser[i].contentHeight / 2
+        end
+
+        if laserRotation == 1 then
+            laser[i].rotation = -45
+        elseif laserRotation == 2 then
+            laser[i].rotation = 0
+        elseif laserRotation == 3 then
+            laser[i].rotation = 45
+        elseif laserRotation == 4 then
+            local onEnterFrame = function( event )
+                if laser[i] ~= nil and laser[i].rotation ~= nil then
+                    laser[i].rotation = laser[i].rotation + 5
+                end
+            end
+            Runtime:addEventListener( "enterFrame", onEnterFrame )
+        end
+
+        laser[i]:setFillColor(1,1,0)
+        physics.addBody(laser[i],"kinematic",{isSensor=true})
+
+        moveAndRemovelaser(i)
+    end
+
+    spawnlaser(1)
+    --------------------------------------------------------
+
+
+
+
+    image = display.newRect (100,100,100,100)
+    image.x = display.contentCenterX
+    image.y = display.contentCenterY
+
+    sceneGroup:insert( image )
+
+    image.touch = onSceneTouch
+
+    text1 = display.newText( "Game Screen", 0, 0, native.systemFontBold, 24 )
+    text1:setFillColor( 255 )
+    text1.x, text1.y = display.contentWidth * 0.5, 50
+    sceneGroup:insert( text1 )
+end
+
+function scene:show( event )
+
+    local phase = event.phase
+
+    if "will" == phase then
+        gameStatus = "ended"
+    end
+
+    if "did" == phase then
+        print( "4" )
+        composer.removeScene( "startScreen" )
+        image:addEventListener( "touch", image )
+        gameStatus = "running"
+    end
+
+end
+
+function scene:hide( event )
+    local phase = event.phase
+    if "will" == phase then
+        print( "5" )
+        gameStatus = "ended"
+        image:removeEventListener( "touch", image )
+        Runtime:removeEventListener( "enterFrame", onEnterFrame )
+    end
+end
+
+function scene:destroy( event ) 
+    print( "6" )
+end
+
+
+scene:addEventListener( "create", scene )
+scene:addEventListener( "show", scene )
+scene:addEventListener( "hide", scene )
+scene:addEventListener( "destroy", scene )
+
+
+return scene
+

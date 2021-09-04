@@ -1,0 +1,375 @@
+package AutoPilot;
+use strict;
+use warnings;
+# use diagnostics;
+
+=head1 Lunar Lander Autopilot
+
+The autopilot is called on every step of the lunar lander simulation.  
+It is passed state information as an argument and returns a set of course 
+correction commands.
+
+The lander world takes the surface of the moon (a circle!)
+and maps it onto a rectangular region. 
+On the x-axis, the lander will wrap around when it hits either the
+left or right edge of the region.  If the lander goes above the maximum
+height of the world, it escapes into the space and thus fails. 
+Similarly, if the lander's position goes below 0 without ever landing
+on some solid surface, it "sinks" and thus fails again.
+
+The simulation is simple in the respect that if the langer goes at a high speed
+it may pass through the terrain boundary.  
+
+The y-axis has normal gravitational physics.
+
+The goal of the autopilot is to land the craft at (or near) the landing
+zone without crashing it (or failing by leaving the world).
+
+=head2 Interface in a nutshell
+
+When the simulation is initialized, AutoPilot::Initialize() is called.
+Every clock tick, AutoPilot::ComputeLanding() is called by the simulator.
+For more explanation, see below.
+
+=cut
+
+# if you want to keep data between invocations of ComputeLanding, put
+# the data in this part of the code.  Use Initialize() to handle simulation
+# resets.
+
+my  $call_count = 0;
+my  $gravity;
+my ($x_min, $y_min, $x_max, $y_max);
+my ($lander_width, $lander_height, $center_x, $center_y);
+my  $target_x; 
+my ($thrust, $left_right_thrust); 
+my ($max_rotation, $max_left_right_thrusters, $max_main_thruster);
+my $ascend_height = 980;
+
+=head1 AutoPilot::Initialize()
+
+This method is called when a new simulation is started.
+The following parameters are passed to initialize:
+
+ $gravity, a number, describing the gravity in the world
+
+ $space_boundaries, a reference to an array with 4 numerical
+        elements, ($x_min, $y_min, $x_max, $y_max), describing 
+        the world boundaries
+
+ $target_x, a number representing the target landing position
+
+ $lander_capabilities, a reference to an array with
+   5 elements,
+
+    ($thrust, $left_right_thrust, $max_rotation, $max_left_right_thrusters, $max_main_thruster),
+
+   describing the capabilities of the lander.
+
+ $lander_dimensions, a reference to an array with    
+   4 elements,
+
+    ($lander_width, $lander_height, $center_x, $center_y),
+
+   describing the dimensions of the lander.
+
+=head2 Details
+=head3 Dimensions
+The dimensions are given in 'units' (you can think of 'units' as meters).
+The actual numbers can take any real value, not only integers.
+
+=head4 World dimensions
+
+The lander world is a square region with  a lower left corner at 
+($x_min,$y_min)  and an upper right corner at ($x_max, $y_max).
+The measurement units of these dimensions will just be called units
+(think about units as meters). By definition, $x_max>$x_min and
+$y_max>$y_min.
+
+The default values for the lower left and upper right corners
+are (-800,0), and (800,1600), respectively.
+
+=head4 Lander dimensions 
+
+The lander is $lander_width units wide and $lander_height high.
+The coordinates of the lander are always specified with respect to its center.
+The center of the lander relative to the lower left corner of the lander bounding box
+is given by $center_x, $center_y. Thus, if ($x,$y) are the coordinates of the lander,
+($x-$center_x,$y-$center_y) and ($x-$center_x+$lander_width,$y-$center_y+$lander_height)
+specify the corners of the bounding box of the lander. (Think of the lander as completely
+filling this box.) The significance of the bounding box of the lander is that a collision 
+occurs if the bounding box intersects with the terrain or the upper/lower edges of the world.
+If a collision occurs, as described earlier, the lander might have just landed,
+crashed or 'escaped' (and thus the lander failed).
+The constraints on these values are: $lander_width>0, $lander_height>0,
+$center_x>0, $center_y>0. 
+
+The default value for the width is 60 units, for the height it is 50,
+for $center_x it is 30, for $center_y it is 25. 
+
+=head4 Forces
+
+The gravitational force is:
+
+    $g
+
+The thrust exerted by the engine when fired is:
+
+    $thrust
+
+The thrust exerted by the left/right thrusters when fired is:
+
+    $left_right_thrust    
+
+=head4 Limits to the controls
+
+Within a single timestep there are limits to how many degrees the 
+lander may rotate in a timestep, and how many times the side thrusters, 
+and main thruster, can fire. These are stored in:
+
+    $max_rotation, $max_left_right_thrusters, $max_main_thruster
+
+=head4 Target
+
+The target landing zone that the lander is supposed to land at:
+
+    $target_x
+
+which returns
+
+    the string "any" if any safe landing site will do, or
+
+    a number giving the x-coordinate of the desired landing site.
+    Note: there is no guarantee that this is actually a safe spot to land!
+
+For more details about how the lander is controlled, see AutoPilot::ComputeLanding.
+
+=cut
+
+sub Initialize {
+    my ($space_boundaries, $lander_capabilities,$lander_dimensions);
+    ($gravity,  $space_boundaries, $target_x, $lander_capabilities, $lander_dimensions) = @_;
+    ($x_min, $y_min, $x_max, $y_max) = @{$space_boundaries};
+    ( $thrust, $left_right_thrust, $max_rotation,
+      $max_left_right_thrusters, $max_main_thruster) = @{$lander_capabilities};
+    ($lander_width, $lander_height, $center_x, $center_y) = @{$lander_dimensions};
+
+    $call_count = 0;
+}
+
+=head1 AutoPilot::ComputeLanding()
+
+This method is called for every clock tick of the simulation.
+It is passed the necessary information about the current state
+and it must return an array with elements, describing the
+actions that the lander should execute in the current tick.
+
+The parameters passed to the method describe the actual state
+ of the lander, the current terrain below the lander and some
+ extra information. In particular, the parameters are:
+
+  $fuel, a nonnegative integer describing the remaining amount of fuel.
+        When the fuel runs out, the lander becomes uncontrolled.
+
+  $terrain_info, an array describing the terrain below the lander (see below).
+
+  $lander_state, an array which contains information about the lander's state.
+        For more information, see below.
+
+  $debug, an integer encoding whether the autopilot should output any debug information.
+        Effectively, the value supplied on the command line after "-D",
+        or if this value is not supplied, the value of the variable $autopilot_debug
+        in the main program. 
+
+  $time, the time elapsed from the beginning of the simulation.
+        If the simulation is reset, time is also reset to 0.
+
+=head2 Details of the parameters
+
+=head3 The terrain information
+
+The array referred to by $terrain_info is either empty, or
+it describes the terrain element which is just (vertically) below the lander.
+It is empty, when there is no terrain element below the lander.
+When it is non-empty, it has the following elements:
+
+ ($x0, $y0, $x1, $y1, $slope, $crashSpeed, $crashSlope)
+
+where
+
+    ($x0, $y0)  is the left coordinate of the terrain segment,
+    ($x1, $y1)  is the right coordinate of the terrain segment,
+    $slope      is the left to right slope of the segment (rise/run),
+    $crashSpeed is the maximum landing speed to avoid a crash,
+    $crashSlope is the maximum ground slope to avoid a crash.
+
+=head3 The state of the lander
+
+The array referred to by $lander_state contains
+ the current position, attitude, and velocity of the lander:
+
+ ($px, $py, $attitude, $vx, $vy, $speed)
+
+where
+
+    $px is its x position in the world, in the range [-800, 800],
+    $py is its y position in the world, in the range [0, 1600],
+    $attitude is its current attitude angle in unit degrees, 
+    from y axis, where
+        0 is vertical,
+        > 0 is to the left (counter clockwise),
+        < 0 is to the right (clockwise),
+    $vx is the x velocity in m/s  (< 0 is to left, > 0 is to right),
+    $vy is the y velocity in m/s  (< 0 is down, > 0 is up),
+    $speed is the speed in m/s, where $speed == sqrt($vx*$vx + $vy*$vy)
+
+=head2 The array to be returned
+
+To control the lander you must return an array with 3 values:
+
+ ($rotation, $left_right_thruster, $main_thruster)
+
+$rotation instructs the lander to rotate the given number of degrees. 
+A value of 5 will cause the lander to rotate 5 degrees counter clockwise, 
+-5 will rotate 5 degrees clockwise.
+
+$left_right_thruster instructs the lander to fire either the left or 
+right thruster. Negative value fire the right thruster, pushing the 
+lander to the left, positive fire the left thruster, pushing to the right. 
+The absolute value of the value given is the number of pushes, 
+so a value of -5 will fire the right thruster 5 times.
+
+$main_thruster instructs the lander to fire the main engine, 
+a value of 5 will fire the main engine 5 times.
+
+Each firing of either the main engine or a side engine consumes 
+one unit of fuel.
+When the fuel runs out, the lander becomes uncontrolled.
+
+Note that your instructions will only be executed up until the 
+limits denoted in $max_rotation, $max_side_thrusters, and $max_main_thruster. 
+If you return a value larger than one of these maximums than the 
+lander will only execute the value of the maximum.
+
+=cut
+
+
+sub ComputeLanding {
+    my ($fuel, $terrain_info, $lander_state, $debug, $time)  = @_;
+
+    my $rotation = 0;
+    my $left_right_thruster = 0;
+    my $main_thruster = 0;
+    # fetch and update historical information
+    $call_count++;
+
+    if ( ! $terrain_info ) {
+        # hmm, we are not above any terrain!  So do nothing.
+        return;
+    }
+
+    my ($x0, $y0, $x1, $y1, $slope, $crashSpeed, $crashSlope) =
+        @{$terrain_info};
+
+    my ($px, $py, $attitude, $vx, $vy, $speed) =
+        @{$lander_state};
+
+    if ( $debug ) {
+        printf "%5d ", $call_count;
+        printf "%5s ", $target_x;
+        printf "%4d, (%6.1f, %6.1f), %4d, ",
+            $fuel, $px, $py, $attitude;
+        printf "(%5.2f, %5.2f), %5.2f, ",
+            $vx, $vy, $speed;
+        printf "(%d %d %d %d, %5.2f), %5.2f, %5.2f\n",
+          $x0, $y0, $x1, $y1, $slope, $crashSpeed, $crashSlope;
+    }
+
+    # reduce horizontal velocity
+    if ( $vx < -1 && $attitude > -90 ) {
+        # going to the left, rotate clockwise, but not past -90!
+        $rotation = -1;
+    } 
+    elsif ( 1 < $vx && $attitude < 90 ) {
+        # going to the right, rotate counterclockwise, but not past 90
+        $rotation = +1;
+    } 
+    else {
+        # we're stable horizontally so make sure we are vertical
+        $rotation = -$attitude;
+    }
+
+    # reduce vertical velocity
+
+
+    if ($target_x eq "any"){
+    if (abs($slope) < $crashSlope){
+        if ($vy < -$crashSpeed + 6){
+        $main_thruster = 1;
+        if (int($vx) < 1 && int ($vx) > -1){
+            $left_right_thruster = 0;
+        }
+        if (int($vx) < -1){
+            $left_right_thruster = 1;
+        }
+        if (int($vx) > 1){
+            $left_right_thruster = -1;
+        }
+        }
+    }
+     else{
+        if ( $py < $ascend_height) {
+        if ($vy < 5){
+        $main_thruster=2;
+        }
+        }   
+        if ($py > $ascend_height){
+        $left_right_thruster = 1;
+        if ($vx > 18){
+            $left_right_thruster = 0;
+        }
+        }
+    }
+    }
+
+    if ($target_x ne "any"){
+
+    if ($target_x < $px + 5 && $target_x > $px - 5){
+        print "I made it here";
+        if (abs($slope) < $crashSlope){
+        if ($vy < -$crashSpeed + 1){
+        $main_thruster = 1;
+        if (int($vx) < 1 && int ($vx) > -1){
+            $left_right_thruster = 0;
+        }
+        if (int($vx) < -1){
+            $left_right_thruster = 1;
+        }
+        if (int($vx) > 1){
+            $left_right_thruster = -1;
+        }
+        }
+    }
+
+    }
+    if ($target_x != $px){
+        if ( $py < $ascend_height) {
+            if ($vy < 5){
+            $main_thruster=2;
+            }
+        }
+        if ($py > $ascend_height){
+        $left_right_thruster = 1;
+        if ($vx > 10){
+            $left_right_thruster = 0;
+        }
+        }
+    }
+
+    }
+
+    return ($rotation, $left_right_thruster, $main_thruster);
+}
+
+1; # package ends
+

@@ -1,0 +1,159 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.IO;
+
+namespace InMemProcessingLeak
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            //Setup Test Environment. Uncomment Once
+            //15000-20000 files would be more realistic
+            //InMemoryProcessingLeak.GenerateTestDirectoryFilesAndColumns(3000, 3);
+            //GC
+            GC.Collect();
+            //Demostrate Large Object Memory Allocation Problem (LOMAP)
+            InMemoryProcessingLeak.SelectColumnFromAllFiles(3000, 2);
+        }
+    }
+
+    class InMemoryProcessingLeak
+    {
+        public static List<string> SelectColumnFromAllFiles(int filesToSelect, int column)
+        {
+            List<string> allItems = new List<string>();
+            int fileCount = filesToSelect;
+            long fileSize, totalReadSize = 0;
+
+            for (int i = 1; i <= fileCount; i++)
+            {
+                allItems.AddRange(SelectColumn(i, column, out fileSize));
+                totalReadSize += fileSize;
+                Console.Clear();
+                Console.Out.WriteLine("Reading file {0:00000} of {1}", i, fileCount);
+                Console.Out.WriteLine("Memory = {0}MB", GC.GetTotalMemory(false) / 1048576);
+                Console.Out.WriteLine("Total Read = {0}MB", totalReadSize / 1048576);
+            }
+            Console.ReadLine();
+            return allItems;
+
+        }
+
+        //reads a csv file and returns the values for a selected column
+        private static List<string> SelectColumn(int fileNumber, int column, out long fileSize)
+        {
+            string fileIn;
+            FileInfo file = new FileInfo(string.Format(@"MemLeakTestFiles/File{0:00000}.txt", fileNumber));
+            fileSize = file.Length;
+            using (System.IO.FileStream fs = file.Open(FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                using (System.IO.StreamReader sr = new System.IO.StreamReader(fs))
+                {
+                    fileIn = sr.ReadToEnd();
+                }
+            }
+
+            string[] lineDelimiter = { "\n" };
+            string[] allLines = fileIn.Split(lineDelimiter, StringSplitOptions.None);
+
+            List<string> processedColumn = new List<string>();
+
+            string current;
+            for (int i = 0; i < allLines.Length - 1; i++)
+            {
+                current = GetColumnFromProcessedRow(allLines[i], column);
+                processedColumn.Add(current);
+            }
+
+            for (int i = 0; i < lineDelimiter.Length; i++) //GC
+            {
+                lineDelimiter[i] = null;
+            }
+            lineDelimiter = null;
+
+            for (int i = 0; i < allLines.Length; i++) //GC
+            {
+                allLines[i] = null;
+            }
+            allLines = null;
+            current = null;
+
+            return processedColumn;
+        }
+
+        //returns a row value from the selected comma separated string and column position
+        private static string GetColumnFromProcessedRow(string line, int columnPosition)
+        {
+            string[] entireRow = line.Split(",".ToCharArray());
+            string currentColumn = entireRow[columnPosition];
+            //GC
+            for (int i = 0; i < entireRow.Length; i++)
+            {
+                entireRow[i] = null;
+            }
+            entireRow = null;
+            return currentColumn;
+        }
+
+        #region Generators
+        public static void GenerateTestDirectoryFilesAndColumns(int filesToGenerate, int columnsToGenerate)
+        {
+            DirectoryInfo dirInfo = new DirectoryInfo("MemLeakTestFiles");
+            if (!dirInfo.Exists)
+            {
+                dirInfo.Create();
+            }
+            Random seed = new Random();
+
+            string[] columns = new string[columnsToGenerate];
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 1; i <= filesToGenerate; i++)
+            {
+                int rows = seed.Next(10, 8000);
+                for (int j = 0; j < rows; j++)
+                {
+                    sb.Append(GenerateRow(seed, columnsToGenerate));
+                }
+                using (TextWriter tw = new StreamWriter(String.Format(@"{0}/File{1:00000}.txt", dirInfo, i)))
+                {
+                    tw.Write(sb.ToString());
+                    tw.Flush();
+                }
+                sb.Remove(0, sb.Length);
+                Console.Clear();
+                Console.Out.WriteLine("Generating file {0:00000} of {1}", i, filesToGenerate);
+            }
+        }
+
+        private static string GenerateString(Random seed)
+        {
+            StringBuilder sb = new StringBuilder();
+            int characters = seed.Next(4, 12);
+            for (int i = 0; i < characters; i++)
+            {
+                sb.Append(Convert.ToChar(Convert.ToInt32(Math.Floor(26 * seed.NextDouble() + 65))));
+            }
+            return sb.ToString();
+        }
+
+        private static string GenerateRow(Random seed, int columnsToGenerate)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.Append(seed.Next());
+            for (int i = 0; i < columnsToGenerate - 1; i++)
+            {
+                sb.Append(",");
+                sb.Append(GenerateString(seed));
+            }
+            sb.Append("\n");
+
+            return sb.ToString();
+        }
+        #endregion
+    }
+}
+

@@ -1,0 +1,39 @@
+package Foo;
+use Moose;
+
+has 'bar' => (
+    is      => 'ro',
+    isa     => 'HashRef', # the error doesn't happen with simpler datatypes
+    lazy    => 1, # this line causes the error
+    default => sub { return { map {$_ => $_} (1 .. 10) } },
+);
+
+package main;
+
+use threads;
+use Thread::Queue;
+
+my $threadq = Thread::Queue->new;
+
+sub create {
+    # $_ doesn't seem to be thread-safe
+    # this resolved another problem I had with a custom Moose type constraint 
+    # where the 'where' clause used $_
+    local $_;
+
+    $threadq->enqueue( Foo->new ) foreach 1 .. 5;
+    $threadq->enqueue( undef );
+    return;
+}
+
+sub process {
+    local $_;
+    while (my $f = $threadq->dequeue) {
+        print keys %{$f->bar}, "\n";
+    }
+    return;
+}
+
+threads->create( \&create )->join;
+threads->create( \&process )->join;
+

@@ -1,0 +1,151 @@
+{
+module Lexer ( main ) where
+
+import System.IO.Unsafe
+}
+
+
+%wrapper "monadUserState"
+
+$whitespace = [\ \t\b]
+$digit      = 0-9                                            -- digits
+$alpha      = [A-Za-z]
+$letter     = [a-zA-Z]                                       -- alphabetic characters
+$ident      = [$letter $digit _]                             -- identifier character
+$indent     = [\ \t]
+
+@number     = [$digit]+
+@identifier = $alpha($alpha|_|$digit)*
+
+error:-
+
+@identifier { mkL LVarId }
+
+\n $whitespace* \n { skip }
+\n $whitespace*    { setIndent }
+$whitespace+       { skip }
+
+{
+
+data Lexeme = Lexeme AlexPosn LexemeClass (Maybe String)
+
+instance Show Lexeme where
+    show (Lexeme _ LEOF _)   = "  Lexeme EOF"
+    show (Lexeme p cl  mbs) = " Lexeme class=" ++ show cl ++ showap p ++ showst mbs
+      where
+        showap pp = " posn=" ++ showPosn pp
+        showst Nothing  = ""
+        showst (Just s) = " string=" ++ show s
+
+instance Eq Lexeme where
+    (Lexeme _ cls1 _) == (Lexeme _ cls2 _) = cls1 == cls2
+
+showPosn :: AlexPosn -> String
+showPosn (AlexPn _ line col) = show line ++ ':': show col
+
+tokPosn :: Lexeme -> AlexPosn
+tokPosn (Lexeme p _ _) = p
+
+data LexemeClass
+    = LVarId
+    | LTIndent Int
+    | LTDedent Int
+    | LIndent
+    | LDedent
+    | LEOF
+    deriving (Show, Eq)
+
+mkL :: LexemeClass -> AlexInput -> Int -> Alex Lexeme
+mkL c (p, _, _, str) len = return (Lexeme p c (Just (take len str)))
+
+data AlexUserState = AlexUserState { indent :: Int }
+
+alexInitUserState :: AlexUserState
+alexInitUserState = AlexUserState 0
+
+type Action = AlexInput -> Int -> Alex Lexeme
+
+getLexerIndentLevel :: Alex Int
+getLexerIndentLevel = Alex $ \s@AlexState{alex_ust=ust} -> Right (s, indent ust)
+
+setLexerIndentLevel :: Int -> Alex ()
+setLexerIndentLevel i = Alex $ \s@AlexState{alex_ust=ust} -> Right (s{alex_ust=(AlexUserState i)}, ())
+
+setIndent :: Action
+setIndent input@(p, _, _, str) i = do
+    --let !x = unsafePerformIO $ putStrLn $ "|matched string: " ++ str ++ "|"
+    lastIndent <- getLexerIndentLevel
+    currIndent <- countIndent (drop 1 str) 0 -- first char is always \n
+    if (lastIndent < currIndent) then
+        do setLexerIndentLevel currIndent
+           mkL (LTIndent (currIndent - lastIndent)) input i
+    else if (lastIndent > currIndent) then
+        do setLexerIndentLevel currIndent
+           mkL (LTDedent (lastIndent - currIndent)) input i
+    else alexMonadScan
+  where
+    countIndent str total
+        | take 1 str == "\t" = do skip input 1
+                                  countIndent (drop 1 str) (total+1)
+        | take 4 str == "    " = do skip input 4
+                                    countIndent (drop 4 str) (total+1)
+        | otherwise = return total
+
+alexEOF :: Alex Lexeme
+alexEOF = return (Lexeme undefined LEOF Nothing)
+
+scanner :: String -> Either String [Lexeme]
+scanner str =
+    let loop = do
+        tok@(Lexeme _ cl _) <- alexMonadScan
+        if (cl == LEOF)
+            then return [tok]
+            else do toks <- loop
+                    return (tok:toks)
+    in runAlex str loop
+
+addIndentations :: [Lexeme] -> [Lexeme]
+addIndentations (lex@(Lexeme pos (LTIndent c) _):ls) =
+    concat [iter lex c, addIndentations ls]
+  where iter lex c = if c == 0 then []
+                     else (Lexeme pos LIndent Nothing):(iter lex (c-1))
+addIndentations (lex@(Lexeme pos (LTDedent c) _):ls) =
+    concat [iter lex c, addIndentations ls]
+  where iter lex c = if c == 0 then []
+                     else (Lexeme pos LDedent Nothing):(iter lex (c-1))
+addIndentations (l:ls) = l:(addIndentations ls)
+addIndentations [] = []
+
+
+main = do
+    s <- getContents
+    return ()
+    print $ fmap addIndentations (scanner s)
+
+}
+
+\n $whitespace*    { setIndent }
+setIndent
+unsafePerformIO
+setIndent
+begin       
+        first indent
+|matched string: 
+        first indent
+                second indent
+                second indent
+dedent
+dedent
+|
+|matched string: 
+                second indent
+dedent
+|
+|matched string: 
+dedent
+|
+|matched string: 
+|
+Right [ Lexeme class=LVarId posn=1:1 string="begin", Lexeme class=LIndent posn=1:6, Lexeme class=LVarId posn=2:15 string="indent", Lexeme class=LIndent posn=2:21, Lexeme class=LDedent posn=3:30, Lexeme class=LDedent posn=3:30, Lexeme class=LVarId posn=4:1 string="dedent",  Lexeme EOF]
+
+setIndent

@@ -1,0 +1,156 @@
+public class Server
+{
+    TcpListener listener;
+    Object sync;
+    IHandler handler;
+    bool running;
+
+    public Server(IHandler handler, int port)
+    {
+        this.handler = handler;
+        IPAddress address = Dns.GetHostEntry(Dns.GetHostName()).AddressList[0];
+        listener = new TcpListener(address, port);
+        sync = new Object();
+        running = false;
+    }
+
+    public void Start()
+    {
+        Thread thread = new Thread(ThreadStart);
+        thread.Start();
+    }
+
+    public void Stop()
+    {
+        lock (sync)
+        {
+            listener.Stop();
+            running = false;
+            Monitor.Pulse(sync);
+        }
+    }
+
+    void ThreadStart()
+    {
+        if (!running)
+        {
+            listener.Start();
+            running = true;
+            lock (sync)
+            {
+                while (running)
+                {
+                    try
+                    {
+                        listener.BeginAcceptTcpClient(new AsyncCallback(Accept), listener);
+                        Monitor.Wait(sync);  // Release lock and wait for a pulse
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e.Message);
+                    }
+                }
+            }
+        }
+    }
+
+    void Accept(IAsyncResult result)
+    {
+        // Let the server continue listening
+        lock (sync)
+        {
+            Monitor.Pulse(sync);
+        } 
+
+        if (running)
+        {
+            TcpListener listener = (TcpListener)result.AsyncState;
+            using (TcpClient client = listener.EndAcceptTcpClient(result))
+            {
+                handler.Handle(client.GetStream());
+            }
+        }
+    }
+}
+
+class Client
+{
+    class EchoHandler : IHandler
+    {
+        public void Handle(Stream stream)
+        {
+            System.Console.Out.Write("Echo Handler: ");
+            StringBuilder sb = new StringBuilder();
+            byte[] buffer = new byte[1024];
+            int count = 0;
+            while ((count = stream.Read(buffer, 0, 1024)) > 0)
+            {
+                sb.Append(Encoding.ASCII.GetString(buffer, 0, count));
+            }
+            System.Console.Out.WriteLine(sb.ToString());
+            System.Console.Out.Flush();
+        }
+    }
+
+    static IPAddress localhost = Dns.GetHostEntry(Dns.GetHostName()).AddressList[0];
+
+    public static int Main()
+    {
+        Server server1 = new Server(new EchoHandler(), 1000);
+        Server server2 = new Server(new EchoHandler(), 1001);
+
+        server1.Start();
+        server2.Start();
+
+        Console.WriteLine("Press return to test...");
+        Console.ReadLine();
+
+        // Note interleaved ports
+        SendMsg("Test1", 1000);
+        SendMsg("Test2", 1001);
+        SendMsg("Test3", 1000);
+        SendMsg("Test4", 1001);
+        SendMsg("Test5", 1000);
+        SendMsg("Test6", 1001);
+        SendMsg("Test7", 1000);
+
+        Console.WriteLine("Press return to terminate...");
+        Console.ReadLine();
+
+        server1.Stop();
+        server2.Stop();
+
+        return 0;
+    }
+
+    public static void SendMsg(String msg, int port)
+    {
+        IPEndPoint endPoint = new IPEndPoint(localhost, port);
+
+        byte[] buffer = Encoding.ASCII.GetBytes(msg);
+        using (Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+        {
+            s.Connect(endPoint);
+            s.Send(buffer);
+        }
+    }
+}
+
+Pulse
+Accept
+Wait
+ThreadStart
+ThreadStart
+sync
+Monitor.Wait()
+Accept
+Pulse
+Stop()
+//listener.Stop();
+//running = false;
+
+Stop()
+sync
+ThreadStart
+Accept
+sync

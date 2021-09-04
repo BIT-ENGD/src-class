@@ -1,0 +1,50 @@
+ select t.year,
+    t.week,
+    decode(t.mine_id,NULL,'PF',t.mine_id) as mine_id,
+    decode(t.product,Null,'LF',t.product) as product,
+    decode(t.mine_id||'-'||t.product,'-','PF',t.mine_id||'-'||t.product) as code,
+    count(distinct t.tpps_train_id) as trains,
+    count(1) as units
+
+from 
+
+ (
+     select trn.mine_code as mine_id,
+            trn.train_tpps_id as tpps_train_id,      
+            round((con.calibrated_weight_total - con.empty_weight_total),2) as tonnes 
+     from  widsys.train trn
+               INNER JOIN widsys.consist con
+                   USING (train_record_id)
+
+     where trn.direction = 'N'
+           and (con.calibrated_weight_total-con.empty_weight_total) > 10
+           and trn.num_cars > 10 
+   and con.consist_no not like '_L%'
+    ) w,
+
+     (
+      select to_char(td.datetime_act_comp_dump-7/24, 'IYYY') as year,
+             to_char(td.datetime_act_comp_dump-7/24, 'IW') as week,
+             td.mine_code as mine_id,
+             td.train_id as tpps_train_id,
+             pt.product_type_code as product
+      from tpps.train_details td
+           inner join tpps.ore_products op
+           using (ore_product_key)
+           inner join tpps.product_types pt
+           using (product_type_key)
+      where to_char(td.datetime_act_comp_dump-7/24, 'IYYY') = 2010
+            and to_char(td.datetime_act_comp_dump-7/24, 'IW') = 12
+      order by td.datetime_act_comp_dump asc
+ ) t 
+where w.mine_id = t.mine_id
+   and w.tpps_train_id = t.tpps_train_id
+
+  having t.product is not null or t.mine_id is null 
+    group by 
+           t.year,
+          t.week,  
+         rollup(
+          t.mine_id,
+          t.product)
+

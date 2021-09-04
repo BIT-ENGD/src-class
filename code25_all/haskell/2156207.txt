@@ -1,0 +1,89 @@
+{-# OPTIONS -fglasgow-exts #-}
+module Collapse where
+class Collapse a r | r -> a where
+  collapse :: (a -> a -> a) -> a -> r
+instance Collapse a a where
+  collapse _ = id
+instance (Collapse a r) => Collapse a (a -> r) where
+  collapse f a a' = collapse f (f a a')
+
+Collapse.hs:5:9:
+    Functional dependencies conflict between instance declarations:
+      instance Collapse a a -- Defined at Collapse.hs:5:9-20
+      instance (Collapse a r) => Collapse a (a -> r)
+        -- Defined at Collapse.hs:7:9-43
+
+module Collapse where
+class Collapse a r | r -> a where
+  collapse :: (a -> a -> a) -> a -> r
+data C a = C a
+instance Collapse a (C a) where
+  collapse _ = C . id
+instance (Collapse a r) => Collapse a (a -> r) where
+  collapse f a a' = collapse f (f a a')
+sum :: (Num a, Collapse a r) => a -> r
+sum = collapse (+)
+
+collapse
+ghci
+ghci> let C s = Collapse.sum 1 2 3 in s
+6
+
+UndecidableInstances
+{-# OPTIONS -fglasgow-exts #-}
+{-# LANGUAGE UndecidableInstances #-}
+module Variadic where
+class Variadic a b r | r -> a, r -> b where
+  variadic :: ([a] -> b) -> r
+data V a = V a
+instance Variadic a b (V b) where
+  variadic f = V $ f []
+instance (Variadic a b r) => Variadic a b (a -> r) where
+  variadic f a = variadic (f . (a:))
+list :: Variadic a [a] r => r
+list = variadic . id
+foldl :: (Variadic b a r) => (a -> b -> a) -> a -> r
+foldl f a = variadic (Prelude.foldl f a)
+
+UndecidableInstances
+Variadic.hs:7:0:
+    Illegal instance declaration for `Variadic a b (V b)'
+        (the Coverage Condition fails for one of the functional dependencies;
+         Use -XUndecidableInstances to permit this)
+    In the instance declaration for `Variadic a b (V b)'
+
+Variadic.hs:9:0:
+    Illegal instance declaration for `Variadic a b (a -> r)'
+        (the Coverage Condition fails for one of the functional dependencies;
+         Use -XUndecidableInstances to permit this)
+    In the instance declaration for `Variadic a b (a -> r)'
+
+ghci> let V l = Variadic.list 1 2 3 in l
+[1,2,3]
+ghci> let vall p = Variadic.foldl (\b a -> b && (p a)) True
+ghci> :t vall
+vall :: (Variadic b Bool r) => (b -> Bool) -> r
+ghci> let V b = vall (>0) 1 2 3 in b
+True
+
+ghci> let vsum = Variadic.foldl (+) 0
+
+<interactive>:1:10:
+    Ambiguous type variables `a', `r' in the constraint:
+      `Variadic a a r'
+        arising from a use of `Variadic.foldl' at <interactive>:1:10-29
+    Probable fix: add a type signature that fixes these type variable(s)
+
+<interactive>:1:10:
+    Ambiguous type variable `a'in the constraint:
+      `Num a' arising from the literal `0' at <interactive>:1:29
+    Probable fix: add a type signature that fixes these type variable(s)
+ghci> let vsum' = Variadic.foldl (+) 
+ghci> :t vsum'
+(Num a, Variadic a a r) => t -> a -> r
+ghci> :t vsum' 0
+(Num a, Variadic a a r) => a -> r
+ghci> let V s = vsum' 0 1 2 3 in s
+6
+
+UndecidableInstances

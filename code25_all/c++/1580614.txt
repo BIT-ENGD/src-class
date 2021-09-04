@@ -1,0 +1,84 @@
+if ( argc != 2 )
+{
+    cerr << "Usage: " << argv[0];
+    cerr << " <URI>" << endl;
+    return 1;
+}
+else
+{
+    uri_string = argv[1];
+}
+
+// Create URI object and have it parse the uri_string
+URI *uri = URI::Parse(uri_string);
+
+if ( uri == NULL )
+{
+    cerr << "Error: Cannot parse URI." << endl;
+    return 2;
+}
+
+// Check the port number specified, if none use port 80
+unsigned port = 80;
+if ( uri->Is_port_defined() )
+{
+    port = uri->Get_port();
+}
+
+// Create TCP socket and connect to server
+int tcp_sock = socket( AF_INET, SOCK_STREAM, 0 );
+if ( tcp_sock < 0 )
+{
+    cerr << "Unable to create TCP socket." << endl;
+    return 3;
+}
+
+sockaddr_in server;
+socklen_t slen = sizeof(server);
+
+server.sin_family = AF_INET;
+server.sin_port = htons( port );
+hostent *hostp = gethostbyname( uri->Get_host().c_str() );
+memcpy( &server.sin_addr, hostp->h_addr, hostp->h_length );
+
+if ( connect( tcp_sock, (sockaddr*)&server, slen ) < 0 )
+{
+    cerr << "Unable to connect to server via TCP." << endl;
+    close( tcp_sock );
+    return 4;
+}
+
+// Build HTTP request to send to server
+HTTP_Request *request = HTTP_Request::Create_GET_request( uri->Get_path() );
+request->Set_host( uri->Get_host() );
+string request_string = "";
+request->Print( request_string );
+
+//cout << request_string << endl;
+
+// Send it to the server, wait for reply and use HTTP_Response to get reply
+send( tcp_sock, &request_string, sizeof(request_string), 0 );
+
+char recv_buffer[1024];
+int bytes_recv = 0;
+while ( bytes_recv < 1024 )
+{
+    int recv_len = recv( tcp_sock, recv_buffer + bytes_recv,
+        1024 - bytes_recv, 0 );
+    if ( recv_len == -1 )
+    {
+        cerr << "Error receiving response from server." << endl;
+        close( tcp_sock );
+        return 5;
+    }
+    bytes_recv += recv_len;
+}
+
+
+HTTP_Response *response = HTTP_Response::Parse(recv_buffer, bytes_recv);
+string response_string = "";
+response->Print( response_string );
+cout << response_string << endl;
+
+return 0;
+

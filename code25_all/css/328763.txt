@@ -1,0 +1,246 @@
+<ass:StylePlaceHolder ID="StylePlaceHolder1" runat="server" SkinID="ThemeStyles" />
+
+<ass:StylePlaceHolder1runat="server" SkinId="ThemeStyles">
+    <ass:Style CssUrl="~/App_Themes/Default/01reset.css" />
+    <ass:Style CssUrl="~/App_Themes/Default/02style.css" />
+    <ass:Style CssUrl="~/App_Themes/Default/99iefix.css" ConditionCommentExpression="[if IE]" />
+</ass:StylePlaceHolder1>
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Security.Permissions;
+using System.Web;
+using System.Web.UI;
+using System.Web.UI.HtmlControls;
+
+[assembly: TagPrefix("Assimilated.Extensions.Web.Controls", "ass")]
+namespace Assimilated.WebControls.Stylesheet
+{
+    [AspNetHostingPermission(SecurityAction.Demand, Level = AspNetHostingPermissionLevel.Minimal)]
+    [AspNetHostingPermission(SecurityAction.InheritanceDemand, Level = AspNetHostingPermissionLevel.Minimal)]
+    [DefaultProperty("SkinID")]
+    [ToolboxData("<{0}:StylePlaceHolder runat=\"server\" SkinID=\"ThemeStyles\"></{0}:StylePlaceHolder>")]
+    [ParseChildren(true, "Styles")]
+    [Themeable(true)]
+    [PersistChildren(false)]
+    public class StylePlaceHolder : Control
+    {
+        private List<Style> _styles;
+
+        [Browsable(true)]
+        [Category("Behavior")]
+        [DefaultValue("ThemeStyles")]
+        public override string SkinID { get; set; }
+
+        [Browsable(false)]
+        public List<Style> Styles
+        {
+            get
+            {
+                if (_styles == null)
+                    _styles = new List<Style>();
+                return _styles;
+            }
+        }
+
+        protected override void CreateChildControls()
+        {
+            if (_styles == null)
+                return;
+
+            // add child controls
+            Styles.ForEach(Controls.Add);
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+
+            // get notified when page has finished its load stage
+            Page.LoadComplete += Page_LoadComplete;
+        }
+
+        void Page_LoadComplete(object sender, EventArgs e)
+        {
+            // only remove if the page is actually using themes
+            if (!string.IsNullOrEmpty(Page.StyleSheetTheme) || !string.IsNullOrEmpty(Page.Theme))
+            {
+                // Make sure only to remove style sheets from the added by
+                // the runtime form the current theme.
+                var themePath = string.Format("~/App_Themes/{0}",
+                                              !string.IsNullOrEmpty(Page.StyleSheetTheme)
+                                                  ? Page.StyleSheetTheme
+                                                  : Page.Theme);
+
+                // find all existing stylesheets in header
+                var removeCandidate = Page.Header.Controls.OfType<HtmlLink>()
+                    .Where(link => link.Href.StartsWith(themePath)).ToList();
+
+                // remove the automatically added style sheets
+                removeCandidate.ForEach(Page.Header.Controls.Remove);
+            }
+        }
+
+        protected override void AddParsedSubObject(object obj)
+        {
+            // only add Style controls
+            if (obj is Style)
+                base.AddParsedSubObject(obj);
+        }
+
+    }
+}
+
+using System.ComponentModel;
+using System.Security.Permissions;
+using System.Web;
+using System.Web.UI;
+
+[assembly: TagPrefix("Assimilated.Extensions.Web.Controls", "ass")]
+namespace Assimilated.WebControls.Stylesheet
+{
+    [AspNetHostingPermission(SecurityAction.Demand, Level = AspNetHostingPermissionLevel.Minimal)]
+    [AspNetHostingPermission(SecurityAction.InheritanceDemand, Level = AspNetHostingPermissionLevel.Minimal)]
+    [DefaultProperty("CssUrl")]
+    [ParseChildren(true, "InlineStyle")]
+    [PersistChildren(false)]
+    [ToolboxData("<{0}:Style runat=\"server\"></{0}:Style>")]
+    [Themeable(true)]
+    public class Style : Control
+    {
+        public Style()
+        {
+            // set default value... for some reason the DefaultValue attribute do
+            // not set this as I would have expected.
+            TargetMedia = "All";
+        }
+
+        #region Properties
+
+        [Browsable(true)]
+        [Category("Style sheet")]
+        [DefaultValue("")]
+        [Description("The url to the style sheet.")]
+        [UrlProperty("*.css")]
+        public string CssUrl
+        {
+            get; set;
+        }
+
+        [Browsable(true)]
+        [Category("Style sheet")]
+        [DefaultValue("All")]
+        [Description("The target media(s) of the style sheet. See http://www.w3.org/TR/REC-CSS2/media.html for more information.")]
+        public string TargetMedia
+        {
+            get; set;
+        }
+
+        [Browsable(true)]
+        [Category("Style sheet")]
+        [DefaultValue(EmbedType.Link)]
+        [Description("Specify how to embed the style sheet on the page.")]
+        public EmbedType Type
+        {
+            get; set;
+        }
+
+        [Browsable(false)]
+        [PersistenceMode(PersistenceMode.InnerDefaultProperty)]
+        public string InlineStyle
+        {
+            get; set;
+        }
+
+        [Browsable(true)]
+        [Category("Conditional comment")]
+        [DefaultValue("")]
+        [Description("Specifies a conditional comment expression to wrap the style sheet in. See http://msdn.microsoft.com/en-us/library/ms537512.aspx")]
+        public string ConditionalCommentExpression
+        {
+            get; set;
+        }
+
+        [Browsable(true)]
+        [Category("Conditional comment")]
+        [DefaultValue(CommentType.DownlevelHidden)]
+        [Description("Whether to reveal the conditional comment expression to downlevel browsers. Default is to hide. See http://msdn.microsoft.com/en-us/library/ms537512.aspx")]
+        public CommentType ConditionalCommentType
+        {
+            get; set;
+        }
+
+        [Browsable(true)]
+        [Category("Behavior")]
+        public override string SkinID { get; set; }
+
+        #endregion
+
+        protected override void Render(HtmlTextWriter writer)
+        {            
+            // add empty line to make output pretty
+            writer.WriteLine();
+
+            // prints out begin condition comment tag
+            if (!string.IsNullOrEmpty(ConditionalCommentExpression))
+                writer.WriteLine(ConditionalCommentType == CommentType.DownlevelRevealed ? "<!{0}>" : "<!--{0}>",
+                                 ConditionalCommentExpression);
+
+            if (!string.IsNullOrEmpty(CssUrl))
+            {               
+                // add shared attribute
+                writer.AddAttribute(HtmlTextWriterAttribute.Type, "text/css");
+
+                // render either import or link tag
+                if (Type == EmbedType.Link)
+                {
+                    // <link href=\"{0}\" type=\"text/css\" rel=\"stylesheet\" media=\"{1}\" />
+                    writer.AddAttribute(HtmlTextWriterAttribute.Href, ResolveUrl(CssUrl));
+                    writer.AddAttribute(HtmlTextWriterAttribute.Rel, "stylesheet");
+                    writer.AddAttribute("media", TargetMedia);
+                    writer.RenderBeginTag(HtmlTextWriterTag.Link);
+                    writer.RenderEndTag();
+                }
+                else
+                {
+                    // <style type="text/css">@import "modern.css" screen;</style>
+                    writer.RenderBeginTag(HtmlTextWriterTag.Style);
+                    writer.Write("@import \"{0}\" {1};", ResolveUrl(CssUrl), TargetMedia);
+                    writer.RenderEndTag();
+                }
+            }
+
+            if(!string.IsNullOrEmpty(InlineStyle))
+            {
+                // <style type="text/css">... inline style ... </style>
+                writer.AddAttribute(HtmlTextWriterAttribute.Type, "text/css");
+                writer.RenderBeginTag(HtmlTextWriterTag.Style);
+                writer.Write(InlineStyle);
+                writer.RenderEndTag();
+            }
+
+            // prints out end condition comment tag
+            if (!string.IsNullOrEmpty(ConditionalCommentExpression))
+            {
+                // add empty line to make output pretty
+                writer.WriteLine();
+                writer.WriteLine(ConditionalCommentType == CommentType.DownlevelRevealed ? "<![endif]>" : "<![endif]-->");
+            }
+        }
+    }
+
+    public enum EmbedType
+    {        
+        Link = 0,
+        Import = 1,
+    }
+
+    public enum CommentType
+    {
+        DownlevelHidden = 0,
+        DownlevelRevealed = 1
+    }
+}
+

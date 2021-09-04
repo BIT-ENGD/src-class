@@ -1,0 +1,91 @@
+function attention.recursive_atten_revise(input_size, embedding_size,      last_embed_size, output_size)
+local inputs = {}
+local outputs = {}
+table.insert(inputs, nn.Identity()())
+table.insert(inputs, nn.Identity()())
+table.insert(inputs, nn.Identity()())
+table.insert(inputs, nn.Identity()())
+table.insert(inputs, nn.Identity()())
+table.insert(inputs, nn.Identity()())
+table.insert(inputs, nn.Identity()())
+
+local img_feat = inputs[1]
+local embed_ques = inputs[2]
+local embed_img = inputs[3]
+local conv_ques = inputs[4]
+local conv_img = inputs[5]
+local lstm_ques = inputs[6]
+local lstm_img = inputs[7]
+print('initialize inputs.')
+-- word level image attention split and join
+local img1_feat = nn.Narrow(2,1,1)(img_feat)
+local img2_feat = nn.Narrow(2,2,1)(img_feat)
+local img3_feat = nn.Narrow(2,3,1)(img_feat)
+
+local w_att1_img = nn.Narrow(2,1,1)(embed_img)
+local w_att2_img = nn.Narrow(2,2,1)(embed_img)
+local w_att3_img = nn.Narrow(2,3,1)(embed_img)-- need to check if it is n_batch*1
+
+local rep_img_atten1 = nn.Replicate(input_size,2)(w_att1_img)
+local rep_img_atten1_dim = nn.View(-1,input_size)(rep_img_atten1)
+local rep_img_atten2 = nn.Replicate(input_size,2)(w_att2_img)
+local rep_img_atten2_dim = nn.View(-1,input_size)(rep_img_atten2)
+local rep_img_atten3 = nn.Replicate(input_size,2)(w_att3_img)
+local rep_img_atten3_dim = nn.View(-1,input_size)(rep_img_atten3)
+
+local w_att_feat1 = nn.CMulTable()({img1_feat,rep_img_atten1_dim})
+local w_att_feat2 = nn.CMulTable()({img2_feat,rep_img_atten2_dim})
+local w_att_feat3 = nn.CMulTable()({img3_feat,rep_img_atten3_dim})
+local w_join_feat = nn.JoinTable(2)({w_att_feat1,w_att_feat2,w_att_feat3,embed_ques})
+print('word level recursive')
+-- phrase level image attention split and join
+local p_att1_img = nn.Narrow(2,1,1)(conv_img)
+local p_att2_img = nn.Narrow(2,2,1)(conv_img)
+local p_att3_img = nn.Narrow(2,3,1)(conv_img)
+
+local rep_p_att1 = nn.Replicate(input_size,2)(p_att1_img)
+local rep_p_att1_dim = nn.View(-1,input_size)(rep_p_att1)
+local rep_p_att2 = nn.Replicate(input_size,2)(p_att2_img)
+local rep_p_att2_dim = nn.View(-1,input_size)(rep_p_att2)
+local rep_p_att3 = nn.Replicate(input_size,2)(p_att3_img)
+local rep_p_att3_dim = nn.View(-1,input_size)(rep_p_att3)
+
+local p_att_feat1 = nn.CMulTable()({img1_feat,rep_p_att1_dim})
+local p_att_feat2 = nn.CMulTable()({img2_feat,rep_p_att2_dim})
+local p_att_feat3 = nn.CMulTable()({img3_feat,rep_p_att3_dim})
+local p_join_feat = nn.JoinTable(2)({p_att_feat1,p_att_feat2,p_att_feat3,conv_ques})
+print('phrase level recursive')
+
+-- question level image attention split and join
+local q_att1_img = nn.Narrow(2,1,1)(lstm_img)
+local q_att2_img = nn.Narrow(2,2,1)(lstm_img)
+local q_att3_img = nn.Narrow(2,3,1)(lstm_img)
+
+local rep_q_att1 = nn.Replicate(input_size,2)(q_att1_img)
+local rep_q_att1_dim = nn.View(-1,input_size)(rep_q_att1)
+local rep_q_att2 = nn.Replicate(input_size,2)(q_att2_img)
+local rep_q_att2_dim = nn.View(-1,input_size)(rep_q_att2)
+local rep_q_att3 = nn.Replicate(input_size,2)(q_att3_img)
+local rep_q_att3_dim = nn.View(-1,input_size)(rep_q_att3)
+
+local q_att_feat1 = nn.CMulTable()({img1_feat,rep_q_att1_dim})
+local q_att_feat2 = nn.CMulTable()({img2_feat,rep_q_att2_dim})
+local q_att_feat3 = nn.CMulTable()({img3_feat,rep_q_att3_dim})
+local q_join_feat = nn.JoinTable(2)({q_att_feat1,q_att_feat2,q_att_feat3,lstm_ques})
+print('question level recursive')
+
+local w_join_feat_dim = nn.View(-1,input_size*4,1)(w_join_feat_dim)
+local p_join_feat_dim = nn.View(-1,input_size*4,1)(p_join_feat_dim)
+local q_join_feat_dim = nn.View(-1,input_size*4,1)(q_join_feat_dim)
+local combine_feat = nn.JoinTable(3)({w_join_feat_dim,p_join_feat_dim,q_join_feat_dim})
+local max_feat = nn.Max(3)(combine_feat)
+
+local hidden1 = nn.Tanh()(nn.Linear(input_size*4,embedding_size)(max_feat))
+local hidden2 = nn.Tanh()(nn.Linear(embedding_size, last_embed_size)(nn.Dropout(0.5)(hidden1)))
+local out_feat = nn.Linear(last_embed_size, output_size)(nn.Dropout(0.5)(hidden2))
+
+table.insert(outputs,out_feat)
+return nn.gModule(inputs,outputs)
+
+end
+

@@ -1,0 +1,91 @@
+[6824:20b] [DEBUG] Compat version: 30000011
+[6824:20b] [DEBUG] resovled host.
+[6824:20b] [DEBUG] writestream opened.
+[6824:20b] [DEBUG] readstream client assigned.
+[6824:20b] [DEBUG] readstream opened.
+[6824:20b] [DEBUG] *** Read stream reported kCFStreamEventErrorOccurred
+[6824:20b] [DEBUG] *** POSIX error: 14 - Bad address
+[6824:20b] Error closing readstream
+[6824:20b] [DEBUG] Writing int: 0x09000000 (0x00000009)
+
++ (BOOL) connectToServerNamed:(NSString*)name atPort:(int)port {
+    CFHostRef theHost = CFHostCreateWithName (NULL, (CFStringRef)name);
+    CFStreamError error;
+
+    if (CFHostStartInfoResolution (theHost, kCFHostReachability, &error))
+    {
+        NSLog (@"[DEBUG] resovled host.");
+        CFStreamCreatePairWithSocketToCFHost (NULL, theHost, port, &readStream, &writeStream);
+        if (CFWriteStreamOpen(writeStream))
+        {
+            NSLog (@"[DEBUG] writestream opened.");
+
+            CFStreamClientContext myContext = { 0, self, NULL, NULL, NULL };
+            CFOptionFlags registeredEvents = kCFStreamEventHasBytesAvailable |
+                    kCFStreamEventErrorOccurred | kCFStreamEventEndEncountered;
+            if (CFReadStreamSetClient (readStream, registeredEvents, readCallBack, &myContext))
+            {
+                NSLog (@"[DEBUG] readstream client assigned.");
+                CFReadStreamScheduleWithRunLoop(readStream, CFRunLoopGetCurrent(),
+                                                kCFRunLoopCommonModes);
+                if (CFReadStreamOpen(readStream))
+                {
+                    NSLog (@"[DEBUG] readstream opened.");
+                    CFRunLoopRun();
+         // Lots of error condition handling snipped.
+        [...]
+    return YES;
+}
+
+
+void readCallBack (CFReadStreamRef stream, CFStreamEventType event, void *myPtr)
+{
+    switch (event)
+    {
+        case kCFStreamEventHasBytesAvailable:
+        {
+            CFIndex bytesRead = CFReadStreamRead(stream, buffer, kNetworkyBitsBufferSize); // won't block
+            if (bytesRead > 0)                                                  // <= 0 leads to additional events
+            {
+                if (listener)
+                {
+                    UInt8 *tmpBuffer = malloc (sizeof (UInt8) * bytesRead);
+                    memcpy (buffer, tmpBuffer, bytesRead);
+                    NSLog(@"[DEBUG] reveived %d bytes", bytesRead);
+                    [listener networkDataArrived:tmpBuffer count:bytesRead];
+                }
+                NSLog(@"[DEBUG] reveived %d bytes; no listener", bytesRead);
+            }
+        }
+            break;
+
+        case kCFStreamEventErrorOccurred:
+            NSLog(@"[DEBUG] *** Read stream reported kCFStreamEventErrorOccurred");
+            CFStreamError error = CFReadStreamGetError(stream);
+            logError(error);
+            [NetworkyBits shutDownRead];
+            break;
+
+        case kCFStreamEventEndEncountered:
+            NSLog(@"[DEBUG] *** Read stream reported kCFStreamEventEndEncountered");
+            [NetworkyBits shutDownRead];
+            break;
+    }
+}
+
+void logError (CFStreamError error)
+{
+    if (error.domain == kCFStreamErrorDomainPOSIX)                              // Interpret error.error as a UNIX errno.
+    {
+        NSLog (@"[DEBUG] *** POSIX error: %d - %s", (int) error.error, strerror(error.error));
+    }
+    else if (error.domain == kCFStreamErrorDomainMacOSStatus)
+    {
+        NSLog (@"[DEBUG] *** MacOS error: %d", (int) error.error);
+    }
+    else
+    {
+        NSLog (@"[DEBUG] *** Stream error domain: %d, error: %d", (int) error.error);
+    }
+}
+

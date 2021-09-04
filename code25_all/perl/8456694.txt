@@ -1,0 +1,94 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+use DateTime;
+use DateTime::Format::HTTP;
+use Time::HiRes;
+
+my @to_be_processed = (1..300000);
+my @queues;
+my $nprocs = 4;
+
+my $parent_from_child;
+my @child_from_parent;
+my @child_to_parent;
+
+$SIG{CHLD} = 'IGNORE';
+$|=1; # autoflush
+
+my %stat = (
+    total           => scalar(@to_be_processed),
+    processed       => 0,
+    time_started    => [Time::HiRes::gettimeofday],
+);
+
+# divide the list into queues for each subprocess
+for (my $i = 0; $i < $stat{total}; $i++ ) {
+    my $queue = $i % $nprocs;
+    push @{$queues[$queue]}, $to_be_processed[$i];
+}
+
+# for progress simulation
+srand (time ^ $$);
+
+for (my $proc = 0; $proc < $nprocs; $proc++) {
+
+    # set up the pipes
+    pipe $parent_from_child, $child_to_parent[$proc]        or die "pipe failed - $!";
+
+    # fork
+    defined(my $pid = fork) or die "fork failed - $!";
+
+    if ($pid) {
+        # parent
+        close $child_to_parent[$proc];
+        printf("[%u] parent says: child %u created with pid %u\n", $$, $proc, $pid);
+    }
+    else {
+        # child
+        close $parent_from_child;
+        open(STDOUT, ">&=" . fileno($child_to_parent[$proc]))   or die "open failed - $!";
+
+        warn(sprintf("[%u] child alive with %u entries\n", $$, scalar(@{$queues[$proc]})));
+
+        foreach my $id (@{$queues[$proc]}) {
+            printf("START: %s\n", $id);
+
+            # simulation of progress
+            my $random_microseconds = int(rand(3000000))+200000;
+            warn(sprintf("[%u] child 'works' for %u microseconds", $$, $random_microseconds));
+            Time::HiRes::usleep( $random_microseconds );
+
+            printf("DONE\n")
+        }
+        exit(0);
+    }
+}
+
+# parent: receive data from children and print overall statistics
+while (<$parent_from_child>) {
+    chomp(my $line = $_);
+
+    if ($line =~ m/^START: (\S+)/) {
+        my ($id) = @_;
+
+        printf("%6u/%6u", $stat{processed}, $stat{total});
+        if ($stat{time_avg}) {
+            my $remaining = ($stat{total} - $stat{processed}) * $stat{time_avg};
+            my $eta = DateTime->from_epoch( epoch => time + $remaining );
+            $eta->set_time_zone('Europe/Berlin');
+            printf(" (ETA %s)", DateTime::Format::HTTP->format_isoz($eta));
+        }
+        printf("\r");
+    }
+    elsif ($line =~ /^DONE/) {
+        $stat{processed}++;
+        $stat{time_processed} = Time::HiRes::tv_interval( $stat{time_started} );
+        $stat{time_avg}       = $stat{time_processed} / $stat{processed};
+    }
+    else {
+        printf("%s\n", $line);
+    }
+}
+

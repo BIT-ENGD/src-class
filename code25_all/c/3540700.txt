@@ -1,0 +1,157 @@
+      //----------------SEMOPHORE.H--------------------------
+    /*********************** semaphore.h ****************************/
+    #define SEM_NAME "semaphore.h",'a'
+    #define SEM_MAX   3
+    #define FREE      0
+    #define DATA      1
+    #define ROOM      2
+    #define S_WAIT   -1
+    #define S_SIGNAL  1
+    #define NO_EVENT -1
+
+    int sem_config(int, int);
+    int sem_wait(int, int);
+    int sem_signal(int, int);
+
+    //----------------Producer-----------------------
+    #include<stdio.h>
+    #include"semaphore.h"
+    #include"shbuf.h"
+    # include <string.h>  
+    # include "shbuf.h"  
+
+    void myadd();  
+
+    main()
+    {
+        sem_config(DATA, FREE);
+        myadd();
+        sem_signal(DATA,S_SIGNAL);
+        return 0;
+    }
+    void myadd()  
+     {  
+       char str[80];  
+       char discard;  
+       printf("you can type a message for the producer."\n);  
+       printf("Producing message : ");  
+       scanf("%s%c", str, &discard);  
+       q_add(strlen(str) , str);  
+     }  
+    //---------------------------CONSUMER---------------------------
+    #include<stdio.h>
+    #include"semaphore.h"
+    #include"shbuf.h"
+
+    # include <string.h>  
+    # include "shbuf.h"  
+
+    void myremove(); 
+
+    main()
+    {
+    sem_wait(DATA, S_WAIT);
+    myremove();
+    sem_signal(DATA,S_SIGNAL);
+
+    return 0;
+    }
+
+    void myremove()  
+     {  
+       char str[80];  
+       if(q_items() > 0)  
+       {  
+         q_remove(1 , str);  
+         str[1] = 0;  
+         printf("%s\n", str);  
+       }  
+     } 
+    //-------------------------------SEMAPHORE.C--------------------------------------
+    #include <sys/types.h>
+    #include <sys/ipc.h>
+    #include <sys/sem.h>
+    #include "semaphore.h"
+
+    static  int sem_id;
+
+    static  union semun 
+        {
+            int val; /* value for SETVAL */
+            struct semid_ds *buf; /* buffer for IPC_STAT & IPC_SET */
+            ushort array[1]; /* array for GETALL & SETALL, used in setting or retrieving all semaphorevalues in a set.*/
+        } sem_attr;
+
+    static  struct sembuf asem[1];
+    static  key_t s_key; //key for shared memory
+
+    int sem_config(int event, int init_val)
+     {
+        int x;
+        s_key = ftok(SEM_NAME); //key for semaphore
+        //create a semaphore for process synchronization
+        if ( -1 == (sem_id = semget(s_key, SEM_MAX, 0666|IPC_CREAT ) ))
+        {
+            perror("semget");
+            return -1;
+        }
+        if ( event == NO_EVENT )
+            return 0;   /*locate semaphore only*/
+        //set initial value of semaphore
+        sem_attr.val = init_val;
+        if ( -1 == semctl(sem_id, event, SETVAL, sem_attr ) )
+        {
+            perror("semctl SETVAL");
+            return -1;
+        }
+        if ( -1 == ( x = semctl(sem_id, event, GETVAL, sem_attr ) ) )
+        {
+            perror("semctl GETVAL");
+            return -1;
+        }
+        assert( x == init_val );
+        return 0;
+     }
+
+    int sem_wait(int event, int nwaits)
+    {
+        asem[0].sem_num = event;
+        asem[0].sem_op = nwaits * S_WAIT;
+        asem[0].sem_flg = 0;
+        if ( event == NO_EVENT )    /*remove semaphore set*/
+            if ( -1 == semctl(sem_id, 0, IPC_RMID, sem_attr ) )
+            {
+                perror("semctl IPC_RMID");
+                return -1;
+            }
+            else
+                return 0;
+        if ( -1 == semop(sem_id, asem, 1 ) )
+        {
+            perror("semop");
+            return -1;
+        }
+        return 0;
+    }
+
+    int sem_signal(int event, int nsignals)
+     {
+        asem[0].sem_num = event;
+        asem[0].sem_op = nsignals * S_SIGNAL;
+        asem[0].sem_flg = 0;
+        if ( event == NO_EVENT )
+            if ( -1 == semctl(sem_id, 0, IPC_RMID, sem_attr ) )
+            {
+                perror("semctl IPC_RMID");
+                return -1;
+            }
+            else
+                return 0;
+        if ( -1 == semop(sem_id, asem, 1 ) )
+        {
+            perror("semop");
+            return -1;
+        }
+        return 0;
+     }
+

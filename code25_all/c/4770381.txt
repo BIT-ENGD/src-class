@@ -1,0 +1,137 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <sys/shm.h>
+#include <errno.h>
+
+#define SEMKEY1 6666
+#define SEMKEY2 7777
+#define SHMKEY  8888
+#define HSIZE    128
+
+union semun {
+  int val;                   /*value for SETVAL*/
+  struct semid_ds *buf;      /*buffer for IPC_STAT, IPC_SET*/
+  unsigned short int *array; /*array for getall, setall*/
+  struct seminfo *__buf;     /*buffer for IPC_INFO*/
+};
+
+int P(int semid){
+  struct sembuf occupy;
+  int res;
+
+  occupy.sem_num  =  0;
+  occupy.sem_op   = -1;
+  occupy.sem_flg  =  0;
+  res = semop(semid, &occupy, 1);
+  if(res < 0){
+    fprintf(stderr,"P() Failed");
+    exit(1);
+  }
+  return res;  
+}
+
+int V(int semid){
+  struct sembuf release;
+  int res;
+  release.sem_num  =  0;
+  release.sem_op   =  1;
+  release.sem_flg  =  0;
+
+  res = semop(semid, &release, 1);
+  if(res < 0){
+    fprintf(stderr,"V() failed");
+    exit(1);
+  }
+  return res;  
+}
+
+int getSem(int key){
+  int semid;
+  int errno;
+
+  if((semid = semget(key, 1, 0)) < 0){
+    fprintf(stderr, "getSem failed for key %d because %d \n ", key, errno);
+    exit(1);    
+  }
+  return semid;
+}
+
+/*STRUCKT die fuer die SHARED MEMORY benutzt wird*/
+typedef struct srtelem {
+  long elem;
+  int flg;
+}SMSTRCKT;
+
+int long_comp(const void *a, const void *b){
+  const int *ai = (const int *) a;
+  const int *bi = (const int *) b;
+
+  return *ai - *bi; 
+}
+
+void print_hangar(long *hangar, int i){
+  int j;
+
+  for(j = 0; j < i; j++){
+    printf("%ld \n", *(hangar+j));
+  }
+}
+
+int main(){
+  int semid1, semid2, shm_id, count;
+  int errno, index;
+  SMSTRCKT *shmptr;
+  long hangar[HSIZE];
+
+  /*Semaphore hollen*/
+  semid1 = getSem(SEMKEY1);
+  semid2 = getSem(SEMKEY2);
+  count = 0;
+  index = 0;
+  printf("\t**SERVER**\n");
+
+  /*Shared memory anlegen*/
+  if((shm_id = shmget(SHMKEY, sizeof(SMSTRCKT), 066)) < 0){
+    fprintf(stderr, "SHMGET failed because of %d\n",errno);
+    exit(1);  
+  }
+
+  /*Shared memory anhaengen*/
+  if((shmptr = (SMSTRCKT *) shmat(shm_id, NULL, 0)) == (SMSTRCKT*) -1){
+    fprintf(stderr,"SHMAT failed because of %d\n", errno);
+    exit(1);    
+  }
+
+/*Get date from the Client*/
+   while((shmptr->flg) == 1){
+      P(semid2);
+      if(shmptr->flg != 0){
+    printf("elem %d \n ",(int) shmptr->elem);
+    *(hangar+count) = shmptr->elem;
+    count++;
+      }  
+      V(semid1);
+    }
+    qsort(hangar,count, sizeof(long),long_comp);
+
+    /*Send the result to the Client*/
+    while(index < count){
+      P(semid1);
+
+      shmptr->elem = *(hangar+index);
+      /*printf(" elem %ld  index %d\n", shmptr->elem, index);*/
+      ++index;
+
+      V(semid2);
+    }
+
+    P(semid1);
+    shmptr->flg++;
+    V(semid2);
+
+  return 0;
+}
+

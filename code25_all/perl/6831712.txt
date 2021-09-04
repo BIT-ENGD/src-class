@@ -1,0 +1,182 @@
+#!/usr/bin/perl -w
+#Copyright anurag gupta ; free to use under GNU GPL License
+
+use strict;
+use feature "switch";
+
+use Common;
+
+use HTML::Element;
+
+use HTML::TreeBuilder;
+#"F:/anurag/work/indiacustomercare/airtel/recharge.html";
+my $filename="F:/tmp/t9.html";
+
+my $index=0;
+my $labelprefix="anu555ltg-";
+
+my $tocIndex=100001;
+
+my $toc;
+
+my @stack;
+
+my $prevHtag="h2";
+
+sub hTagEncountered($)
+{
+    my $hTag=shift;
+
+    my $currLevel=(split //, $hTag)[1];
+
+    given($hTag)
+    {
+        when(/h1/)
+        {
+           break; 
+        }
+        default{
+            my $countCurr= (split /h/,$hTag)[1];
+            my $countPrev= (split /h/,$prevHtag)[1];
+
+
+
+            if($countCurr>$countPrev)
+            {
+                push @stack,($currLevel);
+                $toc.="<ul>";
+            }
+            elsif($countCurr<$countPrev)
+            {
+                # Now check in the stack
+
+                while ( @stack and $currLevel < $stack[$#stack])
+                {
+                    pop @stack;
+                    $toc.="</ul>";
+                }
+            }
+        }
+
+    }
+
+    $prevHtag=$hTag;
+}
+
+sub getLabel
+{
+my $name=$labelprefix.++$tocIndex;
+}
+
+sub traversehtml
+{
+    my $node=$_[0];
+   # $node->dump();
+   # print "-----------------\n";
+   # print $node->tag()."\n";
+
+  #  print ref($node),"->\n";
+
+    if((ref(\$node) ne "SCALAR" )and ($node->tag() =~m/^h[2-7]$/i))  #it's an H Element!
+    {
+
+        my @h = $node->content_list();
+
+        if(@h==1 and ref(\$h[0]) eq "SCALAR")  #H1 contains simple string and nothing else
+        {
+                    hTagEncountered($node->tag());
+
+                    my $label=getLabel();
+
+                    my $a = HTML::Element->new('a', name => $label);
+
+                    my $text=$node->as_trimmed_text();
+
+                    $a->push_content($text);
+
+                    $node->delete_content();
+
+                    $text=HTML::Entities::encode_entities($text);
+
+                    $node->push_content($a);
+                    $toc.=<<EOF;
+                    <li><a href="#$label">$text</a>
+EOF
+        }
+        elsif (  @h==1 and ($h[0]->tag() eq "a"))   # <h1><a href="abc.com">ttt</a></h1> case
+            {
+                #See if any previous label already exists
+
+                my $prevlabel = $h[0]->attr("name");
+
+
+                $h[0]->attr("name",undef) if(defined($prevlabel) and $prevlabel=~m/$labelprefix/); #delete previous name tag if any
+
+                #set the new label
+                my $label=getLabel();
+
+                $h[0]->attr("name",$label);
+
+                hTagEncountered($node->tag());
+                my $text=HTML::Entities::encode_entities($node->as_trimmed_text());
+                $toc.=<<EOF;
+                <li><a href="#$label">$text</a>
+EOF
+
+            }
+        elsif (@h>1)  #<h1>some text here<a href="abc.com">ttt</a></h1> case
+        {
+           die "h1 must not contain any html elements";
+
+        }
+
+    }
+
+    my @h = $node->content_list();
+
+    foreach my $item (@h)
+    {
+
+       if(ref(\$item) ne "SCALAR")  {traversehtml($item); } #skip scalar items
+    }
+
+
+}
+
+   die "File $filename not found" if !-r $filename;
+
+    my $tree = HTML::TreeBuilder->new();
+
+    $tree->parse_file($filename);
+
+
+    my @h = $tree->content_list();
+
+    traversehtml($h[1]);
+
+    while(pop @stack)
+    {
+        $toc.="</ul>";
+    }
+
+    $toc="<ul>$toc</ul>";
+
+    print qq{<div id="icctoc"><h2>TOC</h2>$toc</div>};
+
+    my @list1=$tree->content_list();
+
+    my @list2=$list1[1]->content_list();
+
+for(my $i=0;$i<@list2;++$i){
+    if(ref(\$list2[$i]) eq "SCALAR")
+       {
+        print $list2[$i]
+       }
+    else{
+    print $list2[$i]->as_HTML();
+    }
+
+
+    }
+        # Finally:
+

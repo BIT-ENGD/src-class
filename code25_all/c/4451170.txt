@@ -1,0 +1,210 @@
+fwrite()
+CreateFile()
+FILE_FLAGGED_OVERLAP
+CreateFile
+CREATE_ALWAYS
+CREATE_NEW
+OPEN_EXISTING
+WriteFile
+WriteFile
+CreateFile
+FILE_FLAG_NO_BUFFERING
+#include <windows.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define ASYNC  // remove this definition to run synchronously (i.e. using fwrite)
+
+#ifdef ASYNC
+    struct _OVERLAPPED *pOverlapped;
+    HANDLE *pEventH;
+    HANDLE *pFile;
+#else
+    FILE *pFile;
+#endif
+
+#define DIM_X   100
+#define DIM_Y   150000
+
+#define _PRINTERROR(msgs)\
+ {printf("file: %s, line: %d, %s",__FILE__,__LINE__,msgs);\
+ fflush(stdout);\
+ return 0;}    \
+
+#define _PRINTF(msgs)\
+ {printf(msgs);\
+  fflush(stdout);}      \
+
+#define _START_TIMER       \
+ time_t time1,time2;       \
+ clock_t clock1;        \
+ time(&time1);        \
+ printf("start time: %s",ctime(&time1));  \
+ fflush(stdout);
+
+#define _END_TIMER\
+ time(&time2);\
+ clock1 = clock();\
+ printf("end time: %s",ctime(&time2));\
+ printf("elapsed processor time: %.2f\n",(((float)clock1)/CLOCKS_PER_SEC));\
+ fflush(stdout);
+
+double  aio_dat[DIM_Y] = {0};
+
+double do_compute(double A,double B, int arr_len);
+
+int main()
+{
+ _START_TIMER;
+
+ const char *pName = "test1.bin";
+
+    DWORD dwBytesToWrite;
+    BOOL bErrorFlag = FALSE;
+
+ int j=0;
+ int i=0;
+ int fOverlapped=0;
+
+    #ifdef ASYNC
+     // create / open the file
+        pFile=CreateFile(pName,
+            GENERIC_WRITE,   // open for writing
+            0,               // share write access
+            NULL,            // default security
+            CREATE_ALWAYS,   // create new/overwrite existing
+         FILE_FLAG_OVERLAPPED,  // | FILE_FLAG_NO_BUFFERING,   // overlapped file
+         NULL);           // no attr. template
+
+  // check whether file opening was ok
+     if(pFile==INVALID_HANDLE_VALUE){
+   printf("%x\n",GetLastError());
+   _PRINTERROR("file not opened properly\n");
+  }
+
+  // make the overlapped structure
+     pOverlapped = calloc(1,sizeof(struct _OVERLAPPED)); 
+  pOverlapped->Offset = 0;
+  pOverlapped->OffsetHigh = 0;
+
+   // put event handle in overlapped structure
+  if(!(pOverlapped->hEvent = CreateEvent(NULL,TRUE,FALSE,NULL))){
+   printf("%x\n",GetLastError());
+   _PRINTERROR("error in createevent\n");
+  }
+ #else
+  pFile = fopen(pName,"wb");
+ #endif 
+
+ // create some output 
+ for(j=0;j<DIM_Y;j++){
+     aio_dat[j] = do_compute(i, j, DIM_X);
+ }
+
+ // determine how many bytes should be written
+  dwBytesToWrite = (DWORD)sizeof(aio_dat);
+
+ for(i=0;i<DIM_X;i++){ // do this DIM_X times
+
+        #ifdef ASYNC
+         //if(i>0){
+      //SetFilePointer(pFile,dwBytesToWrite,NULL,FILE_CURRENT);
+      //if(!(SetEndOfFile(pFile))){
+      // printf("%i\n",pFile);
+      // _PRINTERROR("error in set end of file\n");
+      //}
+      //SetFilePointer(pFile,-dwBytesToWrite,NULL,FILE_CURRENT);
+      //}
+
+      // write the bytes
+      if(!(bErrorFlag = WriteFile(pFile,aio_dat,dwBytesToWrite,NULL,pOverlapped))){
+       // check whether io pending or some other error
+       if(GetLastError()!=ERROR_IO_PENDING){
+    printf("lasterror: %x\n",GetLastError());
+    _PRINTERROR("error while writing file\n");
+       }
+       else{
+        fOverlapped=1;
+       }
+      }
+          else{
+       // if you get here output got immediately written; bad!
+       fOverlapped=0;
+      }
+
+      if(fOverlapped){   
+       // do background, this msgs is what I want to see
+       for(j=0;j<DIM_Y;j++){
+        aio_dat[j] = do_compute(i, j, DIM_X);
+       }
+       for(j=0;j<DIM_Y;j++){
+        aio_dat[j] = do_compute(i, j, DIM_X);
+       }
+
+       _PRINTF("can do work in background\n");
+      }
+      else{
+       // not overlapped, this message is bad
+       _PRINTF("not ok\n");
+      } 
+
+                // wait to continue
+      if((WaitForSingleObject(pOverlapped->hEvent,INFINITE))!=WAIT_OBJECT_0){
+       _PRINTERROR("waiting did not succeed\n");
+      }
+
+      // reset event structure
+      if(!(ResetEvent(pOverlapped->hEvent))){
+       printf("%x\n",GetLastError());
+       _PRINTERROR("error in resetevent\n");
+      }
+
+      pOverlapped->Offset+=dwBytesToWrite;
+
+  #else
+      fwrite(aio_dat,sizeof(double),DIM_Y,pFile);
+   for(j=0;j<DIM_Y;j++){
+    aio_dat[j] = do_compute(i, j, DIM_X);
+   }
+   for(j=0;j<DIM_Y;j++){
+    aio_dat[j] = do_compute(i, j, DIM_X);
+   }
+  #endif
+ }
+
+ #ifdef ASYNC
+     CloseHandle(pFile);
+  free(pOverlapped);
+ #else
+     fclose(pFile);
+ #endif
+
+ _END_TIMER;
+
+ return 1;
+} 
+
+double do_compute(double A,double B, int arr_len)
+{
+  int i;
+  double   res = 0;
+  double  *xA = malloc(arr_len * sizeof(double));
+  double  *xB = malloc(arr_len * sizeof(double));
+
+  if ( !xA || !xB )
+   abort();
+
+  for (i = 0; i < arr_len; i++) {
+   xA[i] = sin(A);
+   xB[i] = cos(B);
+   res = res + xA[i]*xA[i];
+  }
+
+  free(xA);
+  free(xB);
+
+  return res;
+}
+

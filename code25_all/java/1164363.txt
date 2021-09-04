@@ -1,0 +1,200 @@
+public class MyApplication extends WebApplication {
+
+    private Folder uploadFolder = null;
+
+    @Override
+    public Class getHomePage() {
+        return UserHome.class;
+    }
+
+    public Folder getUploadFolder()
+    {
+        return uploadFolder;
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+
+        // Disable the Ajax debug label!
+        //getDebugSettings().setAjaxDebugModeEnabled(false);
+
+
+        this.getMarkupSettings().setDefaultMarkupEncoding("UTF-8");
+        this.getRequestCycleSettings().setResponseRequestEncoding("UTF-8");
+        mountBookmarkablePage("/BossPage", BossPage.class);
+        mountBookmarkablePage("/Branch", EditProfile.class);
+        mountBookmarkablePage("/SA", SuperAdmin.class);
+        mountBookmarkablePage("/Admin", ir.pnusn.branch.ui.pages.administratorPages.EditProfile.class);
+        mountBookmarkablePage("/Student", StudentSignUP.class);
+        mountBookmarkablePage("/Student/Test", StudentSignUpConfirm.class);
+        mountBookmarkablePage("/Branch/categories.xml", CategoriesXML.class);
+
+        get().getPageSettings().setAutomaticMultiWindowSupport(true);
+        getResourceSettings().setThrowExceptionOnMissingResource(false);
+        uploadFolder = new Folder("C:\\", "wicket-uploads");
+        uploadFolder.mkdirs();
+
+        this.getSecuritySettings().setAuthorizationStrategy(WiaAuthorizationStrategy.getInstance());
+        this.getSecuritySettings().setUnauthorizedComponentInstantiationListener(WiaAuthorizationStrategy.getInstance());
+        addComponentInstantiationListener(new IComponentInstantiationListener() {
+
+            public void onInstantiation(final Component component) {
+                if (!getSecuritySettings().getAuthorizationStrategy().isInstantiationAuthorized(component.getClass())) {
+                    try {
+                        getSecuritySettings().getUnauthorizedComponentInstantiationListener().onUnauthorizedInstantiation(component);
+                    } catch (Exception e) {
+                        System.out.println("ERRORRRRRRR:" + e.toString());
+                    }
+                }
+            }
+        });
+
+    }
+}
+
+/*
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+ */
+package ir.pnusn.ui.library;
+
+import ir.pnusn.authentication.RealmPolicy;
+import ir.pnusn.authentication.ui.pages.Login;
+import org.apache.wicket.Component;
+import org.apache.wicket.RestartResponseAtInterceptPageException;
+import org.apache.wicket.authorization.Action;
+import org.apache.wicket.authorization.IAuthorizationStrategy;
+import org.apache.wicket.authorization.IUnauthorizedComponentInstantiationListener;
+
+public final class WiaAuthorizationStrategy implements
+        IAuthorizationStrategy,
+        IUnauthorizedComponentInstantiationListener {
+
+    private RealmPolicy roleManager;
+    private static WiaAuthorizationStrategy instance;
+
+    private WiaAuthorizationStrategy() {
+        roleManager = RealmPolicy.getInstance();
+    }
+
+    public static WiaAuthorizationStrategy getInstance() {
+        if(instance == null)
+            instance = new WiaAuthorizationStrategy();
+        return instance;
+    }
+
+    public boolean isInstantiationAuthorized(Class componentClass) {
+
+        if (ProtectedPage.class.isAssignableFrom(componentClass)) {
+            if (WiaSession.get().getUser() == null) {
+                return false;
+            }
+            if(!roleManager.isAuthorized(WiaSession.get().getUser().getRole(), componentClass.getName()))//WiaSession.get().isAuthenticated();
+            {
+                WiaSession.get().setAccess(false);
+                return false;
+            }
+            else
+                return true;
+        }
+
+        return true;
+    }
+
+    public void onUnauthorizedInstantiation(Component component) {
+        throw new RestartResponseAtInterceptPageException(
+                Login.class);
+    }
+
+    public boolean isActionAuthorized(Component component, Action action) {
+        //System.out.println("Name:" + component.getClass().getName() + "\n Action:" + action.getName() + "\nUser:" + WiaSession.get().getUser());
+        if (action.equals(Component.RENDER)) {
+            if (roleManager.containClass(component.getClass().getName()))
+             {
+                if (WiaSession.get().getUser() != null) {
+                    if(!roleManager.isAuthorized(WiaSession.get().getUser().getRole(), component.getClass().getName()))
+                    {
+                        WiaSession.get().setAccess(false);
+                        return false;
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+/*
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+ */
+package ir.pnusn.branch.ui.pages;
+
+import ir.pnusn.branch.database.BranchNotFoundException;
+
+
+
+import ir.pnusn.branch.database.DatabaseException;
+import ir.pnusn.branch.facade.admin.branchDataEnter.BranchDataSubmitFacade;
+import ir.pnusn.branch.facade.admin.branchDataEnter.BuildingBean;
+
+
+import java.util.Iterator;
+import java.util.List;
+import org.apache.wicket.PageParameters;
+import org.apache.wicket.RequestCycle;
+import org.apache.wicket.markup.html.WebPage;
+
+/**
+ *
+ * @author mohammad
+ */
+public class CategoriesXML extends WebPage
+{
+
+    public CategoriesXML(PageParameters parameters)
+    {
+        System.out.println("user " + parameters.getString("user"));
+        StringBuilder builder = new StringBuilder("<markers>");
+        List<BuildingBean> buildings;
+        try
+        {
+            buildings = BranchDataSubmitFacade.createBranchDataSubmitFacade(parameters.getString("user")).getBranchSecondPageData();
+            for (Iterator<BuildingBean> it = buildings.iterator(); it.hasNext();)
+            {
+                BuildingBean buildingBean = it.next();
+                builder.append("<marker lat=\"");
+                builder.append(buildingBean.getLatit());
+                builder.append("\" lng=\"");
+                builder.append(buildingBean.getLongit());
+                builder.append("\"");
+                builder.append(" address=\"");
+                builder.append(buildingBean.getDesctiption());
+                builder.append("\" category=\"branch\" name=\"");
+                builder.append(buildingBean.getBuildingName());
+                builder.append("\"/>");
+
+            }
+            builder.append("</markers>");
+
+        }
+        catch (DatabaseException ex)
+        {
+            builder = new StringBuilder("<markers></markers>");
+        }
+        catch (BranchNotFoundException ex)
+        {
+            builder = new StringBuilder("<markers></markers>");
+        }
+        RequestCycle.get().getResponse().println(builder.toString());
+        /*"<markers>" +
+        "<marker lat=\"35.69187\" lng=\"51.413269\" address=\"Some stuff to display in the First Info Window\"  category=\"branch\" name=\"gholi\"/>" +
+        "<marker lat=\"52.91892\"  lng=\"78.89231\" address=\"Some stuff to display in the Second Info Window\" category=\"branch\" name=\"taghi\"/>" +
+        "<marker lat=\"40.82589\"  lng=\"35.10040\" address=\"Some stuff to display in the Third Info Window\"  category=\"branch\" name=\"naghi\"/>" +
+        "</markers> "**/
+    }
+}
+

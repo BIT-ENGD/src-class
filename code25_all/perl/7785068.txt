@@ -1,0 +1,63 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Device::SerialPort;
+use Time::HiRes qw(usleep); # For sleep in ms
+
+if ($#ARGV + 1 != 2) {
+    print "Usage: $0 port filename\n";
+    print "Example: $0 /dev/ttyASM0 money.txt\n";
+    exit 1;
+}
+
+my $file = $ARGV[0];
+my $dev  = $ARGV[1];
+
+if (!-e $file || !-e $dev) {
+    print "File or brain not found.\n";
+    exit 1;
+}
+
+my $arduino = DeviceSerialPort->new($dev);
+$arduino->baudrate(9600);
+$arduino->databits(8);
+$arduino->parity("none");
+$arduino->stopbits(1);
+
+require "frequencies.pl";
+open NOTES, "$file";
+
+print $frequencies{"LA3"};
+
+while (<NOTES>) {
+    chomp;      # No newline
+    s/#.*//;    # No comments
+    s/^\s+//;   # No leading white
+    s/\s+$//;   # No trailing white
+    next unless length;
+    if ($_ =~ m/^TEMPO/) {
+        my $tempo = split(/\s+/, $_, -1);
+        print "Tempo is $tempo.";
+    } else {
+        my @tone = split(/\s+/, $_);
+    }
+    my $note = $frequencies{$tone[0]};
+    my $duration = $tone[1]*$tempo;
+    print "Playing $tone[0] (\@$note Hz) for $tone[1] units ($duration ms).";
+    while ($note > 255) {
+        $arduino->write(chr(255));
+        $note -= 255;
+    }
+    $arduino->write(chr($note));
+    $arduino->write(";");
+    usleep($duration);
+}
+
+my %frequencies = (
+    "PAUSE" => 0,
+    "B0" => 31,
+    "DO1" => 33,
+    "DOD1" => 35,
+    ...
+);
+

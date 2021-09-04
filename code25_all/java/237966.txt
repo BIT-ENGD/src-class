@@ -1,0 +1,243 @@
+writeReplace()
+readResolve()
+@Configurable(preConstruction = true)
+beanFactory
+null
+createEntity()
+setBeanFactory()
+/*
+ *  Copyright 2008 Brian Thomas Matthews Limited.
+ *  All rights reserved, worldwide.
+ *
+ *  This software and all information contained herein is the property of
+ *  Brian Thomas Matthews Limited. Any dissemination, disclosure, use, or
+ *  reproduction of this material for any reason inconsistent with the
+ *  express purpose for which it has been disclosed is strictly forbidden.
+ */
+
+package com.btmatthews.dmf.domain.impl.cglib;
+
+import java.io.InvalidObjectException;
+import java.io.ObjectStreamException;
+import java.io.Serializable;
+import java.lang.reflect.InvocationTargetException;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.commons.beanutils.PropertyUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.BeanFactoryAware;
+import org.springframework.beans.factory.annotation.Configurable;
+import org.springframework.util.StringUtils;
+
+import com.btmatthews.dmf.domain.IEntity;
+import com.btmatthews.dmf.domain.IEntityFactory;
+import com.btmatthews.dmf.domain.IEntityID;
+import com.btmatthews.dmf.spring.IEntityDefinitionBean;
+
+/**
+ * This class represents the serialized form of a domain object implemented
+ * using CGLib. The readResolve() method recreates the actual domain object
+ * after it has been deserialized into Serializable. You must define
+ * &lt;spring-configured/&gt; in the application context.
+ * 
+ * @param <S>
+ *            The interface that defines the properties of the base domain
+ *            object.
+ * @param <T>
+ *            The interface that defines the properties of the derived domain
+ *            object.
+ * @author <a href="mailto:brian@btmatthews.com">Brian Matthews</a>
+ * @version 1.0
+ */
+@Configurable(preConstruction = true)
+public final class SerializedCGLibEntity<S extends IEntity<S>, T extends S>
+    implements Serializable, BeanFactoryAware
+{
+    /**
+     * Used for logging.
+     */
+    private static final Logger LOG = LoggerFactory
+        .getLogger(SerializedCGLibEntity.class);
+
+    /**
+     * The serialization version number.
+     */
+    private static final long serialVersionUID = 3830830321957878319L;
+
+    /**
+     * The application context. Note this is not serialized.
+     */
+    private transient BeanFactory beanFactory;
+
+    /**
+     * The domain object name.
+     */
+    private String entityName;
+
+    /**
+     * The domain object identifier.
+     */
+    private IEntityID<S> entityId;
+
+    /**
+     * The domain object version number.
+     */
+    private long entityVersion;
+
+    /**
+     * The attributes of the domain object.
+     */
+    private HashMap<?, ?> entityAttributes;
+
+    /**
+     * The default constructor.
+     */
+    public SerializedCGLibEntity()
+    {
+        SerializedCGLibEntity.LOG
+            .debug("Initializing with default constructor");
+    }
+
+    /**
+     * Initialise with the attributes to be serialised.
+     * 
+     * @param name
+     *            The entity name.
+     * @param id
+     *            The domain object identifier.
+     * @param version
+     *            The entity version.
+     * @param attributes
+     *            The entity attributes.
+     */
+    public SerializedCGLibEntity(final String name, final IEntityID<S> id,
+        final long version, final HashMap<?, ?> attributes)
+    {
+        SerializedCGLibEntity.LOG
+            .debug("Initializing with parameterized constructor");
+
+        this.entityName = name;
+        this.entityId = id;
+        this.entityVersion = version;
+        this.entityAttributes = attributes;
+    }
+
+    /**
+     * Inject the bean factory.
+     * 
+     * @param factory
+     *            The bean factory.
+     */
+    public void setBeanFactory(final BeanFactory factory)
+    {
+        SerializedCGLibEntity.LOG.debug("Injected bean factory");
+
+        this.beanFactory = factory;
+    }
+
+    /**
+     * Called after deserialisation. The corresponding entity factory is
+     * retrieved from the bean application context and BeanUtils methods are
+     * used to initialise the object.
+     * 
+     * @return The initialised domain object.
+     * @throws ObjectStreamException
+     *             If there was a problem creating or initialising the domain
+     *             object.
+     */
+    public Object readResolve()
+        throws ObjectStreamException
+    {
+        SerializedCGLibEntity.LOG.debug("Transforming deserialized object");
+
+        final T entity = this.createEntity();
+        entity.setId(this.entityId);
+        try
+        {
+            PropertyUtils.setSimpleProperty(entity, "version",
+            this.entityVersion);
+            for (Map.Entry<?, ?> entry : this.entityAttributes.entrySet())
+            {
+                PropertyUtils.setSimpleProperty(entity, entry.getKey()
+                    .toString(), entry.getValue());
+            }
+        }
+        catch (IllegalAccessException e)
+        {
+            throw new InvalidObjectException(e.getMessage());
+        }
+        catch (InvocationTargetException e)
+        {
+            throw new InvalidObjectException(e.getMessage());
+        }
+        catch (NoSuchMethodException e)
+        {
+            throw new InvalidObjectException(e.getMessage());
+        }
+        return entity;
+    }
+
+    /**
+     * Lookup the entity factory in the application context and create an
+     * instance of the entity. The entity factory is located by getting the
+     * entity definition bean and using the factory registered with it or
+     * getting the entity factory. The name used for the definition bean lookup
+     * is ${entityName}Definition while ${entityName} is used for the factory
+     * lookup.
+     * 
+     * @return The domain object instance.
+     * @throws ObjectStreamException
+     *             If the entity definition bean or entity factory were not
+     *             available.
+     */
+    @SuppressWarnings("unchecked")
+    private T createEntity()
+        throws ObjectStreamException
+    {
+        SerializedCGLibEntity.LOG.debug("Getting domain object factory");
+
+        // Try to use the entity definition bean
+
+        final IEntityDefinitionBean<S, T> entityDefinition = (IEntityDefinitionBean<S, T>)this.beanFactory
+            .getBean(StringUtils.uncapitalize(this.entityName) + "Definition",
+                IEntityDefinitionBean.class);
+
+        if (entityDefinition != null)
+        {
+            final IEntityFactory<S, T> entityFactory = entityDefinition
+                .getFactory();
+            if (entityFactory != null)
+            {
+                 SerializedCGLibEntity.LOG
+                    .debug("Domain object factory obtained via enity definition bean");
+
+                 return entityFactory.create();
+            }
+        }
+
+        // Try to use the entity factory
+
+        final IEntityFactory<S, T> entityFactory = (IEntityFactory<S, T>)this.beanFactory
+            .getBean(StringUtils.uncapitalize(this.entityName) + "Factory",
+                IEntityFactory.class);
+
+        if (entityFactory != null)
+        {
+            SerializedCGLibEntity.LOG
+                .debug("Domain object factory obtained via direct look-up");
+
+            return entityFactory.create();
+        }
+
+        // Neither worked!
+
+        SerializedCGLibEntity.LOG.warn("Cannot find domain object factory");
+
+        throw new InvalidObjectException(
+            "No entity definition or factory found for " + this.entityName);
+    }
+}
+

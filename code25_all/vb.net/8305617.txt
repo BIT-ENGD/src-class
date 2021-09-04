@@ -1,0 +1,40 @@
+Private Shared Sub msg(Optional message As String = "")
+    Debug.WriteLine(Threading.Thread.CurrentThread.ManagedThreadId & " " & message)
+End Sub
+<TestMethod()>
+Public Sub TestMethod1()
+    Dim cancel As New Threading.CancellationTokenSource
+    msg("starting")
+    Dim start As DateTime = DateTime.Now
+    Dim task As New Task(Sub()
+                             msg("in thread")
+                             Do Until Now.Subtract(start).TotalMilliseconds > 2000
+                                 Threading.Thread.Sleep(500)
+                                 msg("loop")
+                                 cancel.Token.ThrowIfCancellationRequested()
+                             Loop
+                         End Sub, cancel.Token, TaskCreationOptions.LongRunning)
+    task.ContinueWith(Sub(result As task)
+                          msg("Continue task running")
+                          Debug.WriteLine(result.Status.ToString & If(result.Exception Is Nothing, ", no exception", ", exception occurred " & result.Exception.GetType.Name))
+                          Do Until Now.Subtract(start).TotalMilliseconds > 10000
+                              cancel.Token.ThrowIfCancellationRequested()
+                              Threading.Thread.Sleep(500)
+                              msg("innerloop")
+                          Loop
+                      End Sub)
+    task.Start()
+    Try
+        If Not task.Wait(4000, cancel.Token) Then
+            msg("wait expired, time to cancel)")
+            cancel.Cancel()
+        End If
+        task.Wait()
+
+    Catch ex As OperationCanceledException
+        msg("task was cancelled")
+    Finally
+        msg("finishing")
+    End Try
+End Sub
+

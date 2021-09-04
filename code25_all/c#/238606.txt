@@ -1,0 +1,133 @@
+class ConnectionHandler
+{
+    private Server server;
+
+    private TcpListener tcp;
+
+    private ArrayList connections;
+
+    private bool listening;
+
+    private Thread listeningThread;
+
+    public Server getServer()
+    {
+        return server;
+    }
+
+    private void log(String s, bool e)
+    {
+        server.log("Connection Manager: " + s, e);
+    }
+
+    private void threadedListen()
+    {
+        while (listening)
+        {
+            try
+            {
+                TcpClient t = tcp.AcceptTcpClient();
+                Connection conn = new Connection(this, t);
+            }
+            catch (NullReferenceException)
+            {
+                log("unable to accept connections!", true);
+            }
+        }
+        log("Stopped listening", false);
+    }
+
+    public void listen()
+    {
+        log("Listening for new connections", false);
+        tcp.Start();
+        listening = true;
+        if (listeningThread != null && listeningThread.IsAlive)
+        {
+            listeningThread.Abort();
+        }
+        listeningThread = new Thread(new ThreadStart(
+            this.threadedListen));
+        listeningThread.Start();
+    }
+
+    public void stop()
+    {
+        listening = false;
+        if (listeningThread != null)
+        {
+            listeningThread.Abort();
+            log("Forced stop", false);
+        }
+        log("Stopped listening", false);
+    }
+
+    public ConnectionHandler(Server server)
+    {
+        this.server = server;
+        tcp = new TcpListener(new IPEndPoint(
+            IPAddress.Parse("127.0.0.1"), 80));
+        connections = new ArrayList();
+    }
+}
+
+class Connection
+{
+    private Socket socket;
+    private TcpClient tcp;
+
+    private ConnectionHandler ch;
+
+    public Connection(ConnectionHandler ch, TcpClient t)
+    {
+        try
+        {
+            this.ch = ch;
+            this.tcp = t;
+            ch.getServer().log("new tcp connection to " 
+                + this.tcp.Client.RemoteEndPoint.ToString(), false);
+            NetworkStream ns = t.GetStream();
+
+            String responseString;
+            Byte[] response;
+            Int32 bytes;
+            responseString = String.Empty;
+            response = new Byte[512];
+            bytes = ns.Read(response, 0, response.Length);
+            responseString = 
+                System.Text.Encoding.ASCII.GetString(response, 0, bytes);
+            ch.getServer().log("Received: " + responseString);
+
+            String msg = "<html>Hello World</html>";
+            String fullMsg = "HTTP/1.x 200 OK\r\n"
+                    + "Server: Test Server\r\n"
+                    + "Content-Type: text/html; "
+                        + "charset=UTF-8\r\n"
+                    + "Content-Length: " + msg.Length + "\r\n"
+                    + "Date: Sun, 10 Aug 2008 22:59:59 GMT"
+                        + "\r\n";
+            nsSend(fullMsg, ns);
+            nsSend(msg, ns);
+
+            ns.Close();
+            tcp.Close();
+        }
+        catch (ArgumentNullException e)
+        {
+            ch.getServer().log("connection error: argument null exception: " + e);
+        }
+        catch (SocketException e)
+        {
+            ch.getServer().log("connection error: socket exception: " + e);
+        }
+    }
+
+    private void nsSend(String s, NetworkStream ns)
+    {
+        Byte[] data = System.Text.Encoding.ASCII.GetBytes(s);
+        ns.Write(data, 0, data.Length);
+        ns.Flush();
+        ch.getServer().log("Sent: " + s);
+    }
+}
+

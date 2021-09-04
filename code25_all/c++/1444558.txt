@@ -1,0 +1,205 @@
+#include "stdafx.h"
+#include "TxStats.h"
+#include <cstdlib>
+#include <atlstr.h>
+
+#pragma managed
+
+#using <mscorlib.dll>
+#using <System.dll>
+#using <system.data.dll>
+
+using namespace std;
+using namespace System;
+using namespace System::Text;
+using namespace System::Text::RegularExpressions;
+using namespace System::Collections::Generic;
+using namespace System::Runtime::InteropServices;
+using namespace Microsoft::VisualStudio::TestTools::UnitTesting;
+
+namespace AUnitTest
+{
+    [TestClass]
+    public ref class TxStatsTest
+    {
+    private:
+        TestContext^ testContextInstance;
+
+    public: 
+        /// <summary>
+        ///Gets or sets the test context which provides
+        ///information about and functionality for the current test run.
+        ///</summary>
+        property Microsoft::VisualStudio::TestTools::UnitTesting::TestContext^ TestContext
+        {
+            Microsoft::VisualStudio::TestTools::UnitTesting::TestContext^ get()
+            {
+                return testContextInstance;
+            }
+            System::Void set(Microsoft::VisualStudio::TestTools::UnitTesting::TestContext^ value)
+            {
+                testContextInstance = value;
+            }
+        };
+
+        #pragma region Additional test attributes
+        //
+        //You can use the following additional attributes as you write your tests:
+        //
+        //Use ClassInitialize to run code before running the first test in the class
+        //[ClassInitialize()]
+        //static void MyClassInitialize(TestContext^ testContext) {};
+        //
+        //Use ClassCleanup to run code after all tests in a class have run
+        //[ClassCleanup()]
+        //static void MyClassCleanup() {};
+        //
+        //Use TestInitialize to run code before running each test
+        //[TestInitialize()]
+        //void MyTestInitialize() {};
+        //
+        //Use TestCleanup to run code after each test has run
+        //[TestCleanup()]
+        //void MyTestCleanup() {};
+        //
+        #pragma endregion 
+
+        [TestMethod]
+        void TestGetTxRateStr()
+        {
+            /* str to CString
+
+                CManagedClass* pCManagedClass = new CManagedClass();
+                pCManagedClass->ShowMessage(strMessage);
+
+                char* szMessage = (char*)Marshal::StringToHGlobalAnsi(strMessage);
+                CUnmanagedClass cUnmanagedClass; cUnmanagedClass.ShowMessageBox(szMessage);
+                Marshal::FreeHGlobal((int)szMessage);
+
+            */
+            CString out = TxStats::GetTxRateStr(1024);
+            // convert between MFC and .NET String implementations
+            String ^ myManagedString = Marshal::PtrToStringAnsi((IntPtr) (char *) out.GetBuffer());
+            String ^ ret = myManagedString ;///gcnew String( );
+            Regex ^ matStr = gcnew Regex("1024 KB/s");
+            StringAssert::Matches(ret, matStr);
+        }
+    };
+}
+
+    #include "stdafx.h"
+#include "TxStats.h"
+
+TxStats::TxStats()
+{
+}
+/*
+ This method returns a data rate string formatted in either Bytes, KBytes, MBytes or GBytes per sec
+ from an int of the bytes per second.
+*/
+CString TxStats::GetTxRateStr(__int64 Bps)
+{
+ enum DataUnits dunit;
+ const __int64 dataSizes[]= { 0x1,        // 2 ^ 0
+         0x400,      // 2 ^ 10
+         0x100000,   // 2 ^ 20
+         0x40000000};// 2 ^ 30
+ const char *dataStrs[] = { "B/s",
+          "KB/s",
+          "MB/s",
+          "GB/s"};
+ CString out;
+ double datarate;
+ bool finish = false;
+ for ( dunit = A_KBYTE; dunit <= LARGER_THAN_BIGGEST_UNIT; dunit = DataUnits(dunit+1) ) 
+ {
+  if ( dunit == LARGER_THAN_BIGGEST_UNIT )
+  {
+   if (dataSizes[dunit - 1] <= Bps )
+   {
+    //Gigabytes / sec
+    datarate = Bps / ((double) dataSizes[dunit - 1]);
+    out.Format("%4.2f %s", datarate, dataStrs[dunit - 1]);
+    finish = true;
+    break;
+   }
+  }
+  else
+  {
+   if (Bps < dataSizes[dunit])
+   {
+    //(Kilo, Mega)bytes / sec
+    datarate = Bps / ((double) dataSizes[dunit - 1]);
+    out.Format("%4.2f %s", datarate, dataStrs[dunit - 1]);
+    finish = true;
+    break;
+   }
+  }
+ }
+ if (! finish)
+ {
+  out.Format("%s", "Unknown!");
+ }
+ return out.GetBuffer();
+}
+
+
+void TxStats::BytesToSizeStr(__int64 bytes, CString &out)
+{
+ if (bytes < 0)
+ {
+  out = "Err";
+ }
+ else if (bytes == 0)
+ {
+  out = "0B";
+ }
+ else
+ {
+  CString size;
+  CString byteChar = "B";
+  CString unit;
+  int val;
+  if (bytes < 1024)
+  {
+   //Bytes
+   unit = "";
+   val = (int)bytes;
+  }
+  else if ( (bytes >> 10) < 1024 )
+  {
+   //Kilobytes
+   unit = "K";
+   __int64 div = 1 << 10;
+   val = (int) (bytes / ((double) div ));
+  }
+  else if ( (bytes >> 20) < 1024 )
+  {
+   //Megabytes
+   unit = "M";
+   __int64 div = 1 << 20;
+   val = (int) (bytes / ((double) div ));
+  }
+  else
+  {
+   //Else assume gigabytes
+   unit = "G";
+   __int64 div = 1 << 30;
+   val = (int) (bytes / ((double) div ));
+  }
+  unit = unit + byteChar;
+  const char * unitCharBuf = unit.GetBuffer();
+  size.Format("%d%s", ((int) val), unitCharBuf);
+  out = size.GetBuffer();
+ }
+
+}
+
+2>TxStatsTest.obj : error LNK2028: unresolved token (0A0005D4) "public: static class ATL::CStringT<char,class StrTraitMFC_DLL<char,class ATL::ChTraitsCRT<char> > > __cdecl TxStats::GetTxRateStr(__int64)" (?GetTxRateStr@TxStats@@$$FSA?AV?$CStringT@DV?$StrTraitMFC_DLL@DV?$ChTraitsCRT@D@ATL@@@@@ATL@@_J@Z) referenced in function "public: void __clrcall AUnitTest::TxStatsTest::TestGetTxRateStr(void)" (?TestGetTxRateStr@TxStatsTest@AUnitTest@@$$FQ$AAMXXZ)
+2>TxStatsTest.obj : error LNK2019: unresolved external symbol "public: static class ATL::CStringT<char,class StrTraitMFC_DLL<char,class ATL::ChTraitsCRT<char> > > __cdecl TxStats::GetTxRateStr(__int64)" (?GetTxRateStr@TxStats@@$$FSA?AV?$CStringT@DV?$StrTraitMFC_DLL@DV?$ChTraitsCRT@D@ATL@@@@@ATL@@_J@Z) referenced in function "public: void __clrcall AUnitTest::TxStatsTest::TestGetTxRateStr(void)" (?TestGetTxRateStr@TxStatsTest@AUnitTest@@$$FQ$AAMXXZ)
+2>\trunk\<proj>\Debug\AUnitTest.dll : fatal error LNK1120: 2 unresolved externals
+2>Caching metadata information for c:\program files\microsoft visual studio 9.0\common7\ide\publicassemblies\microsoft.visualstudio.qualitytools.unittestframework.dll...
+2>Build log was saved at "file://trunk\<proj>\AUnitTest\Debug\BuildLog.htm"
+2>AUnitTest - 3 error(s), 0 warning(s)
+========== Rebuild All: 1 succeeded, 1 failed, 0 skipped ==========
+

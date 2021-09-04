@@ -1,0 +1,67 @@
+probit.ll <- function(par,ytilde,x) {
+   a <- par[1] 
+   b <- par[2]
+ return(  -sum( pnorm(ytilde*(a + b*x),log=TRUE) ))
+}
+
+my.probit <- function(y,x) {
+# use OLS to get start values
+par <- lm(y~x)$coefficients
+ytilde <- 2*y-1
+# Run optim 
+res <- optim(par,probit.ll,hessian=TRUE,ytilde=ytilde,x=x)
+# Return point estimates and SE based on the inverse of Hessian
+names(res$par) <- c('a','b')
+se=sqrt(diag(solve(res$hessian)))
+names(se) <- c('a','b')
+return(list(par=res$par,se=se,cov=solve(res$hessian)))
+}
+
+probit.data <- function(N=100,a=1,b=1) {
+x <- rnorm(N)
+y.star <- a + b*x + rnorm(N)
+y <- (y.star > 0)
+return( as.data.frame(cbind(y,x,y.star)) )
+}
+
+probit.data100 <- function(N=100,a=2,b=1) {
+x <- rnorm(N)
+y.star <- a + b*x + rnorm(N)
+y <- (y.star > 0)
+return( as.data.frame(cbind(y,x,y.star)) )
+}
+
+#predicted value
+se.probit.phat100 <- function(x, par, V) {
+z <- par[1] + par[2] * x
+# Derivative of q w.r.t. alpha and beta 
+J <- c( dnorm(z), dnorm(z)*par[2] )
+return( sqrt(t(J) %*% V %*% J)  )
+}
+
+dat100 <- probit.data100()
+res100 <- my.probit(dat100$y,dat100$x)
+res100
+
+N <- dim(probit.data(N=100, a=1, b=1))[1]
+npb.par <- matrix(NA,100,2)
+colnames(npb.par) <- c("alpha","beta")
+npb.eystar <- matrix(NA,100,N)
+for (t in 1:100) {
+thisdta <- probit.data(N=100, a=1, b=1)[sample(1:N,N,replace=TRUE),]
+npb.par[t,] <- my.probit(thisdta$y,thisdta$x)$par
+}
+
+processres <- function(simres) {
+z <- t(apply(simres,2,function(x) { c(mean(x),median(x),sd(x),quantile(x,c(0.05,0.95)))     } ))
+rownames(z) <- colnames(simres)
+colnames(z) <- c("mean","median","sd","5%","95%")
+z
+}
+
+processres(npb.par)
+
+x <- seq(-5,5,length=100)
+plot(x, pnorm(1 - 0.5*x), ty='l', lwd=2, bty='n', xlab='x', ylab="Pr(y=1)")
+rug(dat100$x)
+

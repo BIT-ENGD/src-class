@@ -1,0 +1,131 @@
+ProxyMessage
+public class ProxyMessage
+{
+   int Length; // message length (not including the length bytes themselves)
+   string Body; // an XML string containing a request/response
+
+   // writes this message instance in the proper network format to stream 
+   // (helper for response messages)
+   WriteToStream(Stream stream) { ... }
+}
+
+ProxyClient
+TcpClient.BeginRead
+BeginRead
+private enum BufferStates 
+{ 
+    GetMessageLength, 
+    GetMessageBody 
+}
+// The read buffer. Initially 4 bytes because we are initially
+// waiting to receive the message length (a 32-bit int) from the client 
+// on first connecting. By constraining the buffer length to exactly 4 bytes,
+// we make the buffer management a bit simpler, because
+// we don't have to worry about cases where the buffer might contain
+// the message length plus a few bytes of the message body.
+// Additional bytes will simply be buffered by the OS until we request them.
+byte[] _buffer = new byte[4];
+
+// A count of how many bytes read so far in a particular BufferState.
+int _totalBytesRead = 0;
+
+// The state of the our buffer processing. Initially, we want
+// to read in the message length, as it's the first thing
+// a client will send
+BufferStates _bufferState = BufferStates.GetMessageLength;
+
+// ...ADDITIONAL CODE OMITTED FOR BREVITY...
+
+// This is called every time we receive data from
+// the client.
+
+private void ReadCallback(IAsyncResult ar)
+{
+    try
+    {
+        int bytesRead = _tcpClient.GetStream().EndRead(ar);
+
+        if (bytesRead == 0)
+        {
+            // No more data/socket was closed.
+            this.Dispose();
+            return;
+        }
+
+        // The state passed to BeginRead is used to hold a ProxyMessage
+        // instance that we use to build to up the message 
+        // as it arrives.
+        ProxyMessage message = (ProxyMessage)ar.AsyncState;
+
+        if(message == null)
+            message = new ProxyMessage();
+
+        switch (_bufferState)
+        {
+            case BufferStates.GetMessageLength:
+
+                _totalBytesRead += bytesRead;
+
+                // if we have the message length (a 32-bit int)
+                // read it in from the buffer, grow the buffer
+                // to fit the incoming message, and change
+                // state so that the next read will start appending
+                // bytes to the message body
+
+                if (_totalBytesRead == 4)
+                {
+                    int length = BitConverter.ToInt32(_buffer, 0);
+                    message.Length = length;
+                    _totalBytesRead = 0;
+                    _buffer = new byte[message.Length];
+                    _bufferState = BufferStates.GetMessageBody;
+                }
+
+                break;
+
+            case BufferStates.GetMessageBody:
+
+                string bodySegment = Encoding.ASCII.GetString(_buffer, _totalBytesRead, bytesRead);
+                _totalBytesRead += bytesRead;
+
+                message.Body += bodySegment;
+
+                if (_totalBytesRead >= message.Length)
+                {
+                    // Got a complete message.
+                    // Notify anyone interested.
+
+                    // Pass a response ProxyMessage object to 
+                    // with the event so that receivers of OnReceiveMessage
+                    // can send a response back to the client after processing
+                    // the request.
+                    ProxyMessage response = new ProxyMessage();
+                    OnReceiveMessage(this, new ProxyMessageEventArgs(message, response));
+                    // Send the response to the client
+                    response.WriteToStream(_tcpClient.GetStream());
+
+                    // Re-initialize our state so that we're
+                    // ready to receive additional requests...
+                    message = new ProxyMessage();
+                    _totalBytesRead = 0;
+                    _buffer = new byte[4]; //message length is 32-bit int (4 bytes)
+                    _bufferState = BufferStates.GetMessageLength;
+                }
+
+                break;
+        }
+
+        // Wait for more data...
+        _tcpClient.GetStream().BeginRead(_buffer, 0, _buffer.Length, this.ReadCallback, message);
+    }
+    catch
+    {
+        // do nothing
+    }
+
+}
+
+MessageBuffer
+MessageBuffer
+BufferState
+ProxyClient

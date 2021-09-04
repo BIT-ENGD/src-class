@@ -1,0 +1,110 @@
+> reload
+[info] Building project Tutorial 1 1.0 against Scala 2.9.1
+[info]    using TutorialOneProject with sbt 0.7.7 and Scala 2.7.7
+> compile
+[info] 
+[info] == compile ==
+[info]   Source analysis: 1 new/modified, 0 indirectly invalidated, 0 removed.
+[info] Compiling main sources...
+[error] /home/carlos/workspaces/scala/tutorial-1/src/main/scala/Pi.scala:3: not found: object Actor
+[error] import Actor._
+[error]        ^
+[error] /home/carlos/workspaces/scala/tutorial-1/src/main/scala/Pi.scala:34: missing parameter type for expanded function
+[error] The argument types of an anonymous function must be fully known. (SLS 8.5)
+[error] Expected type was: ?
+[error]     def receive = {
+[error]                   ^
+[error] /home/carlos/workspaces/scala/tutorial-1/src/main/scala/Pi.scala:58: missing parameter type for expanded function
+[error] The argument types of an anonymous function must be fully known. (SLS 8.5)
+[error] Expected type was: <error>
+[error]     def receive: {
+[error]                          ^
+[error] three errors found
+[info] == compile ==
+[error] Error running compile: Compilation failed
+[info] 
+[info] Total time: 2 s, completed 07/02/2012 01:51:56
+
+package akka.tutorial.first.scala
+
+import Actor._
+import akka._
+import Routing._
+
+import java.util.concurrent.CountDownLatch
+
+object Pi extends App {
+
+  calculate(nrOfWorkers = 4, nrOfElements = 10000, nrOfMessages = 10000)
+
+  sealed trait PiMessage
+  case object Calculate extends PiMessage
+  case class Work(start: Int, nrOfElements: Int) extends PiMessage
+  case class Result(value: Double) extends PiMessage
+
+  class Worker extends Actor {
+
+    def calculatePiFor(start: Int, nrOfElements: Int): Double = {
+          var acc = 0.0
+      for (i <- start until (start + nrOfElements))
+        acc += 4.0 * (1 - (i % 2) * 2) / (2 * i + 1)
+      acc
+    }
+
+    def receive = {
+      case Work(start, nrOfElements) =>
+        self reply Result(calculatePiFor(start, nrOfElements)) 
+    }
+  }
+
+  class Master(
+    nrOfWorkers: Int, nrOfMessages: Int, nrOfElements: Int, latch: CountDownLatch)
+    extends Actor {
+
+    var pi: Double = _
+    var nrOfResults: Int = _
+    var start: Long = _
+
+    val workers = Vector.fill(nrOfWorkers)(actorOf[Worker].start())
+
+    val router = Routing.loadBalancerActor(CyclicIterator(workers)).start()
+
+    def receive: {
+      case Calculate =>
+        for (i <- 0 until nrOfMessages) router ! Work(i * nrOfElements, nrOfElements)
+
+        router ! Broadcast(PoisonPill)
+
+        router ! PoisonPill
+
+      case Result(value) =>
+        pi += value
+        nrOfResults += 1
+        if (nrOfResults == nrOfMessages) self.stop()
+    }
+
+    override def preStart() {
+      start = System.currentTimeMillis
+    }
+
+    override def postStop() {
+      println(
+        "\n\tPi estimate: \t\t%s\n\tCalculation time: \t%s millis"
+        .format(pi, (System.currentTimeMillis - start)))
+      latch.countDown()
+    }
+  }
+
+  def calculate(nrOfWorkers: Int, nrOfElements: Int, nrOfMessages: Int) {
+
+    val latch = new CountDownLatch(1)
+
+    val master = actorOf(
+      new Master(nrOfWorkers, nrOfMessages, nrOfElements, latch)).start()
+
+    master ! Calculate
+
+    latch.await()
+  }
+}
+

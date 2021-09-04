@@ -1,0 +1,149 @@
+import System.Random (randoms, mkStdGen)
+import Control.Parallel.Strategies (parMap, rdeepseq)
+import Control.DeepSeq (NFData)
+import Data.List (transpose)
+
+type Point = (Double, Double)
+
+fmod :: Double -> Double -> Double
+fmod a b | a < 0     = b - fmod (abs a) b 
+         | otherwise = if a < b then a 
+                       else let q = a / b in b * (q - fromIntegral (floor q))
+
+standardMap :: Double -> Point -> Point
+standardMap k (q, p) = (fmod (q + p) (2 * pi), fmod (p + k * sin(q)) (2 * pi))
+
+trajectory :: (Point -> Point) -> Point -> [Point] 
+trajectory map initial = initial : (trajectory map $ map initial)
+
+justEvery :: Int -> [a] -> [a]
+justEvery n (x:xs) = x : (justEvery n $ drop (n-1) xs)
+justEvery _ []     = []
+
+subTrace :: Int -> Int -> [a] -> [a]
+subTrace n m = take (n + 1) . justEvery m
+
+ensemble :: Int -> [Point]
+ensemble n = let qs = randoms (mkStdGen 42)
+                 ps = randoms (mkStdGen 21)
+             in take n $ zip qs ps 
+
+ensembleTrace :: NFData a => (Point -> [Point]) -> (Point -> a) -> 
+                              Int -> Int -> [Point] -> [[a]]
+ensembleTrace orbitGen observable n m = 
+    parMap rdeepseq ((map observable . subTrace n m) . orbitGen)
+
+main = let k = 100
+           l = 100
+           m = 100
+           orbitGen = trajectory (standardMap 7)
+           observable (p, q) = p^2 - q^2
+           initials = ensemble k
+           mean xs = (sum xs) / (fromIntegral $ length xs)
+           result =   (map mean) 
+                    $ transpose 
+                    $ ensembleTrace orbitGen observable l m 
+                    $ initials
+       in mapM_ print result
+
+$ ghc -O2 stdmap.hs -threaded
+
+$ ./stdmap +RTS -N4 > /dev/null
+
+(K=200,L=200,N=200)   -> real    0m0.774s
+                         user    0m2.856s
+                         sys     0m0.147s
+
+(K=2000,L=200,M=200)  -> real    0m7.409s
+                         user    0m28.102s
+                         sys     0m1.080s
+
+(K=200,L=2000,M=200)  -> real    0m7.326s
+                         user    0m27.932s
+                         sys     0m1.020s
+
+(K=200,L=200,M=2000)  -> real    0m10.581s
+                         user    0m38.564s
+                         sys     0m3.376s
+
+(K=20000,L=200,M=200) -> real    4m22.156s
+                         user    7m30.007s
+                         sys     0m40.321s
+
+(K=200,L=20000,M=200) -> real    1m16.222s
+                         user    4m45.891s
+                         sys     0m15.812s
+
+(K=200,L=200,M=20000) -> real    8m15.060s
+                         user    23m10.909s
+                         sys     9m24.450s
+
+overflowed
+SPARKS
+Q = (MUT cpu time) / (MUT real time)
+K = 8000:
+
+$ ghc -O2 stmap.hs -threaded -XBangPatterns
+$ ./stmap +RTS -s -N4 > /dev/null
+
+56,905,405,184 bytes allocated in the heap
+ 503,501,680 bytes copied during GC
+  53,781,168 bytes maximum residency (15 sample(s))
+   6,289,112 bytes maximum slop
+         151 MB total memory in use (0 MB lost due to fragmentation)
+
+                                Tot time (elapsed)  Avg pause  Max pause
+Gen  0     27893 colls, 27893 par    7.85s    1.99s     0.0001s    0.0089s
+Gen  1        15 colls,    14 par    1.20s    0.30s     0.0202s    0.0558s
+
+Parallel GC work balance: 23.49% (serial 0%, perfect 100%)
+
+TASKS: 6 (1 bound, 5 peak workers (5 total), using -N4)
+
+SPARKS: 8000 (8000 converted, 0 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+INIT    time    0.00s  (  0.00s elapsed)
+MUT     time   95.90s  ( 24.28s elapsed)
+GC      time    9.04s  (  2.29s elapsed)
+EXIT    time    0.00s  (  0.00s elapsed)
+Total   time  104.95s  ( 26.58s elapsed)
+
+Alloc rate    593,366,811 bytes per MUT second
+
+Productivity  91.4% of total user, 360.9% of total elapsed
+
+gc_alloc_block_sync: 315819
+
+K = 16000:
+
+$ ghc -O2 stmap.hs -threaded -XBangPatterns
+$ ./stmap +RTS -s -N4 > /dev/null
+
+113,809,786,848 bytes allocated in the heap
+ 1,156,991,152 bytes copied during GC
+  114,778,896 bytes maximum residency (18 sample(s))
+    11,124,592 bytes maximum slop
+      300 MB total memory in use (0 MB lost due to fragmentation)
+
+                                Tot time (elapsed)  Avg pause  Max pause
+Gen  0     135521 colls, 135521 par   22.83s    6.59s     0.0000s    0.0190s
+Gen  1        18 colls,    17 par    2.72s    0.73s     0.0405s    0.1692s
+
+Parallel GC work balance: 18.05% (serial 0%, perfect 100%)
+
+TASKS: 6 (1 bound, 5 peak workers (5 total), using -N4)
+
+SPARKS: 16000 (8198 converted, 7802 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+INIT    time    0.00s  (  0.00s elapsed)
+MUT     time  221.77s  (139.78s elapsed)
+GC      time   25.56s  (  7.32s elapsed)
+EXIT    time    0.00s  (  0.00s elapsed)
+Total   time  247.34s  (147.10s elapsed)
+
+Alloc rate    513,176,874 bytes per MUT second
+
+Productivity  89.7% of total user, 150.8% of total elapsed
+
+gc_alloc_block_sync: 814824
+

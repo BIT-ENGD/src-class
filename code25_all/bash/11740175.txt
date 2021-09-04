@@ -1,0 +1,105 @@
+printf
+loop
+Database:   Table:          Entries:                      
+
+database1   random_table        0                             
+database2   random_table        0                             
+database3   random_table        0
+database4   random_table        0
+
+if
+#!/usr/bin/env bash
+
+# DB Details:
+db_user="user"
+db_pass="password"
+db_host="localhost"
+
+# Date
+date_stamp=$(date +%d%m%Y)
+
+# Initial Setup
+data_dir="/tmp/backup"
+
+# Checks
+if [ ! -e /usr/bin/s3cmd ]; then
+    echo "Required package (http://s3tools.org/s3cmd)"
+    exit 2
+fi
+if [ -e /usr/bin/gpg ]; then
+
+gpg_key=$(gpg -K | tr -d "{<,>}" | awk '/an@example.com/ { print $4 }')
+
+if [ "$gpg_key" != "an@example.com" ]; then
+    echo "No GPG key"
+    exit 2
+fi
+
+else
+    echo "No GPG package"
+    exit 2
+fi
+
+if [ -d $data_dir ]; then
+    rm -rf $data_dir/* && chmod 700 $data_dir
+else
+    mkdir $data_dir && chmod 700 $data_dir
+fi
+
+# S3 buckets
+bucket_1=s3://test/
+
+# Download backup
+
+for backup in $(s3cmd ls s3://test/ | awk '{ print $2 }')
+do
+latest=$(s3cmd ls $backup | awk '{ print $2 }'  | sed -n '$p')
+random=$(s3cmd ls $latest | shuf | awk '{ print $4 }' | sed -n '1p')
+        s3cmd get $random $data_dir >/dev/null 2>&1
+done
+
+# Decrypting Files
+for file in $(ls -A $data_dir)
+do
+filename=$(echo $file | sed 's/\.e//')
+    gpg --out $data_dir/$filename --decrypt $data_dir/$file >/dev/null 2>&1 && rm -f $data_dir/$file
+if [ $? -eq 0 ]; then
+
+# Decompressing Files
+bzip2 -d $data_dir/$filename
+if [ $? -ne 0 ]; then
+    echo "Decompression Failed!"
+fi
+else
+    echo "Decryption Failed!"
+exit 2
+fi
+done
+
+# MySQL Restore
+
+printf "%-40s%-30s%-30s\n\n" Database: Table: Entries:
+
+for dump in $(ls -A $data_dir)
+do
+    mysql -h $db_host -u $db_user -p$db_pass < $data_dir/$dump
+if [ $? -eq 0 ]; then
+
+# Random DBs query
+db=$(echo $dump | sed 's/\.sql//')
+random_table=$(mysql -h $db_host -u $db_user -p$db_pass $db -e "SHOW TABLES" | grep -v 'Tables' | shuf | sed -n '1p')
+db_entries=$(mysql -h $db_host -u $db_user -p$db_pass $db -e "SELECT * FROM $random_table" | grep -v 'id' | wc -l)
+
+printf "%-40s%-30s%-30s\n" $db $random_table $db_entries
+
+    mysql -h $db_host -u $db_user -p$db_pass -e "DROP DATABASE $db"     
+else
+    echo "The system was unable to restore backups!"
+    rm -rf $data_dir
+exit 2
+fi
+done
+
+#Remove backups
+    rm -rf $data_dir
+

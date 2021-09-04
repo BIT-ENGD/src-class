@@ -1,0 +1,86 @@
+#include <gtk/gtk.h>
+
+static int counter = 0;
+static PangoLayout* layout;
+static GdkGC* gc1;
+static GdkGC* gc2;
+//**/static GMutex* mu;
+
+static gboolean on_expose_event(GtkWidget* widget, GdkEventExpose* event)
+{
+    gchar the_string[20];
+
+    //**/g_mutex_lock(mu);
+    gdk_draw_rectangle(GDK_DRAWABLE(widget->window), gc1, TRUE, 0, 0, widget->allocation.width, widget->allocation.height);
+    snprintf(the_string, 20, "%d", counter);
+    pango_layout_set_text(layout, the_string, -1);
+    gdk_draw_layout(GDK_DRAWABLE(widget->window), gc2, 180, 120, layout);
+    //**/g_mutex_unlock(mu);
+
+    g_print (".");
+    return FALSE;
+}
+
+gpointer func(gpointer data)
+{
+    //**/g_usleep(10000);
+    GdkWindow* window = GDK_WINDOW(data);
+    while(TRUE)
+    {
+        gdk_window_invalidate_rect(window, NULL, FALSE);
+        //**/gdk_window_process_updates(window, FALSE);
+        if(counter % 100 == 0) g_print("X");
+        g_usleep(10);
+        ++counter;
+    }
+    return FALSE;
+}
+
+int main(int argc, char** argv)
+{
+    GtkWidget* window;
+    GtkWidget* drawer;
+    GdkColormap* colormap;
+    GdkColor color;
+
+    g_thread_init(NULL);
+    gdk_threads_init();
+    gtk_init(&argc, &argv);
+
+    //:Create widgets and 
+    window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    drawer = gtk_drawing_area_new();
+    gtk_widget_set_size_request(drawer, 400, 300);
+    gtk_container_add(GTK_CONTAINER(window), drawer);
+    //.
+
+    gtk_widget_show_all(window);
+
+    //:Initializing Graphic Contexts
+    colormap = gtk_widget_get_colormap(GTK_WIDGET(drawer));
+    layout = gtk_widget_create_pango_layout(GTK_WIDGET(drawer), NULL);
+    gc1 = gdk_gc_new(GDK_DRAWABLE(GTK_WIDGET(drawer)->window));
+    gc2 = gdk_gc_new(GDK_DRAWABLE(GTK_WIDGET(drawer)->window));
+    gdk_color_parse("#000", &color);
+    gdk_colormap_alloc_color(colormap, &color, FALSE, TRUE);
+    gdk_gc_set_background(gc1, &color);
+    gdk_color_parse("#fff", &color);
+    gdk_colormap_alloc_color(colormap, &color, FALSE, TRUE);
+    gdk_gc_set_foreground(gc2, &color);
+    //.
+
+    g_signal_connect(G_OBJECT(window), "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(G_OBJECT(drawer), "expose_event", G_CALLBACK(on_expose_event), NULL);
+
+    //**/mu = g_mutex_new();
+    //Run the problematic thread!
+    g_thread_create(func, GTK_WIDGET(drawer)->window, TRUE, NULL);
+
+    gdk_threads_enter();
+    gtk_main();
+    gdk_threads_leave();
+
+    //**/g_mutex_free(mu);
+    return 0;
+}
+

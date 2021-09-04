@@ -1,0 +1,211 @@
+#include <stdbool.h>    // C99, boolean type support
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+#define DATATYPE_IS_DOUBLE
+#define NDEBUG                      // disable assertions
+#include <assert.h>
+
+#define WCHARBUF_LINES          20  // def: 20
+#define WCHARBUF_COLMS          800 // def: 80 (using a huge number, like 500, is a good idea,
+                                    //          in order to prevent a buffer overflow :)
+#define RECOMMENDED_CONS_WIDTH  150
+#define RECOMMENDED_CONS_WIDTHQ "150"   // use the same value, quoted
+
+/* Preprocessor directives depending on DATATYPE_IS_* : */
+#if defined DATATYPE_IS_INT || defined DATATYPE_IS_LONG
+    #define DTYPE           long int
+    #define DTYPE_STRING    "INTEGER"
+    #define DTYPE_PRINTF    "%*.*ld"
+    #undef DATATYPE_IS_CHAR
+
+#elif defined DATATYPE_IS_FLOAT
+    #define DTYPE           float
+    #define DTYPE_STRING    "FLOAT"
+    #define DTYPE_PRINTF    "%*.*f"
+    #undef DATATYPE_IS_CHAR
+
+#elif defined DATATYPE_IS_DOUBLE
+    #define DTYPE           double
+    #define DTYPE_STRING    "DOUBLE"
+    #define DTYPE_PRINTF    "%*.*lf"
+    #undef DATATYPE_IS_CHAR
+
+#elif defined DATATYPE_IS_CHAR
+    #define DTYPE           char
+    #define DTYPE_STRING    "CHARACTER"
+    #define DTYPE_PRINTF    "%*.*c" /* using the "precision" sub-specifier ( .* ) with a  */
+                                    /* character will produce a harmless compiler warning */
+#else
+    #error "DATATYPE_IS_* preprocessor directive undefined!"
+
+#endif
+
+
+typedef struct node_struct {
+    DTYPE data;
+    struct node_struct *left;
+    struct node_struct *right;
+    /* int height;  // useful for AVL trees */
+} node;
+
+typedef struct {
+    node *root;
+    bool IsAVL;     // useful for AVL trees
+    long size;
+} tree;
+
+
+static inline
+DTYPE get_largest(node *n){
+    if (n == NULL)
+        return (DTYPE)0;
+
+    for(; n->right != NULL; n=n->right);
+
+    return n->data;
+}
+
+static
+int subtreeheight(node *ST){
+    if (ST == NULL)
+        return -1;
+
+    int height_left  = subtreeheight(ST->left);
+    int height_right = subtreeheight(ST->right);
+
+    return (height_left > height_right) ? (height_left + 1) : (height_right + 1);
+}
+
+
+void prettyprint_tree(tree *T){
+    if (T == NULL)  // if T empty, abort
+        return;
+
+#ifndef DATATYPE_IS_CHAR /* then DTYPE is a numeric type */
+    /* compute spaces, find width: */
+    int width, i, j;
+    DTYPE max = get_largest(T->root);
+
+    width = (max < 10) ? 1 :
+            (max < 100) ? 2 :
+            (max < 1000) ? 3 :
+            (max < 10000) ? 4 :
+            (max < 100000) ? 5 :
+            (max < 1000000) ? 6 :
+            (max < 10000000) ? 7 :
+            (max < 100000000) ? 8 :
+            (max < 1000000000) ? 9 : 10;
+    assert  (max < 10000000000);
+
+    width += 2; // needed for prettier results
+
+#if defined DATATYPE_IS_FLOAT || defined DATATYPE_IS_DOUBLE
+    width += 2; // because of the decimals! (1 decimal is printed by default...)
+#endif // float or double
+
+    int spacesafter = width / 2;
+    int spacesbefore = spacesafter + 1;
+    //int spacesbefore = ceil(width / 2.0);
+
+#else /* character input */
+    int i, j, width = 3, spacesbefore = 2, spacesafter = 1;
+
+#endif // #ifndef DATATYPE_IS_CHAR
+
+    /* start wchar_t printing, using a 2D character array with swprintf() : */
+
+    struct columninfo{  // auxiliary structure
+        bool visited;
+        int  col;
+    };
+
+    wchar_t wcharbuf[WCHARBUF_LINES][WCHARBUF_COLMS];
+    int line=0;
+    struct columninfo eachline[WCHARBUF_LINES];
+
+    for (i=0; i<WCHARBUF_LINES; ++i){       // initialization
+        for (j=0; j<WCHARBUF_COLMS; ++j)
+            wcharbuf[i][j] = (wchar_t)' ';
+        eachline[i].visited = false;
+        eachline[i].col = 0;
+    }
+
+    int height = subtreeheight(T->root);
+
+    void recur_swprintf(node *ST, int cur_line, const wchar_t *nullstr){ // nested function,
+                                                                            // GCC extension!
+        float offset = width * pow(2, height - cur_line);
+
+        ++cur_line;
+
+        if (eachline[cur_line].visited == false) {
+            eachline[cur_line].col = (int) (offset / 2);
+            eachline[cur_line].visited = true;
+        }
+        else{
+            eachline[cur_line].col += (int) offset;
+            if (eachline[cur_line].col + width > WCHARBUF_COLMS)
+                swprintf(wcharbuf[cur_line], L"  BUFFER OVERFLOW DETECTED! ");
+        }
+
+        if (ST == NULL){
+            swprintf(wcharbuf[cur_line] + eachline[cur_line].col, L"%*.*s", 0, width, nullstr);
+            if (cur_line <= height){
+                /* use spaces instead of the nullstr for all the "children" of a NULL node */
+                recur_swprintf(NULL, cur_line, L"          ");
+                recur_swprintf(NULL, cur_line, L"          ");
+            }
+            else
+                return;
+        }
+        else{
+            recur_swprintf(ST->left,  cur_line, nullstr);
+            recur_swprintf(ST->right, cur_line, nullstr);
+
+            swprintf(wcharbuf[cur_line] + eachline[cur_line].col - 1, L"("DTYPE_PRINTF"",
+                     spacesbefore, 1, ST->data);
+
+          //swprintf(wcharbuf[cur_line] + eachline[cur_line].col + spacesafter + 1, L")");
+            swprintf(wcharbuf[cur_line] + eachline[cur_line].col + spacesafter + 2, L")");
+        }
+    }
+
+    void call_recur(tree *tr){  // nested function, GCC extension! (wraps recur_swprintf())
+        recur_swprintf(tr->root, -1, L"NULL");
+    }
+
+    call_recur(T);
+
+    /* Omit empty columns: */
+    int omit_cols(void){        // nested function, GCC extension!
+        int col;
+
+        for (col=0; col<RECOMMENDED_CONS_WIDTH; ++col)
+            for (line=0; line <= height+1; ++line)
+                if (wcharbuf[line][col] != ' ' && wcharbuf[line][col] != '\0')
+                    return col;
+
+        return 0;
+    }
+
+    /* Use fputwc to transfer the character array to the screen: */
+    j = omit_cols() - 2;
+    j = (j < 0) ? 0 : j;
+
+    for (line=0; line <= height+1; ++line){     // assumes RECOMMENDED_CONS_WIDTH console window!
+        fputwc('\n', stdout);                   // optional blanc line
+        for (i=j; i<j+RECOMMENDED_CONS_WIDTH && i<WCHARBUF_COLMS; ++i)
+            fputwc(wcharbuf[line][i], stdout);
+        fputwc('\n', stdout);
+    }
+}
+
+bool IsAVL
+-Wall
+-Wextra
+vim
+nano
+gedit
+L' '

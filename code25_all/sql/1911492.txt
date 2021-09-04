@@ -1,0 +1,87 @@
+ALTER PROCEDURE [dbo].[sp_rte_GetRateList]
+(
+    @TenantID        INT,
+    @CustomerID      BIGINT = -1,   
+    @SearchCriteria  VARCHAR(64) = '', 
+    @SortBy          VARCHAR(16) = '',
+    @SortType        VARCHAR(16) = '',
+    @Debug           BIT = 0
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @sql nvarchar(4000),
+            @paramlist  nvarchar(4000)  
+
+    IF (@SearchCriteria = '')
+    BEGIN
+        SELECT @sql = 'SELECT r.TenantID, r.RateID, r.RateGUID, r.RateCode, r.RateName, r.RateDescription, r.ValidityUTCDate, r.CreatedUTCTimeStamp, 
+                            r.CreatedIP, r.CreatedBy, r.LastModifiedUTCTimeStamp, r.LastModifiedIP, r.LastModifiedBy, r.IsActive, 
+                            c.CustomerID, c.CustomerName, rt.RateTypeID, rt.RateTypeName, s.SupplierID, s.SupplierName, r.FixedLineAmount, r.MobileAmount, r.DataAmount, r.OtherAmount, 
+                            (r.FixedLineAmount + r.MobileAmount + r.DataAmount + r.OtherAmount) AS TotalAmount, 
+                            r.CreatedUTCTimeSTamp,
+                            STUFF((SELECT '', '' + ct.CustomerTypeName 
+                                    FROM glb_CustomerTypes ct JOIN glb_CustomerCustomerTypes cct ON cct.CustomerTypeID = ct.CustomerTypeID 
+                                    WHERE cct.CustomerID = C.CustomerID 
+                                    GROUP BY ct.CustomerTypeName FOR XML PATH('''')), 1, 2, '''') AS CustomerTypeName 
+                        FROM dbo.rte_Rates r 
+                                INNER JOIN dbo.rte_RateTypes rt ON r.RateTypeID = rt.RateTypeID 
+                                INNER JOIN dbo.glb_Suppliers s ON r.SupplierID = s.SupplierID
+                                INNER JOIN dbo.glb_Customers c ON r.CustomerID = c.CustomerID 
+                                INNER JOIN dbo.glb_Addresses a ON c.CustomerID = a.CustomerID
+                                INNER JOIN dbo.glb_AddressTypes at ON a.AddressTypeID = at.AddressTypeID
+                        WHERE   at.AddressTypeCode = ''GLB_ADT_PHYSCLDDRS'' AND
+                                r.TenantID = @xTenantID AND 
+                                rt.TenantID = @xTenantID AND 
+                                s.TenantID = @xTenantID AND 
+                                r.IsActive = 1 AND
+                                rt.IsActive = 1 AND
+                                c.IsActive = 1 AND 
+                                c.CustomerID = @xCustomerID '
+    END
+    ELSE
+    BEGIN
+        SELECT @sql = 'SELECT r.TenantID, r.RateID, r.RateGUID, r.RateCode, r.RateName, r.RateDescription, r.ValidityUTCDate, r.CreatedUTCTimeStamp, 
+                            r.CreatedIP, r.CreatedBy, r.LastModifiedUTCTimeStamp, r.LastModifiedIP, r.LastModifiedBy, r.IsActive, 
+                            c.CustomerID, c.CustomerName, rt.RateTypeID, rt.RateTypeName, s.SupplierID, s.SupplierName, r.FixedLineAmount, r.MobileAmount, r.DataAmount, r.OtherAmount, 
+                            (r.FixedLineAmount + r.MobileAmount + r.DataAmount + r.OtherAmount) AS TotalAmount, 
+                            r.CreatedUTCTimeSTamp,
+                            STUFF((SELECT '', '' + ct.CustomerTypeName 
+                                    FROM glb_CustomerTypes ct JOIN glb_CustomerCustomerTypes cct ON cct.CustomerTypeID = ct.CustomerTypeID 
+                                    WHERE cct.CustomerID = C.CustomerID 
+                                    GROUP BY ct.CustomerTypeName FOR XML PATH('''')), 1, 2, '''') AS CustomerTypeName 
+                        FROM dbo.rte_Rates r 
+                                INNER JOIN dbo.rte_RateTypes rt ON r.RateTypeID = rt.RateTypeID 
+                                INNER JOIN dbo.glb_Suppliers s ON r.SupplierID = s.SupplierID
+                                INNER JOIN dbo.glb_Customers c ON r.CustomerID = c.CustomerID 
+                                INNER JOIN dbo.glb_Addresses a ON c.CustomerID = a.CustomerID
+                                INNER JOIN dbo.glb_AddressTypes at ON a.AddressTypeID = at.AddressTypeID
+                        WHERE   at.AddressTypeCode = ''GLB_ADT_PHYSCLDDRS'' AND
+                                r.TenantID = @xTenantID AND 
+                                rt.TenantID = @xTenantID AND 
+                                s.TenantID = @xTenantID AND 
+                                r.IsActive = 1 AND
+                                rt.IsActive = 1 AND
+                                c.IsActive = 1 AND 
+                                c.CustomerID = @xCustomerID AND 
+                                (r.RateCode LIKE ''%' + @SearchCriteria + '%'' OR
+                                 r.RateName LIKE ''%' + @SearchCriteria + '%'' OR
+                                 rt.RateTypeName LIKE ''%' + @SearchCriteria + '%'' OR
+                                 r.RateDescription LIKE ''%' + @SearchCriteria + '%'' OR
+                                 s.SupplierCode LIKE ''%' + @SearchCriteria + '%'' OR
+                                 s.SupplierName LIKE ''%' + @SearchCriteria + '%'' OR
+                                 c.CustomerCode LIKE ''%' + @SearchCriteria + '%'' OR
+                                 c.CustomerName LIKE ''%' + @SearchCriteria + '%'' OR
+                                 c.CustomerDescription LIKE ''%' + @SearchCriteria + '%'' ) '                       
+    END
+
+    SELECT @sql = @sql + 'ORDER BY ' + @SortBy + ' ' + @SortType
+
+    IF (@Debug = 1) PRINT @sql   
+
+    SELECT @paramlist = '@xTenantID INT, @xCustomerID BIGINT'
+
+    EXEC sp_executesql @sql, @paramlist, @TenantID, @CustomerID
+END
+

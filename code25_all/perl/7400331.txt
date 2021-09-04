@@ -1,0 +1,115 @@
+$VAR1 = {
+          '42-MG-BA' => [
+                          {
+                            'chromosome' => '19',
+                            'position' => '35770059',
+                            'genotype' => 'TC'
+                          },
+                          {
+                            'chromosome' => '2',
+                            'position' => '68019584',
+                            'genotype' => 'G'
+                          },
+                          {
+                            'chromosome' => '16',
+                            'position' => '9561557',
+                            'genotype' => 'G'
+                          },
+
+map {print "$_= $cave_snp_list->{$_}->[0]->{chromosome}\n"}sort keys %$cave_snp_list;
+map {print "$_= $geno_seq_list->{$_}->[0]->{chromosome}\n"}sort keys %$geno_seq_list;
+
+#!/software/bin/perl
+
+use strict;
+
+use warnings;
+use Getopt::Long;
+use Benchmark;
+use Config::Config qw(Sequenom.ini);
+useDatabase::Conn;
+use Data::Dumper;
+
+GetOptions("sam=s" => \my $sample);
+
+my $geno_seq_list = getseqgenotypes($sample);
+my $cave_snp_list = getcavemansnpfile($sample);
+#print Dumper($geno_seq_list);
+print scalar %$geno_seq_list, "\n";
+
+foreach my $sam (keys %{$geno_seq_list}) {
+
+    my $seq_used  = $geno_seq_list->{$sam};
+    my $cave_used = $cave_snp_list->{$sam};
+    print scalar(@$geno_seq_list->{$_}) if sort keys %$geno_seq_list, "\n";
+    print scalar(@$cave_used), "\n";
+    #foreach my $seq2com (@ {$seq_used } ){
+    #    foreach my $cave2com( @ {$cave_used} ){
+    #       print $seq2com->{chromosome},":" ,$cave2com->{chromosome},"\n";
+    #    }
+    #}
+
+    map { print "$_= $cave_snp_list->{$_}->[0]->{chromosome}\n" } sort keys %$cave_snp_list;
+    map { print "$_= $geno_seq_list->{$_}->[0]->{chromosome}\n" } sort keys %$geno_seq_list;
+}
+
+sub getseqgenotypes {
+
+    my $snpconn;
+    my $gen_list = {};
+    $snpconn = Database::Conn->new('live');
+    $snpconn->addConnection(DBI->connect('dbi:Oracle:pssd.world', 'sn', 'ss', { RaiseError => 1, AutoCommit => 0 }),
+        'pssd');
+
+#my $conn2 =Database::Conn->new('live');
+#$conn2->addConnection(DBI->connect('dbi:Oracle:COSI.world','nst_owner','nst_owner', {RaiseError =>1 , AutoCommit=>0}),'nst');
+    my $id_ind = $snpconn->execute('snp::Sequenom::getIdIndforExomeSample', $sample);
+    my $genotype = $snpconn->executeArrRef('snp::Sequenom::getGenotypeCallsPosition', $id_ind);
+    foreach my $geno (@{$genotype}) {
+
+        push @{ $gen_list->{ $geno->[1] } }, {
+
+            chromosome => $geno->[2],
+            position   => $geno->[3],
+            genotype   => $geno->[4],
+        };
+
+    }
+
+    return ($gen_list);
+}    #end of sub getseqgenotypes
+
+sub getcavemansnpfile {
+
+    my $nstconn;
+    my $caveman_list = {};
+    $nstconn = Database::Conn->new('live');
+    $nstconn->addConnection(
+        DBI->connect('dbi:Oracle:CANP.world', 'nst_owner', 'NST_OWNER', { RaiseError => 1, AutoCommit => 0 }), 'nst');
+
+    my $id_sample = $nstconn->execute('nst::Caveman::getSampleid', $sample);
+    #print "IDSample: $id_sample\n";
+    my $file_location = $nstconn->execute('nst::Caveman::getCaveManSNPSFile', $id_sample);
+
+    open(SNPFILE, "<$file_location") || die "Error: Cannot open the file $file_location:$!\n";
+
+    while (<SNPFILE>) {
+
+        chomp;
+        next if /^>/;
+        my @data = split;
+        my ($nor_geno, $tumor_geno) = split /\//, $data[5];
+        # array of hash
+        push @{ $caveman_list->{$sample} }, {
+
+            chromosome => $data[0],
+            position   => $data[1],
+            genotype   => $nor_geno,
+
+        };
+
+    }    #end of while loop
+    close(SNPFILE);
+    return ($caveman_list);
+}
+

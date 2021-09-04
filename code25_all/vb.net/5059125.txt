@@ -1,0 +1,152 @@
+<table class="webparts">
+<tr>
+    <th>User Information</th>
+</tr>
+<tr>
+<td class="details" valign="top">
+
+<h3>Roles:</h3>
+<asp:CheckBoxList ID="UserRoles" runat="server" />
+
+<h3>Main Info:</h3>
+<asp:DetailsView AutoGenerateRows="False" DataSourceID="MemberData"
+  ID="UserInfo" runat="server" OnItemUpdating="UserInfo_ItemUpdating"
+  >
+
+<Fields>
+    <asp:BoundField DataField="UserName" HeaderText="User Name" ReadOnly="True" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem">
+    </asp:BoundField>
+    <asp:BoundField DataField="Email" HeaderText="Email" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem"></asp:BoundField>
+    <asp:BoundField DataField="Comment" HeaderText="Comment" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem"></asp:BoundField>
+    <asp:CheckBoxField DataField="IsApproved" HeaderText="Active User" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem" />
+    <asp:CheckBoxField DataField="IsLockedOut" HeaderText="Is Locked Out" ReadOnly="true" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem" />
+
+    <asp:CheckBoxField DataField="IsOnline" HeaderText="Is Online" ReadOnly="True" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem" />
+    <asp:BoundField DataField="CreationDate" HeaderText="CreationDate" ReadOnly="True"
+     HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem"></asp:BoundField>
+    <asp:BoundField DataField="LastActivityDate" HeaderText="LastActivityDate" ReadOnly="True" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem">
+    </asp:BoundField>
+    <asp:BoundField DataField="LastLoginDate" HeaderText="LastLoginDate" ReadOnly="True" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem">
+    </asp:BoundField>
+    <asp:BoundField DataField="LastLockoutDate" HeaderText="LastLockoutDate" ReadOnly="True" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem"></asp:BoundField>
+    <asp:BoundField DataField="LastPasswordChangedDate" HeaderText="LastPasswordChangedDate"
+    ReadOnly="True" HeaderStyle-CssClass="detailheader" ItemStyle-CssClass="detailitem"></asp:BoundField>
+    <asp:CommandField ButtonType="button" ShowEditButton="true" EditText="Edit User Info" />
+</Fields>
+</asp:DetailsView>
+<div class="alert" style="padding: 5px;">
+<asp:Literal ID="UserUpdateMessage" runat="server">&nbsp;</asp:Literal>
+</div>
+
+
+<div style="text-align: right; width: 100%; margin: 20px 0px;">
+<asp:Button ID="Button1" runat="server" Text="Unlock User" OnClick="UnlockUser" OnClientClick="return confirm('Click OK to unlock this user.')" />
+&nbsp;&nbsp;&nbsp;
+<asp:Button ID="Button2" runat="server" Text="Delete User" OnClick="DeleteUser" OnClientClick="return confirm('Are Your Sure?')" />
+</div>
+
+
+<asp:ObjectDataSource ID="MemberData" runat="server" DataObjectTypeName="System.Web.Security.MembershipUser" SelectMethod="GetUser" UpdateMethod="UpdateUser" TypeName="System.Web.Security.Membership">
+    <SelectParameters>
+        <asp:QueryStringParameter Name="username" QueryStringField="username" DefaultValue="zora" />
+    </SelectParameters>
+</asp:ObjectDataSource> 
+</td>
+
+</tr></table>
+
+Partial Class FamilyAdmin_edit_user
+    Inherits System.Web.UI.Page
+
+    Private username As String
+
+    Private Sub Page_Load()
+        username = Request.QueryString("username")
+        If username Is Nothing OrElse username = "" Then
+            Response.Redirect("users.aspx")
+        End If
+        User = Membership.GetUser(username)
+
+        UserUpdateMessage.Text = ""
+    End Sub
+
+    Protected Sub UserInfo_ItemUpdating(ByVal sender As Object, ByVal e As DetailsViewUpdateEventArgs)
+        'Need to handle the update manually because MembershipUser does not have a
+        'parameterless constructor  
+
+        User.Email = DirectCast(e.NewValues(0), String)
+        User.Comment = DirectCast(e.NewValues(1), String)
+        User.IsApproved = CBool(e.NewValues(2))
+
+        Try
+            ' Update user info:
+            Membership.UpdateUser(User)
+
+            ' Update user roles:
+            UpdateUserRoles()
+
+            UserUpdateMessage.Text = "Update Successful."
+
+            e.Cancel = True
+            UserInfo.ChangeMode(DetailsViewMode.[ReadOnly])
+        Catch ex As Exception
+            UserUpdateMessage.Text = "Update Failed: " + ex.Message
+
+            e.Cancel = True
+            UserInfo.ChangeMode(DetailsViewMode.[ReadOnly])
+        End Try
+    End Sub
+
+    Private Sub Page_PreRender()
+        ' Load the User Roles into checkboxes.
+        UserRoles.DataSource = Roles.GetAllRoles()
+        UserRoles.DataBind()
+
+        ' Disable checkboxes if appropriate:
+        If UserInfo.CurrentMode <> DetailsViewMode.Edit Then
+            For Each checkbox As ListItem In UserRoles.Items
+                checkbox.Enabled = False
+            Next
+        End If
+
+        ' Bind these checkboxes to the User's own set of roles.
+        Dim userRoles__1 As String() = Roles.GetRolesForUser(username)
+        For Each role As String In userRoles__1
+            Dim checkbox As ListItem = UserRoles.Items.FindByValue(role)
+            checkbox.Selected = True
+        Next
+    End Sub
+
+    Private Sub UpdateUserRoles()
+        For Each rolebox As ListItem In UserRoles.Items
+            If rolebox.Selected Then
+                If Not Roles.IsUserInRole(username, rolebox.Text) Then
+                    Roles.AddUserToRole(username, rolebox.Text)
+                End If
+            Else
+                If Roles.IsUserInRole(username, rolebox.Text) Then
+                    Roles.RemoveUserFromRole(username, rolebox.Text)
+                End If
+            End If
+        Next
+    End Sub
+
+    Private Sub DeleteUser(ByVal sender As Object, ByVal e As EventArgs)
+        'Membership.DeleteUser(username, false); // DC: My apps will NEVER delete the related data.
+        Membership.DeleteUser(username, True)
+        ' DC: except during testing, of course!
+        Response.Redirect("manage_members.aspx")
+    End Sub
+
+    Private Sub UnlockUser(ByVal sender As Object, ByVal e As EventArgs)
+        ' Dan Clem, added 5/30/2007 post-live upgrade.
+
+        ' Unlock the user.
+        User.UnlockUser()
+
+        ' DataBind the GridView to reflect same.
+        UserInfo.DataBind()
+    End Sub
+
+End Class
+

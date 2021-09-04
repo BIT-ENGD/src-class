@@ -1,0 +1,145 @@
+int sendmail( char * smtpserver, char * from, char * to, char * subject, char * msg )
+{
+int         iProtocolPort        = 0;
+char        szSmtpServerName[64] = "";
+char        szToAddr[64]         = "";
+char        szFromAddr[64]       = "";
+char        szBuffer[4096]       = "";
+char        szLine[255]          = "";
+char        szMsgLine[255]       = "";
+SOCKET      hServer;
+WSADATA     WSData;
+LPHOSTENT   lpHostEntry;
+LPSERVENT   lpServEntry;
+SOCKADDR_IN SockAddr;
+
+// Load command-line args
+lstrcpyA( szSmtpServerName, smtpserver );
+lstrcpyA( szToAddr, to );
+lstrcpyA( szFromAddr, from );
+
+// Attempt to intialize WinSock (1.1 or later)
+if ( WSAStartup( MAKEWORD( VERSION_MAJOR, VERSION_MINOR ), &WSData ) )
+{
+    printf( "\nCannot find Winsock v%d.%d or later", VERSION_MAJOR, VERSION_MAJOR );
+    return 1;
+}
+
+// Lookup email server's IP address.
+lpHostEntry = gethostbyname( szSmtpServerName );
+if ( !lpHostEntry )
+{
+    printf( "\nCannot find SMTP mail server %s", szSmtpServerName );
+    return 1;
+}
+
+// Create a TCP/IP socket, no specific protocol
+hServer = socket( PF_INET, SOCK_STREAM, 0 );
+if ( hServer == INVALID_SOCKET )
+{
+    printf( "\nCannot open mail server socket!" );
+    return 1;
+}
+
+// Get the mail service port
+lpServEntry = getservbyname( "mail", 0 );
+
+// Use the SMTP default port if no other port is specified
+if ( !lpServEntry ) iProtocolPort = htons( IPPORT_SMTP );
+else iProtocolPort = lpServEntry->s_port;
+
+// Setup a Socket Address structure
+SockAddr.sin_family = AF_INET;
+SockAddr.sin_port   = iProtocolPort;
+SockAddr.sin_addr   = *( (LPIN_ADDR)*lpHostEntry->h_addr_list );
+
+// Connect the Socket
+if ( connect( hServer, ( PSOCKADDR ) &SockAddr, sizeof( SockAddr ) ) )
+{
+    printf( "\nError connecting to Server socket!" );
+    return 1;
+}
+
+// Receive initial response from SMTP server
+Check( recv( hServer, szBuffer, sizeof( szBuffer ), 0), "recv() Reply" );
+
+// Send HELO server.com
+sprintf_s( szMsgLine, "HELO %s%s", smtpserver, CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() HELO" );
+Check( recv( hServer, szBuffer, sizeof( szBuffer ), 0 ), "recv() HELO" );
+
+// Send MAIL FROM: <sender@mydomain.com>
+sprintf_s( szMsgLine, "MAIL FROM:<%s>%s", from, CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() MAIL FROM" );
+Check( recv( hServer, szBuffer, sizeof( szBuffer ), 0 ), "recv() MAIL FROM" );
+
+char buf[ 128 ], str[ 512 ];
+char * pch;
+
+memset( str, 0, sizeof( str ) );
+
+strcpy_s( str, to );
+
+pch = strtok( str, "," );//separate email addresses at ','
+while (pch != NULL)
+{
+    memset( buf, 0, sizeof( buf ) );
+    //printf("Buf: %s\n",pch);
+    strcpy_s( buf, pch );
+    pch = strtok (NULL, ",");
+
+    // Send RCPT TO: <receiver@domain.com>
+    sprintf_s( szMsgLine, "RCPT TO:<%s>%s", buf, CRLF );
+    Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() RCPT TO" );
+    Check( recv( hServer, szBuffer, sizeof( szBuffer ), 0 ), "recv() RCPT TO" );
+}
+
+// Send DATA
+sprintf_s( szMsgLine, "DATA%s", CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() DATA" );
+Check( recv( hServer, szBuffer, sizeof( szBuffer ), 0 ), "recv() DATA" );
+
+//Send Cc
+sprintf_s( szMsgLine, "Cc: %s%s", "test@domain.com",CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() Cc" );
+
+// Send Subject
+sprintf_s( szBuffer, "Subject: %s\n", subject );
+Check( send( hServer, szBuffer, strlen( szBuffer ), 0 ), "send() Subject" );
+
+//Send From
+sprintf_s( szBuffer, "From: %s\n", "BIOS Update" );
+Check( send( hServer, szBuffer, strlen( szBuffer ), 0 ), "send() From" );
+
+//Send To
+sprintf_s( szBuffer, "To: %s\n\n", to );
+Check( send( hServer, szBuffer, strlen( szBuffer ), 0 ), "send() To" );
+
+//Attach
+sprintf_s( szMsgLine, "Attachment: %s%s", "d:\\test.txt",CRLF );   //this doesn't work
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() Attachment" );
+
+sprintf_s( szMsgLine, "%s%s", msg, CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() message-line" );
+
+// Send blank line and a period
+sprintf_s( szMsgLine, "%s.%s", CRLF, CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() end-message" );
+Check( recv(  hServer, szBuffer, sizeof( szBuffer ), 0 ), "recv() end-message" );
+
+// Send QUIT
+sprintf_s( szMsgLine, "QUIT%s", CRLF );
+Check( send( hServer, szMsgLine, strlen( szMsgLine ), 0 ), "send() QUIT" );
+Check( recv( hServer, szBuffer, sizeof( szBuffer ), 0 ), "recv() QUIT" );
+
+// Report message has been sent
+printf( "\nMail sent!" );
+
+// Close server socket and prepare to exit.
+closesocket( hServer );
+
+WSACleanup();
+
+return 0;
+}
+

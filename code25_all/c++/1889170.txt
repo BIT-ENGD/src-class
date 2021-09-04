@@ -1,0 +1,87 @@
+#ifndef __LOW_LOCK_STACK_H_
+#define __LOW_LOCK_STACK_H_
+
+template< class T > class LowLockStack
+{
+protected:
+    struct Entry
+    {
+        Entry*  pNext;
+        T*              pData;
+    };
+    union Header
+    {
+        __int64         m_XChg;
+        struct
+        {
+                Entry*  m_pNext;
+                __int16 m_Depth;
+                __int16 m_Counter;
+        };
+    };
+
+    Header      m_Header;
+public:
+    LowLockStack()
+    {
+        m_Header.m_pNext        = NULL;
+        m_Header.m_Depth        = 0;
+        m_Header.m_Counter  = 0;
+    }
+
+    ~LowLockStack()
+    {
+    }
+
+    void PushEntry( T* pData )
+    {
+        Entry* pEntry   = new Entry;
+        pEntry->pData   = pData;
+
+        Header header;
+        Header xchg;
+        do
+        {
+            xchg.m_XChg   = m_Header.m_XChg;
+
+            header.m_pNext  = pEntry;
+            header.m_Depth  = xchg.m_Depth + 1;
+            header.m_Counter = xchg.m_Counter + 1;
+            pEntry->pNext  = xchg.m_pNext;
+        } while( _InterlockedCompareExchange64( &m_Header.m_XChg, header.m_XChg, xchg.m_XChg ) != xchg.m_XChg );
+    }
+
+    T* PopEntry()
+    {
+        Entry* pEntry   = NULL;
+        Header header;
+        Header xchg;
+        do
+        {
+            xchg.m_XChg    = m_Header.m_XChg;
+
+            pEntry                  = xchg.m_pNext;
+            if ( pEntry == NULL )
+            {
+                 return NULL;
+            }
+
+            header.m_pNext  = pEntry->pNext;
+            header.m_Depth  = xchg.m_Depth - 1;
+
+        } while( _InterlockedCompareExchange64( &m_Header.m_XChg, header.m_XChg, xchg.m_XChg ) != xchg.m_XChg );
+
+        T* pRet = pEntry->pData;
+        delete pEntry;
+
+        return pRet;
+    }
+
+    __int32 GetDepth()
+    {
+        return m_Header.m_Depth;
+    }
+};
+
+#endif
+

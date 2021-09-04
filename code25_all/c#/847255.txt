@@ -1,0 +1,36 @@
+if (iAmRunningInSlave)
+{
+   HealthClient hc = new HealthClient();
+   if (!hc.CheckHealthOfMaster())
+      return this.runJobWrapper(withMutex, iAmRunningInSlave);
+   else
+      return true; //master is ok, we dont need to run the job in slave
+}
+return this.runJobWrapper(withMutex, iAmRunningInSlave);
+
+bool runJobWrapper(bool withMutex, bool iAmRunningInSlave)
+{
+   if (!withMutex)
+      return this.runJob(iAmRunningInSlave); //the job might be interested to know 
+   Mutex mutex = null;
+   string mutexName = this.jobCategory + "-" + this.jobTitle; //this will be unique for given job
+   try
+   {
+      mutex = Mutex.OpenExisting(mutexName);
+      return false; //mutex is with peer, return false which will re-trigger slave
+   }
+   catch
+   {
+      try
+      { //mean time mutex might have created, so wrapping in try/catch
+         mutex = new Mutex(true /*initiallyOwned*/, mutexName);
+         return this.runJob(iAmRunningInSlave); //the job might be interested to know where I am running
+      }
+      finally
+      {
+         if (null!=mutex) mutex.ReleaseMutex();
+      }
+      return false;
+   }
+}
+

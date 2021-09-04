@@ -1,0 +1,70 @@
+static void startElementSAX(void *ctx, const xmlChar *localname, const xmlChar *prefix, const xmlChar *URI, 
+                            int nb_namespaces, const xmlChar **namespaces, int nb_attributes, int nb_defaulted, const xmlChar **attributes) {
+    //set up a local pool so we can release these objects
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+    FormParser *parser = (FormParser *)ctx;
+    NSString *elementName = [[NSString alloc] initWithUTF8String:(const char *)localname];
+
+    NSManagedObject *localObject = [parser.managedObjectContext insertNewObjectForEntityForName:elementName];
+
+    // according to http://www.xmlsoft.org/html/libxml-SAX2.html#xmlSAX2StartElementNs,
+    // there are 5 parts to the attribute array: localname/prefix/URI/value/end
+    int attribCounter;
+    for (attribCounter = 0; attribCounter < (nb_attributes * 5); attribCounter++)
+    {
+        NSString *attributeValue = nil;
+        NSString *attributeName = [[NSString alloc] initWithUTF8String:(const char *)attributes[attribCounter]];
+
+       //let's skip over the prefix
+        attribCounter++;
+        //and the URI
+        attribCounter++;
+        //and get to the value
+        attribCounter++;
+        //increment after using counter so we can get the end value
+        const char *valueStart = (const char *)attributes[attribCounter++];
+        const char *valueEnd = (const char *)attributes[attribCounter];
+
+        //if we have good values, init a value with 
+        if (valueStart && valueEnd) {
+            attributeValue = [[NSString alloc] initWithBytes:attributes[attribCounter-1] length:(strlen(valueStart) - strlen(valueEnd)) encoding:NSUTF8StringEncoding];
+        }
+
+        SEL setAttribute = NSSelectorFromString([NSString stringWithFormat:@"set%@:", [attributeName capitalizedString]]);
+        if (attributeValue && [localObject respondsToSelector:setAttribute])
+        {
+            //HERE'S WHERE I NEED TO CHECK TYPE AND CAST IF NEEDED
+            [localObject setValue:attributeValue forKey:attributeName];
+        }
+
+    }
+
+    //set parser's current object
+    SEL setCurrent = NSSelectorFromString([NSString stringWithFormat:@"setCurrent%@:", [elementName capitalizedString]]);
+    if ([parser respondsToSelector:setCurrent])
+    {
+        [parser performSelector:setCurrent withObject:localObject];
+    }
+
+    //set parent
+    SEL setParent = NSSelectorFromString(@"setParent");
+    if ([localObject respondsToSelector:setParent])
+    {
+        SEL getParent = NSSelectorFromString([NSString stringWithFormat:@"getCurrent%@", [[parser getElementParent:elementName] capitalizedString]]);
+        if ([parser respondsToSelector:getParent])
+        {
+            [localObject performSelector:setParent withObject:[parser performSelector:getParent]];
+        }
+    }
+
+    NSError *error = nil;
+    if (![parser.managedObjectContext save:&error])
+    {
+        if (parser.delegate != nil && [parser.delegate respondsToSelector:@selector(parser:didFailWithError:)]) {
+            [parser.delegate parser:parser didFailWithError:error];
+    }
+    }
+    [pool release];
+}
+

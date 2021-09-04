@@ -1,0 +1,77 @@
+SELECT     
+    [Session].*
+FROM         
+    [OperationTypeOperation] 
+LEFT OUTER JOIN
+    [Operation] ON [OperationTypeOperation].[OperationId] = [Operation].[OperationId]
+RIGHT OUTER JOIN
+    [Session] ON [Operation].[OperationId] = [Session].[OperationId]
+WHERE
+    ([Operation].[IsPublished] = 1) 
+AND 
+    ([Operation].[IsActive] = 1) 
+AND 
+    ([Session].[RegionId] = 66)
+AND 
+    ([Session].[DivisionId] = 99)
+AND 
+    ([Operation].[AdvertisingStartDate] < GETDATE()) 
+AND 
+    ([Operation].[AdvertisingEndDate] > GETDATE()) 
+AND 
+    ([OperationTypeOperation].[OperationTypeId] IN (1, 2, 3))
+
+public PagedResult<Session> Search(int? regionId, int? divisionId, DateTime? startDate, DateTime? endDate, IList<int> operationTypeId, int itemsPerPage, int page)
+        {
+
+            var criteria = _session.CreateCriteria(typeof(Session))
+                .Add(Expression.Eq("IsActive", true))
+                .Add(Expression.Eq("AcceptingApplications", true))
+                .AddOrder(new Order("StartDate", false))
+                ;
+
+            if (regionId.HasValue)
+                criteria.Add(Expression.Eq("Region.Id", regionId.Value));
+
+            if (divisionId.HasValue)
+                criteria.Add(Expression.Eq("Division.Id", divisionId.Value));
+
+            if (startDate.HasValue)
+                criteria.Add(Expression.Ge("StartDate", startDate.Value));
+
+            if (endDate.HasValue)
+                criteria.Add(Expression.Le("EndDate", endDate.Value));
+
+            //Add the operation types
+            if (operationTypeId.Count > 0)
+            {
+                var operationTypes = new Collection<OperationType>();
+                foreach (int id in operationTypeId)
+                {
+                    operationTypes.Add(_session.Get<OperationType>(id));
+                }
+                //Join on the operations
+                criteria.CreateCriteria("Operation")
+                .Add(Expression.Eq("IsPublished", true))
+                .Add(Expression.Eq("IsActive", true))
+                .Add(Expression.Le("AdvertisingStartDate", DateTime.Now))
+                .Add(Expression.Ge("AdvertisingEndDate", DateTime.Now))
+                .CreateAlias("OperationTypes", "operationTypes", JoinType.InnerJoin)
+                .Add(Expression.In("OperationTypes", operationTypes))
+                .SetResultTransformer(new DistinctRootEntityResultTransformer())
+                ;
+            }
+            else
+            {
+                //Join on the operations
+                criteria.CreateCriteria("Operation")
+                .Add(Expression.Eq("IsPublished", true))
+                .Add(Expression.Eq("IsActive", true))
+                .Add(Expression.Le("AdvertisingStartDate", DateTime.Now))
+                .Add(Expression.Ge("AdvertisingEndDate", DateTime.Now))
+                ;
+            }
+
+            return criteria.ToPagedResult<Session>(itemsPerPage, page);
+        }
+

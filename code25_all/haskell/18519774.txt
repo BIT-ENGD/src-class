@@ -1,0 +1,67 @@
+Writer
+State
+Reader
+IO
+{-# Language GeneralizedNewtypeDeriving #-}
+
+import Control.Monad
+import Control.Monad.State
+import Control.Monad.Reader
+import Control.Monad.Writer
+import System.Directory
+import System.FilePath
+
+data AppConfig = AppConfig {
+      cfgMaxDepth :: Int
+    } deriving Show
+
+data AppState = AppState {
+      stDeepestReached :: Int
+    } deriving Show
+
+newtype MyApp a = MyA {
+      runA :: WriterT [(FilePath,Int)] (StateT AppState (ReaderT AppConfig IO)) a
+    } deriving (Monad, MonadIO, Functor, MonadReader AppConfig,
+                MonadWriter [(FilePath,Int)], MonadState AppState)
+
+runApp :: MyApp a -> Int -> IO ([(FilePath,Int)], AppState)
+runApp k maxDepth = let config = AppConfig maxDepth
+                        state' = AppState 0
+                     in runReaderT (runStateT (execWriterT $ runA k) state') config
+
+constrainedCount :: Int -> FilePath -> MyApp ()
+constrainedCount curDepth path = do
+  contents <- liftIO . getDirectoryContents $ path
+  cfg <- ask
+  let maxDepth = cfgMaxDepth cfg
+  tell [(path,curDepth)]
+  forM_ (filter (\d' -> d' /= ".." && d' /= ".") contents) $ \d -> do
+    let newPath = path </> d
+    isDir <- liftIO $ doesDirectoryExist newPath
+    when (isDir && curDepth < maxDepth) $ do
+         let newDepth = curDepth+1
+         st <- get
+         when (stDeepestReached st < newDepth) $
+             put st { stDeepestReached = newDepth }
+         constrainedCount newDepth newPath
+
+main = runApp (constrainedCount 0 "/tmp") 2 >>= print
+
+ask
+get
+put
+MonadReader
+MonadWriter
+MonadState
+MonadWriter (StateT s m)
+lift
+constrainedCount
+st <- get
+st <- lift get
+tell
+should be the same). If I change
+to
+Couldn't match type `t0 m0' with `MyApp'
+Expected type: MyApp ()
+Actual type: t0 m0 ()
+

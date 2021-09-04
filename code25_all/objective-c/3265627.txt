@@ -1,0 +1,115 @@
+#import "StreamingTests.h"
+#import "Streamer.h"
+
+@implementation StreamingTests
+
+- (void) testStream {
+    NSLog(@"Starting stream test.");
+    Streamer * streamer = [[Streamer alloc] init];
+
+    streamer.usePolling = NO;
+    streamer.readingStream = YES;
+    NSThread * readThread = [[NSThread alloc] initWithTarget:streamer selector:@selector(startStreamRead:) object:nil];
+    [readThread start];
+    while(streamer.readingStream) {
+        [NSThread sleepForTimeInterval:0.5];
+    }
+    [readThread cancel];
+}
+
+@end
+
+@implementation Streamer
+@synthesize readingStream, usePolling;
+
+- (void) startStreamRead:(NSObject*) context {  
+    NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
+    NSLog(@"starting stream read.");
+    readingStream = YES;
+    /*
+     NSURL * url = [NSURL URLWithString:@"http://www.google.com"];
+     NSLog(@"Loading: %@",[url description]);
+     NSInputStream * inStream = [[NSInputStream alloc] initWithURL:url];
+     */
+    NSInputStream * inStream = [[NSInputStream alloc] initWithFileAtPath:@"sample.ttc"];
+
+    if(!usePolling) {
+
+        [inStream setDelegate: self];
+        [inStream scheduleInRunLoop: [NSRunLoop currentRunLoop]
+                            forMode: NSDefaultRunLoopMode];
+
+
+    }
+    [inStream open];
+
+    if(usePolling) {
+        while(1) {
+            if([inStream hasBytesAvailable]) {
+                uint8_t buf[1024];
+                unsigned int len = 0;
+                len = [(NSInputStream *)inStream read:buf maxLength:1024];
+                NSLog(@"Read: %d",len);
+            }
+            NSStreamStatus status = [inStream streamStatus];
+            if(status != NSStreamStatusOpen && status != NSStreamStatusOpening) {
+                NSLog(@"Stream not open.");
+                break;
+            }
+        }
+        readingStream = NO;
+
+        NSStreamStatus status = [inStream streamStatus];
+        NSError * error = [inStream streamError];
+        NSLog(@"Status: %d Error Desc: %@ Reason: %@",(int)status,[error localizedDescription], [error localizedFailureReason]);
+
+        [pool release];
+    }
+
+}
+
+
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode {
+    NSMutableData * _data = nil;
+    NSNumber * bytesRead = nil;
+    NSLog(@"Event fired.");
+    switch(eventCode) {
+        case NSStreamEventHasBytesAvailable:
+        {
+            if(!_data) {
+                _data = [[NSMutableData data] retain];
+            }
+            uint8_t buf[1024];
+            unsigned int len = 0;
+            len = [(NSInputStream *)stream read:buf maxLength:1024];
+            if(len) {
+                [_data appendBytes:(const void *)buf length:len];
+                // bytesRead is an instance variable of type NSNumber.
+                //[bytesRead setIntValue:[bytesRead intValue]+len];
+                NSLog(@"Read %d bytes",len);
+            } else {
+                NSLog(@"no buffer!");
+            }
+            break;
+        }
+        case NSStreamEventEndEncountered:
+        {
+            [stream close];
+            [stream removeFromRunLoop:[NSRunLoop currentRunLoop]
+                              forMode:NSDefaultRunLoopMode];
+            [stream release];
+            stream = nil; // stream is ivar, so reinit it
+            readingStream = NO;
+            break;
+        }
+        default:
+        {
+            NSLog(@"Another event occurred.");
+            break;
+        }
+            // continued ...
+    }
+}
+
+@end
+

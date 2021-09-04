@@ -1,0 +1,66 @@
+epoll
+import Control.Concurrent
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
+
+import qualified GHC.Event as Event
+
+import Network
+import Network.Socket
+import Network.Socket.ByteString
+
+main = withSocketFromSomewhere $ \ socket -> do
+  let fd = fromIntegral . fdSocket $ socket
+
+  -- Some app logic
+  state <- newMVar "Bla"
+
+  -- Event manager
+  manager <- Event.new
+
+  -- Do an initial write
+  initialWrite socket state manager
+
+  -- Manager does its thing
+  Event.loop manager
+
+write manager socket bs =
+  -- Should be pretty straight-forward
+  Event.registerFd manager theWrite fd Event.evtWrite
+  where
+    fd = fromIntegral . fdSocket $ socket
+    theWrite key _ = do
+      Event.unregisterFd manager key
+      sendAll socket bs
+
+read manager socket cont =
+  -- Ditto
+  Event.registerFd manager theRead fd Event.evtRead
+  where
+    fd = fromIntegral . fdSocket $ socket
+    theRead key _ = do
+      Event.unregisterFd manager key
+      bs <- recv socket 4096
+      cont bs
+
+initialWrite socket state manager = do
+  msg <- readMVar state
+  write manager socket msg
+  read manager socket $ \ bs -> do
+    ByteString.putStrLn bs
+    putMVar state msg
+
+MVar
+main =
+  withSocketFromSomewhere $ \ socket ->
+  runEvents . flip runStateT "Bla" $ initialWrite socket
+
+initialWrite socket = do
+  msg <- lift get
+  write socket msg
+  resp <- read socket
+  liftIO $ ByteString.putStrLn resp
+  lift $ put msg
+
+resp <- read socket

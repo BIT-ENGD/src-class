@@ -1,0 +1,114 @@
+DECLARE @time_diff INT
+DECLARE @start_date DATETIME
+DECLARE @end_date DATETIME
+
+SET @time_diff = 2
+SET @start_date = '05/04/11 00:00:00 AM'
+SET @end_date = '5/4/2011 11:59:59 PM'
+
+sqlParameter = sqlCmd.Parameters.Add(New SqlParameter("@start_date", System.Data.SqlDbType.DateTime))
+sqlParameter.Value = parameters.StartDate
+sqlParameter = sqlCmd.Parameters.Add(New SqlParameter("@end_date", System.Data.SqlDbType.DateTime))
+sqlParameter.Value = parameters.EndDate
+
+--AND v.call_start_time BETWEEN @start_date AND @end_date
+AND v.call_start_time BETWEEN '05/04/11' AND '5/4/2011 11:59:59 PM'
+
+DBCC DROPCLEANBUFFERS
+DBCC FREEPROCCACHE
+
+SET STATISTICS IO ON
+
+DECLARE @time_diff INT
+DECLARE @start_date DATETIME
+DECLARE @end_date DATETIME
+
+SET @time_diff = 2
+SET @start_date = '05/04/11 00:00:00 AM'
+SET @end_date = '5/4/2011 11:59:59 PM'
+
+--INSERT QUERY
+SELECT * INTO ##tmp_15 FROM (-- PRI CALL RECORDINGS SEARCH QUERY:
+    SELECT DISTINCT
+    v.call_recording_id,
+    v.call_start_time,
+    v.call_source,
+    v.call_type,
+    IsNull(v.phone, '') AS phone,
+    d.call_duration_seconds AS pri_call_duration_seconds,
+    IsNull(cdr.extension, 'N/A') AS pri_extension,
+    IsNull(users.last_name, 'N/A') AS pri_last_name,
+    IsNull(users.first_name, 'N/A') AS pri_first_name,
+    NULL AS debtor_no,
+    NULL AS d_extension,
+    NULL AS d_last_name,
+    NULL AS d_first_name
+    FROM tbl_call_recordings AS v
+    JOIN tbl_pri_call_details AS d ON v.call_recording_id = d.call_recording_id
+    LEFT JOIN (
+        SELECT extension, phone, call_start_time
+        FROM tbl_pri_cdr_records
+        WHERE is_discard = 0
+    ) AS cdr ON v.phone = cdr.phone AND
+        ABS(DATEDIFF(mi, v.call_start_time, cdr.call_start_time)) <= @time_diff
+
+    -- MATCH RECORDS TO USER INFO VIA EXTENSION
+     LEFT JOIN (
+        SELECT extension,
+               start_date,
+               IsNull(end_date, GETDATE()) AS end_date,
+               usr.user_id,
+               last_name,
+               first_name,
+              cr_user_id
+        FROM tbl_extensions AS ext
+        JOIN tbl_extension_users AS ext_usr ON ext.id = ext_usr.extension_id
+        JOIN tbl_users AS usr ON ext_usr.user_id = usr.user_id
+    ) AS users ON cdr.extension = users.extension
+    AND v.call_start_time BETWEEN users.start_date AND users.end_date
+    WHERE 1 = 1
+
+    -- INSERT PRI SEARCH CONSTRAINTS HERE:
+    AND v.call_start_time BETWEEN @start_date AND @end_date
+    --AND v.call_start_time BETWEEN '05/04/11' AND '5/4/2011 11:59:59 PM'
+
+UNION
+
+-- DIALER RECORDINGS SEARCH QUERY:
+      SELECT
+        v.call_recording_id,
+        v.call_start_time,
+        v.call_source,
+        v.call_type,
+        IsNull(v.phone, '') AS phone,
+        NULL AS pri_call_duration_seconds,
+        NULL AS pri_extension,
+        NULL AS pri_last_name,
+        NULL AS pri_first_name,
+       d.debtor_no,
+        IsNull(users.extension, 'N/A') AS extension,
+        IsNull(users.last_name, 'N/A') AS last_name,
+        IsNull(users.first_name, 'N/A') AS first_name
+      FROM tbl_call_recordings AS v
+      JOIN tbl_dialer_call_details AS d ON v.call_recording_id = d.call_recording_id
+
+      -- MATCH RECORDS TO USER INFO VIA EXTENSION
+      LEFT JOIN (
+                SELECT extension,
+                       start_date,
+                       IsNull(end_date, GETDATE()) AS end_date,
+                       last_name,
+                       first_name,
+                       cr_user_id
+                FROM tbl_extensions AS ext
+                JOIN tbl_extension_users AS ext_usr ON ext.id = ext_usr.extension_id
+                JOIN tbl_users AS usr ON ext_usr.user_id = usr.user_id
+
+      ) as users ON d.agent = users.cr_user_id
+        AND v.call_start_time BETWEEN users.start_date AND users.end_date
+      WHERE 1 = 1
+      -- INSERT DIALER SEARCH CONSTRAINTS HERE:
+    AND v.call_start_time BETWEEN @start_date AND @end_date
+    --AND v.call_start_time BETWEEN '05/04/11' AND '5/5/2011'
+)t
+

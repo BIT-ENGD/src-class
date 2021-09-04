@@ -1,0 +1,65 @@
+{-# LANGUAGE OverloadedStrings #-}
+import Network.HTTP.Conduit
+import Network
+import Data.Time.Clock
+import Data.Time.Calendar
+import qualified Control.Exception as E
+
+past :: UTCTime
+past = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
+
+future :: UTCTime
+future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
+
+cookie :: Cookie
+cookie = Cookie { cookie_name = "password_hash"
+               , cookie_value = "abf472c35f8297fbcabf2911230001234fd2"
+               , cookie_expiry_time = future
+               , cookie_domain = "example.com"
+               , cookie_path = "/"
+               , cookie_creation_time = past
+               , cookie_last_access_time = past
+               , cookie_persistent = False
+               , cookie_host_only = False
+               , cookie_secure_only = False
+               , cookie_http_only = False
+               }
+
+main = withSocketsDo $ do
+    request' <- parseUrl "http://example.com/secret-page"
+    let request = request' { cookieJar = Just $ createCookieJar [cookie] }
+    E.catch (withManager $ httpLbs request)
+            (\(StatusCodeException statusCode _ _) ->
+              if statusCode==403 then putStrLn "login failed" else return ())
+
+samplecode.hs:33:39:
+    Couldn't match type `()'
+                  with `Response Data.ByteString.Lazy.Internal.ByteString'
+    Expected type: IO
+                     (Response Data.ByteString.Lazy.Internal.ByteString)
+      Actual type: IO ()
+    In the return type of a call of `putStrLn'
+    In the expression: putStrLn "login failed"
+    In the expression:
+  if statusCode == 403 then putStrLn "login failed" else return ()
+
+samplecode.hs:33:75:
+    Couldn't match expected type `Response
+                                    Data.ByteString.Lazy.Internal.ByteString'
+                with actual type `()'
+    In the first argument of `return', namely `()'
+    In the expression: return ()
+    In the expression:
+      if statusCode == 403 then putStrLn "login failed" else return ()
+Failed, modules loaded: none.
+
+main = withSocketsDo $ do
+    request' <- parseUrl "http://example.com/secret-page"
+    let request = request' { cookieJar = Just $ createCookieJar [cookie] }
+    eitherResp <- E.try (withManager $ httpLbs request)
+    case eitherResp of
+      Left (StatusCodeException s _ _) 
+        | statusCode s == 403 -> putStrLn "login failed"
+        | otherwise         -> return () 
+      Right resp -> print (L.length (responseBody resp))
+

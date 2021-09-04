@@ -1,0 +1,76 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+module Main where
+
+{-
+Example FRP/zeromq app.
+
+The idea is that messages come into a zeromq socket in the form "id state". The state is of each id is tracked until it's complete.
+-}
+
+import Control.Monad
+import Data.ByteString.Char8 as C (unpack)
+import Data.Map as M
+import Data.Maybe
+import Reactive.Banana
+import System.Environment (getArgs)
+import System.ZMQ
+
+data Msg = Msg {mid :: String, state :: String}
+    deriving (Show, Typeable)
+
+type IdMap = Map String String
+
+-- | Deserialize a string to a Maybe Msg
+fromString :: String -> Maybe Msg
+fromString s =
+  case words s of 
+    (x:y:[]) -> Just $ Msg x y
+    _ -> Nothing
+
+-- | Map a message to a partial operation on a map
+-- If the 'state' of the message is "complete" the operation is a delete
+-- otherwise it's an insert
+toMap :: Msg -> IdMap -> IdMap
+toMap msg = case msg  of
+               Msg id_ "complete" -> delete id_ 
+               _ -> insert (mid msg) (state msg) 
+
+main :: IO ()
+main = do
+  (socketHandle,runSocket) <- newAddHandler
+
+  args <- getArgs
+  let sockAddr = case args of
+        [s] -> s
+        _ -> "tcp://127.0.0.1:9999"
+  putStrLn ("Socket: " ++ sockAddr)
+
+
+  network <- compile $ do
+    recvd <- fromAddHandler socketHandle
+
+    let
+      -- Filter out the Nothings
+      justs = filterE isJust recvd
+      -- Accumulate the partially applied toMap operations
+      counter = accumE M.empty $ (toMap . fromJust <$> justs)
+
+
+    -- Print the contents  
+    reactimate $ fmap print counter  
+
+  actuate network
+
+  -- Get a socket and kick off the eventloop
+  withContext 1 $ \ctx ->
+    withSocket ctx Sub $ \sub -> do
+      connect sub sockAddr
+      subscribe sub ""
+      linkSocketHandler sub runSocket
+
+
+-- | Recieve a message, deserialize it to a 'Msg' and call the action with the message
+linkSocketHandler :: Socket a -> (Maybe Msg -> IO ()) -> IO ()
+linkSocketHandler s runner = forever $ do 
+  receive s [] >>= runner . fromString . C.unpack
+

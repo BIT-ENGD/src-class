@@ -1,0 +1,86 @@
+closeable
+true
+public class ModalInternalFrame extends JInternalFrame {
+    public ModalInternalFrame(String title, JRootPane rootPane,
+            Component desktop) {
+        super(title, false, true, false, false);
+
+        // create opaque glass pane
+        final JPanel glass = new JPanel();
+        glass.setOpaque(false);
+
+        // Attach mouse listeners
+        MouseInputAdapter adapter = new MouseInputAdapter() { };
+        glass.addMouseListener(adapter);
+        glass.addMouseMotionListener(adapter);
+
+        this.addInternalFrameListener(new InternalFrameListenerAdapter() {
+            public void internalFrameClosed(InternalFrameEvent e) { close(); }
+            public void internalFrameClosing(InternalFrameEvent e){ close(); }
+        });
+
+        // Change frame border
+        putClientProperty("JInternalFrame.frameType", "optionDialog");
+
+        // Size frame
+        Dimension size = getPreferredSize();
+        Dimension rootSize = desktop.getSize();
+
+        setBounds((rootSize.width - size.width) / 2,
+                (rootSize.height - size.height) / 2, size.width, size.height);
+        desktop.validate();
+        try { setSelected(true); } 
+        catch (PropertyVetoException ignored) { }
+
+        glass.add(this);              // Add modal internal frame to glass pane
+        rootPane.setGlassPane(glass); // Change glass pane to our panel
+        glass.setVisible(true);       // Show glass pane, then modal dialog
+    }
+
+    private void close(){
+        if (isVisible()) {
+            try { setClosed(true); } 
+            catch (PropertyVetoException ignored) { }
+            setVisible(false);
+            rootPane.getGlassPane().setVisible(false);
+        }
+    }
+
+    @Override public void doDefaultCloseAction() {
+        super.doDefaultCloseAction();
+        close();
+    }
+
+    @Override public void setVisible(boolean flag) {
+        super.setVisible(flag);
+        if (flag) startModal();
+        else stopModal();
+    }
+
+    private synchronized void startModal() {
+        try {
+            if (SwingUtilities.isEventDispatchThread()) {
+                EventQueue theQueue = getToolkit().getSystemEventQueue();
+                while (isVisible()) {
+                    AWTEvent event = theQueue.getNextEvent();
+                    Object source = event.getSource();
+                    if (event instanceof ActiveEvent) {
+                        ((ActiveEvent) event).dispatch();
+                    } else if (source instanceof Component) {
+                        ((Component) source).dispatchEvent(event);
+                    } else if (source instanceof MenuComponent) {
+                        ((MenuComponent) source).dispatchEvent(event);
+                    } else {
+                        System.err.println("Unable to dispatch: " + event);
+                    }
+                }
+            } else { while (isVisible()) { wait(); } }
+        } catch (InterruptedException ignored) {
+        }
+
+    }
+
+    private synchronized void stopModal() { notifyAll(); }
+
+}
+

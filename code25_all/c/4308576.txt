@@ -1,0 +1,79 @@
+int demo_game()
+{
+    long int d;
+    int x, y;
+    struct WorldCamera p_viewer;
+    struct Point3D_LLA p_subj;
+    struct Point2D_CalcRes p_res;
+    p_viewer.hfov = 27;
+    p_viewer.vfov = 32;
+    p_viewer.width = 192;
+    p_viewer.height = 128;
+    p_viewer.p.lat = 51.26f;
+    p_viewer.p.lon = -1.0862f;
+    p_viewer.p.alt = 100.0f;
+    p_subj.lat = 51.20f;
+    p_subj.lon = -1.0862f;
+    p_subj.alt = 100.0f;
+    while(1)
+    {
+        fill_buffer(draw_buffer_mask, 0x0000);
+        fill_buffer(draw_buffer_level, 0xffff);
+        compute_3d_transform(&p_viewer, &p_subj, &p_res, 10000.0f);
+        x = p_res.pos.x;
+        y = p_res.pos.y;
+        write_circle_outlined(x, y, 1.0f / p_res.est_dist, 0, 0, 0, 1);
+        p_viewer.p.lat -= 0.0001f; 
+        //p_viewer.p.alt -= 0.00001f; 
+        d = 20000;
+        while(d--);
+    }
+    return 1;
+}
+
+void compute_3d_transform(struct WorldCamera *p_viewer, struct Point3D_LLA *p_subj, struct Point2D_CalcRes *res, float cliph)
+{
+    // Estimate the distance to the waypoint. This isn't intended to replace
+    // proper lat/lon distance algorithms, but provides a general indication
+    // of how far away our subject is from the camera. It works accurately for 
+    // short distances of less than 1km, but doesn't give distances in any
+    // meaningful unit (lat/lon distance?)
+    res->est_dist = hypot2(p_viewer->p.lat - p_subj->lat, p_viewer->p.lon - p_subj->lon);
+    // Save precious cycles if outside of visible world.
+    if(res->est_dist > cliph)
+        goto quick_exit;
+    // Compute the horizontal angle to the point. 
+    // atan2(y,x) so atan2(lon,lat) and not atan2(lat,lon)!
+    res->h_angle = RAD2DEG(angle_dist(atan2(p_viewer->p.lon - p_subj->lon, p_viewer->p.lat - p_subj->lat), p_viewer->yaw));
+    res->small_dist = res->est_dist * 0.0025f; // by trial and error this works well.
+    // Using the estimated distance and altitude delta we can calculate
+    // the vertical angle.
+    res->v_angle = RAD2DEG(atan2(p_viewer->p.alt - p_subj->alt, res->est_dist));
+    // Normalize the results to fit in the field of view of the camera if
+    // the point is visible. If they are outside of (0,hfov] or (0,vfov]
+    // then the point is not visible.
+    res->h_angle += p_viewer->hfov / 2;
+    res->v_angle += p_viewer->vfov / 2;
+    // Set flags.
+    if(res->h_angle < 0 || res->h_angle > p_viewer->hfov)
+        res->flags |= X_OVER;
+    if(res->v_angle < 0 || res->v_angle > p_viewer->vfov)
+        res->flags |= Y_OVER;
+    res->pos.x = (res->h_angle / p_viewer->hfov) * p_viewer->width;
+    res->pos.y = (res->v_angle / p_viewer->vfov) * p_viewer->height;
+    return;
+quick_exit:
+    res->flags |= X_OVER | Y_OVER;
+    return;
+}
+
+typedef struct Point2D_Pixel { unsigned int x, y; };
+
+// Structure for storing calculated results (from camera transforms.)
+typedef struct Point2D_CalcRes
+{
+    struct Point2D_Pixel pos;
+    float h_angle, v_angle, est_dist, small_dist;
+    int flags;
+};
+

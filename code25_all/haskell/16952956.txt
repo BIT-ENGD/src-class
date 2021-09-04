@@ -1,0 +1,137 @@
+Criterion
+import Data.Vector.Unboxed.Mutable as MU
+import Data.Vector.Unboxed as U hiding (mapM_)
+import Control.Monad.ST as ST
+import Control.Monad.Primitive (PrimState)
+import Control.Monad (when) 
+import Data.STRef (newSTRef, modifySTRef, readSTRef)
+import Data.Int
+
+
+type MVI1 s  = MVector (PrimState (ST s)) Int
+
+cmp :: U.Vector Int32 -> U.Vector Int32 -> Int -> Int -> Int
+cmp a b i j = go 0 i j
+               where
+                 n = U.length a
+                 m = U.length b
+                 go !len !i !j| (i<n) && (j<m) && ((unsafeIndex a i) == (unsafeIndex b j)) = go (len+1) (i+1) (j+1)
+                                    | otherwise = len
+
+-- function to find previous y on diagonal k for furthest point 
+findYP :: MVI1 s -> Int -> Int -> ST s (Int,Int)
+findYP fp k offset = do
+              let k0 = k+offset-1
+                  k1 = k+offset+1
+              y0 <- MU.unsafeRead fp k0 >>= \x -> return $ 1+x
+              y1 <- MU.unsafeRead fp k1
+              if y0 > y1 then return (k0,y0)
+              else return (k1,y1)
+{-#INLINE findYP #-}
+
+gridWalk :: Vector Int32 -> Vector Int32 -> MVI1 s -> Int -> (Vector Int32 -> Vector Int32 -> Int -> Int -> Int) -> ST s ()
+gridWalk a b fp !k cmp = {-#SCC gridWalk #-} do
+   let !offset = 1+U.length a
+   (!kp,!yp) <- {-#SCC findYP #-} findYP fp k offset                          
+   let xp = yp-k
+       len = {-#SCC cmp #-} cmp a b xp yp
+       x = xp+len
+       y = yp+len
+
+   {-#SCC "updateFP" #-} MU.unsafeWrite fp (k+offset) y  
+   return ()
+{-#INLINE gridWalk #-}
+
+-- The function below executes ct times, and updates furthest point as they are found during furthest point search
+findSnakes :: Vector Int32 -> Vector Int32 -> MVI1 s ->  Int -> Int -> (Vector Int32 -> Vector Int32 -> Int -> Int -> Int) -> (Int -> Int -> Int) -> ST s ()
+findSnakes a b fp !k !ct cmp op = {-#SCC findSnakes #-} U.forM_ (U.fromList [0..ct-1]) (\x -> gridWalk a b fp (op k x) cmp)
+{-#INLINE findSnakes #-}
+
+  total time  =        2.39 secs   (2394 ticks @ 1000 us, 1 processor)
+  total alloc = 4,612,756,880 bytes  (excludes profiling overheads)
+
+COST CENTRE MODULE    %time %alloc
+
+gridWalk    Main       67.5   52.7
+findSnakes  Main       23.2   27.8
+cmp         Main        4.2    0.0
+findYP      Main        3.5   19.4
+updateFP    Main        1.6    0.0
+
+
+                                                         individual     inherited
+COST CENTRE    MODULE                  no.     entries  %time %alloc   %time %alloc
+
+MAIN           MAIN                     64           0    0.0    0.0   100.0  100.0
+ main          Main                    129           0    0.0    0.0     0.0    0.0
+ CAF           Main                    127           0    0.0    0.0   100.0  100.0
+  findSnakes   Main                    141           0    0.0    0.0     0.0    0.0
+  main         Main                    128           1    0.0    0.0   100.0  100.0
+   findSnakes  Main                    138           0    0.0    0.0     0.0    0.0
+    gridWalk   Main                    139           0    0.0    0.0     0.0    0.0
+     cmp       Main                    140           0    0.0    0.0     0.0    0.0
+   while       Main                    132        4001    0.1    0.0   100.0  100.0
+    findSnakes Main                    133       12000   23.2   27.8    99.9   99.9
+     gridWalk  Main                    134    16004000   67.5   52.7    76.7   72.2
+      cmp      Main                    137    16004000    4.2    0.0     4.2    0.0
+      updateFP Main                    136    16004000    1.6    0.0     1.6    0.0
+      findYP   Main                    135    16004000    3.5   19.4     3.5   19.4
+   newVI1      Main                    130           1    0.0    0.0     0.0    0.0
+   newVI1.\   Main                    131        8004    0.0    0.0     0.0    0.0
+ CAF           GHC.Conc.Signal         112           0    0.0    0.0     0.0    0.0
+ CAF           GHC.IO.Encoding         104           0    0.0    0.0     0.0    0.0
+ CAF           GHC.IO.Encoding.Iconv   102           0    0.0    0.0     0.0    0.0
+ CAF           GHC.IO.Handle.FD         95           0    0.0    0.0     0.0    0.0
+
+gridWalk
+cmp
+findYP
+gridWalk
+forM_
+findSnakes
+gridWalk
+forM_
+Data.Vector.Unboxed
+Control.Monad
+findSnakes
+gridWalk
+lcsh
+whileM_
+findSnakes
+whileM_
+gridWalk
+Haskell code (GHC 7.6.1 x86_64)
+forM_
+ time ./T
+1
+
+real    0m0.150s
+user    0m0.145s
+sys     0m0.003s
+
+C code (gcc 4.7.2 x86_64)
+time ./test
+1
+
+real    0m0.065s
+user    0m0.063s
+sys     0m0.000s
+
+STUArray
+Mac OS X (x86_64,ghc7.6.1)
+$ time ./Diff
+1
+
+real    0m0.087s
+user    0m0.084s
+sys 0m0.003s
+
+$ time ./test
+1
+
+real    0m0.056s
+user    0m0.053s
+sys 0m0.002s
+
+cmm
+llvm

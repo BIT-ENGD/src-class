@@ -1,0 +1,41 @@
+CREATE TABLE #TempTimes
+(
+    [Time] DATETIME,
+)
+
+DECLARE @numDays INT
+SET @numDays = 10
+DECLARE @time DATETIME
+SET @time = DATEADD(dd, DATEDIFF(dd, 0, GETDATE() - @numDays), 0)
+
+WHILE @time < GETDATE()
+BEGIN
+    INSERT #TempTimes
+    VALUES (@time)
+
+    SET @time = DATEADD(hour, 1, @time)
+END
+GO
+/*
+I have to join in a table with all of the hours for the time span I'm querying against, 
+because otherwise, the AVG function won't calculate in the hours where no payments were made. 
+*/
+
+SELECT DATEPART(hour, [Time]) [Hour], AVG(CAST([Count] AS DECIMAL)) [Average]
+FROM 
+(
+    SELECT [Time], CASE WHEN [Count] IS NULL THEN 0 ELSE [Count] END [Count]
+    FROM #TempTimes tt
+    LEFT JOIN 
+    (
+        SELECT DATEADD(hour, DATEDIFF(hour, 0, [CreateDate]), 0) [hour], COUNT(*) [Count]
+        FROM [dbo].[PaymentLog]
+        GROUP BY DATEADD(hour, DATEDIFF(hour, 0, [CreateDate]), 0)
+    ) t1 ON t1.[hour] = tt.[time]
+) t2
+GROUP BY DATEPART(hour, tt.[Time])
+GO
+
+DROP TABLE #TempTimes
+GO
+

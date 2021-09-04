@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.xxxx.adbind</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/adbind.bash</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>/usr/local/bin</string>
+</dict>
+</plist>
+
+#!/bin/bash
+
+computerid=`/usr/sbin/scutil --get LocalHostName`
+
+# Standard parameters
+domain="xxx.xxxx.edu"           # fully qualified DNS name of Active Directory Domain
+udn="xxxxxx"            # username of a privileged network user
+password="xxxxx"                    # password of a privileged network user
+ou="OU=xxx,DC=xxx,DC=xxxx,DC=edu"       # Distinguished name of container for the computer
+
+# Advanced options
+alldomains="enable"         # 'enable' or 'disable' automatic multi-domain authentication
+localhome="enable"          # 'enable' or 'disable' force home directory to local drive
+protocol="smb"              # 'afp' or 'smb' change how home is mounted from server
+mobile="enable"         # 'enable' or 'disable' mobile account support for offline logon
+mobileconfirm="disable"     # 'enable' or 'disable' warn the user that a mobile acct will be created
+useuncpath="enable"         # 'enable' or 'disable' use AD SMBHome attribute to determine the home dir
+user_shell="/bin/bash"      # e.g., /bin/bash or "none"
+preferred="-preferred xxx.xxxxx.edu"    # Use the specified server for all Directory lookups and authentication
+                            # (e.g. "-nopreferred" or "-preferred ad.server.edu")
+admingroups="xxx\admins,xxx\teachers,xxx\ADManagement - Computers,xxx\employees"    # These comma-separated AD groups may administer the machine (e.g. "" or "APPLE\mac admins")
+
+# Login hook setting -- specify the path to a login hook that you want to run instead of this script
+
+### End of configuration
+
+## Wait until all network services are up.
+ipconfig waitall
+
+# Check to see if we're in the district
+if ping -c 1 xxx.xxx.x.x
+then
+
+# Activate the AD plugin
+defaults write /Library/Preferences/DirectoryService/DirectoryService "Active Directory" "Active"
+plutil -convert xml1 /Library/Preferences/DirectoryService/DirectoryService.plist
+sleep 5
+
+# Remove computer from OU
+dsconfigad -f -r -u xxxxxxx -p xxxxxx
+sleep 5
+
+# Bind to AD
+dsconfigad -f -a $computerid -domain $domain -u $udn -p "$password" -ou "$ou"
+
+# Configure advanced AD plugin options
+if [ "$admingroups" = "" ]; then
+    dsconfigad -nogroups
+else
+    dsconfigad -groups "$admingroups"
+fi
+
+dsconfigad -alldomains $alldomains -localhome $localhome -protocol $protocol \
+    -mobile $mobile -mobileconfirm $mobileconfirm -useuncpath $useuncpath \
+    -shell $user_shell $preferred
+
+# Restart DirectoryService (necessary to reload AD plugin activation settings)
+killall DirectoryService
+
+# Add the AD node to the search path
+if [ "$alldomains" = "enable" ]; then
+    csp="/Active Directory/All Domains"
+else
+    csp="/Active Directory/$domain"
+fi
+
+
+# This works in a pinch if the above code does not
+defaults write /Library/Preferences/DirectoryService/SearchNodeConfig "Search Node Custom Path Array" -array "/Active Directory/All Domains"
+defaults write /Library/Preferences/DirectoryService/SearchNodeConfig "Search Policy" -int 4
+defaults write /Library/Preferences/DirectoryService/ContactsNodeConfig "Search Node Custom Path Array" -array "/Active Directory/All Domains"
+defaults write /Library/Preferences/DirectoryService/ContactsNodeConfig "Search Policy" -int 4
+
+plutil -convert xml1 /Library/Preferences/DirectoryService/SearchNodeConfig.plist
+
+## Remove the script and launchd job. Be sure to delete the script.
+launchctl unload -w /Library/LaunchDaemons/com.xxxx.adbind.plist 
+rm /Library/LaunchDaemons/com.xxxx.adbind.plist
+rm /usr/local/bin/adbind.bash
+
+exit 0
+else
+echo "District not Available. Quitting"
+exit 1
+fi
+

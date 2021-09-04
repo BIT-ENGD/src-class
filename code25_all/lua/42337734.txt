@@ -1,0 +1,61 @@
+core.register_action() --> I'm using this. Take TXN as input
+core.register_converters() --> Essentially used for string manipulations.
+core.register_fetches() --> Takes TXN as input and returns string; Mainly used for representing dynamic backend profiles in haproxy config
+core.register_init() --> Used for initialization
+core.register_service() --> You have to return the response mandatorily while using this function, which doesn't satisfy our requirements
+core.register_task() -->  For using normal functions. No mandatory input class. TXN is required to fetch header details from request
+
+local http_socket = require("socket.http")
+local pretty_print = require("pl.pretty")
+
+function add_http_request_header(txn, name, value)
+    local headerName = name
+    local headerValue = value
+    txn.http:req_add_header(headerName, headerValue)
+end
+
+function call_validation_api()
+    local request, code, header = http_socket.request {
+                                   method = "GET",                    -- Validation API Method                           
+                                   url = "http://www.google.com/"     -- Validation API URL
+                                   }
+
+   -- Using core.log; Print in some cases is a blocking operation http://www.arpalert.org/haproxy-lua.html#h203
+   core.Info( "Validation API Response Code: " .. code )
+   pretty_print.dump( header )
+   return code
+end
+
+function failure_response(txn)
+    local response = "Validation Failed"
+    core.Info(response)
+    txn.res:send(response)
+--    txn:close()
+end
+
+core.register_action("validation_action", { "http-req", "http-res" }, function(txn)
+   local validation_api_code = call_validation_api()
+   if validation_api_code == 200 then
+      core.Info("Validation Successful")
+      add_http_request_header(txn, "test-header", "abcdefg")
+      pretty_print.dump( txn.http:req_get_headers() )
+   else
+      failure_response(txn) --->>> **HERE I WANT TO RETURN THE RESPONSE**
+   end
+end)
+
+frontend  http-in
+    bind :8000
+    mode http
+    http-request    lua.validation_action
+
+    #Capturing header of the incoming request
+    capture request header test-header len 64
+
+    #use_backend %[lua.fetch_req_params]
+    default_backend app
+
+backend         app
+    balance     roundrobin
+    server      app1    127.0.0.1:9999  check
+

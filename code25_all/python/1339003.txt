@@ -1,0 +1,103 @@
+thread.start_new_thread(start_server(s,))
+import dbus
+from dbus.mainloop.glib import DBusGMainLoop
+import gobject
+from gobject import GObject
+from SimpleXMLRPCServer import SimpleXMLRPCServer
+import thread
+from os import path
+
+class SlfPhoneConnector :
+
+    def __init__(self) :
+
+        self.activeCalls = {}
+
+        account = {
+            "username" : "1111", 
+            "Account.type" : "SIP", 
+            "hostname" : "192.168.1.109", 
+            "Account.alias" : "1111", 
+            "password":"1111", 
+            "Account.enable" : "TRUE"
+        }
+
+        session = dbus.SessionBus()
+
+        conf_obj = session.get_object("org.sflphone.SFLphone", "/org/sflphone/SFLphone/ConfigurationManager")  
+        self.conf_mgr = dbus.Interface(conf_obj ,"org.sflphone.SFLphone.ConfigurationManager")
+
+        call_obj = session.get_object("org.sflphone.SFLphone", "/org/sflphone/SFLphone/CallManager")  
+        self.call_mgr = dbus.Interface(call_obj ,"org.sflphone.SFLphone.CallManager")
+
+
+        self.call_mgr.connect_to_signal('incomingCall', self.on_incoming_call)
+        self.call_mgr.connect_to_signal('callStateChanged', self.on_call_state_changed)
+
+        self.account_id = self.conf_mgr.addAccount(account)
+
+        self.conf_mgr.sendRegister(self.account_id, 1)           
+
+        #self.call_mgr.placeCall(self.account_id, self.account_id, "2222" )  
+
+    def on_incoming_call(self, account, callid, to):
+        print "Incoming call: " + account + ", " + callid + ", " + to
+        self.activeCalls[callid] = {'Account': account, 'To': to, 'State': '' }   
+
+        self.call_mgr.accept(callid)
+
+    # On call state changed event, set the values for new calls, 
+    # or delete the call from the list of active calls
+    def on_call_state_changed(self, callid, state):
+        print "Call state changed: " + callid + ", " + state
+        if state == "HUNGUP":
+            try:
+                del self.activeCalls[callid]
+            except KeyError:
+                print "Call " + callid + " didn't exist. Cannot delete."
+
+        elif state in [ "RINGING", "CURRENT", "INCOMING", "HOLD" ]:
+            try:
+                self.activeCalls[callid]['State'] = state 
+            except KeyError, e:
+                print "This call didn't exist!: " + callid + ". Adding it to the list."
+                callDetails = self.getCallDetails(callid)
+                self.activeCalls[callid] = {'Account': callDetails['ACCOUNTID'], 'To': callDetails['PEER_NUMBER'], 'State': state }
+        elif state in [ "BUSY", "FAILURE" ]:
+            try:
+                del self.activeCalls[callid]
+            except KeyError, e:
+                print "This call didn't exist!: " + callid   
+
+
+    def getCallDetails(self, callid):
+        """Return informations on this call if exists"""
+        return self.call_mgr.getCallDetails(callid)
+
+    def place_call(self, callid):
+        self.call_mgr.placeCall(self.account_id, self.account_id, callid)
+
+    def hangup(self) :
+        call0 = self.activeCalls.keys()[0]
+        self.call_mgr.hangUp(call0)
+
+
+def start_server(obj):
+    server = SimpleXMLRPCServer( ("localhost", 9988), allow_none= True)
+    server.register_instance(obj)
+
+    print "server start @localhost 9988 forever ..."
+    server.serve_forever()
+
+if __name__ == "__main__" :
+
+    DBusGMainLoop(set_as_default=True)
+    s  = SlfPhoneConnector()
+
+    thread.start_new_thread(start_server(s,))
+
+    ... {{ another code here }}
+
+    #loop = gobject.MainLoop()
+    #loop.run()
+

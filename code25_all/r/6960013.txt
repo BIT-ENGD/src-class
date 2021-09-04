@@ -1,0 +1,56 @@
+OBVMA <- function(price,volume,n) {
+price <- try.xts(price, error = as.matrix)
+volume <- try.xts(volume, error = as.matrix)
+if (!(is.xts(price) && is.xts(volume))) {
+price <- as.vector(price)
+volume <- as.vector(volume)
+}
+obvma <- c(volume[1], ifelse(ROC(price) > 0, volume, -volume)[-1])
+obvma <- cumsum(obvma)
+obvma <- runMean(obvma, n)
+if (is.xts(obvma)) {
+obvma <- xts(obvma, index(price))
+colnames(obvma) <- "obvma"
+}
+reclass(obvma, price)
+}
+
+require(quantstrat)
+suppressWarnings(rm("order_book.obvcross",pos=.strategy))
+suppressWarnings(rm("account.obvcross","portfolio.obvcross",pos=.blotter))
+suppressWarnings(rm("account.st","portfolio.st","stock.str","stratOBVCROSS","initDate","initEq",'start_t','end_t'))
+stock.str='ALPHA.AT' 
+currency('EUR')
+stock(stock.str,currency='EUR',multiplier=1)
+initDate='2001-12-31'
+initEq=1000000
+portfolio.st='obvcross'
+account.st='obvcross'
+initPortf(portfolio.st,symbols=stock.str, initDate=initDate)
+initAcct(account.st,portfolios=portfolio.st, initDate=initDate)
+initOrders(portfolio=portfolio.st,initDate=initDate)
+
+stratOBVCROSS<- strategy(portfolio.st)
+
+stratOBVCROSS <- add.indicator(strategy = stratOBVCROSS, name = "OBV", arguments = list(price = quote(Cl(mktdata)),volume = quote(Vo(mktdata))),label= "obv")
+stratOBVCROSS <- add.indicator(strategy = stratOBVCROSS, name = "OBVMA", arguments = list(price = quote(Cl(mktdata)),volume = quote(Vo(mktdata)), n=20),label="obvma20")
+
+stratOBVCROSS <- add.signal(strategy = stratOBVCROSS,name="sigCrossover",arguments = list(column=c("obv","obvma20"),relationship="gte"),label="obv.gte.obvma20")
+stratOBVCROSS <- add.signal(strategy = stratOBVCROSS,name="sigCrossover",arguments = list(column=c("obv","obvma20"),relationship="lt"),label="obv.lt.obvma20")
+
+stratOBVCROSS <- add.rule(strategy = stratOBVCROSS,name='ruleSignal', arguments = list(sigcol="obv.gte.obvma20",sigval=TRUE, orderqty=100, ordertype='market', orderside='long'),type='enter')
+stratOBVCROSS <- add.rule(strategy = stratOBVCROSS,name='ruleSignal', arguments = list(sigcol="obv.lt.obvma20",sigval=TRUE, orderqty=-100, ordertype='market', orderside='long'),type='exit')
+
+stratOBVCROSS <- add.rule(strategy = stratOBVCROSS,name='ruleSignal', arguments = list(sigcol="obv.lt.obvma20",sigval=TRUE, orderqty=-100, ordertype='market', orderside='short'),type='enter')
+stratOBVCROSS <- add.rule(strategy = stratOBVCROSS,name='ruleSignal', arguments = list(sigcol="obv.gte.obvma20",sigval=TRUE, orderqty=100, ordertype='market', orderside='short'),type='exit')
+
+getSymbols(stock.str,from=initDate)
+for(i in stock.str)
+  assign(i, adjustOHLC(get(i),use.Adjusted=TRUE))
+
+start_t<-Sys.time()
+out<-try(applyStrategy(strategy=stratOBVCROSS,portfolios=portfolio.st))
+
+Error in if (length(j) == 0 || (length(j) == 1 && j == 0)) { : 
+  missing value where TRUE/FALSE needed
+

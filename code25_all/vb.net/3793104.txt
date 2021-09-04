@@ -1,0 +1,68 @@
+Private _UdbBuffer As Byte()
+Private _ReceiveSocket As Socket
+Private _NumReceived As Integer = 0
+Private _StopWaitHandle As AutoResetEvent
+
+Private Sub UdpListen()
+    _StopWaitHandle = New AutoResetEvent(False)
+    _UdpEndPoint = New Net.IPEndPoint(Net.IPAddress.Any, UDP_PORT_NUM)
+
+    _ReceiveSocket = New Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
+    _ReceiveSocket.Bind(_UdpEndPoint)
+
+    ReDim _UdbBuffer(10000)
+
+    While Not _StopRequested
+        Dim ir As IAsyncResult = _ReceiveSocket.BeginReceive(_UdbBuffer, 0, 10000, SocketFlags.None, AddressOf UdpReceive, Nothing)
+
+        If Not _StopRequested Then
+            Dim waitHandles() As WaitHandle = {_StopWaitHandle, ir.AsyncWaitHandle}
+            If (WaitHandle.WaitAny(waitHandles) = 0) Then
+                Exit While
+            End If
+        End If
+    End While
+
+    _ReceiveSocket.Close()
+End Sub
+
+Private Sub UdpReceive(ByVal ar As IAsyncResult)
+    Dim len As Integer
+    If ar.IsCompleted Then
+        len = _ReceiveSocket.EndReceive(ar)
+        Threading.Interlocked.Increment(_NumReceived)
+        RaiseStatus("Got " & _NumReceived & " packets")
+    End If
+End Sub
+
+For i as UShort = 0 to 999
+   Dim b(500) as Byte
+   _UdpClient.Send(b, b.Length)       
+Next
+
+Private Sub StartUdpListen()
+    _UdpEndPoint = New Net.IPEndPoint(Net.IPAddress.Any, UDP_PORT_NUM)
+    _ReceiveSocket = New Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
+    _ReceiveSocket.ReceiveBufferSize = 500000
+    _ReceiveSocket.Bind(_UdpEndPoint)
+
+    ReDim _Buffer(50000)
+
+    _ReceiveSocket.BeginReceiveFrom(_Buffer, 0, _Buffer.Length, SocketFlags.None, _UdpEndPoint, AddressOf UdpReceive, Nothing)
+
+End Sub
+
+Private Sub UdpReceive(ByVal ar As IAsyncResult)
+    Dim len As Integer = _ReceiveSocket.EndReceiveFrom(ar, _UdpEndPoint)
+    Threading.Interlocked.Increment(udpreceived)
+
+    Dim receiveBytes As Byte()
+    ReDim receiveBytes(len - 1)
+    System.Buffer.BlockCopy(_Buffer, 0, receiveBytes, 0, len)
+
+    _ReceiveSocket.BeginReceiveFrom(_Buffer, 0, _UdbBuffer.Length, SocketFlags.None, _UdpEndPoint, AddressOf UdpReceive, Nothing)
+
+    //' At this point, do what we need to do with the data in the receiveBytes buffer
+    Trace.WriteLine("count=" & udpreceived)
+End Sub
+

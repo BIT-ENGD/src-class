@@ -1,0 +1,161 @@
+close()
+close()
+main()
+opendirectory()
+/*
+ * Iterates through given directory
+ */
+void *opendirectory(void *t)
+{
+ pthread_mutex_lock(&dirlock);
+ DIR *dpntr;
+ struct dirent *dentry;
+ char new_directory[512], dir = t;
+
+ printf("OPENING DIRECTORY ... %s\n", t);
+
+ /* Checks if given directory can be opened */
+ if((dpntr = opendir(t)) == NULL) {
+  printf("DIRECTORY FAILED ...%s\n",t);
+  perror("ERROR -- COULD NOT OPEN DIR");
+  pthread_exit(NULL);
+ }
+
+ printf("DIRECTORY OPENED: %s\n", t);
+
+ /* Read each file in current directory */
+ while ((dentry = readdir(dpntr)) != NULL ) {
+  /* Ignore special directories */
+  if(strcmp(dentry -> d_name, ".") == 0 || strcmp(dentry -> d_name, "..") == 0) {
+   continue;
+  } else {
+   compilelist( t, dentry->d_name );
+  }
+ }
+
+ pthread_mutex_unlock(&dirlock);
+ /* Checks if directory can be closed */
+ if(closedir(dpntr) < 0)
+  printf("ERROR CLOSING %s.\n", t);
+
+}
+
+/*
+ * Determines if current file is a directory
+ * Creates a new thread if true
+ */
+void compilelist (const char* dirname, const char *filename)
+{
+    pthread_mutex_lock(&filelock);
+    struct stat statdata;
+    char *filepathname, *dpntr;
+
+    /* Allocate memory for filepathname */
+    if((filepathname = (char *) malloc(sizeof(char) * strlen(dirname))) == NULL)
+    {
+        printf("CANNOT ALLOCATE MEMORY FOR FILE PATH NAME.");
+        pthread_exit(NULL);
+    }
+
+    /* Concats directory name with file name */
+    if(dirname[strlen(dirname) -1] == '/')
+    {
+        pthread_mutex_lock(&pathlock);
+        sprintf(filepathname, "%s%s", dirname, filename);
+        pthread_mutex_unlock(&pathlock);
+    }else
+    {
+        pthread_mutex_lock(&pathlock);
+        sprintf(filepathname, "%s/%s", dirname, filename);
+        pthread_mutex_unlock(&pathlock);
+    }
+
+    lstat(filepathname, &statdata);
+
+    /* Calls print_statdata() if current item is a file */
+    if(!(S_ISDIR(statdata.st_mode)))
+    {
+        printf("FILE: %s\n", filepathname);
+        if(!stat( filepathname, &statdata))
+        {
+            print_statdata( filename, &statdata );
+        }
+        else {
+            fprintf (stderr, "GETTING STAT FOR %s", filepathname);
+            perror( "ERROR IN STATDATA WHILE GETTING STAT");
+        }
+    }
+    /* Recursive call to opendirectory() */
+    else {
+        pthread_mutex_lock(&dircountlock);
+        dirCount++;
+        pthread_mutex_unlock(&dircountlock);
+        dpntr = filepathname;
+        free(filepathname);
+        printf("SUB-DIRECTORY THREAD: %s\nTHREAD ID NUMBER: %d\n", dpntr, dirCount);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+        pthread_create(&threads[dirCount-1], &attr, opendirectory, (void *)dpntr);
+    }
+
+    pthread_mutex_unlock(&filelock);
+
+}
+
+main()
+/*
+ * Main function prompts user for a directory
+ */
+int main(int argc, char *argv[])
+{
+    int i;
+    char *dPtr;
+    // pthread_attr_t attr;
+
+    printf("ENTER A DIRECTORY:\n\t");
+    scanf("%s", directory);
+    dPtr = directory;
+
+    /* Initialize mutex and condition variable objects */
+    pthread_mutex_init(&mutex, NULL);
+    pthread_mutex_init(&filelock, NULL);
+    pthread_mutex_init(&dirlock, NULL);
+    pthread_mutex_init(&dircountlock, NULL);
+    pthread_cond_init (&count_threshold_cv, NULL);
+
+    /* For portability, explicitly create threads in a joinable state */
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    pthread_create(&threads[0], &attr, opendirectory, (void *)dPtr);
+
+    /* Wait for all threads to complete */
+    for (i = 0; i < dirCount; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("TOTAL DIRECTORY SIZE: %d\n", dirSize);
+
+    /* Clean up and exit */
+    pthread_attr_destroy(&attr);
+    pthread_mutex_destroy(&mutex);
+    pthread_mutex_destroy(&filelock);
+    pthread_mutex_destroy(&dirlock);
+    pthread_mutex_destroy(&dircountlock);
+    pthread_cond_destroy(&count_threshold_cv);
+    pthread_exit (NULL);
+
+}
+
+pthread_mutex_t mutex;
+pthread_mutex_t dirlock;
+pthread_mutex_t filelock;
+pthread_mutex_t dircountlock;
+pthread_mutex_t threadlock;
+pthread_cond_t count_threshold_cv;
+pthread_attr_t attr;
+pthread_t threads[128]; // handles up to 128 threads (i.e. 128 directories, change accordingly)
+char directory[512];
+int dirSize = 0;
+int dirCount = 1; // user's input directory
+
+pthread_create()
+compilelist()

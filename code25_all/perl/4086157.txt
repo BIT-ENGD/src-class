@@ -1,0 +1,308 @@
+#!/usr/bin/perl
+
+use Tk;
+use strict;
+use warnings;
+use Tk::NoteBook;
+use Tk::TextUndo;
+use XML::Simple;
+use IO::Socket::INET;
+
+# ===================variables==================
+my $fname;
+my $open_fname;
+my $f;
+my $info;
+my $t;
+# my $load_file_variable;
+my $types;
+my $menubar;
+my @path;
+my $parser_path;
+my $log_filename;
+my $dut_conf_filename;
+my $w;
+my %info;
+my @key;
+my $sub_routine_flg = 0;
+# ==============================================
+
+$log_filename = '/home/SaLTT/Log/log.txt';
+$dut_conf_filename = '/home/SaLTT/Log/dut_configuration.txt';
+
+my $filename = '/home/sait11/Desktop/Examples/test.txt';
+# print "\tfilename***$filename\n\n";
+
+my $mw = MainWindow->new;
+    $mw->optionAdd("*font", "-*-arial-normal-r-*-*-*-120-*-*-*-*-*-*");
+    $mw->optionAdd("*borderWidth", 3);
+    $mw->geometry("1250x1250");
+    $mw->title('SaLTT');
+
+# ===================Adding Logo==================
+    my $image = '/home/SaLTT/images/SAI_logo.gif';    # 32x32 GIF or BMP
+    my $icon = $mw->Photo(-file => $image);
+    $mw->iconimage($icon);
+# ==============================================
+    $menubar = $mw->Menu(-type => 'menubar');
+    $mw->configure(-menu => $menubar);
+
+####### Menus #######
+
+    my $mfile = $menubar->cascade(-label => '~File', -tearoff => 0);    #   File_Menu
+    my $mview = $menubar->cascade(-label => '~View', -tearoff => 0);    #   View_Menu  
+    my $medit = $menubar->cascade(-label => '~Edit', -tearoff => 0);    #   Edit_Menu
+    my $mhelp = $menubar->cascade(-label => '~Help', -tearoff => 0);    #   Help_Menu
+
+# ==================== File ====================
+    $mfile->command(    -label => '~Open',
+                        -accelerator => 'Control+o',
+                        -command => \&open_file
+                    );
+    $mfile->command(    -label => '~Save',
+                        -accelerator => 'Control+s',
+                        -command => \&save_log_file
+                    );
+
+# ==================== Edit ====================
+    $medit->command(    -label => '~Edit',
+                        -accelerator => 'Control+e',
+                        -command => \&edit_file
+                    );
+
+# *************************************************
+my $nb = $mw->NoteBook( )->pack( -expand => 1,
+                                 -fill => 'both'
+                                );
+#=====================================================
+# Page 1 on the notebook, with button on that page
+#               DUT_Configuration
+#=====================================================
+my $tab1 = $nb->add('page1', -label => 'DUT_Configuration');
+    $f = $tab1->Frame->pack(-side => 'bottom');
+    $t = $tab1->Scrolled("TextUndo",-width => 600,-height => 400, -scrollbars => 'osoe')->pack(-side=>"right",
+                                                                                               -expand => "yes",
+                                                                                               -fill => "y"
+                                                                                               );
+
+    foreach (qw/IP_ADDRESS_SS PORT_NUMBER_CLIENT PROTOCOL_CLIENT/)
+    {
+        $w = $t->Label(-text => "$_:", -relief => 'groove', -width => 25);
+        $t->windowCreate('end', -window => $w);
+        $w = $t->Entry(-width => 20, -textvariable => \$info{$_})->pack();
+        $t->windowCreate('end', -window => $w);
+        $t->insert('end', "\n");
+    }
+
+    $f->Button(-text => 'Exit!',-activebackground=>"red", -command=>sub{exit})->pack( -side=>'right',
+                                                                                     -anchor=>'se',
+                                                                                     -ipadx => 10, -ipady => 10
+                                                                                   );
+    $f->Button(-text => 'Save',-activebackground=>"green", -command=>\&print_dut_rec)->pack( -side=>'right',
+                                                                                      -anchor=>'se',
+                                                                                      -ipadx => 10, -ipady => 10
+                                                                                    );
+    my $clear_text = $f->Button(-text => "Clear Text",-command => \&clear_entry)->pack(-side => 'right',
+                                                                                      -anchor=>'se',
+                                                                                      -ipadx => 10, -ipady => 10
+                                                                                      );
+#=====================================================
+# Empty page 2
+# SS_Configuration
+#=====================================================
+my $tab2 = $nb->add('page2', -label => 'SS_Configuration');
+$tab2->Button(-text => 'Exit!',-activebackground=>"red", -command=>sub{exit})->pack(  -side=>'bottom',
+                                                            -anchor=>'se',
+                                                            -ipadx => 10, -ipady => 10
+                                                          );
+#=====================================================
+# Empty page 3
+# TC_Manager
+#=====================================================
+my $tab3 = $nb->add('page3', -label=>'TC_Manager');
+$tab3->Button(-text=>"Test-UE", -command =>\&exec_parser)->grid(  $tab3->Button(-text=>"Test-eNB", -command=>sub{exit}),
+$tab3->Button(-text=>"Exit!",-activebackground=>"red",-activebackground=>"red",-command=>sub{exit}),
+                                                                 "-", "-",
+                                                                -sticky=>'e',
+                                                                -ipadx=>25, -ipady=>25,
+                                                                -padx=>50, -pady=>50
+                                                            );
+#=====================================================
+# Empty page 4
+# TG_Configuration
+#=====================================================
+my $tab4 = $nb->add('page4', -label=>"TG_Configuration");
+
+$tab4->Button(-text=>"SAITG",-command=>sub{exit})->grid($tab4->Button(-text=>"SmartBit",-command=>sub{exit}),
+                                                        $tab4->Button(-text=>"Iperf",-command=>sub{exit}),
+                                                        -sticky=>'nsew',
+                                                        -ipadx=>25, -ipady=>25,
+                                                        -padx=>50, -pady=>50,
+                                                       );
+#=====================================================
+# Empty page 5
+# Log Monitor
+#=====================================================
+my $tab5 = $nb->add("page5", -label=>"Log Monitor");
+
+    $f = $tab5->Frame->pack(-side => 'top', -fill => 'x');
+
+    $tab5->Button(-text => "Exit",-activebackground=>"red",-command => sub { exit; } )->pack(-side => 'bottom',-anchor=>'se',-ipadx=>10, -ipady=>10);
+    $tab5->Button(-text => "Save",-activebackground=>"green",-command => \&save_log_file)->pack(-side => 'right',-anchor => 'ne',-ipadx=>10, -ipady=>10);
+    $tab5->Button(-text => "Load", -command => \&load_log_file)->pack(-side => 'right', -anchor => 'ne',-ipadx=>10, -ipady=>10);
+        $tab5->repeat(1000,\&load_log_file);
+
+#   Create necessary widgets
+    $tab5->Label(-textvariable => \$info, -relief => 'ridge')->pack(-side => 'bottom', -fill => 'x');
+    $t = $tab5->Scrolled("Text",-scrollbars=>"w",-exportselection => 1)->pack(-side => 'bottom',-fill => 'both', -expand => 1,);
+
+#=====================================================
+# Empty page 6
+# TC_Result
+#=====================================================
+    my $tab6 = $nb->add("page6", -label=>"TC_Result");
+
+    $tab6->Button(-text=>"Report - Excel_sheet", -command=>\&report_spread_sheet)->pack( -side=>'top',
+                                                                                         -anchor=>'center',
+                                                                                         -ipadx => 50, -ipady => 25,
+                                                                                         -padx=>500, -pady=>75
+                                                                                       );
+
+    $tab6->Button(-text=>"Report - HTML_sheet", -command=>\&report_html_sheet)->pack(   -side=>'top',
+                                                                                        -anchor=>'center',
+                                                                                        -ipadx => 50, -ipady => 25,
+                                                                                        -padx=>500, -pady=>50
+                                                                                    );
+
+    $tab6->Button(-text=>"Exit!",-activebackground=>"red", -command=>sub{exit})->pack(  -side=>'bottom',
+                                                                                        -anchor=>'se',
+                                                                                        -ipadx => 10, -ipady => 10
+                                                                                     );
+#=====================================================
+#   Empty page 7
+#   TTCN-3 
+#=====================================================
+    my $tab7 = $nb->add("page7", -label=>"TTCN-3");
+    $tab7->Button(-text=>"Exit!",-activebackground=>"red", -command=>sub{exit})->pack(  -side=>'bottom',
+                                                                                        -anchor=>'se',
+                                                                                        -ipadx => 10, -ipady => 10
+                                                                                     );
+# ================================
+    $mw->bind('<Control-o>', [\&open_file]);
+    $mw->bind('<Control-s>', [\&save_file]);
+    $mw->bind('<Control-e>', [\&edit_file]);
+
+
+    $types = [ ['XML Files',   '.xml'],
+                  ['Perl files', '.pl'],
+                  ['Text Files',   '.txt'],
+                  ['All Files',   '*'],
+                ];
+
+MainLoop;
+
+# ================================================
+# $fname;                     #Fetch the selected test case file name
+# =========================================================
+# sub clear_entry
+# {
+#    $w->delete('0.0', 'end');
+# }
+# # =========================================================
+sub open_file
+{
+  $open_fname = $mw->getOpenFile(-filetypes => $types,
+                                    -defaultextension => '.xml'
+                                   );
+    if($open_fname)
+    {
+#         print qq{You chose to open "$open_fname"\n};
+        my @ref = split(/\//,$open_fname);
+        $fname = $ref[$#ref];
+#         print "From open.pl ::: $fname\n";
+    }
+    else
+    {
+        print"Please select the test case file!!!\n";
+        exit;
+    }
+}
+# =========================================================
+sub exec_parser
+{
+if (!$sub_routine_flg)
+{
+#   print "\n\nIn if condition of open.pl....having name in fname::$fname\n\n";
+    &xml_parser_execution($fname);
+    $sub_routine_flg = 1;
+    undef $fname;
+#   print "\tIn if part\n\n";
+    print "\n\t***** Execution Completed.... Please Select test case from data base ***** ....\n\n";
+}
+else
+{
+# #     undef $fname;
+#   print "fname in else part in open.pl:: $fname\n";
+#   print "\n\n\tsubroutine flag is set in open.pl\n\n";
+    &xml_parser_execution($fname);
+    undef $fname;
+#   print "\tIn else part\n\n";
+    print "\n\t***** Execution Completed.... Please Select test case from data base ***** ....\n\n";
+}
+}
+# =========================================================
+#### ==Subroutine for log ==####
+# load_file :- checks to see what the filename is and loads it if possible
+sub load_log_file
+{
+    $info = "Loading file '$log_filename' ...";
+    $t->delete("1.0", "end");
+    if (!open(FH, "$log_filename"))
+    {
+    $t->insert("end", "ERROR: Could not open $log_filename\n");
+    return;
+    }
+    while (<FH>) { $t->insert("end", $_); }
+    close (FH);
+    $info = "File '$filename' loaded";
+}
+
+# save_file :- saves the file using the filename in the entry box.
+sub save_log_file
+{
+    $info = "Saving '$log_filename'";
+    open (FH, ">$log_filename");
+    print FH $t->get("1.0", "end");
+    $info = "Saved...";
+}
+# =========================================================
+sub save_dut_config_file
+{
+    $info = "Saving '$filename'";
+    open (FH, ">$filename");
+    print FH $t->get("1.0", "end");
+    $info = "Saved.";
+}
+# =========================================================
+sub print_dut_rec()
+{
+    open (FH, ">/home/SaLTT/DUT_Config.txt")||die" Not able to open DUT_Config.txt file xxxxxxxxxxxxx....\n";
+    @key = keys %info;
+    foreach $_ (@key)
+    {
+    print FH "$_:    $info{$_}\n";
+#     print "$_:   $info{$_}\n";
+    }
+}
+# =================== Report subroutines ======================================
+sub report_spread_sheet
+{
+
+}
+
+sub report_html_sheet
+{
+
+}
+# ========================================================= 
+

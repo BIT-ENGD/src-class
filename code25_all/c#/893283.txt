@@ -1,0 +1,169 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Drawing;
+using System.Drawing.Imaging;
+
+namespace DCOMProductions.Desktop.ScreenViewer {
+public unsafe class UnsafeBitmap {
+    Bitmap bitmap;
+
+    // three elements used for MakeGreyUnsafe
+    int width;
+    BitmapData bitmapData = null;
+    Byte* pBase = null;
+
+    public UnsafeBitmap(Bitmap bitmap) {
+        this.bitmap = new Bitmap(bitmap);
+    }
+
+    public UnsafeBitmap(int width, int height) {
+        this.bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+    }
+
+    public void Dispose() {
+        bitmap.Dispose();
+    }
+
+    public Bitmap Bitmap {
+        get {
+            return (bitmap);
+        }
+    }
+
+    private Point PixelSize {
+        get {
+            GraphicsUnit unit = GraphicsUnit.Pixel;
+            RectangleF bounds = bitmap.GetBounds(ref unit);
+
+            return new Point((int)bounds.Width, (int)bounds.Height);
+        }
+    }
+
+    public void LockBitmap() {
+        GraphicsUnit unit = GraphicsUnit.Pixel;
+        RectangleF boundsF = bitmap.GetBounds(ref unit);
+        Rectangle bounds = new Rectangle((int)boundsF.X,
+      (int)boundsF.Y,
+      (int)boundsF.Width,
+      (int)boundsF.Height);
+
+        // Figure out the number of bytes in a row
+        // This is rounded up to be a multiple of 4
+        // bytes, since a scan line in an image must always be a multiple of 4 bytes
+        // in length. 
+        width = (int)boundsF.Width * sizeof(Pixel);
+        if (width % 4 != 0) {
+            width = 4 * (width / 4 + 1);
+        }
+        bitmapData =
+      bitmap.LockBits(bounds, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+
+        pBase = (Byte*)bitmapData.Scan0.ToPointer();
+    }
+
+    public Pixel GetPixel(int x, int y) {
+        Pixel returnValue = *PixelAt(x, y);
+        return returnValue;
+    }
+
+    public void SetPixel(int x, int y, Pixel colour) {
+        Pixel* pixel = PixelAt(x, y);
+        *pixel = colour;
+    }
+
+    public void UnlockBitmap() {
+        bitmap.UnlockBits(bitmapData);
+        bitmapData = null;
+        pBase = null;
+    }
+    public Pixel* PixelAt(int x, int y) {
+        return (Pixel*)(pBase + y * width + x * sizeof(Pixel));
+    }
+}
+
+private Bitmap GetInvalidFrame(Bitmap frame) {
+        Stopwatch sp = new Stopwatch();
+        sp.Start();
+
+        if (m_FrameBackBuffer == null) {
+            return frame;
+        }
+
+        Int32 pixelsToRead = frame.Width * frame.Height;
+        Int32 x = 0, y = 0;
+
+        UnsafeBitmap unsafeBitmap = new UnsafeBitmap(frame);
+        UnsafeBitmap unsafeBuffBitmap = new UnsafeBitmap(m_FrameBackBuffer);
+        UnsafeBitmap retVal = new UnsafeBitmap(frame.Width, frame.Height);
+
+        unsafeBitmap.LockBitmap();
+        unsafeBuffBitmap.LockBitmap();
+        retVal.LockBitmap();
+
+        do {
+            for (x = 0; x < frame.Width; x++) {
+                Pixel newPixel = unsafeBitmap.GetPixel(x, y);
+                Pixel oldPixel = unsafeBuffBitmap.GetPixel(x, y);
+
+                if (newPixel.Alpha != oldPixel.Alpha || newPixel.Red != oldPixel.Red || newPixel.Green != oldPixel.Green || newPixel.Blue != oldPixel.Blue) {
+                   retVal.SetPixel(x, y, newPixel);
+                }
+                else {
+                    // Skip pixel
+                }
+            }
+
+            y++;
+        } while (y != frame.Height);
+
+        unsafeBitmap.UnlockBitmap();
+        unsafeBuffBitmap.UnlockBitmap();
+        retVal.UnlockBitmap();
+
+        sp.Stop();
+
+        System.Diagnostics.Debug.WriteLine(sp.Elapsed.Milliseconds.ToString());
+
+        sp.Reset();
+
+        return retVal.Bitmap;
+    }
+
+#region RootWorkItem
+
+    private ScreenClient m_RootWorkItem;
+    /// <summary>
+    /// Gets the RootWorkItem
+    /// </summary>
+    public ScreenClient RootWorkItem {
+        get {
+            if (m_RootWorkItem == null) {
+                m_RootWorkItem = new ScreenClient();
+                m_RootWorkItem.FrameRead += new EventHandler<FrameEventArgs>(RootWorkItem_FrameRead);
+            }
+            return m_RootWorkItem;
+        }
+    }
+
+    #endregion
+
+    private void RootWorkItem_FrameRead(Object sender, FrameEventArgs e) {
+        if (e.Frame != null) {
+            if (uxSurface.Image != null) {
+                Bitmap frame = (Bitmap)uxSurface.Image;
+
+                Graphics g = Graphics.FromImage(frame);
+                g.DrawImage(e.Frame, 0, 0); // Draw only updated pixels
+
+                uxSurface.Image = frame;
+            }
+            else {
+                uxSurface.Image = e.Frame; // Draw initial, full image
+            }
+        }
+        else {
+            uxSurface.Image = null;
+        }
+    }
+

@@ -1,0 +1,63 @@
+Using ldapConn As New LdapConnection(New LdapDirectoryIdentifier(LDAPServerAddress), credential)
+ ldapConn.SessionOptions.ProtocolVersion = 3
+ ldapConn.SessionOptions.Signing = Not _UseSecureConnection
+ ldapConn.SessionOptions.Sealing = Not _UseSecureConnection
+ ldapConn.SessionOptions.SecureSocketLayer = _UseSecureConnection
+ If _UseSecureConnection Then
+  ldapConn.SessionOptions.VerifyServerCertificate = New VerifyServerCertificateCallback(AddressOf ServerCallback)
+ End If
+ ldapConn.AuthType = AuthType.Negotiate
+
+ ldapConn.Bind()
+
+ Dim DistinguishedName As String = String.Format("CN={0},OU={1},{2}", Me.AccountName, Me.OrgUnit, Me.DCSuffix)
+
+ ' Save this distinguished name to the local object; so that the group memberships addition works in a minute.
+ Me._DistinguishedName = DistinguishedName
+
+ Dim addRequest As New AddRequest(DistinguishedName, Me.LDAPUserObjectType)
+
+ '' Add an AccountName attribute
+ addRequest.Attributes.Add(New DirectoryAttribute(GetLDAPSchemaMapping(LDAPUserProperties.AccountName), AccountName))
+
+ '' Look in any derived classes, if they want any attributes adding as part of this save operation.
+
+ '' Hint: Derived classes will override the "GetDirectoryAttributesForAddNewRequest" function and return a list of anything they want adding
+ '' to the AD at the time of creation.
+ If Not GetDirectoryAttributesForAddNewRequest() Is Nothing Then
+  For Each kvp As KeyValuePair(Of String, String) In GetDirectoryAttributesForAddNewRequest()
+   addRequest.Attributes.Add(New DirectoryAttribute(kvp.Key, kvp.Value))
+  Next
+ End If
+
+ '' Hash up the password into a Unicode byte array and send this as the requried initial password.
+ addRequest.Attributes.Add(New DirectoryAttribute("unicodePwd", GetPasswordData(UsersFirstPassword)))
+
+ ' Execute the request on the directory server.
+ Dim addResponse As DirectoryResponse = ldapConn.SendRequest(addRequest)
+
+ ' Need to return the GUID, need to search against the ldap server:
+ Dim request As New SearchRequest(String.Format("OU={0},{1}", Me.OrgUnit, Me.DCSuffix), "(&(objectCategory=" & Me.LDAPUserObjectType & ")(sAMAccountName=" & Me.AccountName & "))", System.DirectoryServices.Protocols.SearchScope.Subtree)
+ Dim searchResponse As SearchResponse = DirectCast(ldapConn.SendRequest(request), SearchResponse)
+
+ returnedGuid = DirectCast(searchResponse.Entries(0).Attributes("objectGuid").Item(0), Byte())
+
+ ' Set up the search request object so we can do searches now based on this new user:
+ Dim rq As SearchRequest = BuildLdapSearchRequest("sAMAccountName", Me.AccountName)
+
+ ' ** Send the query to the LDAP server, and save the response into the private _SearchResponse object **
+ _SearchResponse = DirectCast(ldapConn.SendRequest(rq), SearchResponse)
+End Using
+
+addRequest.Attributes.Add(New DirectoryAttribute("unicodePwd", GetPasswordData(UsersFirstPassword)))
+
+''' <summary>
+''' Returns a unicode-encoded byte array based on the incoming password string.
+''' </summary>
+''' <param name="password">The password to turn into a byte array</param>
+Public Function GetPasswordData(ByVal password As String) As Byte()
+ Dim formattedPassword As String
+ formattedPassword = String.Format("""{0}""", password)
+ Return Encoding.Unicode.GetBytes(formattedPassword)
+End Function
+

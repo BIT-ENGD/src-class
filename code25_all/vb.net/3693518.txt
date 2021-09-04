@@ -1,0 +1,286 @@
+Public Class CartHeader
+
+Public Function UpdateCartStep2(ByVal CartNo As Long, ByVal Username As String, _
+ByVal PmtMethod As String, ByVal ShipMethod As String, _
+ByVal ShipComplete As Boolean, ByVal ShipCost As Double, _
+ByVal ShipInstr As String, Optional ByVal TaxGroup As String = "", _
+Optional ByVal PickupLoc As String = "", _
+Optional ByVal FuelSurcharge As Double = 0, _
+Optional ByVal Misc As String = "", _
+    Optional ByVal TaxThisSomeTaxOrder As Boolean = False, _
+    Optional ByVal ShipToID As Long = 0, _
+    Optional ByVal ShipToZip As String = "", _
+    Optional ByVal mCustCode As String = "", _
+    Optional ByVal CustTax As Tax = Nothing) As Integer
+    '=================>
+    'note that the last parameter is new which is what we're currently using to pass in the customtax class so that we can consume it inside this method
+    '==================>
+
+
+    If IsNothing(CustTax) Then
+        CustTax = New Tax
+    End If
+
+    '6-29-08 this stored proc was updated to allow for fuel surcharge
+    'added fuel surcharge parameter
+
+    Dim Resultval As Integer
+    Dim strConnect As New SqlConnection(ConfigurationManager.ConnectionStrings("ConnectionString").ConnectionString)
+    Dim SqlCommand As New SqlCommand("sp_UpdateCartStep2", strConnect)
+
+    Try
+
+        Dim SubTotalAmt As Double
+        SubTotalAmt = GetCartSubTotal(CartNo)
+
+        GetCartHeader(CartNo)
+
+        Dim CartTax As Double
+
+        Dim SystemTypeID As Integer = CInt(ConfigurationManager.AppSettings("SystemTypeID").ToString)
+
+        Select Case SystemTypeID
+            Case 1
+
+                If profile.AllowTerms = False Then
+                    CartTax = CalcTax(SubTotalAmt, ShipCost, FuelSurcharge, m_Ship_State_Province)
+                Else
+                    CartTax = 0
+                End If
+            Case 2
+                '6-29-08 added to figure fuel surcharge
+                'Dim CustTax As New Tax
+                'Dim CustCode As String = System.Web.HttpContext.Current.Profile("CustCode")
+                Dim lCustTax As New List(Of Tax)
+
+                '=========================>
+                'note that this part of the header must always call into the calctax method.
+                'it should be able to call the custom method if it has been defined.
+                lCustTax = CustTax.wa_cc_CalcTax(mCustCode, ShipToID, SubTotalAmt, ShipCost, FuelSurcharge, CStr(m_Ship_State_Province), CStr(ShipToZip))
+                '==========================>
+
+
+                For Each ct As Tax In lCustTax
+                    CartTax += ct.Tax
+                Next
+                'CartTax = CalcTax(SubTotalAmt, ShipCost, FuelSurcharge, m_Ship_State_Province, TaxGroup)
+
+        End Select
+
+        SqlCommand.CommandType = CommandType.StoredProcedure
+        strConnect.Open()
+
+        SqlCommand.Parameters.AddWithValue("@CartNo", SqlDbType.BigInt).Value = CartNo
+        SqlCommand.Parameters.AddWithValue("@Username", SqlDbType.VarChar).Value = Username
+        SqlCommand.Parameters.AddWithValue("@PmtMethod", SqlDbType.VarChar).Value = PmtMethod
+        SqlCommand.Parameters.AddWithValue("@ShipMethod", SqlDbType.VarChar).Value = ShipMethod
+        SqlCommand.Parameters.AddWithValue("@ShipCompleteFlag", SqlDbType.Bit).Value = ShipComplete
+        SqlCommand.Parameters.AddWithValue("@ShipCost", SqlDbType.Money).Value = ShipCost
+        SqlCommand.Parameters.AddWithValue("@Tax", SqlDbType.Money).Value = CartTax
+        SqlCommand.Parameters.AddWithValue("@ShipInstr", SqlDbType.VarChar).Value = ShipInstr
+        SqlCommand.Parameters.AddWithValue("@PickupLoc", SqlDbType.VarChar).Value = PickupLoc
+        SqlCommand.Parameters.AddWithValue("@FuelSurcharge", SqlDbType.Float).Value = FuelSurcharge
+
+        '1-30-08 Changed to accomodate holding the carrier number when selecting collect freight
+        'required modification of the sp_UpdateCartStep2 stored procedure.
+        SqlCommand.Parameters.AddWithValue("@Misc3", SqlDbType.VarChar).Value = Misc3
+
+        SqlCommand.ExecuteNonQuery()
+        Resultval = 0
+    Catch ex As Exception
+        Resultval = -1
+        System.Web.HttpContext.Current.Trace.Write(ex.Message)
+    Finally
+        strConnect.Close()
+    End Try
+
+    Return Resultval
+End Function
+
+Public Class Tax
+
+
+Private _Tax As Double
+Public Property Tax() As Double
+    Get
+        Return _Tax
+    End Get
+    Set(ByVal value As Double)
+        _Tax = value
+    End Set
+End Property
+
+Private _TaxRate As Double
+Public Property TaxRate() As Double
+    Get
+        Return _TaxRate
+    End Get
+    Set(ByVal value As Double)
+        _TaxRate = value
+    End Set
+End Property
+
+
+Private _TaxDesc As String
+Public Property TaxDesc() As String
+    Get
+        Return _TaxDesc
+    End Get
+    Set(ByVal value As String)
+        _TaxDesc = value
+    End Set
+End Property
+
+
+Private _TaxGroupID As String
+Public Property TaxGroupID() As String
+    Get
+        Return _TaxGroupID
+    End Get
+    Set(ByVal value As String)
+        _TaxGroupID = value
+    End Set
+End Property
+
+
+Private _TaxJurisdictionID As String
+Public Property TaxJurisdictionID() As String
+    Get
+        Return _TaxJurisdictionID
+    End Get
+    Set(ByVal value As String)
+        _TaxJurisdictionID = value
+    End Set
+End Property
+
+
+
+Private _TaxCustCode As String
+Public Property TaxCustCode() As String
+    Get
+        Return _TaxCustCode
+    End Get
+    Set(ByVal value As String)
+        _TaxCustCode = value
+    End Set
+End Property
+
+
+Private _TaxFreight As Boolean
+Public Property taxFreight() As Boolean
+    Get
+        Return _TaxFreight
+    End Get
+    Set(ByVal value As Boolean)
+        _TaxFreight = value
+    End Set
+End Property
+
+
+
+
+Public Enum TaxableStatus
+    All
+    None
+    some
+End Enum
+
+
+''' <summary>
+''' It will first try to figure out if we're shipping to the same zip as the ship to
+''' if it is the same, then we'll use the ship-tos tax group
+''' if it is different, then we'll go to manual tax.
+''' in manual tax, the customer record is reviewed and the class_1id field is interogated.
+''' The code selected tells us what states the customer is taxable for.
+''' If we are in those states, then the customer tax group is chosed based on the state.
+''' </summary>
+''' <param name="mCustCode"></param>
+''' <param name="mShipToID"></param>
+''' <param name="SubTotalAmt"></param>
+''' <param name="FreightCost"></param>
+''' <param name="FuelSurcharge"></param>
+''' <param name="m_Ship_State_Province"></param>
+''' <param name="m_Zip"></param>
+''' <param name="TaxGroup"></param>
+''' <returns></returns>
+''' <remarks></remarks>
+Public Overridable Function wa_cc_CalcTax(ByVal mCustCode As String, _
+                       ByVal mShipToID As String, _
+                       ByVal SubTotalAmt As Double, _
+                     ByVal FreightCost As Double, _
+                    ByVal FuelSurcharge As Double, _
+                    ByVal m_Ship_State_Province As String, _
+                    ByVal m_Zip As String, _
+                     Optional ByVal TaxGroup As String = "") As List(Of Tax)
+
+    'do some 'normal' tax calcs.
+
+
+    Return New List(Of Tax)
+
+End Function
+
+Public Class CustomTax
+
+Inherits Tax
+
+
+''' <summary>
+''' It will first try to figure out if we're shipping to the same zip as the ship to
+''' if it is the same, then we'll use the ship-tos tax group
+''' if it is different, then we'll go to manual tax.
+''' in manual tax, the customer record is reviewed and the class_1id field is interogated.
+''' The code selected tells us what states the customer is taxable for.
+''' If we are in those states, then the customer tax group is chosed based on the state.
+''' </summary>
+''' <param name="mCustCode"></param>
+''' <param name="mShipToID"></param>
+''' <param name="SubTotalAmt"></param>
+''' <param name="FreightCost"></param>
+''' <param name="FuelSurcharge"></param>
+''' <param name="m_Ship_State_Province"></param>
+''' <param name="m_Zip"></param>
+''' <param name="TaxGroup"></param>
+''' <returns></returns>
+''' <remarks></remarks>
+Public Overrides Function wa_cc_CalcTax(ByVal mCustCode As String, _
+                       ByVal mShipToID As String, _
+                       ByVal SubTotalAmt As Double, _
+                     ByVal FreightCost As Double, _
+                    ByVal FuelSurcharge As Double, _
+                    ByVal m_Ship_State_Province As String, _
+                    ByVal m_Zip As String, _
+                     Optional ByVal TaxGroup As String = "") As List(Of Tax)
+    Dim lTX As New List(Of Tax)
+
+    Dim mUseP21Tax As Boolean = True
+    If mShipToID <= 0 Then
+        mUseP21Tax = False
+    End If
+
+    If FreightCost <= 0 Then
+        FreightCost = 0
+    End If
+
+    Dim tx As New CustomTax
+    Dim ZipMatch As Boolean
+    If mShipToID > 0 Then
+        'we're dealing with a selected ship to so we should see if it all still matches
+        ZipMatch = CheckZipAgainstShipTo(m_Zip, mCustCode, mShipToID)
+    Else
+        'this item is not a selected ship-to so no need to look for a match
+        ZipMatch = False
+    End If
+
+    If ZipMatch = True Then
+
+        lTX = LookupTaxForShipTo(mCustCode, mShipToID, SubTotalAmt, FreightCost)
+    Else
+        lTX = LookupManualTax(mCustCode, m_Ship_State_Province, SubTotalAmt, FreightCost, , m_Zip)
+
+
+    End If
+
+
+    Return lTX
+

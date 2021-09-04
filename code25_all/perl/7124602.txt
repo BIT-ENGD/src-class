@@ -1,0 +1,64 @@
+#!/usr/bin/perl
+
+use Net::SMPP;
+use Data::Dumper;
+$Net::SMPP::trace = 1;
+
+$smpp = Net::SMPP->new_receiver('--removed--',
+                                port => '--removed--',
+                                system_id => '--removed--',
+                                password => '--removed--',
+                                ) or die;
+
+while (1)
+{       
+    $pdu = $smpp->read_pdu() or die;
+
+    print "Received #$pdu->{seq} $pdu->{cmd}:". Net::SMPP::pdu_tab->{$pdu->{cmd}}{cmd} ."\n";
+    print "From: $pdu->{source_addr}\nTo: $pdu->{destination_addr}\nData: $pdu->{data}\n";
+    print "Messsage: $pdu->{short_message}\n\n";
+}
+
+premature eof reading from socket at /usr/lib/perl5/site_perl/5.8.8/Net/SMPP.pm line 2424.
+$VAR1 = undef;
+
+sub read_hard {
+    my ($me, $len, $dr, $offset) = @_;
+    while (length($$dr) < $len+$offset) {
+        my $n = length($$dr) - $offset;
+        eval {
+            local $SIG{ALRM} = sub { die "alarm\n" }; # NB: \n required
+            alarm ${*$me}{enquire_interval} if ${*$me}{enquire_interval};
+            warn "read $n/$len enqint(${*$me}{enquire_interval})" if $trace>1;
+            while (1) {
+                $n = $me->sysread($$dr, $len-$n, $n+$offset);
+                next if $! =~ /^Interrupted/;
+                last;
+            }
+            alarm 0;
+        };
+        if ($@) {
+            warn "ENQUIRE $@" if $trace;
+            die unless $@ eq "alarm\n";   # propagate unexpected errors
+            $me->enquire_link();   # Send a periodic ping
+        } else {
+            if (!defined($n)) {
+                warn "error reading header from socket: $!";
+                ${*$me}{smpperror} = "read_hard I/O error: $!";
+                ${*$me}{smpperrorcode} = 1;
+                return undef;
+            }
+            #if ($n == 0) { last; }
+            if (!$n) {
+                warn "premature eof reading from socket";
+                ${*$me}{smpperror} = "read_hard premature eof";
+                ${*$me}{smpperrorcode} = 2;
+                return undef;
+                #return 0;
+            }
+        }
+    }
+    #warn "read complete";
+    return 1;
+}
+

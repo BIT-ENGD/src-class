@@ -1,0 +1,37 @@
+.scala
+object build extends Build {
+  lazy val root = Project("main", file(".")) aggregate(benchmark)
+  lazy val benchmark = Project("benchmark", file("benchmark"))
+}
+
+re-start
+main
+run
+benchmark
+benchmark/run
+main/re-start
+import sbt._
+import Keys._
+import cc.spray.revolver.RevolverPlugin.Revolver._
+import cc.spray.revolver.Actions._
+import cc.spray.revolver.AppProcess
+
+object build extends Build {
+  val noArgs = TaskKey[ExtraCmdLineOptions]("no-args")
+  val noArgsTask = TaskKey[ExtraCmdLineOptions]("no-args") := { ExtraCmdLineOptions(Nil, Nil) }
+  val reStartCustom = TaskKey[AppProcess]("re-start-custom")
+
+  val reStartTask = reStartCustom <<= (streams, state, reForkOptions, mainClass in reStart, fullClasspath in Runtime, reStartArgs, noArgs in root)
+    .map(restartApp)
+    .updateState(registerAppProcess)
+    .dependsOn(products in Compile)
+
+  lazy val root: Project = Project("main", file("."), settings = Defaults.defaultSettings ++ Seq(noArgsTask, reStartTask)) aggregate(benchmark)
+  lazy val benchmark: Project = Project("benchmark", file("benchmark"), settings = Defaults.defaultSettings ++ Seq(
+    run in Compile <<= (reStartCustom in root, run in Compile in benchmark) {
+      case (mainRestart, benchmarkRun) =>
+        benchmarkRun.mapTask { runTask => mainRestart.flatMap(_ => runTask) }
+    }
+  ))
+}
+

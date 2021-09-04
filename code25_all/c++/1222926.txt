@@ -1,0 +1,102 @@
+#include "precompiled.h"
+#include "db.h"
+class Connection
+    : public boost::enable_shared_from_this<Connection>
+{
+public:
+    typedef boost::shared_ptr<Connection> Pointer;
+
+    static Pointer create(boost::asio::io_service& ioService)
+    {
+        return Pointer(new Connection(ioService));
+    }
+
+    ip::tcp::socket& getSocket()
+    {
+        return socket;
+    }
+
+    void startRead()
+    {
+        std::cout << "Connection::startRead()" << std::endl;
+        socket.async_read_some(boost::asio::buffer(readBuffer),
+            boost::bind(&Connection::handleRead,this,_1,_2));
+    }
+private:
+    Connection(asio::io_service& ioService)
+        : socket(ioService)
+    {
+    }
+
+    void handleWrite(const boost::system::error_code&,size_t)
+    {
+    }
+    void handleRead(const boost::system::error_code&error,size_t len)
+    {
+        std::cout << "Connection::handleRead()" << std::endl;
+        if(error)
+        {
+            std::cout << "READ ERROR: ";
+            std::cout << boost::system::system_error(error).what();
+            std::cout << std::endl;
+        }
+        else
+        {
+            std::cout << "read: ";
+            std::cout.write(readBuffer.data(),len);
+            std::cout << std::endl;
+        }
+        startRead();
+    }
+    boost::array<char, 256> readBuffer;
+    ip::tcp::socket socket;
+};
+
+class Server
+{
+public:
+    Server(asio::io_service& ioService)
+        :acceptor(ioService, ip::tcp::endpoint(ip::tcp::v4(), getPort()))
+    {
+        startAccept();
+    }
+private:
+    void startAccept()
+    {
+        std::cout << "RServer::startAccept()" << std::endl;
+        Connection::Pointer newConn =
+            Connection::create(acceptor.io_service());
+
+        acceptor.async_accept(newConn->getSocket(),
+            boost::bind(&Server::handleAccept, this, newConn,
+            asio::placeholders::error));
+    }
+    void handleAccept(Connection::Pointer newConn,
+        const boost::system::error_code& error)
+    {
+        std::cout << "Server::handleAccept()" << std::endl;
+        if(error)
+        {
+            std::cout << "CONNECTION ERROR: ";
+            std::cout << boost::system::system_error(error).what();
+            std::cout << std::endl;
+        }
+        else
+        {
+            std::cout << "Connection accepted" << std::endl;
+            startAccept();
+            newConn->startRead();
+        }
+    }
+    ip::tcp::acceptor acceptor;
+};
+
+int main()
+{
+    std::cout << "Start server" << std::endl;
+    asio::io_service ioService;
+    RemoteAdminServer server(ioService);
+    boost::system::error_code error;
+    ioService.run(error);
+}
+

@@ -1,0 +1,103 @@
+collate
+Traversable
+val ints = List(0,9,4,5,-3,-5,6,5,-2,1,0,6,-3,-2)
+val results = ints collate {
+  case i: Int if(i < 0) => i.floatValue
+} andThen {
+  case i: Int if(i>5) => i.toString
+} andThen {
+  case i: Int if(i==0) => i
+} toTuple
+
+/*
+results: (List[Float], List[java.lang.String], List[Int], List[Int]) =
+(List(-3.0, -5.0, -2.0, -3.0, -2.0),List(9, 6, 6),List(0, 0),List(4, 5, 5, 1))
+*/
+
+collect
+partition
+import collection.generic.CanBuildFrom
+
+class Collatable[Repr <% Traversable[T], T](xs: Repr) {
+
+  // Results handling stuff, bit like a poor-man's HList, feel free to skip...
+
+  trait Results {
+    def remainder: Repr
+
+    type Append[That] <: Results
+    def append[That](tup: (That, Repr)): Append[That]
+
+    def andThen[R, That](pf: PartialFunction[T, R])
+    (implicit
+      matchesBuilder: CanBuildFrom[Repr, R, That],
+      remainderBuilder: CanBuildFrom[Repr, T, Repr]
+    ) = {
+      val more = (new Collatable[Repr,T](remainder)).collateOne[R,That](pf)
+      append(more)
+    }
+  }
+
+  case class Results9[M1,M2,M3,M4,M5,M6,M7,M8,M9](
+    m1: M1, m2: M2, m3: M3, m4: M4, m5: M5, m6: M6, m7: M7, m8: M8, m9: M9,
+    remainder: Repr)
+  extends Results {
+    implicit def toTuple = (m1, m2, m3, m4, m5, m6, m7, m8, m9, remainder)
+    def append[That](tup: (That, Repr)) = error("too many")
+  }
+
+  // ... skip a bit, still in results logic ...
+
+  case class Results2[M1,M2](
+    m1: M1, m2: M2, remainder: Repr)
+  extends Results {
+    implicit def toTuple = (m1, m2, remainder)
+    type Append[That] = Results3[M1,M2,That]
+    def append[That](tup: (That, Repr)) = Results3(m1, m2, tup._1, tup._2)
+  }
+
+  case class Results1[M1](matches: M1, remainder: Repr) extends Results {
+    implicit def toTuple = (matches, remainder)
+
+    type Append[That] = Results2[M1, That]
+    def append[That](tup: (That, Repr)) = Results2(matches, tup._1, tup._2)
+  }
+
+  // and now... Our feature presentation!
+
+  def collateOne[R, That](pf: PartialFunction[T, R])
+  (implicit
+    matchesBuilder: CanBuildFrom[Repr, R, That],
+    remainderBuilder: CanBuildFrom[Repr, T, Repr]
+  ) = {
+    val matches = matchesBuilder(xs)
+    val remainder = remainderBuilder(xs)
+    for (x <- xs) if (pf.isDefinedAt(x)) matches += pf(x) else remainder += x
+    (matches.result, remainder.result)
+  }
+
+  def collate[R, That](pf: PartialFunction[T, R])
+  (implicit
+    matchesBuilder: CanBuildFrom[Repr, R, That],
+    remainderBuilder: CanBuildFrom[Repr, T, Repr]
+  ): Results1[That]  = {
+    val tup = collateOne[R,That](pf)
+    Results1(tup._1, tup._2)
+  }
+}
+
+object Collatable {
+  def apply[Repr, T](xs: Repr)(implicit witness: Repr => Traversable[T]) = {
+    new Collatable[Repr, T](xs)
+  }
+}
+
+implicit def traversableIsCollatable[CC[X] <: Traversable[X], A](xs: CC[A]) =
+  Collatable[CC[A], A](xs)
+implicit def stringIsCollatable(xs: String) =
+  Collatable[String, Char](xs)
+
+CanBuildFrom
+Repr
+Traversable
+CanBuildFrom[Repr, T, Repr]

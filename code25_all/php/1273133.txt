@@ -1,0 +1,196 @@
+//Connect to second server
+$server2 = explode(":", $xfr[3]);
+$socket2 = pfsockopen($server2[0], (int)$server2[1], $errno, $errstr, 999999);
+$_SESSION["socket"] = $server2;
+echo '<b>Connected to 2nd server.</b><br />';
+
+<?php
+session_start();
+
+//Check username and password
+if(!isset($_POST["username"]) || !isset($_POST["password"]) || !isset($_POST["status"]))
+{
+    die("Bad request");
+}
+$wronglogin = false;
+//Yep, it's set, so let's connect to MSN
+
+$socket = fsockopen("messenger.hotmail.com", 1863);
+echo '<b>Connected to 1st server.</b><br />';
+//Send MSNP version
+fputs($socket, "VER 0 MSNP10 CVR0\r\n");
+echo fread($socket, 5000) . '<br />';
+//Send user-agent
+fputs($socket, "CVR 1 0x0409 php ".phpversion()." i386 MSNMSGR 7.0.0000 MSMSGS ".$_POST["username"]."\r\n");
+echo fread($socket, 5000) . '<br />';
+//Send username
+fputs($socket, "USR 2 TWN I ".$_POST["username"]."\r\n");
+//Read XFR
+$xfr = fread($socket, 5000);
+echo $xfr . '<br />';
+$xfr = explode(" ", $xfr);
+
+//Connect to second server
+$server2 = explode(":", $xfr[3]);
+$socket2 = pfsockopen($server2[0], (int)$server2[1], $errno, $errstr, 999999);
+$_SESSION["socket"] = $server2;
+echo '<b>Connected to 2nd server.</b><br />';
+//Send MSNP version
+fputs($socket2, "VER 0 MSNP10 CVR0\r\n");
+echo fread($socket2, 5000) . '<br />';
+//Send user-agent
+fputs($socket2, "CVR 1 0x0409 php ".phpversion()." i386 MSNMSGR 7.0.0000 MSMSGS ".$_POST["username"]."\r\n");
+echo fread($socket2, 5000) . '<br />';
+//Send username
+fputs($socket2, "USR 2 TWN I ".$_POST["username"]."\r\n");
+//Read USR
+$usr = fread($socket2, 5000);
+echo $usr . '<br />';
+$usr = explode(" ", $usr);//This is for later usage.
+
+
+//Connect to Nexus
+$nexus = fsockopen("ssl://nexus.passport.com", 443);
+$request_nexus = "GET /rdr/pprdr.asp HTTP/1.1\r\n";
+$request_nexus .= "Host:nexus.passport.com\r\n";
+$request_nexus .= "User-Agent:Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.1.1) Gecko/20090715 Firefox/3.5.1\r\n";
+$request_nexus .= "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n";
+$request_nexus .= "Accept-Language:en-us,en;q=0.5\r\n";
+$request_nexus .= "Accept-Charset:ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n";
+$request_nexus .= "Keep-Alive:300\r\n";
+$request_nexus .= "Connection:keep-alive\r\n";
+$request_nexus .= "Cache-Control:max-age=0\r\n\r\n";
+fputs($nexus, $request_nexus);
+//Receive nexus response
+$response_nexus = fread($nexus, 5000);
+echo str_replace("\n", "\n<br />", $response_nexus);
+//Get passport urls
+foreach(explode("\r\n", $response_nexus) as $line)
+{
+    if(substr($line, 0, strlen('PassportURLs:')) == 'PassportURLs:')
+    {
+        $PassportURLs = substr($line, strlen('PassportURLs:') + 1);
+    }
+}
+echo $PassportURLs . '<br />';
+//Get login server URL
+foreach(explode(",", $PassportURLs) as $item)
+{
+    if(substr($item, 0, strlen('DALogin=')) == 'DALogin=')
+    {
+        $loginurl = substr($item, strlen('DALogin='));
+    }
+}
+echo $loginurl . '<br />';
+//Connect to login server
+$loginurl_arr = explode("/", $loginurl);
+$loginserver = fsockopen("ssl://" . $loginurl_arr[0], 443);
+$request_login = "GET ".substr($loginurl, strlen($loginurl_arr[0]))." HTTP/1.1\r\n";
+$request_login .= "Authorization: Passport1.4 OrgVerb=GET,OrgURL=http%3A%2F%2Fmessenger%2Emsn%2Ecom,sign-in=";
+    $request_login .= urlencode($_POST["username"]) . ",pwd=" . urlencode($_POST["password"]) . ",";
+    $request_login .= $usr[4];
+$request_login .= "Host:".$loginurl_arr[0]."\r\n";
+$request_login .= "User-Agent:Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.1.1) Gecko/20090715 Firefox/3.5.1\r\n";
+$request_login .= "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n";
+$request_login .= "Accept-Language:en-us,en;q=0.5\r\n";
+$request_login .= "Accept-Charset:ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n";
+$request_login .= "Keep-Alive:300\r\n";
+$request_login .= "Connection:keep-alive\r\n";
+$request_login .= "Cache-Control:max-age=0\r\n\r\n";
+fputs($loginserver, $request_login, 5000);
+$response_login = fread($loginserver, 5000);
+echo str_replace("\n", "\n<br />", $response_login);
+//Get login ticket
+foreach(explode("\r\n", $response_login) as $line)
+{
+    if(substr($line, 0, strlen('Authentication-Info:')) == 'Authentication-Info:')
+    {
+        $ticket_exp = substr($line, strlen('Authentication-Info:') + 1);
+        $ticket_exp = explode(",", $ticket_exp);
+        foreach($ticket_exp as $item)
+        {
+            if(substr($item, 0, strlen('from-PP=')) == 'from-PP=')
+            {
+                $ticket = str_replace("'", "", substr($item, strlen('from-PP=')));
+            }
+        }
+    }
+}
+echo $ticket . '<br />';
+if(!isset($ticket))
+{
+    $wronglogin = true;
+}
+else
+{
+    //Send USR
+    fputs($socket2, "USR 3 TWN S ".$ticket."\r\n");
+    //Read USR
+    $usr = fread($socket2, 10000);
+    echo $usr . '<br />';
+    echo str_replace("\n", "\n<br />", fread($socket2, 5000));
+    //Sync
+    fputs($socket2, "SYN 4 0 0\r\n", 5000);
+    echo fread($socket2, 5000) . '<br />';
+    //Set status to available
+    fputs($socket2, "CHG 5 ".$_POST["status"]."\r\n", 5000);
+    echo fread($socket2, 5000) . '<br />';
+
+    //Check login
+    if(!substr($usr, 0, strlen("USR 3 OK")) == "USR 3 OK")//Login not succeeded
+    {
+        $wronglogin = true;
+    }
+}
+
+
+
+
+
+
+if($wronglogin)
+{
+    fclose($socket);
+    session_destroy();
+    header("Location: index.php");
+}
+?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title>MSN.php</title>
+    <script type="text/javascript" src="jquery-1.3.2.min.js"></script>
+    <script type="text/javascript" src="main.js"></script>
+</head>
+<body>
+    <div id="header">
+        <input type="text" id="nickname" />
+        <select id="status">
+            <option value="NLN">Available</option>
+            <option value="BSY">Busy</option>
+            <option value="IDL">Idle</option>
+            <option value="BRB">Be right back</option>
+            <option value="AWY">Away</option>
+            <option value="PHN">On the phone</option>
+            <option value="LUN">Out to lunch</option>
+            <option value="HDN">Show offline</option>
+        </select>
+    </div>
+</body>
+</html>
+
+$(document).ready(function()
+{
+    //Change status
+    $("#status option").click(function()
+    {
+        $.get("AJAX/status.php?s=" + $(this).attr("value"));
+    });
+});
+
+<?php
+session_start();
+
+$socket2 = pfsockopen($_SESSION["socket"][0], (int)$_SESSION["socket"][1]);
+fputs($socket2, "CHG 0 ".$_GET["s"]." \r\n");
+echo fread($socket2, 5000) . '<br />';
+

@@ -1,0 +1,42 @@
+class Hospital
+  has_one :setting, :as => :settable
+  belongs_to :administrative_area
+
+  def next_link
+    adminstrative_area
+  end
+
+  def usable_setting
+    setting ? setting : next_link.usable_setting
+  end
+end
+
+class Setting < ActiveRecord::Base
+
+belongs_to :settable, :polymorphic => true
+
+def chained
+  %w(api_key active_days).each do |method|
+
+    # this is here because otherwise the method isn't defined,
+    # it's almost as while it's going up, the metaclass doesn't have the columns
+    # until it loads, probably will be fixed if we cache classes
+    self.send method.to_sym
+
+    (class << self; self; end).class_eval do
+
+      define_method method do |*args|
+        alias_method "original_#{method}", method
+        my_setting = send("original_#{method}")
+        if my_setting.nil? or my_setting.empty?
+          settable.next_link.usable_setting.chained.send(method)
+        else
+          return my_setting
+        end
+      end
+    end
+  end
+  self
+end
+end
+

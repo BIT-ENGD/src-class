@@ -1,0 +1,83 @@
+void op_TJ(CGPDFScannerRef scanner, void *info)
+{
+    PDFPage *self = info;
+    CGPDFArrayRef array;
+
+    NSMutableString *tempString = [NSMutableString stringWithCapacity:1];
+    NSMutableArray *kernArray = [[NSMutableArray alloc] initWithCapacity:1];
+
+    if(!CGPDFScannerPopArray(scanner, &array)) {
+        [kernArray release];
+        return;
+    }
+
+    for(size_t n = 0; n < CGPDFArrayGetCount(array); n += 2)
+    {
+        if(n >= CGPDFArrayGetCount(array))
+            continue;
+
+        CGPDFStringRef pdfString;
+
+        // if we get a PDF string
+        if (CGPDFArrayGetString(array, n, &pdfString))
+        {
+            //get the actual string
+            const unsigned char *charstring = CGPDFStringGetBytePtr(pdfString);
+
+            //add this string to our temp string
+            [tempString appendString:[NSString stringWithCString:(const    char*)charstring encoding:[self pageEncoding]]];
+            //NSLog(@"string: %@", tempString);
+
+            //get the space after this string
+            CGPDFReal r = 0;
+            if (n+1 < CGPDFArrayGetCount(array)) {
+                CGPDFArrayGetNumber(array, n+1, &r);
+
+                // multiply by the font size
+                CGFloat k = r;
+                k = -k/1000 * self.tmatrix.a * self.fontSize;
+
+
+                CGFloat kKern = self.kern * self.tmatrix.a;
+                k = k + kKern;
+
+                // add the location and kern to the array
+                NSNumber *tempKern = [NSNumber numberWithFloat:k];
+                NSLog(@"tempKern address: %p", tempKern);
+                [kernArray addObject:[NSArray arrayWithObjects:[NSNumber numberWithInt:[tempString length] - 1], tempKern, nil]];
+
+            }
+        }
+    }
+
+    // create an attribute string
+    CFMutableAttributedStringRef attString =    CFAttributedStringCreateMutable(kCFAllocatorDefault, 10);
+
+    CFAttributedStringReplaceString(attString, CFRangeMake(0, 0), (CFStringRef)tempString);
+
+    //apply overall kerning
+    NSNumber *tkern = [NSNumber numberWithFloat:self.kern * self.tmatrix.a * self.fontSize];
+    CFAttributedStringSetAttribute(attString, CFRangeMake(0, CFAttributedStringGetLength(attString)), kCTKernAttributeName, (CFNumberRef)tkern);
+
+    //apply individual kern attributes
+    for (NSArray *kernLoc in kernArray) {
+        NSLog(@"kern location: %i, %i", [[kernLoc objectAtIndex:0] intValue],[[kernLoc objectAtIndex:1] floatValue]);
+        CFAttributedStringSetAttribute(attString, CFRangeMake([[kernLoc objectAtIndex:0] intValue], 1), kCTKernAttributeName, (CFNumberRef)[kernLoc objectAtIndex:1]);
+    }
+
+    CFAttributedStringReplaceAttributedString([self cfAttString], CFRangeMake(CFAttributedStringGetLength([self cfAttString]), 0), attString);
+
+    //release
+    CFRelease(attString);
+    [kernArray release];
+
+
+}
+
+CFAttributedStringSetAttribute(attString, CFRangeMake([[kernLoc objectAtIndex:0] intValue], 1), kCTKernAttributeName, (CFNumberRef)[kernLoc objectAtIndex:1])
+
+#0  0x942c7ed7 in objc_msgSend ()
+#1  0x00000013 in ?? ()
+#2  0x0285b827 in CFAttributedStringSetAttribute ()
+#3  0x0000568f in op_TJ (scanner=0x472a590, info=0x4a32320) at /Users/Richard/Desktop/AppTest/PDFHighlight 2/PDFScannerOperators.m:251
+

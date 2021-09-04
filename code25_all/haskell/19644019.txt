@@ -1,0 +1,104 @@
+module OpenTable
+   where
+
+data OpenTable = OpenTable { meta :: Meta
+                           , bindings :: [Binding]
+                           } deriving (Read, Show)
+
+data Meta = Meta { metaApiKeyURL        :: Maybe String
+                 , metaAuthor           :: Maybe String
+                 , metaDocumentationURL :: Maybe String
+                 , metaDescription      :: Maybe String
+                 , metaSampleQuery      :: Maybe String
+                 } deriving (Read, Show)
+
+data Binding = SelectBinding Select
+             | InsertBinding Insert
+             | UpdateBinding Update
+             | DeleteBinding Delete
+             deriving (Read, Show)
+
+data Select = Select { selectItemPath                :: Maybe String
+                     , selectPollingFrequencySeconds :: Maybe Integer
+                     , selectProduces                :: Maybe String
+                     , selectUrls                    :: [String]
+                     , selectInputs                  :: [Input]
+                     }  deriving (Read, Show)
+....
+
+module Main
+       where
+
+import System.Environment
+import Text.XML.HXT.Core
+import OpenTable
+
+main :: IO ()
+main
+    = do
+      [file] <- getArgs
+      parseYQL file
+      return ()
+
+instance XmlPickler OpenTable where
+  xpickle = xpOpenTable
+
+xpOpenTable :: PU OpenTable
+xpOpenTable
+  = xpElem "table" $
+    xpWrap ( uncurry OpenTable
+           , \ot -> (meta ot, bindings ot)) $
+    xpPair xpMeta xpBindings
+
+instance XmlPickler Meta where
+  xpickle = xpMeta
+
+xpMeta :: PU Meta
+xpMeta
+  = xpElem "meta" $
+    xpWrap ( \ ((api, aut, doc, des, sam)) -> Meta api aut doc des sam
+           , \ m -> (metaApiKeyURL m, metaAuthor m, metaDocumentationURL m,
+                     metaDescription m, metaSampleQuery m)) $
+    xp5Tuple
+    (xpOption $ xpElem "apiKeyUrl" xpText)
+    (xpOption $ xpElem "author" xpText)
+    (xpOption $ xpElem "documentationURL" xpText)
+    (xpOption $ xpElem "description" xpText)
+    (xpOption $ xpElem "sampleQuery" xpText)
+
+xpBindings :: PU [Binding]
+xpBindings = xpElem "bindings" $
+             xpList xpBinding
+
+instance XmlPickler Binding where
+  xpickle = xpBinding
+
+xpBinding :: PU Binding
+xpBinding = undefined
+
+
+
+parseYQL file
+  = runX ( xunpickleDocument xpOpenTable [] file
+           >>>
+           xpickleDocument xpOpenTable [] "dst.xml" )
+
+<?xml version="1.0" encoding="UTF-8"?>
+<table xmlns="http://query.yahooapis.com/v1/schema/table.xsd">
+  <meta>
+    <sampleQuery>select * from {table} where q="this is a test" and target="de";</sampleQuery>
+  </meta>
+  <bindings>
+    <select itemPath="json" produces="JSON">
+      <urls>
+        <url>http://translate.google.com/translate_a/t?client=x&amp;text={q}&amp;sl={source}&amp;tl={target}</url>
+      </urls>
+      <inputs>
+        <key id='q' type='xs:string' paramType='query' required="true" />
+        <key id='source' type='xs:string' paramType='path' default="auto" />
+        <key id='target' type='xs:string' paramType='path' required="true" />
+      </inputs>
+    </select>
+  </bindings>
+</table>
+

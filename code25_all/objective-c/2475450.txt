@@ -1,0 +1,121 @@
+-(IBAction)btnTappedImages:(id)sender{
+
+    // MyGetPDFDocumentRef is custom c method 
+    // & filePath is path to pdf document.
+    CGPDFDocumentRef document = MyGetPDFDocumentRef ([filePath UTF8String]);
+
+    int pgcnt = CGPDFDocumentGetNumberOfPages( document );
+
+    for( int i1 = 0; i1 < pgcnt; ++i1 ) {
+        // 1. Open Document page 
+        CGPDFPageRef pg = CGPDFDocumentGetPage (document, i1+1);
+        if( !pg ) {
+            NSLog(@"Couldn't open page.");
+        }
+        // 2. get page dictionary
+        CGPDFDictionaryRef dict = CGPDFPageGetDictionary( pg );
+        if( !dict ) {
+            NSLog(@"Couldn't open page dictionary.");
+        }
+        // 3. get page contents stream
+        CGPDFStreamRef cont;
+        if( !CGPDFDictionaryGetStream( dict, "Contents", &cont ) ) {
+            NSLog(@"Couldn't open page stream.");
+        }
+        // 4. copy page contents steam
+        //  CFDataRef contdata = CGPDFStreamCopyData( cont, NULL );
+
+        // 5. get the media array from stream
+        CGPDFArrayRef media;
+        if( !CGPDFDictionaryGetArray( dict, "MediaBox", &media ) ) {
+            NSLog(@"Couldn't open page Media.");
+        }
+
+        // 6. open media & get it's size
+        CGPDFInteger mediatop, medialeft;
+        CGPDFReal mediaright, mediabottom;
+        if( !CGPDFArrayGetInteger( media, 0, &mediatop ) || !CGPDFArrayGetInteger( media, 1, &medialeft ) || !CGPDFArrayGetNumber( media, 2, &mediaright ) || !CGPDFArrayGetNumber( media, 3, &mediabottom ) ) {
+            NSLog(@"Couldn't open page Media Box.");
+        }
+
+        // 7. set media size 
+        double mediawidth = mediaright - medialeft, mediaheight = mediabottom - mediatop;
+
+        // 8. get media resources
+        CGPDFDictionaryRef res;
+        if( !CGPDFDictionaryGetDictionary( dict, "Resources", &res ) ) {
+            NSLog(@"Couldn't Open Page Media Reopsources.");
+        }
+
+        // 9. get xObject from media resources  
+        CGPDFDictionaryRef xobj;
+        if( !CGPDFDictionaryGetDictionary( res, "XObject", &xobj ) ) {
+            NSLog(@"Couldn't load page Xobjects.");
+        }
+
+        char imagestr[16];
+        sprintf( imagestr, "Im%d", i1 );
+
+        // 10. get x object stream
+        CGPDFStreamRef strm;
+        if( !CGPDFDictionaryGetStream( xobj, imagestr, &strm ) ) {
+            NSLog(@"Couldn't load stream for xObject");
+        }
+
+        // 11. get dictionary from xObject Stream
+        CGPDFDictionaryRef strmdict = CGPDFStreamGetDictionary( strm );
+        if( !strmdict ) {
+            NSLog(@"Failed to load dictionary for xObject");
+        }
+
+        // 12. get type of xObject
+        const char * type;
+        if( !CGPDFDictionaryGetName( strmdict, "Type", &type ) || strcmp(type, "XObject" ) ) {
+            NSLog(@"Couldn't load xObject Type");
+        }
+
+        // 13. Check weather subtype is image or not
+        const char * subtype;
+        if( !CGPDFDictionaryGetName( strmdict, "Subtype", &subtype ) || strcmp( subtype, "Image" ) ) {
+            NSLog(@"xObject is not image");
+        }
+
+        // 14. Bits per component
+        CGPDFInteger bitsper;
+        if( !CGPDFDictionaryGetInteger( strmdict, "BitsPerComponent",&bitsper ) || bitsper != 1 ) {
+            NSLog(@"Bits per component not loaded");
+        }
+
+        // 15. Type of filter of image
+        const char * filter;
+        if( !CGPDFDictionaryGetName( strmdict, "Filter", &filter ) || strcmp( filter, "FlateDecode" ) ) {
+            NSLog(@"Filter not loaded");
+        }
+
+        // 16. Image height width   
+        CGPDFInteger width, height;
+        if( !CGPDFDictionaryGetInteger( strmdict, "Width", &width ) || !CGPDFDictionaryGetInteger( strmdict, "Height", &height ) ) {
+            NSLog(@"Image Height - width not loaded.");
+        }
+
+        // 17. Load image bytes & verify it
+        CGPDFDataFormat fmt = CGPDFDataFormatRaw;
+        CFDataRef data = CGPDFStreamCopyData( strm, &fmt );
+
+        int32_t len = CFDataGetLength( data );
+        const void * bytes = CFDataGetBytePtr( data );
+
+        // now I have bytes for images in "bytes" pointer the problem is how to covert it into UIImage
+
+        NSLog(@"Image bytes length - %i",len);  
+        int32_t rowbytes = (width + 7) / 8;
+        if( rowbytes * height != len ) {
+            NSLog(@"Invalid Image");
+        }
+
+        double xres = width / mediawidth * 72.0, yres = height / mediaheight * 72.0;
+        xres = round( xres * 1000 ) / 1000;
+        yres = round( yres * 1000 ) / 1000;
+    }
+}
+

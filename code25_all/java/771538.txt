@@ -1,0 +1,185 @@
+import java.io.*;
+import java.util.*;
+import gnu.io.*;
+
+
+public class Deb implements SerialPortEventListener, Runnable{
+
+    public static final int TIMEOUTSECONDS = 30;
+    public static final int BAUD = 9600;
+
+    static String telefono;
+    static Boolean llamar = false;
+
+    CommPortIdentifier cpiModem = null;
+    SerialPort modem;
+
+    BufferedReader is;
+    PrintStream os;
+
+    Thread hiloMarcado;
+
+    int nConnects = 0;
+
+    boolean flag = false;
+    String line;
+
+    public static void main(String argv[]) throws PortInUseException, UnsupportedCommOperationException, IOException, InterruptedException, TooManyListenersException {
+
+        if (argv.length>0) {
+            telefono = argv[0];
+            llamar = true;
+        }
+        new Deb();      
+    }
+
+    public Deb() throws PortInUseException, UnsupportedCommOperationException, IOException, InterruptedException, TooManyListenersException{        
+
+        Enumeration pList = CommPortIdentifier.getPortIdentifiers();
+        while (pList.hasMoreElements()) {
+
+            CommPortIdentifier cpi = (CommPortIdentifier)pList.nextElement();
+
+            if (cpi.getPortType()==CommPortIdentifier.PORT_SERIAL) {
+
+                SerialPort puertoSerie = (SerialPort) cpi.open("DEB", TIMEOUTSECONDS * 1000);
+                puertoSerie.setSerialPortParams(BAUD, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE);
+                puertoSerie.setFlowControlMode(SerialPort.FLOWCONTROL_RTSCTS_IN & SerialPort.FLOWCONTROL_RTSCTS_OUT);
+
+                BufferedReader is = new BufferedReader(new InputStreamReader(puertoSerie.getInputStream()));
+                PrintStream os = new PrintStream(puertoSerie.getOutputStream(), true);
+
+                os.println("AT");
+                Thread.sleep(TIMEOUTSECONDS * 50);
+                if (!is.ready()) {
+                    System.out.println("No hay un modem en " + cpi.getName());
+                } else {
+                    System.out.println("Hay un modem en " + cpi.getName());
+                    cpiModem = cpi;
+                }           
+                puertoSerie.close();
+            }           
+        }
+
+        modem = (SerialPort) cpiModem.open("DEBita", TIMEOUTSECONDS * 1000);
+        modem.setSerialPortParams(BAUD, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE);
+        modem.setFlowControlMode(SerialPort.FLOWCONTROL_RTSCTS_IN & SerialPort.FLOWCONTROL_RTSCTS_OUT);
+
+        is = new BufferedReader(new InputStreamReader(modem.getInputStream()));
+        os = new PrintStream(modem.getOutputStream(), true);        
+
+        modem.addEventListener(this);
+
+        modem.notifyOnDataAvailable(true);
+        modem.notifyOnCarrierDetect(true);
+        modem.notifyOnBreakInterrupt(true);
+        modem.notifyOnCTS(true);
+        modem.notifyOnDSR(true);
+        modem.notifyOnFramingError(true);
+        modem.notifyOnOutputEmpty(true);
+        modem.notifyOnOverrunError(true);
+        modem.notifyOnParityError(true);
+        modem.notifyOnRingIndicator(true);
+
+        /*System.out.println(is.read());*/  
+
+        if (llamar) {           
+            hiloMarcado = new Thread(this);
+            hiloMarcado.start();
+        }
+
+    }
+
+    public void serialEvent(SerialPortEvent event) {
+        switch (event.getEventType()) {
+        case SerialPortEvent.OE:
+        case SerialPortEvent.FE:
+        case SerialPortEvent.PE:
+        case SerialPortEvent.DSR:
+            System.out.println("Data Set Ready.");
+            break;
+        case SerialPortEvent.OUTPUT_BUFFER_EMPTY:
+            System.out.println("Ignored event");
+            break;
+
+        case SerialPortEvent.BI:
+            System.out.println("Break Interrupt");
+            break;
+
+        case SerialPortEvent.CTS:
+            System.out.println("Clear to send");
+            break;
+
+        case SerialPortEvent.RI:
+            System.out.println("Pick up the receiver.");
+            if( event.getNewValue() ) 
+            {
+                System.out.println("Ring Indicator On");
+            }
+            else 
+            {
+                System.out.println("Ring Indicator Off");
+            }
+            break;
+
+
+        case SerialPortEvent.CD:
+            if (event.getNewValue()) {
+                System.out.println("Connected");
+                nConnects = nConnects + 1;          
+            } else {
+                System.out.println("Disconnected");
+            }
+            break;
+
+        case SerialPortEvent.DATA_AVAILABLE:    
+            handleData();
+            break;
+        }
+    }
+
+
+    public void run() {
+        while (true) {
+            if (nConnects == 0) {
+                try {
+                    if (!modem.isCD()) {                        
+                        System.err.println("Estamos llamando  ...");
+                        os.println("ATDT" + telefono);
+                    }
+                    Thread.sleep(TIMEOUTSECONDS * 2000);
+
+                } catch (Exception ex) {
+                    System.err.println("Failed to write message");
+                }
+            }
+        }
+    }
+
+    public void handleData() {
+        try {
+            int avail = modem.getInputStream().available();
+            byte[] response = new byte[avail];
+            StringBuffer strbuf = new StringBuffer();
+            modem.getInputStream().read(response, 0, avail);
+
+
+             if (!flag) {
+                 modem.getInputStream().read(response, 0, avail);
+                 for (int i = 0; i < avail; i++) {
+                     Thread.sleep(5);
+                     os.write((char) response[i]);
+                     System.out.print((char) response[i]);
+                 }
+             }
+        } catch (IOException ie1) {
+            System.out.println("File " + ie1);
+        } catch (InterruptedException in) {
+            System.out.println("Interrupt " + in);
+        }
+
+    }
+
+
+}
+

@@ -1,0 +1,63 @@
+transactions
+addresses
+notes
+order_id
+line_items
+shipments
+transaction_id
+SELECT o.id FROM orders o
+LEFT JOIN addresses a ON a.order_id = o.id
+LEFT JOIN notes n ON (n.parent_id = o.id AND n.type = "parts")
+LEFT JOIN transactions t ON t.order_id = o.id
+LEFT JOIN line_items li ON li.transaction_id = t.id
+LEFT JOIN shipments s ON s.transaction_id = t.id
+WHERE 0 = 0
+AND ((a.`email` LIKE "%Lachman%" || a.`contact_name` LIKE "%Lachman%" || a.`company_name` LIKE "%Lachman%" || a.`address1` LIKE "%Lachman%" || a.`address2` LIKE "%Lachman%" || a.`country` LIKE "%Lachman%" || a.`city` LIKE "%Lachman%" || a.`region` LIKE "%Lachman%" || a.`postal_code` LIKE "%Lachman%" || n.`note` LIKE "%Lachman%" || t.`g_order_number` LIKE "%Lachman%" || t.`pp_txn_id` LIKE "%Lachman%" || t.`fm_invoice_num` LIKE "%Lachman%" || t.`ebay_item_id` LIKE "%Lachman%" || t.`ebay_buyer_id` LIKE "%Lachman%" || t.`ebay_transaction_id` LIKE "%Lachman%" || t.`ebay_order_id` LIKE "%Lachman%" || li.`partnum` LIKE "%Lachman%" || li.`part_id` LIKE "%Lachman%" || li.`desc` LIKE "%Lachman%" || li.`source` LIKE "%Lachman%" || s.`tracking` LIKE "%Lachman%" || s.`carrier` LIKE "%Lachman%"))
+GROUP BY o.id
+ORDER BY `created` DESC
+
+id  select_type table   type    possible_keys   key key_len ref rows    Extra
+1   SIMPLE  o   ALL NULL    NULL    NULL    NULL    2840    Using temporary; Using filesort
+1   SIMPLE  a   ref order_id    order_id    5   apple_components.o.id   1    
+1   SIMPLE  n   ref parent_id,type  type    22  const   314  
+1   SIMPLE  t   ref order_id    order_id    5   apple_components.o.id   1    
+1   SIMPLE  li  ref transaction_id  transaction_id  4   apple_components.t.id   1    
+1   SIMPLE  s   ref transaction_id  transaction_id  4   apple_components.t.id   1   Using where
+
+if ($s['s']) {
+    $search_fields = array(
+        'a' => array('email', 'contact_name', 'company_name', 'address1', 'address2', 'country', 'city', 'region', 'postal_code'),
+        'n' => array('note'),
+        't' => array('g_order_number', 'pp_txn_id', 'fm_invoice_num', 'ebay_item_id', 'ebay_buyer_id', 'ebay_transaction_id', 'ebay_order_id'),
+        'li' => array('partnum', 'part_id', 'desc', 'source'),
+        's' => array('tracking', 'carrier')
+    );
+    $search_clauses = array();
+    foreach ($search_fields as $table => $fields) {
+        $the_fields = array();
+        foreach ($fields as $field) $the_fields[] = $table.'.`'.$field.'`';
+        $clauses = array();
+        foreach (explode(' ', $s['s']) as $term) $clauses[] = 'CONCAT_WS(" ", '.implode(', ', $the_fields).') LIKE "%'.$term.'%"';
+        $search_clauses[$table] = $clauses;
+    }
+
+    $order_ids = array();
+    $results = mysql_query('SELECT order_id FROM addresses a WHERE '.implode(' AND ', $search_clauses['a']));
+    while ($result = mysql_fetch_assoc($results)) $order_ids[] = $result['order_id'];
+    $results = mysql_query('SELECT parent_id FROM notes n WHERE type = "orders" AND '.implode(' AND ', $search_clauses['n']));
+    while ($result = mysql_fetch_assoc($results)) $order_ids[] = $result['parent_id'];
+    $results = mysql_query('SELECT order_id FROM transactions t WHERE '.implode(' AND ', $search_clauses['t']));
+    while ($result = mysql_fetch_assoc($results)) $order_ids[] = $result['order_id'];
+
+    $transaction_ids = array();
+    $results = mysql_query('SELECT transaction_id FROM line_items li WHERE '.implode(' AND ', $search_clauses['li']));
+    while ($result = mysql_fetch_assoc($results)) $transaction_ids[] = $result['transaction_id'];
+    $results = mysql_query('SELECT transaction_id FROM shipments s WHERE '.implode(' AND ', $search_clauses['s']));
+    while ($result = mysql_fetch_assoc($results)) $transaction_ids[] = $result['transaction_id'];
+    if (count($transaction_ids)) {
+        $results = mysql_query('SELECT order_id FROM transactions WHERE id IN ('.implode(', ', $transaction_ids).')');
+        while ($result = mysql_fetch_assoc($results)) if (!empty($result['order_id'])) $order_ids[] = $result['order_id'];
+    }
+}
+$query = 'SELECT id FROM orders WHERE id IN ('.implode(', ', $order_ids).')';
+

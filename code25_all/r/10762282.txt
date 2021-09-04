@@ -1,0 +1,137 @@
+r2l <- read.table("kddcup_r2l.data",sep=",",header=T)
+#u2r <- read.table("kddcup_u2r.data",sep=",",header=T)
+#probe_original <- read.table("kddcup_probe.data",sep=",",header=T)
+#dos <- read.table("kddcup_dos.data",sep=",",header=T)
+normal <- read.table("kddcup_normal.data",sep=",",header=T)
+
+#probe <- probe_original[sample(1:dim(probe_original)[1],10000),]
+
+#   Features selected by the three algorithms svm, lgp and mars
+#   for the different classes of attack
+########################################################################
+
+features.r2l.svm <- c("srv_count","service","duration","count","dst_host_count")
+features.r2l.lgp <- c("is_guest_login","num_access_files","dst_bytes","num_failed_logins","logged_in")
+features.r2l.mars <- c("srv_count","service","dst_host_srv_count","count","logged_in")
+features.r2l.combined <- unique(c(features.r2l.svm,features.r2l.lgp,features.r2l.mars))
+
+
+
+#       Sample the training set containing the normal labels
+#       for each class of attack in order to have the same number 
+#       of training data belonging to the "normal" class and the 
+#       "attack" class
+#######################################################################
+
+normal_sample.r2l <- normal[sample(1:dim(normal)[1],dim(r2l)[1]),]
+
+
+# This part was useful before the separation normal/attack because 
+# attack was composed of different types for each class
+######################################################################
+
+normal.r2l.Y <- matrix(normal_sample.r2l[,c("label")]) 
+
+
+#######################################################################
+#       Class of attack Remote to Local (r2l)
+#######################################################################
+
+#   Select the features according to the algorithms(svm,lgp and mars)
+#   for this particular type of attack. Combined contains the 
+#   combination of the features selected by the 3 algorithms  
+#######################################################################
+#features.r2l.svm <- c(features.r2l.svm,"label")
+r2l_svm <- r2l[,features.r2l.svm]
+r2l_lgp <- r2l[,features.r2l.lgp]
+r2l_mars <- r2l[,features.r2l.mars]
+r2l_combined <- r2l[,features.r2l.combined]
+r2l_ALL <- r2l[,colnames(r2l) != "label"]
+
+r2l.Y <- matrix(r2l[,c("label")])
+r2l.Y[,1] = "attack"
+
+
+
+#   Merge the "normal" instances and the "r2l" instances and shuffle the result
+############################################################################### 
+
+r2l_svm.tr <- rbind(normal_sample.r2l[,features.r2l.svm],r2l_svm)
+r2l_svm.tr <- r2l_svm.tr[sample(1:nrow(r2l_svm.tr),replace=F),]
+r2l_lgp.tr <- rbind(normal_sample.r2l[,features.r2l.lgp],r2l_lgp)
+r2l_lgp.tr <- r2l_lgp.tr[sample(1:nrow(r2l_lgp.tr),replace=F),]
+r2l_mars.tr <- rbind(normal_sample.r2l[,features.r2l.mars],r2l_mars)
+r2l_mars.tr <- r2l_mars.tr[sample(1:nrow(r2l_mars.tr),replace=F),]
+r2l_ALL.tr <- rbind(normal_sample.r2l[,colnames(normal_sample.r2l) != "label"],r2l_ALL)
+r2l_ALL.tr <- r2l_ALL.tr[sample(1:nrow(r2l_ALL.tr),replace=F),]
+
+r2l.Y.tr <- rbind(normal.r2l.Y,r2l.Y)
+r2l.Y.tr <- matrix(r2l.Y.tr[sample(1:nrow(r2l.Y.tr),replace=F),])
+
+#######################################################################
+#
+#       10-fold CROSS-VALIDATION to assess the models accuracy
+#
+####################################################################### 
+
+# CV for Remote to Local
+########################    
+cv(r2l_svm.tr, r2l_lgp.tr, r2l_mars.tr, r2l_ALL.tr, r2l.Y.tr)
+
+cv <- function(svm.tr, lgp.tr, mars.tr, ALL.tr, Y.tr){  
+
+Jcv.svm_mean <- NULL
+
+#Compute the size of the cross validation
+# =======================================
+index=sample(1:dim(svm.tr)[1])
+size.CV<-floor(dim(svm.tr)[1]/10)
+
+Jcv.svm <- NULL
+
+#Start 10-fold Cross validation
+# =============================
+for (i in 1:10) {
+    #   if m is the size of the training set 
+    #   (nr of rows in svm.tr for example)
+    #   take n observations for test and (m-n) for training
+    #   with n << m (here n = m/10)
+    # ===================================================
+    i.ts<-(((i-1)*size.CV+1):(i*size.CV))   
+    i.tr<-setdiff(index,i.ts)
+
+    Y.tr.tr <- as.factor(Y.tr[i.tr])    
+    Y.tr.ts <- as.factor(matrix(Y.tr[i.ts],ncol=1))
+
+    svm.tr.tr <- svm.tr[i.tr,]
+    svm.tr.ts <- svm.tr[i.ts,]  
+
+
+    # Get the model for the algorithms 
+    # ==============================================
+
+
+    model.svm <- svm(Y.tr.tr~.,svm.tr.tr,type="C-classification")
+
+    # Compute the prediction 
+    # ==============================================
+    Y.hat.ts.svm <- predict(model.svm,svm.tr.ts)
+
+    # Compute the error 
+    # ==============================================
+
+    h.svm <- NULL
+
+    h.svm <- matrix(Y.hat.ts.svm,ncol=1)
+
+    Jcv.svm <- c(Jcv.svm ,sum(!(h.svm == Y.tr.ts))/size.CV)
+    print(table(h.svm,Y.tr.ts)) 
+
+}
+
+Jcv.svm_mean <- c(Jcv.svm_mean, mean(Jcv.svm))
+
+d <- 10
+print(paste("Jcv.svm_mean: ", round(Jcv.svm_mean,digits=d) ))   
+}
+

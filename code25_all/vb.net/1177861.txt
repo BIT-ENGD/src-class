@@ -1,0 +1,132 @@
+Public Class AccessControl
+
+Public Shared Function AuthenticateUser(ByVal id As String, ByVal password As String) As Boolean
+    Dim path As String = GetUserPath(id)
+    If path IsNot Nothing Then
+        Dim username As String = path.Split("/")(3)
+        Dim userRoot As DirectoryEntry = New DirectoryEntry(path, username, password, AuthenticationTypes.None)
+        Try
+            userRoot.RefreshCache()
+            Return True
+        Catch ex As Exception
+            Return False
+        End Try
+    Else
+        Return False
+    End If
+End Function
+
+Private Shared Function GetUserPath(ByVal id As String) As String
+    Dim root As DirectoryEntry = New DirectoryEntry("LDAP://XXXXX/O=YYYY", String.Empty, String.Empty, AuthenticationTypes.None)
+    Dim searcher As New DirectorySearcher
+    Dim results As SearchResultCollection
+    Dim result As SearchResult
+    Try
+        With searcher
+            .SearchRoot = root
+            .PropertiesToLoad.Add("cn")
+            .Filter = String.Format("cn={0}", id)
+            results = .FindAll()
+        End With
+        If results.Count > 0 Then
+            result = results(0)
+            Return result.Path.ToString()
+        Else
+            Return Nothing
+        End If
+    Catch ex As Exception
+        Return Nothing
+    End Try
+End Function
+
+Public Shared Function GetUserInfo(ByVal id As String) As UserInfo
+    Dim root As DirectoryEntry = New DirectoryEntry("LDAP://XXXXX/O=YYYY", String.Empty, String.Empty, AuthenticationTypes.None)
+    Dim searcher As New DirectorySearcher
+    Dim results As SearchResultCollection
+    Dim props() As String = {"id", "sn", "mail", "givenname", "container", "cn"}
+    Try
+        With searcher
+            .SearchRoot = root
+            .PropertiesToLoad.AddRange(props)
+            .Filter = String.Format("cn={0}", id)
+            results = .FindAll()
+        End With
+        If results.Count > 0 Then
+            Dim properties As PropertyCollection = results(0).GetDirectoryEntry().Properties
+            Dim user As New UserInfo(properties("id").Value)
+            user.EmailAddress = properties("mail").Item(0).ToString
+            user.FirstName = properties("givenname").Item(0).ToString
+            user.LastName = properties("sn").Item(0).ToString
+            user.OfficeLocation = properties("container").Item(0).ToString
+            Return user
+        Else
+            Return New UserInfo
+        End If
+    Catch ex As Exception
+        Return Nothing
+    End Try
+End Function
+
+Public Shared Function IsMemberOfGroup(ByVal id As String, ByVal group As String) As Boolean
+    Dim root As DirectoryEntry = New DirectoryEntry("LDAP://XXXXX/O=YYYY", String.Empty, String.Empty, AuthenticationTypes.None)
+    Dim searcher As New DirectorySearcher
+    Dim results As SearchResultCollection
+    Dim result As SearchResult
+    Dim props() As String = {"cn", "member"}
+    Try
+        With searcher
+            .SearchRoot = root
+            .PropertiesToLoad.AddRange(props)
+            .Filter = String.Format("cn={0}", group)
+            results = .FindAll()
+        End With
+        If results.Count > 0 Then
+            For Each result In results
+                Dim members As PropertyValueCollection = result.GetDirectoryEntry().Properties("member")
+                Dim member As String
+                For i As Integer = 0 To members.Count - 1
+                    member = members.Item(i).ToString
+                    member = member.Substring(3, member.IndexOf(",") - 3).ToLowerInvariant
+                    If member.Contains(id.ToLowerInvariant) Then Return True
+                Next
+            Next
+        End If
+        Return False
+    Catch ex As Exception
+        Return False
+    End Try
+End Function
+
+Public Shared Function GetMembersOfGroup(ByVal group As String) As List(Of String)
+    Dim groupMembers As New List(Of String)
+    Dim root As DirectoryEntry = New DirectoryEntry("LDAP://XXXXX/O=YYYY", String.Empty, String.Empty, AuthenticationTypes.None)
+    Dim searcher As New DirectorySearcher
+    Dim results As SearchResultCollection
+    Dim result As SearchResult
+    Dim props() As String = {"cn", "member"}
+    Try
+        With searcher
+            .SearchRoot = root
+            .PropertiesToLoad.AddRange(props)
+            .Filter = String.Format("cn={0}", group)
+            results = .FindAll()
+        End With
+        If results.Count > 0 Then
+            For Each result In results
+                Dim members As PropertyValueCollection = result.GetDirectoryEntry().Properties("member")
+                Dim member As String
+                For i As Integer = 0 To members.Count - 1
+                    member = members.Item(i).ToString
+                    member = member.Substring(3, member.IndexOf(",") - 3).ToLowerInvariant
+                    groupMembers.Add(member)
+                Next
+            Next
+        End If
+    Catch ex As Exception
+        Return Nothing
+    End Try
+    Return groupMembers
+End Function
+
+End Class  
+

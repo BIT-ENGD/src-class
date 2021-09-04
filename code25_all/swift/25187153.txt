@@ -1,0 +1,157 @@
+'Client' is not convertible to 'AFOAuthSignatureMethod'
+if self.selectedClient == client  {
+import Foundation
+
+class Client {
+    var id : String!
+    var organization : String!
+
+    init(id: String, organization: String) {
+        self.id = id
+        self.organization = organization
+    }
+}
+
+import UIKit
+
+class SelectController: UITableViewController, NSXMLParserDelegate {
+    // MARK: Properties
+
+    var clients : [Client] = []
+    var selectedClient : Client!
+
+    var elemName : String!
+    var clientId : String!
+    var organization : String!
+
+    required init(coder aDecoder: NSCoder!) {
+        super.init(coder: aDecoder)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        var defaults = NSUserDefaults.standardUserDefaults()
+        let accountData = defaults.objectForKey("credentials") as NSDictionary!
+
+        if accountData == nil {
+            let authController = self.storyboard.instantiateViewControllerWithIdentifier("AuthController") as AuthController
+            self.navigationController.pushViewController(authController, animated: false)
+        }
+
+        if clients.count > 0 {
+            self.tableView.reloadData()
+        } else {
+            let accountName = accountData["accountName"] as String
+            let key = accountData["key"] as String
+            let secret = accountData["secret"] as String
+
+            let baseURL = "https://\(accountName).freshbooks.com"
+
+            var token = AFOAuth1Token(key: key, secret: secret, session: nil, expiration: nil, renewable: true)
+
+            var freshbooksClient = AFOAuth1Client(
+                baseURL: NSURL.URLWithString(baseURL),
+                key: consumerKey,
+                secret: consumerSecret
+            )
+            freshbooksClient.accessToken = token
+            freshbooksClient.signatureMethod = AFOAuthSignatureMethod.AFPlainTextSignatureMethod
+
+            let requestBody = "<?xml version=\"1.0\" encoding=\"utf-8\"?><request method=\"client.list\"></request>"
+
+            var request = freshbooksClient.requestWithMethod("POST", path: "/api/2.1/xml-in", parameters: nil)
+            request.HTTPBody = requestBody.dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: false)
+            request.HTTPMethod = "POST"
+
+            var operation = AFXMLRequestOperation(request: request)
+            freshbooksClient.registerHTTPOperationClass(AFXMLRequestOperation)
+
+            operation.setCompletionBlockWithSuccess(
+                { (operation : AFHTTPRequestOperation!, responseObject) in
+                    var parser = responseObject as NSXMLParser
+                    parser.delegate = self
+                    parser.parse()
+                },
+                failure: { (operation, error) in
+                    println("Error: " + error.description)
+                }
+            )
+
+            operation.start()
+        }
+    }
+
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        // Dispose of any resources that can be recreated.
+    }
+
+    // MARK: Table view data source
+
+    override func numberOfSectionsInTableView(tableView: UITableView?) -> Int {
+        return 1
+    }
+
+    override func tableView(tableView: UITableView?, numberOfRowsInSection section: Int) -> Int {
+        return clients.count
+    }
+
+    override func tableView(tableView: UITableView!, cellForRowAtIndexPath indexPath: NSIndexPath!) -> UITableViewCell! {
+        let cell = tableView.dequeueReusableCellWithIdentifier("Cell", forIndexPath: indexPath) as UITableViewCell
+
+        var client = clients[indexPath.row]
+        cell.textLabel.text = client.organization
+
+        if self.selectedClient == client  {
+            cell.accessoryType = UITableViewCellAccessoryType.Checkmark
+        } else {
+            cell.accessoryType = UITableViewCellAccessoryType.None
+        }
+
+        return cell
+    }
+
+    override func tableView(tableView: UITableView!, didDeselectRowAtIndexPath indexPath: NSIndexPath!) {
+        self.selectedClient = clients[indexPath.row]
+        tableView.reloadRowsAtIndexPaths([indexPath], withRowAnimation: UITableViewRowAnimation.None)
+    }
+
+    // MARK: Navigation
+
+    override func prepareForSegue(segue: UIStoryboardSegue!, sender: AnyObject!) {
+
+    }
+
+    // MARK: Parser
+
+    func parser(parser: NSXMLParser!, didStartElement elementName: String!, namespaceURI: String!, qualifiedName qName: String!, attributes attributeDict: NSDictionary!) {
+        elemName = elementName
+    }
+
+    func parser(parser: NSXMLParser!, didEndElement elementName: String!, namespaceURI: String!, qualifiedName qName: String!) {
+        if elementName == "client" {
+            var client = Client(id: clientId, organization: organization)
+            clients.append(client)
+        }
+    }
+
+    func parser(parser: NSXMLParser!, foundCharacters string: String!) {
+        let data = string.stringByTrimmingCharactersInSet(NSCharacterSet.whitespaceAndNewlineCharacterSet())
+        if (!data.isEmpty) {
+            if elemName == "client_id" {
+                clientId = data
+            } else if elemName == "organization" {
+                organization = data
+            }
+        }        
+    }
+
+    func parserDidEndDocument(parser: NSXMLParser!) {
+        // Sort clients alphabetically
+        clients.sort({ $0.organization < $1.organization })
+
+        self.tableView.reloadData()
+    }
+}
+

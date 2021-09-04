@@ -1,0 +1,47 @@
+get_image_*
+write_imagef
+clGetImageInfo
+(platform:_) <- clGetPlatformIDs
+(device:_) <- clGetDeviceIDs platform CL_DEVICE_TYPE_GPU
+glContext <- glXGetCurrentContext
+glDisplay <- glXGetCurrentDisplay
+context <- clCreateContext [CL_GL_CONTEXT_KHR glContext, CL_GLX_DISPLAY_KHR glDisplay] [device] putStrLn
+queue <- clCreateCommandQueue context device []
+source <- readFile "pt.cl"
+program <- clCreateProgramWithSource context source
+clBuildProgram program [device] "-cl-strict-aliasing"
+        `catch` (λe -> case (e :: CLError) of
+                            CL_BUILD_PROGRAM_FAILURE -> putStrLn "Building OpenCL program failed:"
+                                                     >> clGetProgramBuildLog program device >>= putStrLn
+                                                     >> throw e
+                            _                        -> return ())
+kernel <- clCreateKernel program "sample"
+pCorners <- mallocArray 4
+buffer <- clCreateBuffer context [CL_MEM_READ_ONLY, CL_MEM_USE_HOST_PTR] (4*sizeOf (undefined :: V.Vec4F), castPtr pCorners)
+clSetKernelArgSto kernel 1 buffer
+tex@(TextureObject texid) <- head <$> (genObjectNames 1)
+activeTexture $= TextureUnit 0
+textureBinding Texture2D $= Just tex
+textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
+textureWrapMode Texture2D S $= (Repeated, Clamp)
+textureWrapMode Texture2D T $= (Repeated, Clamp)
+texImage2D Nothing NoProxy 0 RGBA′ (TextureSize2D initialWidth initialHeight) 0 (PixelData RGBA UnsignedByte nullPtr)
+image <- clCreateFromGLTexture2D context [CL_MEM_READ_WRITE] gl_TEXTURE_2D 0 texid
+clSetKernelArgSto kernel 2 image
+
+clSetKernelArgSto kernel 0 position
+pokeArray pCorners orientedCorners -- update the pCorners array
+finish -- This is glFinish()
+clEnqueueAcquireGLObjects queue [image] []
+clEnqueueNDRangeKernel queue kernel [width, height] [] []
+clEnqueueReleaseGLObjects queue [image] []
+clFinish queue
+drawElements TriangleFan 4 UnsignedInt offset0
+swapBuffers
+
+__kernel void sample(float3 position, __constant float3 corner[4], image2d_t output) {
+        write_imagef(output, (int2)(get_global_id(0), get_global_id(1)), (float4)(0, 0.5f, 1, 1));
+}
+
+printf
+get_image_*

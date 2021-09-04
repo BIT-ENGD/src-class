@@ -1,0 +1,108 @@
+package Article;
+use Moose;
+use Moose::Util::TypeConstraints;
+has 'name',                 is => 'rw', isa => 'Str', required => 1;
+has 'price',                is => 'rw', isa => 'Num', required => 1;
+has 'quantity',             is => 'rw', isa => 'Num', required => 1,
+                            trigger => \&update_quantity;
+has 'quantity_original',    is => 'rw', isa => 'Num',
+                            predicate   => 'quantity_fix',
+                            clearer     => 'quantity_back_to_normal';
+
+# https://metacpan.org/module/Moose::Cookbook::Basics::Recipe3
+# A trigger accepts a subroutine reference, which will be called as a method
+# whenever the attribute is set. This can happen both during object
+# construction or later by passing a new object to the attribute's accessor
+# method. However, it is not called when a value is provided by a default or
+# builder.
+
+sub update_quantity {
+    my( $self, $val ) = @_;
+#   print STDERR $val, "\n";
+    if ( $val == int $val ) {
+        $self->quantity_back_to_normal;
+    } else {
+        $self->quantity_original( $val );
+        # Updating quantity via setter would retrigger this code.
+        # Which would defeat its purpose. The following won't:
+        $self->{quantity} = 1; # hack, yes; but it does work
+    }
+}
+
+around name => sub {
+    my $orig = shift;
+    my $self = shift;
+    return $self->$orig( @_ ) if @_; # setter
+    return $self->$orig unless $self->quantity_fix;
+    return sprintf '%s (%s)', $self->$orig, $self->quantity_original;
+};
+
+around price => sub {
+    my $orig = shift;
+    my $self = shift;
+    return $self->$orig( @_ ) if @_; # setter
+    return $self->$orig unless $self->quantity_fix;
+    return int( 100 * $self->$orig * $self->quantity_original + 0.5 ) / 100;
+};
+
+__PACKAGE__->meta->make_immutable; no Moose;
+
+package main;
+use Test::More;
+
+{   my $art = Article->new( name => 'Apfel', price => 33, quantity => 4 );
+    is $art->price, 33, 'supplied price';
+    is $art->quantity, 4, 'supplied quantity';
+    is $art->name, 'Apfel', 'supplied name';
+}
+
+{   my $art = Article->new( name => 'Mehl', price => 33, quantity => 4.44 );
+#   diag explain $art;
+    is $art->quantity, 1, 'has quantity fixed';
+    is $art->price, 33 * 4.44, 'has price fixed';
+    is $art->name, 'Mehl (4.44)', 'has name fixed';
+    # tougher testing ...
+    $art->quantity(3);
+    is $art->quantity, 3, 'supplied quantity again';
+    is $art->price, 33, 'supplied price again';
+    is $art->name, 'Mehl', 'supplied name again';
+}
+
+done_testing;
+
+around
+new
+package Bla;
+use Moose;
+has 'eins', is => 'rw', isa => 'Int';
+has 'zwei', is => 'rw', isa => 'Num';
+
+around [qw/ eins zwei /] => sub {
+    my $orig = shift;
+    my $self = shift;
+    return $self->$orig unless @_;
+    my $val = shift;
+    if ( $val == int $val ) {
+        return $self->$orig( $val );
+    }
+    else {
+        return $self->$orig( 1 );
+        warn "replaced $val by 1";
+    }
+};
+
+package main;
+use Test::More;
+use Test::Exception;
+
+dies_ok { Bla->new( eins => 33.33 ) } 'dies because of Int type constraint';
+my $bla = Bla->new( zwei => 22.22 );
+is $bla->zwei, 22.22, 'around has not been called';
+done_testing;
+
+quantity
+price
+new
+1
+around BUILDARGS
+around quantity

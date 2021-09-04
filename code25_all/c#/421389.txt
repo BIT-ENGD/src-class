@@ -1,0 +1,128 @@
+public delegate DataSet LookupValuesDelegate(LookupTextEventArgs e);
+
+internal delegate void PassDataSet(DataSet ds);
+
+public class AutoCompleteBox : UserControl
+{
+   Thread _yarn = null;
+
+   [System.ComponentModel.Category("Data")]
+   public LookupValuesDelegate LookupValuesDelegate { set; get; }
+
+   void DataSetCallback(DataSet ds)
+   {
+      if (this.InvokeRequired)
+         this.Invoke(new PassDataSet(DataSetCallback), ds);
+      else
+      {
+         // implements the appending of text on textbox here
+      }
+   }
+
+   private void txt_TextChanged(object sender, EventArgs e)
+   {
+      if (_yarn != null) _yarn.Abort();
+
+      _yarn = new Thread(
+         new Mate
+         {
+            LookupValuesDelegate = this.LookupValuesDelegate,
+            LookupTextEventArgs =
+            new LookupTextEventArgs
+            {
+               RowOffset = offset,
+               Filter = txt.Text
+            },
+            PassDataSet = this.DataSetCallback
+         }.DoWork);
+
+      _yarn.Start();
+   }
+}
+
+
+internal class Mate
+{
+   internal LookupTextEventArgs LookupTextEventArgs = null;
+
+   internal LookupValuesDelegate LookupValuesDelegate = null;
+
+   internal PassDataSet PassDataSet = null;
+
+
+   object o = new object();
+   internal void DoWork()
+   {
+      lock (o)
+      {
+         // the actual code that queries the database
+         var ds = LookupValuesDelegate(LookupTextEventArgs);
+         PassDataSet(ds);
+      }
+   }
+}
+
+internal delegate void PassDataSet(DataSet ds, int keyIndex);
+
+public class AutoCompleteBox : UserControl
+{
+   [System.ComponentModel.Category("Data")]
+   public LookupValuesDelegate LookupValuesDelegate { set; get; }
+
+   static int _currentKeyIndex = 0;
+
+   void DataSetCallback(DataSet ds, int keyIndex)
+   {
+      if (this.InvokeRequired)
+         this.Invoke(new PassDataSet(DataSetCallback), ds, keyIndex);
+      else
+      {
+         // ignore the returned DataSet
+         if (keyIndex < _currentKeyIndex) return; 
+
+         // implements the appending of text on textbox here...
+      }
+   }
+
+   private void txt_TextChanged(object sender, EventArgs e)
+   {
+      Interlocked.Increment(ref _currentKeyIndex);
+
+      var yarn = new Thread(
+         new Mate
+         {
+            KeyIndex = _currentKeyIndex,
+            LookupValuesDelegate = this.LookupValuesDelegate,
+            LookupTextEventArgs =
+            new LookupTextEventArgs
+            {
+               RowOffset = offset,
+               Filter = txt.Text
+            },
+            PassDataSet = this.DataSetCallback
+         }.DoWork);
+
+      yarn.Start();
+   }
+}
+
+
+internal class Mate
+{
+   internal int KeyIndex;
+   internal LookupTextEventArgs LookupTextEventArgs = null;
+   internal LookupValuesDelegate LookupValuesDelegate = null;
+   internal PassDataSet PassDataSet = null;
+
+   object o = new object();
+   internal void DoWork()
+   {
+      lock (o)
+      {
+         // the actual code that queries the database
+         var ds = LookupValuesDelegate(LookupTextEventArgs);
+         PassDataSet(ds, KeyIndex);
+      }
+   }
+}
+

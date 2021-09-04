@@ -1,0 +1,98 @@
+SELECT     
+
+SOHeader.OrdNbr, 
+SOHeader.CustID, 
+SOHeader.User9 AS ShipDate,
+SOLine.LineRef, 
+SOLine.InvtID, 
+SOLine.QtyOrd, 
+
+CASE WHEN SOShipHeader.InvcNbr = '' THEN
+
+CASE WHEN (
+            SELECT MIN(EventTime)  
+            FROM  Solomon_SOEvent SOEvent WITH (NOLOCK)   
+            WHERE  (SOEvent.EventType = 'NPAK' OR SOEvent.EventType = 'PINV') 
+            AND SOEvent.OrdNbr = SOHeader.OrdNbr) IS NULL 
+THEN 0 
+
+ELSE (
+        SELECT MAX(SOShipLine.QtyShip) 
+        FROM Solomon_SOShipLine SOShipLine WITH (NOLOCK) 
+        WHERE SOShipLine.InvtID = SOLine.InvtID 
+        AND SOShipLine.SiteID = SOLine.SiteID 
+        AND SOShipHeader.ShipperID = SOShipLine.ShipperID
+        )
+END 
+
+ELSE
+  ISNULL(
+        (SELECT MAX(SOShipLine.QtyShip) 
+         FROM Solomon_SOShipLine SOShipLine WITH (NOLOCK) 
+         WHERE SOShipLine.InvtID = SOLine.InvtID 
+         AND SOShipLine.SiteID = SOLine.SiteID
+         AND SOShipHeader.ShipperID = SOShipLine.ShipperID)
+,0)
+
+END
+
+AS QtyShip_Corrected,
+
+ISNULL(
+    (SELECT MAX(SOShipLine.QtyShip) 
+     FROM Solomon_SOShipLine SOShipLine WITH (NOLOCK) 
+     WHERE SOShipLine.InvtID = SOLine.InvtID 
+     AND SOShipLine.SiteID = SOLine.SiteID 
+     AND SOShipHeader.ShipperID = SOShipLine.ShipperID)
+   ,0)
+
+AS SOShipLineQtyShip,
+
+QtyShip
+
+FROM Solomon_SOHeader SOHeader  WITH (NOLOCK) 
+INNER JOIN Solomon_SOLine SOLine  WITH (NOLOCK) ON SOHeader.OrdNbr = SOLine.OrdNbr 
+INNER JOIN Solomon_SOShipHeader SOShipHeader  WITH (NOLOCK) ON SOShipHeader.OrdNbr = SOHeader.OrdNbr 
+AND SOShipHeader.Cancelled = 0
+
+WHERE SOHeader.Status = 'O'
+AND SOLine.QtyShip > 0
+AND CASE WHEN SOShipHeader.InvcNbr = '' 
+
+THEN
+
+CASE WHEN (
+        SELECT     MIN(EventTime)  
+        FROM  Solomon_SOEvent SOEvent WITH (NOLOCK)   
+        WHERE (SOEvent.EventType = 'NPAK' OR SOEvent.EventType = 'PINV') 
+        AND SOEvent.OrdNbr = SOHeader.OrdNbr) IS NULL 
+THEN 0 
+
+    ELSE (
+            SELECT MAX(SOShipLine.QtyShip) 
+            FROM Solomon_SOShipLine SOShipLine WITH (NOLOCK) 
+            WHERE SOShipLine.InvtID = SOLine.InvtID 
+            AND SOShipLine.SiteID = SOLine.SiteID 
+            AND SOShipHeader.ShipperID = SOShipLine.ShipperID
+         )
+    END 
+ELSE
+
+    ISNULL(
+            (SELECT MAX(SOShipLine.QtyShip) 
+             FROM Solomon_SOShipLine SOShipLine WITH (NOLOCK) 
+             WHERE SOShipLine.InvtID = SOLine.InvtID 
+             AND SOShipLine.SiteID = SOLine.SiteID 
+             AND SOShipHeader.ShipperID = SOShipLine.ShipperID)
+       ,0)
+
+END 
+
+  <> ISNULL(
+            (SELECT MAX(SOShipLine.QtyShip) 
+             FROM Solomon_SOShipLine SOShipLine WITH (NOLOCK) 
+             WHERE SOShipLine.InvtID = SOLine.InvtID 
+             AND SOShipLine.SiteID = SOLine.SiteID 
+             AND SOShipHeader.ShipperID = SOShipLine.ShipperID)
+    ,0)
+

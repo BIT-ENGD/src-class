@@ -1,0 +1,695 @@
+else if (grid[i][j]->getType() == WILDEBEEST) { ...
+
+const int LION = 1; 
+const int WILDEBEEST = 2;
+
+//
+// .
+// .
+// .
+//
+
+class Animal {
+    friend class Savanna;   // Allow savanna to affect animal 
+public: 
+    Animal(); 
+    Animal(Savanna *, int, int); 
+    ~Animal(); 
+    virtual void breed() = 0;    // Breeding implementation 
+    virtual void move() = 0;     // Move the animal, with appropriate behavior 
+    virtual int getType() = 0;   // Return if wildebeest or lion 
+    virtual bool starve() = 0;   // Determine if animal starves 
+protected: 
+    int x,y;        // Position in the savanna, using the XY coordinate plane
+    bool moved;     // Bool to indicate if moved this turn 
+    int breedTicks; // Number of ticks since breeding 
+    Savanna *savanna; 
+};
+
+//
+// .
+// .
+// .
+//
+
+void Savanna::Display() 
+{ 
+ int i,j; 
+
+ cout << endl << endl; 
+ for (j=0; j<SAVANNASIZE; j++) 
+ { 
+  for (i=0; i<SAVANNASIZE; i++) 
+  { 
+   if (grid[i][j]==NULL){ 
+    setrgb(0);
+    cout << " "; 
+   }
+   else if (grid[i][j]->getType()==WILDEBEEST) // RUNTIME ERROR HERE
+   {
+     setrgb(7);
+     cout << "W"; 
+   }
+   else {
+        setrgb(3);
+        cout << "L";
+   }
+  } 
+
+     cout << endl; 
+ } 
+ setrgb(0);
+} 
+
+class Wildebeest: public Animal {
+
+friend class Savanna;    // Allow the Savanna to affect the animal, as per spec
+public: 
+    Wildebeest(); 
+    Wildebeest(Savanna *, int, int);    // accepts (pointer to a Savanna instance, X Position, Y Position)
+    void breed();           // Perform breeding, and check breedTick 
+    void move();            // move the animal.
+    int getType();              // returns WILDEBEEST
+    bool starve();                  // if starving, returns 0. (counterintuitive, I know.)
+};
+
+int Wildebeest::getType() {
+
+    return WILDEBEEST;
+}
+
+// 
+//  This program simulates a 2D world with predators and prey. 
+//  The predators (lions) and prey (wildebeest) inherit from the 
+//  Animal class that keeps track of basic information about each 
+//  animal (time ticks since last bred, position on the savanna). 
+// 
+//  The 2D world is implemented as a separate class, Savanna, 
+//  that contains a 2D array of pointers to type Animal. 
+// 
+
+// **************************************************************** 
+
+#include <iostream> 
+#include <string> 
+#include <vector> 
+#include <cstdlib> 
+#include <time.h> 
+#include "graphics.h"
+
+using namespace std; 
+
+int wrapTo20 (int value) {
+
+    if (0 > value) {
+
+        value = 19;
+    } else if (20 == value) {
+
+        value = 0;
+    }
+
+    return value;
+}
+
+const int SAVANNASIZE = 20; 
+const int INITIALBEEST = 100; 
+const int INITIALLIONS = 5; 
+const int LION = 1; 
+const int WILDEBEEST = 2; 
+const int BEESTBREED = 3;
+const int LIONBREED = 8; 
+const int LIONSTARVE = 3; 
+
+// Forward declaration of Animal classes so we can reference it 
+// in the Savanna class 
+class Animal; 
+class Lion; 
+class Wildebeest; 
+
+// ========================================== 
+// The Savana class stores data about the savanna by creating a 
+// SAVANNASIZE by SAVANNASIZE array of type Animal. 
+// NULL indicates an empty spot, otherwise a valid object 
+// indicates an wildebeest or lion.  To determine which, 
+// invoke the virtual function getType of Animal that should return 
+// WILDEBEEST if the class is of type Wildebeest, and Lion otherwise. 
+// ========================================== 
+
+class Savanna 
+{ 
+friend class Animal;   // Allow Animal to access grid 
+friend class Lion;   // Allow Animal to access grid 
+friend class Wildebeest;   // Allow Animal to access grid 
+public: 
+ Savanna(); 
+ ~Savanna(); 
+ Animal* getAt(int, int); 
+  void setAt(int, int, Animal *); 
+ void Display(); 
+ void SimulateOneStep(); 
+private: 
+ Animal* grid[SAVANNASIZE][SAVANNASIZE]; 
+}; 
+
+
+// ========================================== 
+// Definition for the Animal base class. 
+// Each animal has a reference back to 
+// the Savanna object so it can move itself 
+// about in the savanna. 
+// ========================================== 
+class Animal 
+{ 
+friend class Savanna;   // Allow savanna to affect animal 
+public: 
+ Animal(); 
+ Animal(Savanna *, int, int); 
+ ~Animal(); 
+ virtual void breed() = 0; // Whether or not to breed 
+ virtual void move() = 0; // Rules to move the animal 
+ virtual int getType() = 0; // Return if wildebeest or lion 
+ virtual bool starve() = 0; // Determine if animal starves 
+protected: 
+ int x,y;   // Position in the savanna 
+ bool moved;   // Bool to indicate if moved this turn 
+ int breedTicks;   // Number of ticks since breeding 
+ Savanna *savanna; 
+}; 
+
+// ====================== 
+// Savanna constructor, destructor 
+// These classes initialize the array and 
+// releases any classes created when destroyed. 
+// ====================== 
+Savanna::Savanna() 
+{ 
+ // Initialize savanna to empty spaces 
+ int i,j; 
+ for (i=0; i<SAVANNASIZE; i++) 
+ { 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+   grid[i][j]=NULL; 
+  } 
+ } 
+} 
+
+Savanna::~Savanna() 
+{ 
+ // Release any allocated memory 
+ int i,j; 
+ for (i=0; i<SAVANNASIZE; i++) 
+ { 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+   if (grid[i][j]!=NULL) delete (grid[i][j]); 
+  } 
+ } 
+} 
+
+// ====================== 
+// getAt 
+// Returns the entry stored in the grid array at x,y 
+// ====================== 
+Animal* Savanna::getAt(int x, int y) 
+{ 
+ if ((x>=0) && (x<SAVANNASIZE) && (y>=0) && (y<SAVANNASIZE)) 
+  return grid[x][y]; 
+ return NULL; 
+} 
+
+// ====================== 
+// setAt 
+// Sets the entry at x,y to the 
+// value passed in.  Assumes that 
+// someone else is keeping track of 
+// references in case we overwrite something 
+// that is not NULL (so we don't have a memory leak) 
+// ====================== 
+void Savanna::setAt(int x, int y, Animal *anim) 
+{ 
+ if ((x>=0) && (x<SAVANNASIZE) && (y>=0) && (y<SAVANNASIZE)) 
+ { 
+  grid[x][y] = anim; 
+ } 
+} 
+
+// ====================== 
+// Display 
+// Displays the savanna in ASCII.  Uses W for wildebeest, L for lion. 
+// ====================== 
+void Savanna::Display() 
+{ 
+ int i,j; 
+
+ cout << endl << endl; 
+ for (j=0; j<SAVANNASIZE; j++) 
+ { 
+  for (i=0; i<SAVANNASIZE; i++) 
+  { 
+   if (grid[i][j]==NULL){ 
+    setrgb(0);
+    cout << " "; 
+   }
+   else if (grid[i][j]->getType()==WILDEBEEST) 
+   {
+     setrgb(7);
+     cout << "W"; 
+   }
+   else {
+        setrgb(3);
+        cout << "L";
+   }
+  } 
+
+     cout << endl; 
+ } 
+ setrgb(0);
+} 
+
+// ====================== 
+// SimulateOneStep 
+// This is the main routine that simulates one turn in the savanna. 
+// First, a flag for each animal is used to indicate if it has moved. 
+// This is because we iterate through the grid starting from the top 
+// looking for an animal to move . If one moves down, we don't want 
+// to move it again when we reach it. 
+// First move lions, then wildebeest, and if they are still alive then 
+// we breed them. 
+// ====================== 
+void Savanna::SimulateOneStep() 
+{ 
+ int i,j; 
+ // First reset all animals to not moved 
+ for (i=0; i<SAVANNASIZE; i++) 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+   if (grid[i][j]!=NULL) grid[i][j]->moved = false; 
+  } 
+ // Loop through cells in order and move if it's a Lion 
+ for (i=0; i<SAVANNASIZE; i++) 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+   if ((grid[i][j]!=NULL) && (grid[i][j]->getType()==LION)) 
+   { 
+   if (grid[i][j]->moved == false) 
+   { 
+    grid[i][j]->moved = true; // Mark as moved 
+    grid[i][j]->move(); 
+   } 
+   } 
+  } 
+ // Loop through cells in order and move if it's an Wildebeest 
+ for (i=0; i<SAVANNASIZE; i++) 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+   if ((grid[i][j]!=NULL) && (grid[i][j]->getType()==WILDEBEEST)) 
+   { 
+    if (grid[i][j]->moved == false) 
+    { 
+     grid[i][j]->moved = true; // Mark as moved 
+     grid[i][j]->move(); 
+    } 
+   } 
+  } 
+ // Loop through cells in order and check if we should breed 
+ for (i=0; i<SAVANNASIZE; i++) 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+        // Kill off any lions that haven't eaten recently 
+   if ((grid[i][j]!=NULL) && 
+       (grid[i][j]->getType()==LION)) 
+   { 
+    if (grid[i][j]->starve()) 
+    { 
+     delete (grid[i][j]); 
+     grid[i][j] = NULL; 
+    } 
+   } 
+  } 
+ // Loop through cells in order and check if we should breed 
+ for (i=0; i<SAVANNASIZE; i++) 
+  for (j=0; j<SAVANNASIZE; j++) 
+  { 
+   // Only breed animals that have moved, since 
+   // breeding places new animals on the map we 
+   // don't want to try and breed those 
+   if ((grid[i][j]!=NULL) && (grid[i][j]->moved==true)) 
+   { 
+    grid[i][j]->breed(); 
+   } 
+  } 
+} 
+
+// ====================== 
+// Animal Constructor 
+// Sets a reference back to the Savanna object. 
+// ====================== 
+Animal::Animal() 
+{ 
+ savanna = NULL; 
+ moved = false; 
+ breedTicks = 0; 
+ x=0; 
+ y=0; 
+} 
+
+Animal::Animal(Savanna *savana, int x, int y) 
+{ 
+ this->savanna = savana; 
+ moved = false; 
+ breedTicks = 0; 
+ this->x=x; 
+ this->y=y; 
+ savanna->setAt(x,y,this); 
+} 
+
+// ====================== 
+// Animal destructor 
+// No need to delete the savanna reference, 
+// it will be destroyed elsewhere. 
+// ====================== 
+Animal::~Animal() 
+{ } 
+
+// Start with the Wildebeest class and its required declarations 
+class Wildebeest: public Animal {
+
+    friend class Savanna;   // Allow savanna to affect animal 
+public: 
+    Wildebeest(); 
+    Wildebeest(Savanna *, int, int); 
+ void breed();          // Whether or not to breed 
+ void move();           // Rules to move the animal 
+ int getType();         // Return if wildebeest or lion 
+ bool starve(); 
+};
+
+bool Wildebeest::starve() {
+
+    return 1;
+}
+
+
+// ====================== 
+// Wildebeest constructors 
+// ====================== 
+
+Wildebeest::Wildebeest() {
+
+}
+
+Wildebeest::Wildebeest(Savanna * sav, int x, int y) : Animal(sav, x, y) {
+
+}
+
+// ====================== 
+// Wldebeest Move 
+// Look for an empty cell up, right, left, or down and 
+// try to move there. 
+// ====================== 
+
+void Wildebeest::move() {
+
+    int loc1, loc2, loc3, loc4;
+    int x1, x2, x3, x4;
+    int y1, y2, y3, y4;
+
+    x1 = wrapTo20(x);
+    y1 = wrapTo20(y + 1);
+
+    x2 = wrapTo20(x + 1);
+    y2 = wrapTo20(y);
+
+    x3 = wrapTo20(x);
+    y3 = wrapTo20(y - 1);
+
+    x4 = wrapTo20(x - 1);
+    y4 = wrapTo20(y);
+
+    loc1 = savanna->getAt(x1, y1)->getType();
+    loc2 = (int)savanna->getAt(x2, y2)->getType();
+    loc3 = savanna->getAt(x3, y3)->getType();
+    loc4 = savanna->getAt(x4, y4)->getType();
+
+    while (!moved) {
+        int x = 1 + (rand() % 4);
+        switch (x) {
+
+            case 1:
+                if (!loc1) savanna->setAt(x1, y1, this);
+                break;
+
+            case 2:
+                if (!loc2) savanna->setAt(x2, y2, this);
+                break;
+
+            case 3:
+                if (!loc3) savanna->setAt(x3, y3, this);
+                break;
+
+            case 4:
+                if (!loc4) savanna->setAt(x4, y4, this);
+                break;
+
+            default:
+                break;
+        }
+    }
+}
+
+
+
+// ====================== 
+// Wildebeest getType 
+// This virtual function is used so we can determine 
+// what type of animal we are dealing with. 
+// ====================== 
+int Wildebeest::getType() {
+
+    return WILDEBEEST;
+}
+
+// ====================== 
+// Wildebeest breed 
+// Increment the tick count for breeding. 
+// If it equals our threshold, then clone this wildebeest either 
+// above, right, left, or below the current one. 
+// ====================== 
+
+void Wildebeest::breed() {
+    breedTicks++;
+
+    if (2 == breedTicks) {
+        breedTicks = 0;
+    }
+
+}
+
+// ***************************************************** 
+// Now define Lion Class and its required declarations
+// ***************************************************** 
+
+class Lion: public Animal {
+
+    friend class Savanna;   // Allow savanna to affect animal 
+public: 
+    Lion(); 
+    Lion(Savanna *, int, int); 
+ void breed();          // Whether or not to breed 
+ void move();           // Rules to move the animal 
+ int getType();         // Return if wildebeest or lion 
+ bool starve(); 
+};
+
+
+// ====================== 
+// Lion constructors 
+// ====================== 
+
+Lion::Lion() {
+
+}
+
+Lion::Lion(Savanna * sav, int x, int y) : Animal(sav, x, y) {
+
+}
+
+
+// ====================== 
+// Lion move 
+// Look up, down, left or right for a lion.  If one is found, move there 
+// and eat it, resetting the starveTicks counter. 
+// ====================== 
+
+void Lion::move() {
+
+    int loc1, loc2, loc3, loc4;
+    int x1, x2, x3, x4;
+    int y1, y2, y3, y4;
+
+    x1 = wrapTo20(x);
+    y1 = wrapTo20(y + 1);
+
+    x2 = wrapTo20(x + 1);
+    y2 = wrapTo20(y);
+
+    x3 = wrapTo20(x);
+    y3 = wrapTo20(y - 1);
+
+    x4 = wrapTo20(x - 1);
+    y4 = wrapTo20(y);
+
+    loc1 = savanna->getAt(x1, y1)->getType();
+    loc2 = (int)savanna->getAt(x2, y2)->getType();
+    loc3 = savanna->getAt(x3, y3)->getType();
+    loc4 = savanna->getAt(x4, y4)->getType();
+
+    while (!moved) {
+        int x = 1 + (rand() % 4);
+        switch (x) {
+
+            case 1:
+                if (!loc1) savanna->setAt(x1, y1, this);
+                break;
+
+            case 2:
+                if (!loc2) savanna->setAt(x2, y2, this);
+                break;
+
+            case 3:
+                if (!loc3) savanna->setAt(x3, y3, this);
+                break;
+
+            case 4:
+                if (!loc4) savanna->setAt(x4, y4, this);
+                break;
+
+            default:
+                break;
+        }
+    }
+}
+
+// ====================== 
+// Lion getType 
+// This virtual function is used so we can determine 
+// what type of animal we are dealing with. 
+// ====================== 
+
+int Lion::getType() {
+
+    return LION;
+}
+
+// ====================== 
+// Lion breed 
+// Creates a new lion adjacent to the current cell 
+// if the breedTicks meets the threshold. 
+// ====================== 
+
+void Lion::breed() {
+
+    breedTicks++;
+
+    if (2 == breedTicks) {
+        breedTicks = 0;
+    }
+
+}
+
+
+// ====================== 
+// Lion starve 
+// Returns true or false if a lion should die off 
+// because it hasn't eaten enough food. 
+// ====================== 
+
+
+bool Lion::starve() {
+
+    return 1;
+}
+
+
+// ====================== 
+//     main function 
+// ====================== 
+int main() 
+{ 
+  string s; 
+  srand((int)time(NULL));  // Seed random number generator 
+  Savanna w; 
+  int initialWildebeest=0;
+  int initialLions=0;
+
+  // enter initial number of wildebeest
+  int beestcount = 0; 
+  while(initialWildebeest <= 0 || initialWildebeest > INITIALBEEST){
+    cout << "Enter number of initial Wildebeest (greater than 0 and less than " << INITIALBEEST << ") : ";
+    cin >> initialWildebeest;
+  }
+  // Randomly create wildebeests and place them in a randomly choosen empty spot in savanna 
+
+
+    int i;
+    bool placed = 0;
+
+    for ( i = 0; i < initialWildebeest; i++) {
+        while (!placed) {
+            int x = 1 + (rand() % 20);
+            int y = 1 + (rand() % 20);
+
+            if (!(w.getAt(x, y))){
+                Wildebeest fred(&w, x, y);
+                placed = 1;
+            }
+        }
+        placed = 0;
+    }
+
+
+  // Enter initial number of lions 
+  int lioncount = 0; 
+  while(initialLions <= 0 || initialLions > INITIALLIONS){
+    cout << "Enter number of initial Lions (greater than 0 and less than " << INITIALLIONS << ") : ";
+    cin >> initialLions;
+  }
+  // Randomly create lions and place them in a randomly choosen empty spot in savanna
+
+  placed = 0;
+
+  for ( i = 0; i < initialLions; i++) {
+        while (!placed) {
+            int x = 1 + (rand() % 20);
+            int y = 1 + (rand() % 20);
+
+            if (!(w.getAt(x, y))){
+                Lion ronald(&w, x, y);
+                placed = 1;
+            }
+        }
+        placed = 0;
+    }
+
+  // Run simulation forever, until user cancels 
+  int count=0;
+  while (true) 
+  { 
+  gotoxy(0,0);
+  w.Display(); 
+  w.SimulateOneStep();
+  Sleep(500); 
+  count++;
+  if(count == 20){
+   count=0;
+   cout << endl << "Press enter for next step, ctrl-c to quit" << endl; 
+   getline(cin,s);
+   clearline(23); 
+
+   }
+  } 
+  return 0; 
+} 
+

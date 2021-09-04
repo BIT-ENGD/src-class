@@ -1,0 +1,133 @@
+Stream adoStream = null;
+SqlParameter cmdParameter;
+SqlCommand cmd = null;
+SqlDataReader dr = null;
+
+string cmdText;
+int bytesReturned;
+int chunkSize = 65536;
+int offSet = 0;
+
+UnicodeEncoding readBytes;
+
+try
+{
+    cmdParameter = new SqlParameter(parameterName, idParamter);
+
+    cmdText = sqlString;
+
+    cmd = new SqlCommand();
+    cmd.CommandType = CommandType.Text;
+    cmd.CommandTimeout = 0;
+    cmd.CommandText = cmdText;
+    cmd.Connection = this.pbiSQLConnection;
+    cmd.Parameters.Add(cmdParameter);
+    dr = cmd.ExecuteReader(CommandBehavior.SequentialAccess);
+    dr.Read();
+
+    if (dr.HasRows)
+    {
+        readBytes = new UnicodeEncoding();
+        byte[] byteChunk = new byte[chunkSize];
+
+        adoStream = new Stream();
+        adoStream.Type = StreamTypeEnum.adTypeText;
+        adoStream.Open(Type.Missing, ConnectModeEnum.adModeUnknown,
+            StreamOpenOptionsEnum.adOpenStreamUnspecified, "", "");
+
+        do
+        {
+            bytesReturned = (int)dr.GetBytes(0, offSet, byteChunk, 0,
+                chunkSize);
+            size += bytesReturned;
+            if (bytesReturned > 0)
+            {
+                if (bytesReturned < chunkSize)
+                {
+                    Array.Resize(ref byteChunk, bytesReturned);
+                }
+
+                adoStream.WriteText(readBytes.GetString(byteChunk),
+                    StreamWriteEnum.stWriteChar);
+                adoStream.Flush();
+            }
+
+            offSet += bytesReturned;
+        } while (bytesReturned == chunkSize);
+    }
+}
+catch (Exception exLoadResultsFromDB)
+{
+    throw (exLoadResultsFromDB);
+}
+finally
+{
+    if (dr != null)
+    {
+        if (!dr.IsClosed)
+        {
+            dr.Close();
+        }
+
+        dr.Dispose();
+    }
+
+    if (cmd != null)
+    {
+        cmd.Dispose();
+    }
+}
+
+adoStream = LoadTextFromDBToADODBStream(resultID, "@result_id",
+    "some sql statement", ref size);
+if (adoStream.Size == 0)
+{
+    success = false;
+}
+else
+{
+    adoStream.Position = 0;
+
+    DataTable table = new DataTable();
+    Recordset rs = new Recordset();
+    rs.Open(adoStream, Type.Missing, CursorTypeEnum.adOpenStatic,
+              LockTypeEnum.adLockBatchOptimistic, -1);
+
+    if (adoStream != null)
+    {
+        adoStream.Close();
+        adoStream = null;
+    }
+
+    source.SourceRows = rs.RecordCount;
+    table.TableName = "Source";
+    source.Dataset = new DataSet();
+    source.Dataset.Tables.Add(table);
+
+    OleDbDataAdapter adapter = new OleDbDataAdapter();
+    adapter.MissingSchemaAction = MissingSchemaAction.AddWithKey;
+    adapter.Fill(source.Dataset.Tables[0], rs);
+
+    if (adapter != null)
+    {
+        adapter.Dispose();
+        adapter = null;
+    }
+
+    if (adoStream != null)
+    {
+        adoStream.Close();
+        adoStream = null;
+    }
+
+    if (rs != null)
+    {
+        if (rs.State == 1)
+        {
+            rs.Close();
+        }
+
+        rs = null;
+    }
+}
+

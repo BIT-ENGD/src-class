@@ -1,0 +1,93 @@
+    Private Sub StartAnalysis(ByVal grp As String, ByVal grpdn As String, ByVal reqid As String)
+
+    Dim searchedGroups As New Hashtable
+
+    'prior work before calling sub
+
+    searchedGroups.Add(grp, 1)
+    Dim iserror As Boolean = GetGroupMembers(grpdn, searchedGroups, reqid)
+
+    If iserror = False Then
+        'do stuff
+    Else
+        'do stuff
+    End If
+
+    'cleanup
+
+End Sub
+
+
+    Public Function GetGroupMembers(ByVal groupSearch As String, ByVal searchedGroups As Hashtable, ByVal requestID As String) As Boolean
+
+    Dim iserror As Boolean = False
+
+    Try
+        Dim lastQuery As Boolean = False
+        Dim endLoop As Boolean = False
+        Dim rangeStep As Integer = 999
+        Dim rangeLow As Integer = 0
+        Dim rangeHigh As Integer = rangeLow + rangeStep
+
+        Do
+            Dim range As String = "member"
+            If lastQuery = False Then
+                range = String.Format("member;range={0}-{1}", rangeLow, rangeHigh)
+            Else
+                range = String.Format("member;range={0}-*", rangeLow)
+                endLoop = True
+            End If
+
+            Dim group As SearchResult = QueryObject(groupSearch, range)
+            Dim groupCN As String = group.Properties("cn")(0).ToString
+            If group.Properties.Contains(range) Then
+                For Each member As Object In group.Properties(range)
+                    Dim user As SearchResult = QueryObject(member.ToString, "member")
+                    Dim userCN = user.Properties("cn")(0).ToString
+                    If Not user.Properties.Contains("member") Then
+                        Dim userMail = String.Empty
+                        If user.Properties.Contains("mail") Then
+                            userMail = user.Properties("mail")(0).ToString
+                        End If
+
+                        userCN = userCN.Replace("'", "''")
+                        Dim qry As String = _
+                            "INSERT INTO group_analysis_details (request_id, member_name, member_email, member_group) " & _
+                            "values ('" & requestID & "', '" & userCN & "', '" & userMail & "', '" & groupCN & "')"
+
+                        Dim sqlConn As SqlConnection = New SqlConnection(cs)
+                        Dim sqlCmd As SqlCommand = New SqlCommand(qry, sqlConn)
+                        sqlConn.Open()
+                        sqlCmd.ExecuteNonQuery()
+                        sqlConn.Close()
+                        sqlCmd.Dispose()
+                        sqlConn.Dispose()
+                    Else
+                        If Not searchedGroups.ContainsKey(userCN) Then
+                            searchedGroups.Add(userCN, 1)
+                            iserror = GetGroupMembers(user.Properties("distinguishedname")(0).ToString, searchedGroups, requestID)
+                            If iserror = True Then Return iserror
+                        Else
+                            searchedGroups(userCN) += 1
+                        End If
+                    End If
+                Next
+            Else
+                lastQuery = True
+            End If
+
+            If lastQuery = False Then
+                rangeLow = rangeHigh + 1
+                rangeHigh = rangeLow + rangeStep
+            End If
+
+        Loop While endLoop = False
+        Return iserror
+    Catch ex As Exception
+        myEvents.WriteEntry("Error while analyzing the following group: " & groupSearch & vbCrLf & vbCrLf & _
+            "Details of the error are as follows: " & ex.Message, EventLogEntryType.Error)
+        Return True
+    End Try
+
+End Function
+

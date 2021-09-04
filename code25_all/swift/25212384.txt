@@ -1,0 +1,108 @@
+class StripViewController: SWRevealViewController, RSColorPickerViewDelegate, UIPickerViewDataSource, UIPickerViewDelegate, BLEDelegate, UIActionSheetDelegate, UITextFieldDelegate {
+var stripView: StripView!
+var colorPicker: RSColorPickerView!
+var connectBtn:UIButton!
+var connectionSpinner:UIActivityIndicatorView!
+
+var tapRecognizer:UITapGestureRecognizer!
+
+init(coder aDecoder: NSCoder!) {
+    super.init(coder: aDecoder)
+}
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+    // Do any additional setup after loading the view, typically from a nib.
+    // use UIView extension as per https://stackoverflow.com/questions/24370061/assign-xib-to-the-uiview-in-swift
+    stripView = UIView.loadFromNibNamed("StripView") as StripView
+    self.view.addSubview(stripView)
+
+    // nav bar setup //
+    self.title = "Strip \(self.tabBarController.selectedIndex+1)"
+
+    let leftNav:UIView = UIView(frame: CGRectMake(0,0,100,40))
+
+    self.connectBtn = UIButton(frame: CGRectMake(0,0,95,40))
+    connectBtn.frame = CGRectMake(0,0,connectBtn.bounds.size.width,connectBtn.bounds.size.height)
+    connectBtn.contentHorizontalAlignment = UIControlContentHorizontalAlignment.Left
+    connectBtn.setTitle("Connect", forState: UIControlState.Normal)
+    connectBtn.setTitleColor(UIColor(red: 0.0, green: 122.0/255.0, blue: 1.0, alpha: 1.0), forState: UIControlState.Normal)
+    connectBtn.addTarget(self, action: "connectButtonPressed:", forControlEvents: UIControlEvents.TouchDown)
+    leftNav.addSubview(connectBtn)
+
+    self.connectionSpinner = UIActivityIndicatorView(activityIndicatorStyle: UIActivityIndicatorViewStyle.Gray)
+    connectionSpinner.frame = CGRectMake(connectBtn.frame.minX + connectBtn.bounds.size.width, connectBtn.frame.minY + 10, connectionSpinner.bounds.size.width, connectionSpinner.bounds.size.height)
+    connectionSpinner.hidesWhenStopped = true
+    leftNav.addSubview(connectionSpinner)
+
+    let leftNavItem:UIBarButtonItem = UIBarButtonItem(customView: leftNav)
+
+    self.navigationItem.leftBarButtonItem = leftNavItem
+
+    // set up color picker
+    colorPicker = RSColorPickerView(frame: CGRectMake(20, 78, 160, 160))
+    self.view.addSubview(colorPicker)
+    colorPicker.delegate = self
+
+    // set up mode picker
+    // THESE APPEAR TO BE THE OFFENDING LINES —
+    // COMMENTING THEM OUT DISPLAYS THE VIEW AS EXPECTED
+    self.stripView.modePicker.dataSource = self;
+    self.stripView.modePicker.delegate = self;
+
+    // set up notifications
+    NSNotificationCenter.defaultCenter().addObserver(self, selector: "colorFieldDidChange:", name: "ColorFieldDidChangeNotification", object: nil)
+    NSNotificationCenter.defaultCenter().addObserver(self, selector: "keyboardWillShow:", name: UIKeyboardWillShowNotification, object: nil)
+
+    // set up UI and populate fields
+    self.stripView.setAnimSpeed()
+
+    // set up BLE
+    BLEManager.instance.ble.delegate = self
+}
+
+[...]
+
+self.stripView.modePicker.dataSource = self;
+self.stripView.modePicker.delegate = self;
+
+func numberOfComponentsInPickerView(pickerView: UIPickerView!) -> Int {
+    return 1
+}
+
+func pickerView(pickerView: UIPickerView!, numberOfRowsInComponent component: Int) -> Int     {
+    return DataModel.instance.ModeNames.count
+}
+
+func pickerView(pickerView: UIPickerView!, titleForRow row: Int, forComponent component: Int) -> String! {
+    return DataModel.instance.ModeNames[row]
+}
+
+func pickerView(pickerView: UIPickerView!, didSelectRow row: Int, inComponent component: Int) {
+    // send mode to arduino
+    println("--- sending mode select command ---")
+    var buf:[UInt8] = [0x00, 0x00, 0x00, 0x00]
+    buf[0] = Modes.instance.SET_MODE
+    buf[1] = UInt8(DataModel.instance.ModeOpcodes[DataModel.instance.ModeNames[row]]!)
+
+    let data:NSData = NSData(bytes: buf, length: 4)
+    BLEManager.instance.ble.write(data)
+}
+
+class DataModel {
+// setup singleton
+    class var instance: DataModel {
+        struct Static {
+            static let instance : DataModel = DataModel()
+        }
+        return Static.instance
+    }
+
+    // modes
+    // eventually may replace this with a more flexible data structure
+    // for now, we just need names
+    let ModeNames: Array<String> = ["Light All", "Rainbow"]
+
+    let ModeOpcodes: Dictionary<String, UInt8> = [DataModel.instance.ModeNames[0]: Modes.instance.LIGHT_ALL, DataModel.instance.ModeNames[1]: Modes.instance.RAINBOW];
+}
+

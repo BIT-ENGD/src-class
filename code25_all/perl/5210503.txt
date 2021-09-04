@@ -1,0 +1,57 @@
+# ...
+use HTML::TableExtract;
+my $te = HTML::TableExtract->new( headers => [ 'some headers', 'one', 'two' ], keep_headers => 1 );
+$te->parse( $html_string );
+die $te->tables if $te->tables != 1;
+( my $grid ) = $te->tables;
+
+use DBI;
+my $dbh = DBI->connect( ... ) or die $DBI::errstr;
+my $table = 'my_test_table';
+
+my @rows = $grid->rows;
+my $header_row = shift @rows;
+
+#####  version 1  ####
+use Data::Types qw(:all);
+my @create_row;
+
+for my $col ( 0 .. $#$header_row ) {
+    my ( $count, $int, $float ) = ( 0, 0, 0 );
+    my $longest = 0;
+    for my $row ( @rows ) {
+        $longest = length $row->[$col] if length $row->[$col] > $longest;
+        $int++ if is_int( $row->[$col] );
+        $float++ if is_float( $row->[$col] );
+        $count++;
+    }
+    if ( $int == $count ) {
+        $create_row[$col] = $dbh->quote( $header_row->[$col] ) . ' int';
+    } 
+    elsif ( $float == $count ) {
+        $create_row[$col] = $dbh->quote( $header_row->[$col] ) . ' float';
+    } 
+    else {
+        $create_row[$col] = $dbh->quote( $header_row->[$col] ) . " char($longest)";
+    }
+}
+
+$sql = sprintf "CREATE TABLE $table ( %s )", 
+join( ', ', @create_row );
+$dbh->do( $sql );
+
+$sql = sprintf "INSERT INTO $table ( %s ) VALUES( %s )", 
+join( ',',  map { $dbh->quote( $_ ) } @$header_row ), join( ',', ('?') x @$header_row );
+my $sth = $dbh->prepare( $sql );
+
+####  version 2  ####
+# always varchar
+
+$sql = sprintf "CREATE TABLE $table ( %s )", 
+join( ', ', map { "'$_' varchar(60)" } @$header_row );
+$dbh->do( $sql );
+
+$sql = sprintf "INSERT INTO $table ( %s ) VALUES( %s )", 
+join( ',',  map { $dbh->quote( $_ ) } @$header_row ), join( ',', ('?') x @$header_row );
+my $sth = $dbh->prepare( $sql );
+

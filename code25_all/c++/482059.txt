@@ -1,0 +1,97 @@
+// the key type for the multimap
+typedef enum { ... } Module;
+
+// my class as the mapped type for the multimap
+struct Patch
+{
+    void Apply(bool enable);
+}
+
+// I have some functors designed to work directly with Patch pointers
+// because in other places I use set<Patch*> or other containers
+struct ApplyOnCondtion: public unary_function<Patch*, void>
+{
+    void operator() (Patch* patch)
+    {
+        if(some_condition) patch->Apply(enable_or_not);
+    }
+}
+
+// somewhere I have a collection of patches attributed to some module
+multimap<Module, Patch*> patches;
+
+// the problem is that using for_each with a map or a multimap results in
+// a `pair<Module,Patch*>` as argument to the functor, not the Patch* as desired.
+for_each(patches.begin(), patches.end(), ApplyOnCondition(...));
+
+EDIT 1
+
+#include <functional>
+#include <utility>
+using namespace std;
+
+
+//////////////////////////////////////////////////////////////////////////
+// any functor to be called must be derived from unary_function or
+// have defined result_type and argument_type.
+// template 'First' should be set to pair::first_type
+template<typename First, typename Func>
+class passSecond_t: public unary_function<
+                        pair<First,typename Func::argument_type>,
+                        typename Func::result_type>
+{
+    Func* func;
+
+public:
+    passSecond_t(Func &functor): func(&functor) {}
+
+    result_type operator()(argument_type value)
+    {
+        return (*func)(value.second);
+    }
+};
+
+// construction helper, unfortunately 'First' must be explicitly specified
+template <typename First, typename Func>
+passSecond_t<First, Func> passSecond(Func& functor)
+{
+    return passSecond_t<First, Func> (functor);
+}
+
+
+// the following is a sample
+#include <map>
+#include <algorithm>
+#include <iostream>
+
+struct SampleClass 
+{
+    void execute(char* text)
+    {
+        cout << "this: " << this << ", text: " << text << endl;
+    }
+};
+
+struct SampleFunctor: public unary_function<SampleClass*,void>
+{
+    char* text;
+    SampleFunctor(char* text_): text(text_) {}
+
+    result_type operator() (argument_type argu)
+    {
+        argu->execute(text);
+    }
+};
+
+void main()
+{
+    map<int,SampleClass*> mymap;
+    SampleClass s1, s2;
+    mymap[0] = &s1;
+    mymap[1] = &s2;
+
+    SampleFunctor myfunctor("my text");
+
+    for_each(mymap.begin(), mymap.end(), passSecond<int>(myfunctor));
+}
+

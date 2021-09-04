@@ -1,0 +1,105 @@
+   Select s.pName, 
+       s.ProductCode, 
+       min(s.Price)                         as MinPrice, 
+       sum(s.Quantity)                      as SalesQty, 
+       sum(s.Price * s.Quantity)            as SalesValue, 
+       isnull((select sum(Quantity) 
+               from   Breakages 
+               where  pGroup = 16 
+                      and quantity > 0), 0) as BreakQty, 
+       isnull((select sum(Price * Quantity) 
+               from   Breakages 
+               where  pGroup = 16), 0)      as BreakValue, 
+       isnull((select CASE 
+                        WHEN min(r.Quantity) != 0 THEN Sum(r.Quantity) 
+                      END), 0)              as ReturnQty, 
+       isnull((select sum(Price * Quantity) 
+               from   SalesReturn 
+               where  pGroup = 16), 0)      as ReturnValue 
+from   SalesLog as s 
+       INNER JOIN SalesReturn as r 
+         ON r.BillDate = s.BillDate 
+       INNER JOIN Breakages as b 
+         ON r.BillDate = b.BillDate 
+where  s.BillDate = '12-10-2010' 
+       and r.BillDate = '12-10-2010' 
+       and b.BillDate = '12-10-2010' 
+       and s.pGroup = 16 
+       and b.pGroup = 16 
+       and r.pGroup = 16 
+group  by s.pName, 
+          s.ProductCode; 
+
+Name               Code Price SalesQty SValue  BreakQty BValue  RefundQty  RQty
+CDM 42GRMS.        854    15      3       45        2       0         3     30
+APPLE JUICE 750ML  860    59      5      295        2       0         3     30
+BISLERI WATER      865     3      5       15        2       0         3     30
+PERK 35 GRMS       870    10     20      200        2       0         3     30
+
+CREATE TABLE [dbo].[SalesReturn](
+    [srID] [int] IDENTITY(1,1) NOT NULL,
+    [ProductCode] [int] NULL,
+    [Quantity] [int] NULL,
+    [pGroup] [int] NULL,
+    [MemoNo] [int] NULL,
+    [SalesmanID] [int] NULL,
+    [Price] [int] NULL,
+    [BillDate] [nchar](10) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    [AddedOn] [datetime] NULL,
+ CONSTRAINT [PK_SalesReturn] PRIMARY KEY CLUSTERED 
+([srID] ASC) WITH (PAD_INDEX  = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+
+CREATE TABLE [dbo].[SalesLog](
+   [SalesID] [int] IDENTITY(1,1) NOT NULL,
+   [MemoNo] [int] NULL,
+   [ProductCode] [int] NULL,
+   [Quantity] [int] NULL,
+   [Price] [int] NULL,
+   [pGroup] [int] NULL,
+   [pName] [nvarchar](30) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+   [pSize] [int] NULL,
+   [BillDate] [nchar](10) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+ CONSTRAINT [PK_SalesLog] PRIMARY KEY CLUSTERED 
+ (  [SalesID] ASC )WITH (PAD_INDEX  = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]
+ ) ON [PRIMARY]
+
+CREATE TABLE [dbo].[Breakages](
+    [breakId] [int] IDENTITY(1,1) NOT NULL,
+    [MemoNo] [int] NULL,
+    [SalesmanID] [int] NULL,
+    [ProductCode] [int] NULL,
+    [pName] [nvarchar](30) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    [Quantity] [int] NULL,
+    [Price] [int] NULL,
+    [pGroup] [int] NULL,
+    [BillDate] [nchar](10) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    [AddedOn] [datetime] NULL,
+ CONSTRAINT [PK_Breakages_1] PRIMARY KEY CLUSTERED (
+[breakId] ASC )WITH (PAD_INDEX  = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+
+SELECT  p.pName, p.pCode, MIN(p.pPrice) AS MinPrice
+   , SUM(s.Quantity) AS SalesQty, SUM(s.Quantity) * MIN(p.pPrice) AS SalesValue
+   , MIN(b.Quantity) AS BreakQty, MIN(b.Quantity) * MIN(p.pPrice) AS BreakValue
+   , MIN(r.Quantity) AS ReturnQty, MIN(r.Quantity) * MIN(p.pPrice) AS ReturnValue
+FROM    Products AS p
+
+OUTER APPLY (SELECT SUM(s.Quantity) AS Quantity
+         FROM   SalesLog AS s
+         WHERE  s.BillDate = '12-10-2010'
+                AND s.ProductCode = p.pCode
+        ) AS s
+OUTER APPLY (SELECT SUM(r.Quantity) AS Quantity
+         FROM   SalesReturn AS r
+         WHERE  r.BillDate = '12-10-2010'
+                AND r.ProductCode = p.pCode
+        ) AS r
+OUTER APPLY (SELECT SUM(b.Quantity) AS Quantity
+         FROM   Breakages AS b
+         WHERE  b.BillDate = '12-10-2010'
+                AND b.ProductCode = p.pCode
+        ) AS b
+WHERE  p.pGroup!=15 and p.pGroup!=16 
+GROUP BY p.pName, p.pCode;
+

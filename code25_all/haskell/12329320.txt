@@ -1,0 +1,81 @@
+manipList = do
+    goForward
+    goForward
+    goBack
+
+import Control.Monad
+import Control.Monad.State
+
+type ListZipper a = ([a], [a])
+
+-- move focus forward, put previous root into breadcrumbs
+goForward :: ListZipper a -> ListZipper a
+goForward (x:xs, bs) = (xs, x:bs)
+
+-- move focus back, restore previous root from breadcrumbs
+goBack :: ListZipper a -> ListZipper a
+goBack (xs, b:bs) = (b:xs, bs)
+
+-- wrap goForward so it becomes a State
+goForwardM :: State (ListZipper a) [a]
+goForwardM = state stateTrans where
+    stateTrans z = (fst newZ, newZ) where
+        newZ = goForward z
+
+-- wrap goBack so it becomes a State
+goBackM :: State (ListZipper a) [a]
+goBackM = state stateTrans where
+    stateTrans z = (fst newZ, newZ) where
+        newZ = goBack z
+
+-- here I have tried to combine State with something like a Writer
+-- so that I kept an extra [String] and add logs to it manually
+
+-- nothing but write out current focus
+printLog :: Show a => State (ListZipper a, [String]) [a]
+printLog = state $ \(z, logs) -> (fst z, (z, ("print current focus: " ++ (show $ fst z)):logs))
+
+-- wrap goForward and record this move
+goForwardLog :: Show a => State (ListZipper a, [String]) [a]
+goForwardLog = state stateTrans where
+    stateTrans (z, logs) = (fst newZ, (newZ, newLog:logs)) where
+        newZ = goForward z
+        newLog = "go forward, current focus: " ++ (show $ fst newZ)
+
+-- wrap goBack and record this move
+goBackLog :: Show a => State (ListZipper a, [String]) [a]
+goBackLog = state stateTrans where
+    stateTrans (z, logs) = (fst newZ, (newZ, newLog:logs)) where
+        newZ = goBack z
+        newLog = "go back, current focus: " ++ (show $ fst newZ)
+
+-- return
+listZipper :: [a] -> ListZipper a
+listZipper xs = (xs, [])
+
+-- return
+stateZipper :: [a] -> (ListZipper a, [String])
+stateZipper xs = (listZipper xs, [])
+
+_performTestCase1 = do
+    goForwardM
+    goForwardM
+    goBackM
+
+performTestCase1 =
+    putStrLn $ show $ runState _performTestCase1 (listZipper [1..4])
+
+_performTestCase2 = do
+    printLog
+    goForwardLog
+    goForwardLog
+    goBackLog
+    printLog
+
+performTestCase2 = do
+    let (result2, (zipper2, log2)) = runState _performTestCase2 $ stateZipper [1..4]
+    putStrLn $ "Result: " ++ (show result2)
+    putStrLn $ "Zipper: " ++ (show zipper2)
+    putStrLn "Logs are: "
+    mapM_ putStrLn (reverse log2)
+

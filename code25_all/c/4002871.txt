@@ -1,0 +1,111 @@
+package SocketPolicy;
+
+# Listen 843
+# <VirtualHost _default_:843>
+#       PerlModule                   SocketPolicy
+#       PerlProcessConnectionHandler SocketPolicy
+# </VirtualHost>
+
+use strict;
+use warnings FATAL => 'all';
+use APR::Const(-compile => 'SO_NONBLOCK');
+use APR::Socket();
+use Apache2::ServerRec();
+use Apache2::Connection();
+use Apache2::Const(-compile => qw(OK DECLINED));
+
+use constant POLICY =>
+qq{<?xml version="1.0"?>
+<!DOCTYPE cross-domain-policy SYSTEM
+"http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">
+
+<cross-domain-policy>
+<allow-access-from domain="*" to-ports="8080"/>
+</cross-domain-policy>
+\0};
+
+sub handler {
+        my $conn   = shift;
+        my $socket = $conn->client_socket();
+        my $offset = 0;
+
+        # set the socket to the blocking mode
+        $socket->opt_set(APR::Const::SO_NONBLOCK => 0);
+
+        do {
+                my $nbytes = $socket->send(substr(POLICY, $offset), length(POLICY) - $offset);
+                # client connection closed or interrupted
+                return Apache2::Const::DECLINED unless $nbytes;
+                $offset += $nbytes;
+        } while ($offset < length(POLICY));
+
+        my $slog = $conn->base_server()->log();
+        $slog->warn('served socket policy to: ', $conn->remote_ip());
+        return Apache2::Const::OK;
+}
+
+1;
+
+/*
+LoadModule socket_policy_module modules/mod_socket_policy.so
+Listen 843
+<VirtualHost _default_:843>
+        SetHandler socket_policy
+</VirtualHost>
+*/
+
+#include <httpd.h>
+#include <http_protocol.h>
+#include <http_connection.h>
+#include <http_config.h>
+#include <http_log.h>
+#define CORE_PRIVATE
+#include <http_core.h>
+
+#define POLICY "<?xml version=\"1.0\"?>\n" \
+               "<!DOCTYPE cross-domain-policy SYSTEM\n" \
+               "\"http://www.adobe.com/xml/dtds/cross-domain-policy.dtd\">\n" \
+               "<cross-domain-policy>\n" \
+               "<allow-access-from domain=\"*\" to-ports=\"8080\"/>\n" \
+               "</cross-domain-policy>\0"
+
+static int socket_policy_handler(conn_rec *conn) {
+        apr_socket_t *socket = ap_get_module_config(conn->conn_config, &core_module);
+        apr_size_t len = strlen(POLICY);
+
+        apr_socket_send(socket, POLICY, &len);
+
+        ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, conn->base_server,
+                "served socket policy to %s", conn->remote_ip);
+
+        return OK;
+}
+
+static void register_hooks(apr_pool_t *pool) {
+        ap_hook_process_connection(socket_policy_handler, NULL, NULL, APR_HOOK_MIDDLE);
+}
+
+module AP_MODULE_DECLARE_DATA socket_policy_module = {
+        STANDARD20_MODULE_STUFF,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        register_hooks
+};
+
+static MP_INLINE
+apr_socket_t *mpxs_Apache2__Connection_client_socket(pTHX_ conn_rec *c,
+                                                    apr_socket_t *s)
+{
+    apr_socket_t *socket =
+        ap_get_module_config(c->conn_config, &core_module);
+
+    if (s) {
+        ap_set_module_config(c->conn_config, &core_module, s);
+    }
+
+    return socket;
+}
+

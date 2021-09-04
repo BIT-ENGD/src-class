@@ -1,0 +1,161 @@
+URL:  http://localhost/hostname/stackoverflow.com
+Response data:
+Host: stackoverflow.com
+Address: 69.59.196.211
+Address type: AF_INET
+
+Request 1:  http://192.168.1.3/hostname
+Response data:
+Hostname not found in request.
+
+Request 2:  http://192.168.1.3/hostname
+Response data:
+Hostname not found in request.
+Hostname not found in request.
+
+Request 3:  http://192.168.1.3/hostname
+Response data:
+Hostname not found in request.
+Hostname not found in request.
+Hostname not found in request.
+
+#include <sys/types.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <stdarg.h>
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#include "httpd.h"
+#include "http_log.h"
+#include "http_config.h"
+
+
+static void log_info(request_rec *r, const char *fmt, ...){
+    char log_msg[100];
+    memset(log_msg,100,0x00);
+    va_list args;
+    va_start(args,fmt);
+    vsprintf(log_msg,fmt,args);
+    va_end(args);
+    ap_log_error(APLOG_MARK,APLOG_INFO,APR_SUCCESS,r->server,log_msg,NULL);
+}
+static void log_err(request_rec *r, const char *fmt, ...){
+    char log_msg[100];
+    memset(log_msg,100,0x00);
+    va_list args;
+    va_start(args,fmt);
+    vsprintf(log_msg,fmt,args);
+    va_end(args);
+    ap_log_error(APLOG_MARK,APLOG_ERR,APR_SUCCESS,r->server,log_msg,NULL);
+}
+
+int count_chrinstr(const char *haystack, const char needle){
+    int n=0;
+    char *next;
+    while( (next=strchr(haystack,needle)) != NULL ){
+        haystack=next+1;
+        n++;
+    }
+
+    return n;
+}
+void parse_uri(char *uri, char *pieces[]){
+    int i=0;
+    char *next_tok=strtok(uri,"/");
+    while( next_tok != NULL ){
+        pieces[i]=next_tok;
+        i++;
+        next_tok=strtok(NULL,"/");
+    }
+}
+
+void lookup_hostname(request_rec *r, char *output){
+    int num_parts=count_chrinstr(r->uri,'/');
+    log_info(r,"Number of parts: %d",num_parts);
+    if(num_parts<2){
+        log_err(r,"Hostname not found in request, exiting.",NULL);
+        strcat(output,"Hostname not found in request.<br>\n");
+        return;
+    }
+
+    char *pieces[num_parts];
+    parse_uri(r->uri,pieces);
+    char *host_entered=pieces[1];
+
+    struct hostent *h=gethostbyname(host_entered);
+
+    //host
+    output += sprintf(output,"Host: %s<br>\n", h->h_name);
+
+    //aliases
+    int i=0;
+    while(h->h_aliases[i] != NULL){
+        output += sprintf(output,"Alias: %s<br>\n",h->h_aliases[i]);
+        i++;
+    }
+
+    //addresses
+    i=0;
+    while(h->h_addr_list[i] != NULL){
+        char *net_addr=inet_ntoa( *(struct in_addr*)(h->h_addr_list[i]));
+        output += sprintf(output,"Address: %s<br>\n",net_addr);
+        i++;
+    }
+    log_info(r,"Added addresses to output.",NULL);
+
+    //address type
+    if(h->h_addrtype != NULL){
+        switch(h->h_addrtype){
+            case 2:
+                strcat(output,"Address type: AF_INET<br>\n");
+                break;
+            case 10:
+                strcat(output,"Address type: AF_INET6<br>\n");
+                break;
+            default:
+                strcat(output,"Address type: Unknown<br>\n");
+                break;
+        }
+    }
+
+}
+
+static int hostname_handler(request_rec *r) {
+  if (!r->handler || strcasecmp(r->handler, "hostname") != 0) {
+    return DECLINED;
+  }
+
+  if (r->method_number != M_GET) {
+    return HTTP_METHOD_NOT_ALLOWED;
+  }
+
+  char result[10000];
+  memset(result,10000,0x00);
+
+  log_info(r,"Starting hostname lookup.",NULL);
+  lookup_hostname(r,result);
+  ap_set_content_type(r, "text/html");
+  ap_rputs(result, r);
+  ap_finalize_request_protocol(r);
+
+  return OK;
+}
+
+
+static void hostname_hooks(apr_pool_t *pool) {
+  ap_hook_handler(hostname_handler, NULL, NULL, APR_HOOK_MIDDLE);
+}
+
+module AP_MODULE_DECLARE_DATA hostname_module = {
+  STANDARD20_MODULE_STUFF,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  hostname_hooks
+};
+

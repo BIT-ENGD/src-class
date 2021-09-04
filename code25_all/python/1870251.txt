@@ -1,0 +1,60 @@
+from twisted.internet.protocol import Protocol, Factory, ClientCreator
+from twisted.internet import reactor, defer
+from collections import namedtuple
+
+BalanceServer = namedtuple('BalanceServer', 'host port')
+
+SERVER_LIST = [BalanceServer('127.0.0.1', 8000), BalanceServer('127.0.0.1', 8001)]
+
+def getServer(servers):
+    while True:
+        for server in servers:
+            yield server
+
+# this writes to one of balance servers and responds to client with callback 'clientWrite'
+class ServerWriter(Protocol):
+    def sendData(self, data):
+        self.transport.write(data)
+
+    def dataReceived(self, data):
+        self.clientWrite(data)
+
+    def connectionLost( self, reason ):
+        self.clientLoseConnection()
+
+# callback for reading data from client to send it to server and get response to client again    
+def transferData(serverWriter, clientWrite, clientLoseConnection, data):
+    if serverWriter:
+        serverWriter.clientWrite = clientWrite
+        serverWriter.clientLoseConnection = clientLoseConnection
+        serverWriter.sendData(data)
+
+def closeConnection(serverWriter):
+    if serverWriter: #1 this is null
+        #2 So connection is not closed and hangs there, till BalanceServer close it 
+        serverWriter.transport.loseConnection()
+
+# accepts clients
+class ReverseProxy(Protocol):
+    def connectionMade(self):
+        server = self.factory.getServer()
+        self.serverWriter = ClientCreator(reactor, ServerWriter)
+        self.client = self.serverWriter.connectTCP( server.host, server.port )
+
+    def dataReceived(self, data):
+        self.client.addCallback(transferData, self.transport.write, 
+                    self.transport.loseConnection, data )
+
+    def connectionLost(self, reason):
+        self.client.addCallback(closeConnection) #3 adding close doesn't work
+
+
+class ReverseProxyFactory(Factory):
+    protocol = ReverseProxy
+    def __init__(self, serverGenerator):
+        self.getServer = serverGenerator
+
+plainFactory = ReverseProxyFactory( getServer(SERVER_LIST).next )
+reactor.listenTCP( 7777, plainFactory )
+reactor.run()
+

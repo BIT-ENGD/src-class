@@ -1,0 +1,67 @@
+Iteratee
+BodyParser
+import play.api.mvc._
+import play.api.mvc.Results._
+import play.api.libs.iteratee.{Iteratee, Input}
+import play.api.libs.concurrent.Promise
+import play.api.libs.iteratee.Input.{El, EOF, Empty}
+
+01 object Upload extends Controller {
+02   def send = Action(BodyParser(rh => new SomeIteratee)) { request =>
+03     Ok("Done")
+04   }
+05 }
+06
+07 case class SomeIteratee(state: Symbol = 'Cont, input: Input[Array[Byte]] = Empty, received: Int = 0) extends Iteratee[Array[Byte], Either[Result, Int]] {
+08   println(state + " " + input + " " + received)
+09
+10   def fold[B](
+11     done: (Either[Result, Int], Input[Array[Byte]]) => Promise[B],
+12     cont: (Input[Array[Byte]] => Iteratee[Array[Byte], Either[Result, Int]]) => Promise[B],
+13     error: (String, Input[Array[Byte]]) => Promise[B]
+14   ): Promise[B] = state match {
+15     case 'Done => { println("Done"); done(Right(received), Input.Empty) }
+16     case 'Cont => cont(in => in match {
+17       case in: El[Array[Byte]] => copy(input = in, received = received + in.e.length)
+18       case Empty => copy(input = in)
+19       case EOF => copy(state = 'Done, input = in)
+20       case _ => copy(state = 'Error, input = in)
+21     })
+22     case _ => { println("Error"); error("Some error.", input) }
+23   }
+24 }
+
+Result
+Int
+17       case in: El[Array[Byte]] => copy(state = if(received + in.e.length > 10000) 'Error else 'Cont, input = in, received = received + in.e.length)
+
+'Cont Empty 0
+'Cont El([B@38ecece6) 8192
+'Error El([B@4ab50d3c) 16384
+Error
+Error
+Error
+Error
+Error
+Error
+Error
+Error
+Error
+Error
+Error
+
+error
+fold
+error
+15    case 'Done => { println("Done with " + input); done(if (input == EOF) Right(received) else Left(BadRequest), Input.Empty) }
+
+17       case in: El[Array[Byte]] => copy(state = if(received + in.e.length > 10000) 'Done else 'Cont, input = in, received = received + in.e.length)
+
+'Cont Empty 0
+'Cont El([B@16ce00a8) 8192
+'Done El([B@2e8d214a) 16384
+Done with El([B@2e8d214a)
+Done with El([B@2e8d214a)
+Done with El([B@2e8d214a)
+Done with El([B@2e8d214a)
+

@@ -1,0 +1,174 @@
+ctrl+c
+-- threadTester.lua
+local classic = require 'classic'
+local threads = require 'threads'
+threads.Threads.serialization('threads.sharedserialize')
+local tds = require 'tds'
+local threadTester = classic.class('threadTester')
+
+function threadTester:_init(atomic)
+    self.game = threads.Threads(1,
+    function ()
+        inner = atomic
+    end)
+    classic.strict(self)
+end
+
+function threadTester:play()
+    self.game:addjob(function ()
+        while true do
+            if inner:get() < 0 then break end
+        end
+    end)
+    -- do some stuff outside
+end
+
+return threadTester
+
+local threads = require 'threads'
+threads.Threads.serialization('threads.sharedserialize')
+local tds = require 'tds'
+local signal = require 'posix.signal'
+
+local ctrlpool = threads.Threads(1, function ()
+    local tds = require 'tds'
+end)
+
+local atomic = tds.AtomicCounter()
+atomic:set(1)
+nThreads = 4
+local ctrlPool = threads.Threads(1)
+ctrlPool:addjob(function ()
+    local signal = require 'posix.signal'
+    signal.signal(signal.SIGINT, function(signum)
+        print('\nSIGINT received')
+        print('Ex(c)iting')
+        atomic:set(-1)
+    end)
+end)
+
+ctrlPool:synchronize()
+
+local gamePool = threads.Threads(nThreads, function ()
+    threadTester = require 'threadTester'
+    player = threadTester(atomic)
+end)
+
+for i = 1, nThreads do
+    gamePool:addjob(function ()
+        print(string.format("begin in thread %d", __threadid))
+        local status, err = xpcall(player.play, debug.traceback, player)
+        if not status then
+            print(string.format('%s', err))
+            os.exit(128)
+        end
+    end)
+end
+
+gamePool:synchronize()
+gamePool:terminate()
+
+th test.lua
+ctrl+c
+test.lua
+local threads = require 'threads'
+threads.Threads.serialization('threads.sharedserialize')
+local tds = require 'tds'
+local signal = require 'posix.signal'
+
+-- local ctrlpool = threads.Threads(1, function ()
+--  local tds = require 'tds'
+-- end)
+
+local atomic = tds.AtomicCounter()
+atomic:set(1)
+nThreads = 4
+-- local ctrlPool = threads.Threads(1)
+-- ctrlPool:addjob(function ()
+    local signal = require 'posix.signal'
+    signal.signal(signal.SIGINT, function(signum)
+        print('\nSIGINT received')
+        print('Ex(c)iting')
+        atomic:set(-1)
+    end)
+-- end)
+
+-- ctrlPool:synchronize()
+
+local gamePool = threads.Threads(nThreads, function ()
+    threadTester = require 'threadTester'
+    player = threadTester(atomic)
+end)
+
+for i = 1, nThreads do
+    gamePool:addjob(function ()
+        print(string.format("begin in thread %d", __threadid))
+        local status, err = xpcall(player.play, debug.traceback, player)
+        if not status then
+            print(string.format('%s', err))
+            os.exit(128)
+        end
+    end)
+end
+
+gamePool:synchronize()
+gamePool:terminate()
+
+> th test.lua
+begin in thread 1
+begin in thread 2
+begin in thread 3
+begin in thread 4
+^C
+SIGINT received
+Ex(c)iting
+
+qlua
+>qlua test.lua
+begin in thread 1
+begin in thread 2
+begin in thread 3
+begin in thread 4
+^C^C^C^C^C^C^Z
+[3]  + 15370 suspended  qlua test.lua
+
+qlua
+threadTester.lua
+local classic = require 'classic'
+local threads = require 'threads'
+threads.Threads.serialization('threads.sharedserialize')
+local tds = require 'tds'
+local threadTester = classic.class('threadTester')
+
+function threadTester:_init(atomic)
+    self.game = threads.Threads(1,
+    function ()
+        inner = atomic
+    end)
+    self.atomic = atomic
+    classic.strict(self)
+end
+
+function threadTester:play()
+    self.game:addjob(function ()
+        os.execute("sleep ".. 10)
+    end)
+    -- do some stuff outside
+    while true do
+        if self.atomic:get() < 0 then break end
+    end
+end
+
+return threadTester
+
+test.lua
+th test.lua
+begin in thread 1
+begin in thread 2
+begin in thread 3
+begin in thread 4
+^C^C^C^C^C
+SIGINT received
+Ex(c)iting
+
+os.execute(something)

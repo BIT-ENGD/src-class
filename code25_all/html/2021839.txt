@@ -1,0 +1,111 @@
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.spans.SpanNearQuery;
+import org.apache.lucene.search.spans.SpanQuery;
+import org.apache.lucene.search.spans.SpanTermQuery;
+import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.util.Version;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.IOException;
+
+public class SpanNearQueryTest {
+
+    private RAMDirectory directory = null;
+
+    private static final String BAZ = "baz";
+    private static final String BAR = "bar";
+    private static final String FOO = "foo";
+    private static final String TERM_FIELD = "text";
+
+    @Before
+    public void given() throws IOException {
+        directory = new RAMDirectory();
+        IndexWriter writer = new IndexWriter(
+                directory,
+                new StandardAnalyzer(Version.LUCENE_29),
+                IndexWriter.MaxFieldLength.UNLIMITED);
+
+        Document doc = new Document();
+        doc.add(new Field(TERM_FIELD, FOO, Field.Store.NO, Field.Index.ANALYZED));
+        doc.add(new Field(TERM_FIELD, BAR, Field.Store.NO, Field.Index.ANALYZED));
+        doc.add(new Field(TERM_FIELD, BAZ, Field.Store.NO, Field.Index.ANALYZED));
+
+        writer.addDocument(doc);
+        writer.commit();
+        writer.optimize();
+        writer.close();
+    }
+
+    @After
+    public void cleanup() {
+        directory.close();
+    }
+
+    @Test
+    public void givenSingleMatch() throws IOException {
+
+        SpanNearQuery spanNearQuery = new SpanNearQuery(
+                new SpanQuery[] {
+                        new SpanTermQuery(new Term(TERM_FIELD, FOO))
+                }, Integer.MAX_VALUE, false);
+
+        TopDocs topDocs = new IndexSearcher(IndexReader.open(directory)).search(spanNearQuery, 100);
+
+        Assert.assertEquals("Should have made a match.", 1, topDocs.scoreDocs.length);
+    }
+
+    @Test
+    public void givenTwoMatches() throws IOException {
+
+        SpanNearQuery spanNearQuery = new SpanNearQuery(
+                new SpanQuery[] {
+                        new SpanTermQuery(new Term(TERM_FIELD, FOO)),
+                        new SpanTermQuery(new Term(TERM_FIELD, BAR))
+                }, Integer.MAX_VALUE, false);
+
+        TopDocs topDocs = new IndexSearcher(IndexReader.open(directory)).search(spanNearQuery, 100);
+
+        Assert.assertEquals("Should have made a match.", 1, topDocs.scoreDocs.length);
+    }
+
+    @Test
+    public void givenThreeMatches() throws IOException {
+
+        SpanNearQuery spanNearQuery = new SpanNearQuery(
+                new SpanQuery[] {
+                        new SpanTermQuery(new Term(TERM_FIELD, FOO)),
+                        new SpanTermQuery(new Term(TERM_FIELD, BAR)),
+                        new SpanTermQuery(new Term(TERM_FIELD, BAZ))
+                }, Integer.MAX_VALUE, false);
+
+        TopDocs topDocs = new IndexSearcher(IndexReader.open(directory)).search(spanNearQuery, 100);
+
+        Assert.assertEquals("Should have made a match.", 1, topDocs.scoreDocs.length);
+    }
+
+    @Test
+    public void givenSingleMatch_andExtraTerm() throws IOException {
+
+        SpanNearQuery spanNearQuery = new SpanNearQuery(
+                new SpanQuery[] {
+                        new SpanTermQuery(new Term(TERM_FIELD, BAZ)),
+                        new SpanTermQuery(new Term(TERM_FIELD, "EXTRA"))
+                },
+                Integer.MAX_VALUE, false);
+
+        TopDocs topDocs = new IndexSearcher(IndexReader.open(directory)).search(spanNearQuery, 100);
+
+        Assert.assertEquals("Should have made a match.", 1, topDocs.scoreDocs.length);
+    }
+}
+

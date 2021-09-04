@@ -1,0 +1,77 @@
+%APPDATA%\Microsoft\Windows\SendTo
+crc32_inline.pl %*
+
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Cwd;
+use English qw( -no_match_vars );
+use File::Basename;
+
+$OUTPUT_AUTOFLUSH = 1;
+
+my $crc32_cmd = 'crc32.bat';
+my $failure_report_basename = 'crc32_failures.txt';
+my %failures = ();
+
+print "\n";
+foreach my $arg (@ARGV) {
+
+  # if the file has a crc, check to see if it matches the calculated
+  # crc.
+  if (-f $arg and $arg =~ /\[([0-9a-f]{8})\]/i) {
+    my $crc = uc $1;
+    my $basename = basename($arg);
+    print "checking ${basename}... ";
+    my $calculated_crc = uc `${crc32_cmd} "${arg}"`;
+    chomp($calculated_crc);
+    if ($crc eq $calculated_crc) {
+      print "passed.\n";
+    }
+    else {
+      print "FAILED (calculated ${calculated_crc})\n";
+      my $dirname = dirname($arg);
+      $failures{$dirname}{$basename} = $calculated_crc;
+    }
+  }
+}
+
+print "\nReport Summary:\n";
+if (scalar keys %failures == 0) {
+  print "  All files OK\n";
+}
+else {
+  print sprintf("  %d / %d files failed crc32 validation.\n" .
+                "  See %s for details.\n",
+                scalar keys %failures,
+                scalar @ARGV,
+                $failure_report_basename);
+
+  my $failure_report_fullname = $failure_report_basename;
+  if (defined -f $ARGV[0]) {
+    $failure_report_fullname
+      = dirname($ARGV[0]) . '/' . $failure_report_basename;
+  }
+
+  $OUTPUT_AUTOFLUSH = 0;
+  open my $fh, '>' . $failure_report_fullname or die $!;
+  foreach my $dirname (sort keys %failures) {
+    print {$fh} $dirname . "\n";
+    foreach my $basename (sort keys %{$failures{$dirname}}) {
+      print {$fh} sprintf("  crc32(%s) basename(%s)\n",
+                          $failures{$dirname}{$basename},
+                          $basename);
+    }
+  }
+  close $fh;
+  $OUTPUT_AUTOFLUSH = 1;
+}
+
+print sprintf("\n%s done! (%d seconds elapsed)\n" .
+              "Press enter to exit.\n",
+              basename($0),
+              time() - $BASETIME);
+<STDIN>;
+

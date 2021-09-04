@@ -1,0 +1,241 @@
+use strict;
+use warnings;
+use IO::Socket::INET;
+use IO::Select;
+use POSIX ":sys_wait_h";
+use IPC::Open2;
+use 5.010;
+use Config;
+BEGIN
+{
+    if(!$Config{useithreads})
+    {
+        die "Your perl does not compiled with threading support.";    
+    }
+}
+use threads;
+use threads::shared;
+use constant
+{
+    SERVER_PORT=>5000,
+    #Remote request packet fields
+    PACKET_REQTYPE=>0,
+    PACKET_FILENAM=>1,
+    PACKET_VOLMLVL=>2,
+    PACKET_ENDPOSI=>3,
+    PACKET_SEEKPOS=>4,
+    #our request typs
+    PLAY_REQUEST=>1,
+    STOP_REQUEST=>2,
+    INFO_REQUEST=>3,
+    VOCH_REQUEST=>4,
+    PAUS_REQUEST=>5,
+    PLPA_REQUEST=>6,
+    SEEK_REQUEST=>7,
+    #Play states
+    STATE_PAUS=>0,
+    STATE_PLAY=>1,
+    STATE_STOP=>2,
+};
+
+#The following line must be added because of a bad behavior in the perl thread library that causes a SIGPIPE to be generated under heavy usage of the threads.
+$SIG{PIPE} = 'IGNORE';
+#This variable holds the server socket object
+my $server_socket;
+#This array is used to hold objects of our all threads
+my @thread_objects;
+#create the server socket
+$server_socket=IO::Socket::INET->new(LocalPort=>SERVER_PORT,Listen=>20,Proto=>'tcp',Reuse=>1) or
+die "Creating socket error ($@)";
+#Now try to accept remote connections
+print "Server socket created successfully now try to accept remote connections on port: ".SERVER_PORT."\n";
+while(my $client_connection=$server_socket->accept())
+{
+    push @thread_objects,threads->create(\&player_thread,$client_connection);
+    $thread_objects[$#thread_objects]->detach();
+}
+
+
+
+#This subroutine is used to play something using tcp-based commands
+sub player_thread
+{
+    my $client_socket=shift;
+    #create a new select object
+    my $selector=IO::Select->new($client_socket);
+    #this variabe is used to pars our request
+    my @remote_request;
+    #getting th thread id of the current thread
+    my $tid=threads->self()->tid;
+    #This variable is used to hold the pid of mplayer child
+    my $mp_pid=-1;
+    #Mplayer stdin and stdout file descriptors
+    my ($MP_STDIN,$MP_STDOUT);
+    #This variable is used to check if we are playing something now or not
+    my $is_playing=STATE_STOP;
+
+
+    print "Client thread $tid created.\n";
+    while(1)
+    {
+        #check to see if we can read anything from our handler
+        #print "Before select\n";
+        #my @ready=$selector->can_read();
+        #print "After select: @ready\n";
+        #now the data is ready for reading so we read it here
+        my $data=<$client_socket>;
+        #This means if the connection is closed by the remote end
+        if(!defined($data))
+        {
+            print "Remote connection has been closed in thread $tid mplayer id is: $mp_pid and state is: $is_playing.\n";
+            #if we have an mplayer child when remote connection is closed we must wait for it
+            #so that is work is done
+            if($mp_pid!=-1 and $is_playing ==STATE_PLAY)
+            {
+                waitpid $mp_pid,0;
+                $is_playing=STATE_STOP;
+            }
+            elsif($is_playing==STATE_PAUS and $mp_pid!=-1)
+            {
+                print "thread $tid is in the paused state, we must kill mplayer.\n";
+                print $MP_STDIN "quit\n";
+                waitpid $mp_pid,0;
+                $is_playing=STATE_STOP;
+            }
+            last;
+        }#if
+
+        #FIXME:: Here we must validate our argument
+        #Now we try to execute the command
+        chomp($data);
+        @remote_request=split ",",$data;
+        print "@remote_request\n";
+
+        #Trying to reap the death child and change the state of the thread
+        my $dead_child=-1;
+        $dead_child=&reaper($mp_pid);
+        if($dead_child)
+        {
+            $is_playing=STATE_STOP;
+            $mp_pid=-1;
+        }
+
+        given($remote_request[PACKET_REQTYPE])
+        {
+            when($_==PLAY_REQUEST)
+            {
+                print "Play request\n";
+                if($is_playing==STATE_STOP)
+                {
+                    eval{$mp_pid=open2($MP_STDOUT,$MP_STDIN,"mplayer -slave -really-quiet -softvol -volume ".$remote_request[PACKET_VOLMLVL]." -endpos ".$remote_request[PACKET_ENDPOSI]." ./".$remote_request[PACKET_FILENAM]);};
+                    print "Some error occurred in open2 system call: $@\n" if $@;
+                    $is_playing=STATE_PLAY;
+                    print "Mplayer pid: $mp_pid.\n";
+                }
+            }
+            when($_==STOP_REQUEST)
+            {
+                print "Stop request\n";
+                if($is_playing != STATE_STOP)
+                {
+                    print $MP_STDIN "pausing_keep stop\n";
+
+                    #FIXME:: Maybe we should use WNOHANG here
+                    my $id=waitpid $mp_pid,0;
+                    print "Mplayer($id) stopped.\n";
+                    $is_playing=STATE_STOP;
+                    $mp_pid=-1;
+                }
+            }
+            when($_==PAUS_REQUEST)
+            {
+                print "pause request\n";
+                if($is_playing !=STATE_STOP)
+                {
+                    print $MP_STDIN "pausing_keep pause\n";
+                    $is_playing=STATE_PAUS;
+                }
+            }
+            when($_==VOCH_REQUEST)
+            {
+                print "volume change request\n";
+                if($is_playing !=STATE_STOP)
+                {
+                    print $MP_STDIN "pausing_keep volume ".$remote_request[PACKET_VOLMLVL]." 1\n";
+                }
+            }
+            when($_==INFO_REQUEST)
+            {
+                my $id;
+                $id=&reaper($mp_pid);
+                if($id > 0)
+                {
+                    print "Mplayer($id) stopped.\n";
+                    $is_playing=STATE_STOP;
+                    $mp_pid=-1;
+                }
+
+                given($is_playing)
+                {
+                    when($_==STATE_STOP)
+                    {
+                        print $client_socket "Stopped\n";
+                    }
+                    when($_==STATE_PAUS)
+                    {
+                        print $client_socket "Paused\n";
+                    }
+                    when($_==STATE_PLAY)
+                    {
+                        print $client_socket "Playing\n";
+                    }
+                }
+            }
+            when ($_==PLPA_REQUEST)
+            {
+                print "play paused request\n";
+                if($is_playing==STATE_STOP)
+                {
+                    eval{$mp_pid=open2($MP_STDOUT,$MP_STDIN,"mplayer -slave -really-quiet -softvol -volume ".$remote_request[PACKET_VOLMLVL]." -endpos ".$remote_request[PACKET_ENDPOSI]." ./".$remote_request[PACKET_FILENAM]);};
+                    print "Some error occurred in open2 system call: $@\n" if $@;
+                    print $MP_STDIN "pausing_keep pause\n";
+                    $is_playing=STATE_PAUS;
+                }
+            }
+            when ($_==SEEK_REQUEST)
+            {
+                print "Seek request\n";
+                if($is_playing != STATE_STOP)
+                {
+                    my $seek_pos=abs $remote_request[PACKET_SEEKPOS];
+                    print $MP_STDIN "seek $seek_pos 2\n";
+                    $is_playing=STATE_PLAY;
+                }
+            }
+            default
+            {
+                warn "Invalid request($_)!!!";
+                next;
+            }
+        }#Given
+
+    }#while
+    $client_socket->close();
+    print "Thread $tid is exiting now, the child mplayer pid is: $mp_pid and state is: $is_playing.\n";
+}
+#The following subroutine takes a pid and if that pid is grater than 0 it tries to reap it
+#if it is successful returns pid of the reaped process else 0
+sub reaper
+{
+    my $pid=shift;
+    if($pid > 0)
+    {
+        my $id=waitpid($pid,WNOHANG);
+        if($id > 0)
+        {
+            return $id;               
+        }
+    }
+    return 0;
+}
+

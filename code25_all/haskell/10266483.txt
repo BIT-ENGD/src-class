@@ -1,0 +1,53 @@
+happstack-clientsession
+ClientSessionT
+MonadReader
+MonadError
+{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, DeriveDataTypeable, EmptyDataDecls, TemplateHaskell #-}
+module Server where
+
+import Control.Monad
+import Control.Monad.Error
+import Control.Monad.Reader
+import Control.Monad.Trans
+import Data.Data (Data, Typeable)
+import Data.SafeCopy (base, deriveSafeCopy)
+import Database.MongoDB as M
+import Happstack.Server
+import Happstack.Server.Error
+import Happstack.Server.ClientSession
+import System.IO.Pool
+import System.IO.Error
+import Web.ClientSession (getDefaultKey)
+
+type MongoPool e = Pool e Pipe
+
+data PonySession = PonySession -- TODO: Fill in User type when available
+    deriving (Ord, Read,Show, Eq, Typeable, Data)
+$(deriveSafeCopy 0 'base ''PonySession)
+
+instance ClientSession PonySession where
+    empty = PonySession
+
+newtype PonyServerPartT e m a = PonyServerPart (ClientSessionT PonySession (ReaderT (MongoPool IOError) (ServerPartT (ErrorT e m))) a)
+    deriving (Monad, MonadIO, MonadReader (MongoPool e), MonadError e, ServerMonad, MonadPlus)
+
+type PonyServerPart = PonyServerPartT IOError IO
+
+runServerT s = mapServerPartT' (spUnwrapErrorT errorHandler) $ do
+    key <- liftIO getDefaultKey
+    let sessConf = (mkSessionConf key) { sessionCookieLife = MaxAge $ 60 * 60 * 24 * 7 }
+    pool <- liftIO mongoPool
+    runReaderT (runClientSessionT s sessConf) pool
+    where errorHandler = simpleErrorHandler . show
+
+mongoPool :: IO (MongoPool IOError)
+mongoPool = newPool fac 10
+    where fac = Factory {
+            newResource = connect $ M.host "127.0.0.1",
+            killResource = close,
+            isExpired = isClosed
+        }
+
+MonadError
+MonadReader
+deriving

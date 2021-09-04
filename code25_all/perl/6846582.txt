@@ -1,0 +1,75 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Spreadsheet::ParseExcel;
+use WordNet::Similarity::lesk;
+use WordNet::QueryData;
+
+my $wn = WordNet::QueryData->new();
+my $lesk = WordNet::Similarity::lesk->new($wn);
+my $parser = Spreadsheet::ParseExcel->new();
+my $workbook = $parser->parse ( 'input.xls' );
+
+if ( !defined $workbook ) {
+   die $parser->error(), ".\n";
+}
+
+WORKSHEET:
+for my $worksheet ( $workbook->worksheets() ) {
+
+    my $sheetname = $worksheet->get_name();
+    my ( $row_min, $row_max ) = $worksheet->row_range();
+    my ( $col_min, $col_max ) = $worksheet->col_range();
+    my $target_col;
+    my $response_col;
+
+# Skip worksheet if it doesn't contain data
+    if ( $row_min > $row_max ) {
+       warn "\tWorksheet $sheetname doesn't contain data. \n";
+       next WORKSHEET;
+    }
+
+# Check for column headers
+    COLUMN:
+    for my $col ( $col_min .. $col_max ) {
+
+        my $cell = $worksheet->get_cell( $row_min, $col );
+        next COLUMN unless $cell;
+
+        $target_col   = $col if $cell->value() eq 'Target';
+        $response_col = $col if $cell->value() eq 'Response';
+    }
+
+    if ( defined $target_col && defined $response_col ) {
+
+        ROW:
+        for my $row ( $row_min + 1 .. $row_max ) {
+            my $target_cell   = $worksheet->get_cell( $row, $target_col);
+            my $response_cell = $worksheet->get_cell( $row, $response_col);
+            if ( defined $target_cell && defined $response_cell ) {
+                my $target   = $target_cell->value();
+                my $response = $response_cell->value();
+
+                my $value    = $lesk->getRelatedness( $target, $response );
+
+                print "Worksheet   = $sheetname\n";
+                print "Row         = $row\n";
+                print "Target      = $target\n";
+                print "Response    = $response\n";
+                print "Relatedness = $value\n";                
+
+            }
+            else {
+
+                warn "\tWroksheet $sheetname, Row = $row doesn't contain target and response data.\n";
+                next ROW;
+            }
+        }    
+    }
+    else {
+
+        warn "\tWorksheet $sheetname: Didn't find Target and Response headings.\n";
+        next WORKSHEET;
+    }  
+}
+

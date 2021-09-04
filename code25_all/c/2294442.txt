@@ -1,0 +1,141 @@
+//Necessary Includes For Device Drivers.
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/fs.h>
+#include <linux/errno.h>
+#include <linux/proc_fs.h>
+#include <asm/uaccess.h>
+#include <linux/timer.h>
+#include <linux/ioctl.h>
+
+#define DEVICE_NAME "mytimer"
+#define DEVICE_FILE_NAME "mytimer"
+#define MAJOR_NUM 61
+#define MINOR_NUM 0
+#define SUCCESS 0
+#define IOCTL_MAKE_TIMER _IOWR(MAJOR_NUM, 0, int)
+#define IOCTL_SET_TIMER _IOWR(MAJOR_NUM, 1, int)
+#define IOCTL_GET_TIMER _IOWR(MAJOR_NUM, 2, int)
+
+
+//Module License
+MODULE_LICENSE("Dual BSD/GPL");
+
+//Initialize timer structure.
+static struct timer_list my_timer;
+
+//Forward Declarations for File Operation Functions and Other Functions.
+static int mytimer_open(struct inode *inode, struct file *file);
+static int mytimer_release(struct inode *inode, struct file *file);
+int mytimer_ioctl(struct inode *inode, struct file *file, unsigned int ioctl_num, unsigned long args);
+void TimerExpire(char* data);
+
+//Syscall Operations for the module.
+struct file_operations FileOps = 
+{
+    .owner = THIS_MODULE,
+    .open = mytimer_open,
+    .release = mytimer_release,
+    .ioctl = mytimer_ioctl
+};
+
+//Syscall function for opening the module.
+static int mytimer_open(struct inode *inode, struct file *file)
+{
+    try_module_get(THIS_MODULE);
+
+    return SUCCESS;
+}
+
+//Syscall function for releasing the module.
+static int mytimer_release(struct inode *inode, struct file *file)
+{
+    module_put(THIS_MODULE);
+
+    return SUCCESS;
+}
+
+//Syscall function for controlling the module through IOCTLs.
+int mytimer_ioctl(struct inode *inode, struct file *file, unsigned int fcn, unsigned long args)
+{
+    //Copies the function parameters from userspace to kernel space in order to use them in the kernel module.
+    char* user_arg = args;
+    char kern_arg[strlen_user(user_arg)];
+    copy_from_user(kern_arg, user_arg, strlen_user(user_arg));
+    char* final_arg = kern_arg;
+
+    //If there is a timer, and the command is to make a new one, the old timer will be removed so a new one can be setup.
+    if (timer_pending(&my_timer) && fcn == IOCTL_MAKE_TIMER)
+{
+    del_timer_sync(&my_timer);
+    printk("Timer already exists. Deleting old timer and setting new timer.\n");
+}
+
+//Switch function that serves the function that is called.
+//Note that the make and set timer functions are separate. This is because only 1 arg is passed via ioctl at a time, so I had to make two different ioctl calls.
+switch (fcn)
+{
+    //Make a new timer.
+    case IOCTL_MAKE_TIMER:
+        setup_timer(&my_timer, TimerExpire, final_arg);
+        printk("Made timer with message: %s\n", final_arg);
+        break;
+
+    //Set the timer made above.
+    case IOCTL_SET_TIMER:           
+        mod_timer(&my_timer, jiffies + msecs_to_jiffies(args * 1000));
+        printk("Armed timer for %d seconds.\n", args);
+        break;
+
+    //Print the current timer, if any.
+    case IOCTL_GET_TIMER:
+        if (!timer_pending(&my_timer))
+        {
+            printk("No timer currently set.\n");
+        }           
+        else
+        {
+            printk("Time left in timer: %u seconds\n", jiffies_to_msecs(my_timer.expires - jiffies)/1000);
+            printk("Message in timer is: %s\n", my_timer.data);
+        }
+        break;
+}
+
+return SUCCESS;
+}
+
+
+//Function to perform when timer expires.
+void TimerExpire(char* data)
+{
+    printk("%s\n", data);
+}
+
+//Module Init and Exit Functions.
+int init_module(void)
+{
+printk("Loading MyTimer Kernel Module...\n");
+    //Register the device with the system to obtain the major number and register the file operations for syscall functionality.
+int initResult = register_chrdev(MAJOR_NUM, "mytimer", &FileOps);
+
+    //If we couldn't register the device, print the error.
+    if (initResult < 0)
+    {
+    printk("Cannot obtain major number %d\n", MAJOR_NUM);
+
+    return initResult;
+    }
+
+    printk("Please create device file using:\n\tmknod /dev/mytimer c 61 0\n");
+
+    return SUCCESS;
+}
+void cleanup_module(void)
+{
+    //Unregister the device with the system to free the major number.
+    printk("Unloading MyTimer Kernel Module...\n");
+    unregister_chrdev(MAJOR_NUM, "mytimer");
+    printk("MyTimer Kernel Module Unloaded.\n");
+}
+

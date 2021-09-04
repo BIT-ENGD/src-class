@@ -1,0 +1,43 @@
+compileText :: SourceView -> IO ()
+compileText tview = do
+
+txtBuff <- textViewGetBuffer tview
+startIt <- textBufferGetStartIter txtBuff
+endIt <- textBufferGetEndIter txtBuff
+compTime <- getClockTime
+srcString <- textBufferGetText txtBuff startIt endIt False
+
+
+defaultErrorHandler defaultLogAction $ do
+  func <- runGhc (Just libdir) $ do
+    dflags <- getSessionDynFlags
+    setSessionDynFlags dflags
+    addTarget $ haskellFileFromText srcString compTime
+    r <- load LoadAllTargets
+    case r of
+      Failed -> error "Compilation failed"
+      Succeeded -> do
+        m <- findModule (mkModuleName "Test") Nothing
+        setContext [IIModule m]
+        value <- compileExpr ("Test.print")
+        do let value' = (unsafeCoerce value) :: String -> IO ()
+           return value'
+  func "Hello"
+  return ()
+
+haskellFileFromText :: String -> ClockTime -> GHC.Target
+haskellFileFromText codeStr cTime = GHC.Target (TargetModule (mkModuleName "Test")) False (Just ((stringToStringBuffer codeStr), cTime))
+
+module Test (Test.print) where
+
+print :: String -> IO ()
+print x = putStrLn x 
+
+textEdit: panic! (the 'impossible' happened)
+  (GHC version 7.4.1 for x86_64-unknown-linux):
+    Could not find module `Test'
+Use -v to see a list of the files searched for.
+
+
+Please report this as a GHC bug:  http://www.haskell.org/ghc/reportabug
+

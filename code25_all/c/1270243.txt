@@ -1,0 +1,105 @@
+/** scanfill algorithm **/
+/* the stack */
+#define stackSize 16777218
+int stack[stackSize];
+int stackPointer;
+
+static bool
+pop(int * x, int * y, int h) 
+{ 
+    if(stackPointer > 0) 
+    { 
+        int p = stack[stackPointer]; 
+        *x = p / h; 
+        *y = p % h; 
+        stackPointer--; 
+        return true; 
+    }     
+    else 
+    { 
+        return false;
+    }    
+}    
+
+static bool
+push(int x, int y, int h) 
+{ 
+    if(stackPointer < stackSize - 1) 
+    { 
+        stackPointer++; 
+        stack[stackPointer] = h * x + y; 
+        return true;
+    }     
+    else 
+    { 
+        return false;
+    }    
+}     
+
+static void
+emptyStack() 
+{ 
+    int x, y; 
+    while(pop(&x, &y, 0)); 
+}
+
+void
+scan_fill_do_action(int x, int y, texture_info * tex, VALUE hash_arg,
+                sync sync_mode, bool primary, action_struct * payload)
+{
+    action_struct cur;
+    rgba old_color;
+    int y1;
+    bool spanLeft, spanRight;
+
+    if(!bound_by_rect(x, y, 0, 0, tex->width - 1, tex->height - 1)) return;
+
+    draw_prologue(&cur, tex, 0, 0, 1024, 1024, &hash_arg, sync_mode, primary, &payload);
+
+    old_color = get_pixel_color(tex, x, y);
+
+    if(cmp_color(old_color, cur.color)) return;
+
+    emptyStack();
+
+    if(!push(x, y, tex->width)) return;
+
+    while(pop(&x, &y, tex->width))
+    {    
+        y1 = y;
+        while(y1 >= 0 && cmp_color(old_color, get_pixel_color(tex, x, y1))) y1--;
+        y1++;
+        spanLeft = spanRight = false;
+        while(y1 < tex->height  && cmp_color(old_color, get_pixel_color(tex, x, y1)) )
+            {
+                set_pixel_color_with_style(payload, tex, x, y1);
+
+                if(!spanLeft && x > 0 && cmp_color(old_color, get_pixel_color(tex, x - 1, y1))) 
+                    {
+                        if(!push(x - 1, y1, tex->width)) return;
+                        spanLeft = true;
+                    }
+                else if(spanLeft && x > 0 && !cmp_color(old_color, get_pixel_color(tex, x - 1, y1)))
+                    {
+                        spanLeft = false;
+                    }
+
+
+                if(!spanRight && x < tex->width && cmp_color(old_color,
+                                                                 get_pixel_color(tex, x + 1, y1))) 
+                    {
+                        if(!push(x + 1, y1, tex->width)) return;
+                        spanRight = true;
+                    }
+
+                else if(spanRight && x < tex->width && !cmp_color(old_color,
+                                                                      get_pixel_color(tex, x + 1, y1)))
+                    {
+                        spanRight = false;
+                    } 
+                y1++;
+            }
+    }
+   draw_epilogue(&cur, tex, primary);
+}
+

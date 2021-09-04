@@ -1,0 +1,251 @@
+Public Class StatePrintHandler
+
+    Private WithEvents _RetryForm As frmRetryReject
+
+    Private Delegate Sub delShowRetryDialog()
+    Private Delegate Sub delResetEnable()
+
+    Private Sub InvokeResetEnable()
+        Dim del As delResetEnable
+        del = New delResetEnable(AddressOf ResetEnable)
+        del.Invoke()
+    End Sub
+
+    Private Sub InvokeRetryDialogue()
+        Dim del As delShowRetryDialog
+        del = New delShowRetryDialog(AddressOf ShowRetryDialog)
+        del.Invoke()
+    End Sub
+
+    Private Sub ShowRetryDialog()
+        _RetryForm = New frmRetryReject
+        _RetryForm.Prep()
+        _RetryForm.ShowDialog()
+        If (_RetryForm.DialogResult = Windows.Forms.DialogResult.OK) Then
+            Me._RetryForm.Visible = False
+        End If
+    End Sub
+
+
+Private Sub ResetEnable()
+    If (Not IsNothing(_RetryForm)) Then
+        _RetryForm.ResetEnable()
+    Else
+        AuditTrail("Retry form not active, no action", True)
+    End If
+End Sub
+
+
+'Event handler for status change coming in on a different thread
+    Private Sub _Fault_StateChanged(ByVal sender As Object, ByVal e As Drivers.Common.DigitalSignalChangedEventArgs) Handles _fault.StateChanged
+        If (e.NewState) Then
+                AuditTrail("Labeller has faulted out during cycling", True)
+        Else
+                InvokeResetEnable()
+        End If
+    End Sub
+End Class
+
+Public Class frmRetryReject
+    Private Delegate Sub delEnable()
+    Public Event Complete()
+    Public Sub Prep()
+        Me.OK_Button.Enabled = False
+    End Sub
+    Private Sub OK_Button_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles OK_Button.Click
+        Me.DialogResult = System.Windows.Forms.DialogResult.OK
+        Me.Close()
+    End Sub
+    Public Sub ResetEnable()
+        If (IsHandleCreated) Then
+            Dim params() As Object = {}
+            Me.Invoke(New delEnable(AddressOf InvokeEnable), params)
+        End If
+    End Sub
+    Private Sub InvokeEnable()
+        Me.OK_Button.Enabled = True
+    End Sub
+End Class
+
+Imports System.IO
+Imports ACS.Interfaces
+Imports ACS.Pallet
+
+Public Class StateCimPAKPrintHandler
+    Inherits StateBase
+    Private WithEvents _ioManager As ACS.Components.DigitalIOManager
+    Private _config As StateCimPAKPrintHandlerBootstrap
+    Private CONST_OutcomeOK As String = "OK"
+    Private CONST_OutcomeRetry As String = "Retry"
+    Private CONST_OutcomeException As String = "Exception"
+
+    Private WithEvents _busy As ACS.Drivers.Common.InputSignal
+    Private WithEvents _fault As ACS.Drivers.Common.InputSignal
+    Private WithEvents _print As ACS.Drivers.Common.OutputSignal
+    Private WithEvents _palletRelease As ACS.Drivers.Common.OutputSignal
+
+    Private _labellingInProgress As Boolean
+    Private _faulted As Boolean
+    Private _retryScreenInvoked As Boolean
+    Private WithEvents _timeout As System.Timers.Timer
+    Private WithEvents _faultTimer As System.Timers.Timer
+
+    Private WithEvents _RetryForm As frmRetryReject
+
+    Private Delegate Sub delShowRetryDialog()
+    Private Delegate Sub delResetEnable()
+
+    Private Sub InvokeResetEnable()
+        Dim del As delResetEnable
+        del = New delResetEnable(AddressOf ResetEnable)
+        del.Invoke()
+    End Sub
+
+    Private Sub InvokeRetryDialogue()
+        Dim del As delShowRetryDialog
+        del = New delShowRetryDialog(AddressOf ShowRetryDialog)
+        del.Invoke()
+    End Sub
+
+    Private Sub ShowRetryDialog()
+        _timeout.Stop()
+        _retryScreenInvoked = True
+        _RetryForm = New frmRetryReject
+        _RetryForm.Prep()
+        AuditTrail("Displaying Retry screen", True)
+        _RetryForm.ShowDialog()
+        If (_RetryForm.DialogResult = Windows.Forms.DialogResult.OK) Then
+            AuditTrail("User clicked RETRY LINE on the RETRY dialogue", True)
+            _retryScreenInvoked = False
+            Me._RetryForm.Visible = False
+            Me.SetOutcome(CONST_OutcomeRetry)
+        End If
+    End Sub
+
+    Private Sub ResetEnable()
+        If (Not IsNothing(_RetryForm)) Then
+            _RetryForm.ResetEnable()
+        Else
+            AuditTrail("Retry form not active, no action", True)
+        End If
+    End Sub
+
+    Public Sub New(ByVal Sequencer As ISequencer, ByVal ParentPlt As ACS.Interfaces.IPallet, ByVal Name As String)
+        MyBase.New(Sequencer, ParentPlt, Name)
+        _timeout = New System.Timers.Timer
+        _faultTimer = New System.Timers.Timer
+        _config = New StateCimPAKPrintHandlerBootstrap(Me._myIniFileName, Name)
+        _timeout.Interval = _config.CycleTimeoutMS
+        _faultTimer.Interval = 750
+        _retryScreenInvoked = False
+        _RetryForm = New frmRetryReject
+        Me._RetryForm.Visible = False
+        _ioManager = ACS.Components.DigitalIOManager.GetInstance
+        _busy = _ioManager.GetInput("Busy")
+        _fault = _ioManager.GetInput("CimPAKFault")
+        _print = _ioManager.GetOutput("Print")
+        _palletRelease = _ioManager.GetOutput("PalletRelease")
+    End Sub
+    Public Overrides Sub Kill()
+        _ioManager = Nothing
+        _RetryForm = Nothing
+        _busy = Nothing
+        _fault = Nothing
+        _print = Nothing
+        _timeout = Nothing
+        _faultTimer = Nothing
+        _pallet = Nothing
+    End Sub
+    Public Overrides Sub Execute()
+        AuditTrail("Pulsing Print Signal", True)
+        _print.PulseOutput(3000)
+        _labellingInProgress = True
+        _timeout.Start()
+    End Sub
+    Private Sub _busy_StateChanged(ByVal sender As Object, ByVal e As Drivers.Common.DigitalSignalChangedEventArgs) Handles _busy.StateChanged
+        _timeout.Stop()
+        AuditTrail("Busy signal changed to : " & e.NewState, True)
+        If (e.NewState) Then
+            _faulted = False
+            AuditTrail("CimPAK = Busy High", True)
+            _labellingInProgress = True
+        Else
+            AuditTrail("CimPAK = Busy Low", True)
+            AuditTrail("Wait 750 milliseconds for any faults", True)
+            _faultTimer.Start()
+        End If
+    End Sub
+    Private Sub _Fault_StateChanged(ByVal sender As Object, ByVal e As Drivers.Common.DigitalSignalChangedEventArgs) Handles _fault.StateChanged
+        AuditTrail("Fault signal changed to : " & e.NewState, True)
+        If (e.NewState) Then
+            If (_labellingInProgress = True) Then
+                AuditTrail("Labeller has faulted out during cycling", True)
+                _faulted = True
+                If (Not _retryScreenInvoked) Then
+                    InvokeRetryDialogue()
+                End If
+            Else
+                AuditTrail("Labeller has faulted out between cycles, no action can be taken", True)
+            End If
+        Else
+            If (_retryScreenInvoked) Then
+                AuditTrail("Enable button on Retry screen", True)
+                InvokeResetEnable()
+            End If
+            _faulted = False
+        End If
+    End Sub
+    Private Sub _faultTimer_Elapsed(ByVal sender As Object, ByVal e As System.Timers.ElapsedEventArgs) Handles _faultTimer.Elapsed
+        _faultTimer.Stop()
+        If (_faulted) Then
+            AuditTrail("System has faulted", True)
+        Else
+            AuditTrail("No fault occured, assume pallet is OK to release", True)
+            AuditTrail("CimPAK cycle complete", True)
+            _labellingInProgress = False
+            _palletRelease.PulseOutput(3000)
+            Me.SetOutcome(CONST_OutcomeOK)
+        End If
+    End Sub
+    Private Sub _timeout_Elapsed(ByVal sender As Object, ByVal e As System.Timers.ElapsedEventArgs) Handles _timeout.Elapsed
+        _timeout.Stop()
+        AuditTrail("Labeller print cycle timed out", True)
+        If (Not _retryScreenInvoked) Then
+            _retryScreenInvoked = True
+            InvokeRetryDialogue()
+            InvokeResetEnable()
+        End If
+    End Sub
+
+
+
+End Class
+
+#Region "Bootstrap"
+Public Class StateCimPAKPrintHandlerBootstrap
+    Private Const CONST_CycleTimeoutMS As String = "CycleTimeoutMS"
+    Private _CycleTimeoutMS As Long
+#Region "Properties"
+    Public ReadOnly Property CycleTimeoutMS() As Long
+        Get
+            Return _CycleTimeoutMS
+        End Get
+    End Property
+#End Region
+    Public Sub New(ByVal IniFile As String, ByVal Name As String)
+        Try
+            Dim _cfgFile As String = Environ("ACSVAR") & "\" & IniFile
+            ' Check to see if the CFG file exits
+            If File.Exists(_cfgFile) = False Then
+                Throw New Exception("Configuration file does not exist: " & _cfgFile)
+            Else
+                'Get values
+                _CycleTimeoutMS = ACS.Utility.Configuration.GetLong(_cfgFile, Name, CONST_CycleTimeoutMS)
+            End If
+        Catch ex As Exception
+            Throw
+        End Try
+    End Sub
+End Class
+#End Region
+

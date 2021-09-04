@@ -1,0 +1,40 @@
+typedef struct {
+      int someInt;
+      void *someInternalData;
+   } opaque_t;
+
+int bar (opaque_t *aPtr, int anArg);
+
+{-# LANGUAGE CPP, ForeignFunctionInterface #-}
+module MyFFI where
+import Foreign
+import Foreign.Ptr
+import Foreign.ForeignPtr
+import Foreign.C.Types
+import Foreign.C
+import System.IO.Unsafe
+import Foreign.Marshal
+import qualified Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
+import qualified System.IO (putStrLn)
+
+#include "myclib.h"
+
+newtype OpaquePtr = OpaquePtr (ForeignPtr OpaquePtr)
+
+#let alignment t = "%lu", (unsigned long)offsetof(struct {char x__; t (y__); }, y__) 
+instance Storable OpaquePtr where
+    sizeOf _ = #{size opaque_t}
+    alignment _ = #{alignment opaque_t}
+    peek _ = error "Cant peek"
+
+foreign import ccall unsafe "myclib.h bar"
+    c_bar :: Ptr OpaquePtr
+                -> CInt
+                -> CInt
+
+barWrapper :: Int -> (Int, ForeignPtr OpaquePtr)
+barWrapper anArg = System.IO.Unsafe.unsafePerformIO $ do
+    o <- mallocForeignPtr
+    let res = c_bar (fromIntegral anArg) (Foreign.ForeignPtr.Unsafe.unsafeForeignPtrToPtr o)
+    return ((fromIntegral res), o)
+

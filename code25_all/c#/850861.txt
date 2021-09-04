@@ -1,0 +1,87 @@
+public abstract class ExpiringCache<TKey,TValue> : IDisposable 
+{
+    protected readonly object locker = new object();
+
+    protected readonly Dictionary<TKey, TValue> cache =
+        new Dictionary<TKey, TValue>();
+
+    private readonly Queue<KeyValuePair<TKey, long>> queue =
+        new Queue<KeyValuePair<TKey, long>>();
+
+    private volatile bool dispose;
+
+    private readonly Thread cleaningThread;
+
+    private readonly long lifeSpanTicks;
+
+    public ExpiringCache(TimeSpan lifeSpan)
+    {
+        // Validate lifeSpan
+
+        if (lifeSpan.Ticks == 0)
+        {
+            throw new ArgumentOutOfRangeException
+                ("lifeSpan", "Must be greater than zero.");
+        }
+
+        this.lifeSpanTicks = lifeSpan.Ticks;
+
+        // Begin expiring expired items
+
+        this.cleaningThread = new Thread(() =>
+        {
+            while (!this.dispose)
+            {
+                this.RemoveExpired();
+                Thread.Sleep(1);
+            }
+        });
+
+        this.cleaningThread.Start();
+    }
+
+    private void RemoveExpired()
+    {
+        if (this.queue.Count == 0)
+        {
+            return;
+        }
+
+        var pair = this.queue.Peek();
+
+        if (pair.Value >= DateTime.Now.Ticks)
+        {
+            lock (this.locker)
+            {
+                this.cache.Remove(pair.Key);
+            }
+
+            this.queue.Dequeue();
+        }
+    }
+
+    public bool Contains(TKey key)
+    {
+        lock (this.locker)
+        {
+            return this.cache.ContainsKey(key);
+        }
+    }
+
+    public void Add(TKey key, TValue value)
+    {
+        lock (this.locker)
+        {
+            this.cache.Add(key, value);
+        }
+
+        this.queue.Enqueue(new KeyValuePair<TKey, long>
+            (key, DateTime.Now.Ticks + this.lifeSpanTicks));
+    }
+
+    public void Dispose()
+    {
+        this.dispose = true;
+    }
+}
+

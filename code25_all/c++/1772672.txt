@@ -1,0 +1,110 @@
+malloc
+#include <stdlib.h>
+#include <stdio.h>
+#define UINT_32_MAX 0xFFFFFFFF
+
+#ifdef WIN32
+typedef unsigned __int64 Tuint64;
+#include <windows.h>
+#else
+typedef unsigned long long Tuint64;
+#include <sys/mman.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#endif
+
+static void* Allocate(void* pSuggested, unsigned int PageSize)
+{
+#ifdef WIN32
+   void* pAllocated = ::VirtualAlloc(pSuggested, PageSize, MEM_RESERVE ,PAGE_NOACCESS);
+   if (pAllocated)
+   {
+      return pAllocated;
+   }
+   return (void*)-1;
+#else
+   void* pAllocated = ::mmap(pSuggested,
+                             PageSize,
+                             PROT_NONE,
+                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, 
+                             -1, 
+                             0);
+   if (pAllocated == MAP_FAILED)
+   {
+      pAllocated = (void*)-1;
+   }
+   return pAllocated;
+#endif
+}
+
+static void Deallocate(void* pRegion, unsigned int PageSize)
+{
+#ifdef WIN32
+   ::VirtualFree(pRegion,0,MEM_RELEASE);
+#else
+   ::munmap(pRegion,PageSize);
+#endif
+}
+
+static void Gobble32bitAddressSpace()
+{
+#ifdef WIN32
+   SYSTEM_INFO SysInfo;
+   ::GetSystemInfo(&SysInfo);
+   unsigned int PageSize = SysInfo.dwAllocationGranularity;
+#else
+   unsigned int PageSize = ::sysconf(_SC_PAGE_SIZE);
+#endif
+
+   unsigned int AllocatedPages = 0;
+   unsigned int SkippedPages = 0;
+   void *pStart = 0;
+   while( ((Tuint64)pStart) < UINT_32_MAX)
+   {
+      void* pAllocated = Allocate(pStart, PageSize);
+      if (pAllocated  != (void*)-1)
+      {
+         if (pAllocated == pStart)
+         {
+            //Allocated at expected location
+            AllocatedPages++;
+         }
+         else 
+         {
+            //Allocated at a different location
+            //unallocate and consider this page unreserved
+            SkippedPages++;
+            Deallocate(pAllocated,PageSize);
+         }
+      }
+      else
+      {
+         //could not allocate at all
+         SkippedPages++;
+      }
+      pStart = (char*)pStart + PageSize;
+   }
+   printf("PageSize : %u\n",PageSize);
+   printf("Allocated Pages : %u (%u bytes)\n",AllocatedPages,PageSize*AllocatedPages);
+   printf("Skipped Pages : %u (%u bytes)\n",SkippedPages,SkippedPages*PageSize);
+}
+
+int main()
+{
+   Gobble32bitAddressSpace();
+
+   //Try to call malloc now and see if we get an
+   //address above 4GB
+   void* pFirstMalloc = ::malloc(1024);
+   if (((Tuint64)pFirstMalloc) >= UINT_32_MAX)
+   {
+      printf("OK\n");
+   }
+   else
+   {
+      printf("FAIL\n");
+   }
+   return 0;
+}
+

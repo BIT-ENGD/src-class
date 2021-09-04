@@ -1,0 +1,76 @@
+ghc 6.12.1
+ghc 7.4.1
+{-# LANGUAGE ForeignFunctionInterface #-}
+module Main where
+
+import Data.Word
+import Text.Printf
+import Foreign
+
+foreign import ccall "dynamic"
+   code_void :: FunPtr (IO ()) -> (IO ())
+
+main :: IO ()
+main = do
+  entryPtr <- (mallocBytes 2)
+  poke entryPtr (0xc390 :: Word16) -- nop (0x90); ret(0xc3) (little endian order)
+
+  _ <- printf "entry point: 0x%08x\n" ((fromIntegral $ ptrToIntPtr entryPtr) :: Int)
+  _ <- getLine -- for debugging
+  code_void $ castPtrToFunPtr entryPtr
+  putStrLn "welcome back"
+
+$ make 
+ghc --make -Wall -O2 Main.hs -o stackoverflow_segv
+[1 of 1] Compiling Main             ( Main.hs, Main.o )
+Linking stackoverflow_segv ...
+./stackoverflow_segv
+entry point: 0x098d77e0
+
+welcome back
+
+$ ./stackoverflow_segv 
+entry point: 0x092547e0
+
+Segmentation fault (core dumped)
+
+gdb
+objdump
+/proc
+$ gdb -q stackoverflow_segv
+Reading symbols from /home/lewurm/stackoverflow/stackoverflow_segv...(no debugging symbols found)...done.
+(gdb) run
+Starting program: /home/lewurm/stackoverflow/stackoverflow_segv
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/i386-linux-gnu/libthread_db.so.1".
+entry point: 0x080fc810
+
+$ cat /proc/`pgrep stackoverflow`/maps
+[...]
+08048000-080ea000 r-xp 00000000 08:01 2492678    /home/lewurm/stackoverflow/stackoverflow_segv
+080ea000-080eb000 r--p 000a2000 08:01 2492678    /home/lewurm/stackoverflow/stackoverflow_segv
+080eb000-080f1000 rw-p 000a3000 08:01 2492678    /home/lewurm/stackoverflow/stackoverflow_segv
+080f1000-08115000 rw-p 00000000 00:00 0          [heap]
+[...]
+
+<enter>
+Program received signal SIGSEGV, Segmentation fault.
+0x0804ce3c in s2aV_info ()
+
+$ objdump -D stackoverflow_segv | grep -C 3 804ce3c
+ 804ce31:       89 44 24 4c             mov    %eax,0x4c(%esp)
+ 804ce35:       83 ec 0c                sub    $0xc,%esp
+ 804ce38:       8b 44 24 4c             mov    0x4c(%esp),%eax
+ 804ce3c:       ff d0                   call   *%eax
+ 804ce3e:       83 c4 0c                add    $0xc,%esp
+ 804ce41:       83 ec 08                sub    $0x8,%esp
+ 804ce44:       8b 44 24 54             mov    0x54(%esp),%eax
+
+*%eax
+%eax
+ (gdb) info reg eax
+ eax            0x80fc810        135251984
+
+/proc/*/maps
+rw-p
+make

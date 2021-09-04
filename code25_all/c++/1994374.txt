@@ -1,0 +1,76 @@
+ref class CWaveIn
+{
+public:
+ void CWaveIn::Open(int currentInputDeviceId)
+private:
+ void AllocateBuffer(void);
+ void WaveInProc(HWAVEIN hwi, UINT uMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2);
+ delegate void CallBack(HWAVEIN hwi, UINT uMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2);
+ CallBack^ myDelegate;
+protected:
+ WAVEFORMATEX* waveFormat;
+ int bufferDuration; // in seconds
+ BYTE* waveInBuffer;
+ int bufferSize;
+};
+
+void CWaveIn::AllocateBuffer(void)
+{
+ free(waveInBuffer);
+ bufferSize = waveFormat->nAvgBytesPerSec * bufferDuration;
+ waveInBuffer = new BYTE[bufferSize];
+ Debug::WriteLine("BufferSize: " + bufferSize);
+}
+
+void CWaveIn::WaveInProc(HWAVEIN hwi, UINT uMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2) 
+{
+ switch(uMsg) {
+  case WIM_CLOSE:
+   Debug::WriteLine("WIM_CLOSE");
+   break;
+  case WIM_DATA:
+   for(int i=0;i<bufferSize; i++) {
+    Debug::Write(waveInBuffer[i] + " ");
+   }
+   Debug::WriteLine("WIM_DATA");
+   break;
+  case WIM_OPEN:
+   Debug::WriteLine("WIM_OPEN");
+   break;
+ }
+}
+
+void CWaveIn::Open(int currentInputDeviceId) 
+{
+ MMRESULT result = ::waveInOpen(0, currentInputDeviceId, waveFormat, 0, 0, WAVE_FORMAT_QUERY);
+ Debug::WriteLine(L"CWaveIn::Open() WAVE_FORMAT_QUERY: device " + currentInputDeviceId.ToString());
+ DebugError(result);
+ if(result == MMSYSERR_NOERROR)
+ {
+  myDelegate = gcnew CallBack(this, &CWaveIn::WaveInProc);
+  pin_ptr<CallBack^> ptrMyDelegate= &myDelegate;
+  IntPtr delegatePointer = System::Runtime::InteropServices::Marshal::GetFunctionPointerForDelegate(myDelegate);
+
+  HWAVEIN hWaveIn;
+  MMRESULT result = ::waveInOpen(&hWaveIn, currentInputDeviceId, waveFormat, (DWORD_PTR)delegatePointer.ToPointer(), 0, CALLBACK_FUNCTION | WAVE_FORMAT_DIRECT);
+  Debug::WriteLine(L"CWaveIn::Open() : device " + currentInputDeviceId.ToString());
+  DebugError(result);
+
+  AllocateBuffer();
+
+  WAVEHDR WaveInHdr;
+  WaveInHdr.lpData = (LPSTR)waveInBuffer;
+  WaveInHdr.dwBufferLength = bufferSize;
+  WaveInHdr.dwBytesRecorded=0;
+  WaveInHdr.dwUser = 0L;
+  WaveInHdr.dwFlags = 0L;
+  WaveInHdr.dwLoops = 0L;
+  ::waveInPrepareHeader(hWaveIn, &WaveInHdr, sizeof(WAVEHDR));
+  result = ::waveInAddBuffer(hWaveIn, &WaveInHdr, sizeof(WAVEHDR));
+
+  result = ::waveInStart(hWaveIn);
+  Debug::WriteLine(L"CWaveIn::Start() : device " + currentInputDeviceId.ToString());
+  DebugError(result);
+ }
+}
+

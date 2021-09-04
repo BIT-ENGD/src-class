@@ -1,0 +1,111 @@
+==18270== Invalid free() / delete / delete[]
+==18270==    at 0x400576A: operator delete(void*) (vg_replace_malloc.c:342)
+==18270==    by 0x80537F7: LCD::LCDControl::~LCDControl() (LCDControl.cpp:23)
+==18270==    by 0x806C055: main (Main.cpp:22)
+==18270==  Address 0x59e92c4 is 388 bytes inside a block of size 712 alloc'd
+==18270==    at 0x40068AD: operator new(unsigned int) (vg_replace_malloc.c:224)
+==18270==    by 0x8078033: LCD::DrvCrystalfontz::Get(std::string, LCD::LCDControl*, Json::Value*, std::string) (DrvCrystalfontz.cpp:652)
+==18270==    by 0x8053F50: LCD::LCDControl::ConfigSetup() (LCDControl.cpp:71)
+==18270==    by 0x80539F7: LCD::LCDControl::Start(int, char**) (LCDControl.cpp:31)
+==18270==    by 0x806C025: main (Main.cpp:21)
+
+LCDControl::~LCDControl() {
+    Shutdown();
+    for(std::vector<std::string>::iterator it = display_keys_.begin();
+        it != display_keys_.end(); it++) {
+        Error("Deleting %s %p", (*it).c_str(), devices_text_[*it]);
+        if(devices_text_.find(*it) != devices_text_.end() && devices_text_[*it])
+            delete devices_text_[*it]; // line 23
+    }
+    //delete app_;
+}
+
+switch(m->GetProtocol()) {
+    case 1:
+        return new Protocol1(name, m, v, config);
+        break;
+    case 2:
+        return new Protocol2(name, m, v, config); // line 652
+        break;
+    case 3:
+        return new Protocol3(name, m, v, config, scab);
+        break;
+    default:
+        Error("Internal error. Model has bad protocol: <%s>",
+            m->GetName().c_str());
+        break;
+
+std::map<std::string, Generic <LCDText>*> devices_text_;
+
+void LCDControl::ConfigSetup() {
+    if(!CFG_Get_Root()) return;
+    Json::Value::Members keys = CFG_Get_Root()->getMemberNames();
+
+    for(std::vector<std::string>::iterator it = keys.begin(); it != keys.end(); it++ ) {
+        if(it->find("display_", 0) != std::string::npos) {
+            Json::Value *display = CFG_Fetch_Raw(CFG_Get_Root(), it->c_str());
+            Json::Value *driver = CFG_Fetch_Raw(display, "driver");
+            if(!driver) {
+                Error("CFG: Must specify driver <%s>", it->c_str());
+                continue;
+            }
+            Json::Value *rows = CFG_Fetch_Raw(display, "rows", new Json::Value(-1));
+            /*if(!rows->isNumeric() || rows->asInt() == -1) {
+                Error("Display <%s> requires number of rows to initialize.", it->c_str());
+                delete display;
+                delete driver;
+                continue;
+            }*/
+            Json::Value *cols = CFG_Fetch_Raw(display, "cols", new Json::Value(-1));
+            /*if(!cols->isNumeric() || rows->asInt() == -1) {
+                Error("Display <%s> requires number of columns to initialize.", it->c_str());
+                delete display;
+                delete driver;
+                delete rows;
+                continue;
+            }*/
+
+            Json::Value *model = CFG_Fetch_Raw(display, "model");
+            if(driver->asString() == "crystalfontz") {
+                if(model) {
+                    devices_text_[*it] = DrvCrystalfontz::Get(*it, this,
+                        CFG_Get_Root(), model->asString()); // line 71
+                } else {
+                    Error("Device <%s> requires a model.", it->c_str());
+                    delete display;
+                    delete driver;
+                    delete rows;
+                    delete cols;
+                    continue;
+                }
+            } else if(driver->asString() == "qt") {
+                devices_text_[*it] = new DrvQt(*it, this, CFG_Get_Root(),
+                    rows->asInt(), cols->asInt());
+
+            } else if(driver->asString() == "pertelian") {
+                //devices_text_[*it] = new DrvPertelian(this, CFG_Get_Root(), rows->asInt(), cols->asInt());
+
+            } else
+                continue;
+            if(model) delete model;
+            delete display;
+            delete driver;
+            delete rows;
+            delete cols;
+        }
+
+    }
+
+    for(std::map<std::string, Generic<LCDText> *>::iterator it =
+        devices_text_.begin(); it != devices_text_.end(); it++) {
+        display_keys_.push_back(it->first);
+        Error("Starting <%s> %p", it->first.c_str(), it->second);
+        Generic<LCDText> *device = it->second;
+        device->CFGSetup(it->first);
+        device->Connect();
+        device->SetupDevice();
+        device->BuildLayouts();
+        device->StartLayout();
+    }
+}
+

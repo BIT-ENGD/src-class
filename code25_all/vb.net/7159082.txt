@@ -1,0 +1,51 @@
+Public Sub BeginTransaction()
+    Dim context = HttpContext.Current.GetObjectContext()
+    If Not context.Connection.State = ConnectionState.Open Then
+        context.Connection.Open()
+    End If
+    Dim trasnaction = context.Connection.BeginTransaction()
+    HttpContext.Current.Items("transaction") = trasnaction
+End Sub
+
+Public Sub CommitTransaction()
+    Dim transaction = CType(HttpContext.Current.Items("transaction"), DbTransaction)
+    transaction.Commit()
+    HttpContext.Current.Items("transaction") = Nothing
+End Sub
+
+
+Public Sub RollbackTransaction()
+    Dim transaction = CType(HttpContext.Current.Items("transaction"), DbTransaction)
+    transaction.Rollback()
+    HttpContext.Current.Items("transaction") = Nothing
+End Sub
+
+Public Sub TransactionsTest()
+    Dim context = GetObjectContext()
+    Dim firstString = context.LocalizedStrings.Where(Function(ls) ls.ID = 4).First()
+    Dim secondString = context.LocalizedStrings.Where(Function(ls) ls.ID = 5).First()
+
+    Dim firstStringOriginal = firstString.Text
+    Try
+        DatabaseProvider.BeginTransaction()
+        firstString.Text = "blabla"
+        context.SaveChanges() //Saves OK
+        Dim caughExeption = False
+        Try
+            secondString.LanguageID = "suka"
+            context.SaveChanges() //Doesn't save, because change is invalid
+            DatabaseProvider.CommitTransaction()
+        Catch ex As Exception
+            DatabaseProvider.RollbackTransaction()
+            caughExeption = True
+        End Try
+        Assert.IsTrue(caughExeption)
+        // Try to retrieve the first string again
+        firstString = context.LocalizedStrings.Where(Function(ls) ls.ID = 4).First()
+        Assert.AreEqual(firstStringOriginal, firstString.Text) // FAILS :(
+    Finally
+        firstString.Text = firstStringOriginal
+        context.SaveChanges()
+    End Try
+End Sub
+

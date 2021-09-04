@@ -1,0 +1,51 @@
+-- declare our protocol
+myproto_udp_proto = Proto("myproto_UDP","myproto UDP Protocol")
+myproto_tcp_proto = Proto("myproto_TCP","myproto TCP Protocol")
+-- create a function to dissect it
+function myproto_tcp_proto.dissector(buffer,pinfo,tree)
+        pinfo.cols.protocol = "myproto TCP"
+        local subtree = tree:add(myproto_tcp_proto,buffer(),"myproto TCP Protocol Data")
+        if buffer(0,2):uint() == 0xF00D then
+            subtree:add(buffer(0,2),"Magic(F00D)")
+        else
+            subtree:add(buffer(0,2),"Bad Magic")
+        end
+end
+function myproto_udp_proto.dissector(buffer,pinfo,tree)
+    pinfo.cols.protocol = "myproto UDP"
+    local subtree = tree:add(myproto_udp_proto,buffer(),"myproto UDP Protocol Data")
+    if buffer(0,2):uint() == 0xF00D then
+        subtree:add(buffer(0,2),"Magic(F00D)")
+        local command;
+        local port = -1;
+        if buffer(2,1):uint() == 01 then
+            command = "Searching for server"
+        elseif buffer(2,1):uint() == 02 then
+            command = "I'm server"
+            port = buffer(7,2):uint()
+        else
+            command = "unknown";
+        end
+        subtree:add(buffer(2,1),command)
+        subtree:add(buffer(3,4),"Server id: " .. buffer(3,4):uint())
+        if port ~= -1 then
+            subtree:add(buffer(7,2),"Server listening port: " .. buffer(7,2):uint())
+            subtree:add(buffer(9,4),"check bytes")
+            myproto_tcp_init(port)
+        end
+    else
+        subtree:add(buffer(0,2),"Bad Magic")
+    end
+end
+-- load the udp.port table
+udp_table = DissectorTable.get("udp.port")
+-- register our protocol to handle udp port 1338
+udp_table:add(1338,myproto_udp_proto)
+
+function myproto_tcp_init(port)
+    -- load the tcp.port table
+    tcp_table = DissectorTable.get("tcp.port")
+    -- register our protocol to handle tcp port !DYNAMIC!
+    tcp_table:add(port,myproto_tcp_proto)
+end
+

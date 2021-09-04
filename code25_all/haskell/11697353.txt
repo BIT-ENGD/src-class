@@ -1,0 +1,42 @@
+application :: MVar ServerState -> WS.Request -> WS.WebSockets WS.Hybi10 ()
+application state rq = do
+    WS.acceptRequest rq
+    WS.getVersion >>= liftIO . putStrLn . ("Client version: " ++)
+    sink <- WS.getSink
+    msg <- WS.receiveData
+    clients <- liftIO $ readMVar state
+    url <- liftIO fbUrl
+
+    let prefix = "Facebook code"
+    let code = T.drop (T.length prefix) msg
+
+    let a = ("code",T.unpack code)
+    e <- liftIO $ fbEmail $ (\(x,y) -> (C.pack x, C.pack y)) a
+
+    let client = (e, sink) --ERROR
+
+    case msg of
+        _   | not (prefix `T.isPrefixOf` msg) -> do
+                WS.sendTextData ("Facebook login " `mappend` url :: Text)
+            | any ($ fst client)
+                [T.null, T.any isPunctuation, T.any isSpace] ->
+                    WS.sendTextData ("Facbook code invalid" :: Text)
+            | clientExists client clients ->
+                WS.sendTextData ("User already exists" :: Text)
+            | otherwise -> do
+                liftIO $ modifyMVar_ state $ \s -> do
+                    let s' = addClient client s
+                    WS.sendSink sink $ WS.textData $
+                        "Welcome! Users: " `mappend`
+                        T.intercalate ", " (map fst s)
+                    broadcast (fst client `mappend` " joined") s'
+                    return s'
+                talk state client
+
+    Couldn't match expected type `Maybe Text' with actual type `Text'
+    Expected type: Maybe Text -> Bool
+      Actual type: Text -> Bool
+    In the expression: T.null
+    In the second argument of `any', namely
+      `[T.null, T.any isPunctuation, T.any isSpace]'
+

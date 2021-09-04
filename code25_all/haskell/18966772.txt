@@ -1,0 +1,68 @@
+import Network.HTTP.Conduit
+import Data.Time.Clock
+import Data.Time.Calendar.WeekDate
+import Data.Time.Calendar (Day, addDays, fromGregorian)
+import Control.Monad.Trans.Resource (runResourceT)
+
+import qualified Data.ByteString.Char8 as C
+import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString as S
+
+
+curDate :: IO Day
+curDate = fmap utctDay getCurrentTime
+
+dayToWkYr :: Day -> (S.ByteString, S.ByteString)
+dayToWkYr day = (C.pack (show year), C.pack (show week))
+                where (year, week, _) = toWeekDate day
+
+mkDateList :: Day -> Day -> [Day] -> [Day]
+mkDateList start end lst
+    | start == end = lst
+    | otherwise    = mkDateList (addWk start) end (start:lst)
+    where addWk = addDays 7
+
+getMovies' :: Manager -> [Day] -> [Response L.ByteString] -> [Response L.ByteString]
+getMovies' manager (d:ds) results = runResourceT $ do
+    let (year, week) = dayToWkYr d
+    initreq <- parseUrl "http://boxofficemojo.com/weekly/chart/"
+    let request = initreq { queryString = "?yr=" `S.append` year `S.append`
+                                            "&wk=" `S.append` week}
+    response <- httpLbs request manager
+    getMovies' manager ds (response:results)
+
+getMovies' _ [] results = results
+
+scraper.hs:27:37:
+    Couldn't match type `[]' with `IO'
+    When using functional dependencies to combine
+      Control.Monad.Trans.Control.MonadBaseControl [] [],
+        arising from the dependency `m -> b'
+        in the instance declaration in `Control.Monad.Trans.Control'
+      Control.Monad.Trans.Control.MonadBaseControl IO [],
+        arising from a use of `runResourceT' at scraper.hs:27:37-48
+    In the expression: runResourceT
+    In the expression:
+      runResourceT
+      $ do { let (year, week) = dayToWkYr d;
+             initreq <- parseUrl "http://boxofficemojo.com/weekly/chart/";
+             let request = ...;
+             response <- httpLbs request manager;
+             .... }
+
+scraper.hs:33:5:
+    Couldn't match type `[]'
+                  with `Control.Monad.Trans.Resource.ResourceT []'
+    Expected type: Control.Monad.Trans.Resource.ResourceT
+                     [] (Response L.ByteString)
+      Actual type: [Response L.ByteString]
+    In the return type of a call of getMovies'
+    In a stmt of a 'do' block:
+      getMovies' manager ds (response : results)
+    In the second argument of `($)', namely
+      `do { let (year, week) = dayToWkYr d;
+            initreq <- parseUrl "http://boxofficemojo.com/weekly/chart/";
+            let request = ...;
+            response <- httpLbs request manager;
+            .... }'
+

@@ -1,0 +1,144 @@
+name
+quantity
+price
+quantity
+quantity
+name
+#!perl
+package Article;
+use Moose;
+
+has name        => is => 'rw', isa => 'Str', required => 1;
+has quantity    => is => 'rw', isa => 'Num', required => 1;
+has price       => is => 'rw', isa => 'Num', required => 1;
+
+around BUILDARGS => sub {
+    my $orig = shift;
+    my $class = shift;
+    my %args = @_ == 1 ? %{$_[0]} : @_;
+    my $q = $args{quantity};
+    if ( $q != int $q ) {
+        $args{name}    .= " ($q)";
+        $args{price}   *= $q;
+        $args{quantity} = 1;
+    }
+    return $class->$orig( %args );
+};
+
+sub itemprice { $_[0]->quantity * $_[0]->price }
+
+sub as_string {
+    return sprintf '%2u * %-40s (%7.2f) %8.2f', map $_[0]->$_,
+    qw/quantity name price itemprice/;
+}
+
+package main;
+use Test::More;
+
+my $table = Article->new({ name => 'Table', quantity => 1, price => 199 });
+is $table->itemprice, 199, $table->as_string;
+
+my $chairs = Article->new( name => 'Chair', quantity => 4, price => 45.50 );
+is $chairs->itemprice, 182, $chairs->as_string;
+
+my $rope = Article->new( name => 'Rope', quantity => 3.5, price => 2.80 );
+is $rope->itemprice, 9.80, $rope->as_string;
+is $rope->quantity, 1, 'quantity set to 1';
+is $rope->name, 'Rope (3.5)', 'name includes original quantity';
+
+done_testing;
+
+package Article::Interface;
+use Moose::Role;
+requires qw(name quantity price);
+
+sub itemprice { $_[0]->quantity * $_[0]->price }
+
+sub as_string {
+        return sprintf '%2u * %-40s (%7.2f) %8.2f', map $_[0]->$_,
+        qw/quantity name price itemprice/;
+}
+
+
+package Article::Types;
+use Moose::Util::TypeConstraints;
+class_type 'Article::Internal';
+class_type 'Article::External';
+coerce 'Article::External' =>
+  from 'Article::Internal' => via
+{
+        Article::External->new(
+                name        => sprintf( '%s (%s)', $_->name, $_->quantity ),
+                quantity    => 1,
+                price       => $_->quantity * $_->price
+        );
+};
+
+
+package Article::Internal;
+use Moose;
+use Moose::Util::TypeConstraints;
+has name        => isa => 'Str', is => 'rw', required => 1;
+has quantity    => isa => 'Num', is => 'rw', required => 1;
+has price       => isa => 'Num', is => 'rw', required => 1;
+
+my $constraint = find_type_constraint('Article::External');
+
+=useless for this case
+# Moose::Manual::Construction - "You should never call $self->SUPER::BUILD,
+# nor"should you ever apply a method modifier to BUILD."
+sub BUILD {
+        my $self = shift;
+        my $q = $self->quantity;
+    # BUILD does not return the object to the caller,
+    # so it CANNOT BE USED to trigger the coercion.
+        return $q == int $q ? $self : $constraint->coerce( $self );
+}
+=cut
+
+with qw(Article::Interface); # need to put this at the end
+
+
+package Article::External;
+use Moose;
+has name        => isa => 'Str', is => 'ro', required => 1;
+has quantity    => isa => 'Int', is => 'ro', required => 1;
+has price       => isa => 'Num', is => 'ro', required => 1;
+
+sub itemprice { $_[0]->price } # override
+
+with qw(Article::Interface); # need to put this at the end
+
+
+package main;
+use Test::More;
+
+my $table = Article::Internal->new(
+        { name => 'Table', quantity => 1, price => 199 });
+is $table->itemprice, 199, $table->as_string;
+is $table->quantity, 1;
+is $table->name, 'Table';
+
+my $chairs = Article::Internal->new(
+        name => 'Chair', quantity => 4, price => 45.50 );
+is $chairs->itemprice, 182, $chairs->as_string;
+is $chairs->quantity, 4;
+is $chairs->name, 'Chair';
+
+my $rope = Article::Internal->new(
+        name => 'Rope', quantity => 3.5, price => 2.80 );
+# I can trigger the conversion manually.
+$rope = $constraint->coerce( $rope );
+# I'd like the conversion to be automatic, though.
+# But I cannot use BUILD for doing that. - XXX
+# Looks like I'd have to add a factory method that inspects the
+# parameters and does the conversion if needed, and it is always
+# needed when the `quantity` isn't an integer.
+
+isa_ok $rope, 'Article::External';
+is $rope->itemprice, 9.80, $rope->as_string;
+is $rope->quantity, 1, 'quantity set to 1';
+is $rope->name, 'Rope (3.5)', 'name includes original quantity';
+
+done_testing;
+

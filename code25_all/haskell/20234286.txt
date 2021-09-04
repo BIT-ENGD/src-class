@@ -1,0 +1,38 @@
+splice :: C.Splice IO  
+splice =  do  
+  projects <- query_ "SELECT * FROM projects"  
+  C.manyWithSplices C.runChildren projectSplice $ return (projects :: [Project])  
+  where  
+    projectSplice = do  
+      "title" ## (C.pureSplice . C.textSplice $ title)  
+      "description" ## (C.pureSplice . C.textSplice $ description)  
+
+No instance for (HasPostgres (HeistT IO IO))
+  arising from a use of 'query_'
+Possible fix:
+  add an instance declaration for (HasPostgres (HeistT IO IO))
+In a stmt of a 'do' block:
+  projects <- query_ "SELECT * FROM projects"
+In the expression:
+  do { projects <- query_ "SELECT * FROM projects";
+       C.manyWithSplices C.runChildren projectSplice 
+       $ return (projects :: [Project]) }
+
+projectSplice = do
+  "title" ## (C.pureSplice . C.textSplice $ title)
+  "description" ## (C.pureSplice . C.textSplice $ description)
+
+splice :: C.Splice (Handler App App)
+splice =  C.manyWithSplices C.runChildren projectSplice $ lift $ query_ "SELECT * FROM projects"
+
+getHeistState heistConfig = liftIO $ either (error "Heist Init failed") id <$> (runEitherT $ initHeist heistConfig)
+
+getBuilder heistState = maybe (error "Render template failed") fst $ C.renderTemplate heistState "database"
+
+getAllProjectsHeist :: Handler App App ()
+getAllProjectsHeist = do
+  let heistConfig = HeistConfig defaultInterpretedSplices defaultLoadTimeSplices ("project" ## splice) noSplices [loadTemplates "templates"]
+  heistState <- getHeistState heistConfig
+  builder <- getBuilder heistState
+  writeBS $ toByteString builder
+

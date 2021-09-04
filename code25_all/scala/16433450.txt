@@ -1,0 +1,36 @@
+class DataQueryWorker(csvExporterWorker: ActorRef) extends Actor with ActorLogging{
+
+  private implicit def ModelConverter(rs: ResultSet): QueryModel = {
+    QueryModel(
+      id = rs.getString(0),
+      name = rs.getString(1),
+      age = rs.getString(2),
+      gender = rs.getString(3))
+}
+
+  private def sendModelToCsvWorker(model: QueryModel): Unit = {
+    csvExporterWorker ! model
+  }
+
+  private def startExport[T](queryString: String)(resultFunc: T => Unit)(implicit ModelConverter: ResultSet => T): Unit = {
+    try {
+      val connection = DriverManager.getConnection(DbConfig.connectionString,
+        DbConfig.user,
+        DbConfig.password)
+      val statement = connection.createStatement(java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY)
+      statement.setFetchSize(Integer.MIN_VALUE)
+      val rs = statement.executeQuery(queryString)
+      while (rs.next()) {
+        resultFunc(ModelConverter(rs))
+      }
+    } catch {
+      case e: Exception => //What to do in case of an exception???
+    }
+  }
+
+  override def receive() = {
+    case startEvent => startExport(DbConfig.ModelExtractionQuery)(sendModelToCsvWorker)
+  }
+
+}
+

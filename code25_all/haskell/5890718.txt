@@ -1,0 +1,37 @@
+module Main ( main ) where
+
+import qualified Data.Enumerator as E ( Enumeratee, Step(..), Stream(..),
+  checkDone, checkDoneEx, continue, enumList, joinI, run_, yield )
+import Data.Enumerator ( ($$), (>>==) )
+import qualified Data.Enumerator.List as EL ( consume )
+
+-- cribbed from EL.concatMap
+concatMapAccum :: Monad m => (s -> ao -> (s, [ai])) -> s ->
+E.Enumeratee ao ai m b
+concatMapAccum f s0 = E.checkDone (E.continue . step s0)
+  where
+    step _ k E.EOF = E.yield (E.Continue k) E.EOF
+    step s k (E.Chunks xs) = loop s k xs
+    loop s k [] = E.continue (step s k)
+    loop s k (x:xs) = case f s x of
+      (s', ais) -> k (E.Chunks $ ais) >>==
+        E.checkDoneEx (E.Chunks xs) (\k' -> loop s' k' xs)
+
+passFromTo :: Monad m => ((a -> Bool), (a -> Bool)) -> Bool -> E.Enumeratee a a m b
+passFromTo (from, to) pass0 =
+  concatMapAccum updatePass pass0
+    where
+      updatePass pass el = case (pass, from el, to el) of
+        (True, _, to_el) -> (not to_el, [el])
+        (False, True, _) -> (True, [el])
+        (False, False, _) -> (False, [])
+
+main :: IO()
+main = do
+  E.run_ (E.enumList 3 [1..20] $$
+    E.joinI $ passFromTo ((\e -> e == 3 || e == 13), (\e -> e == 7 || e == 17)) False $$
+    EL.consume) >>= print
+
+$ ./dist/build/StatefulEnumeratee/StatefulEnumeratee
+[3,4,5,6,7,13,14,15,16,17]
+

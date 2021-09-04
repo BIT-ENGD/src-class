@@ -1,0 +1,81 @@
+IO
+SIGTERM
+draw
+go
+go
+import Data.Maybe (isJust, fromJust)
+import System.Random
+import System.Console.ANSI
+import qualified System.Console.Terminal.Size as Term
+
+data RainDrop a = RainDrop
+  { row   :: !a
+  , col   :: !a
+  , count :: !a
+  } deriving (Read,Show)
+
+main :: IO ()
+main = do
+  clearScreen
+  -- proof that draw works
+  c <- applyX 10 draw (return (RainDrop 0 2 10))
+  go [return (RainDrop 0 0 10)]
+
+applyX :: Int -> (a -> a) -> a -> a
+applyX 0 _ x = x
+applyX n f x = applyX (n-1) f (f x)
+
+go :: [IO (RainDrop Int)] -> IO ()
+go []     = return ()
+go (x:xs) = do
+  prng <- newStdGen
+  go $ map draw $ maybeAddToQueue prng (x:xs)
+
+maybeAddToQueue :: RandomGen g => g -> [IO (RainDrop Int)] -> [IO (RainDrop Int)]
+maybeAddToQueue _    []     = []
+maybeAddToQueue prng (x:xs) =
+  let
+    (noNewDrop, gen0) = randomR (True,False) prng
+  in
+    if noNewDrop
+    then x:xs
+    else (
+      do
+        (colR,gen1) <- randomCol gen0
+        return $ RainDrop 0 colR $ fst $ randomLen gen1
+      ):x:xs
+
+randomCol :: RandomGen g => g -> IO (Int, g)
+randomCol prng = do
+  w <- Term.size >>= (\x -> return . Term.width  $ fromJust x)
+  return $ randomR (0,(w-1)) prng
+
+randomLen :: RandomGen g => g -> (Int, g)
+randomLen = randomR (4,32)
+
+draw :: IO (RainDrop Int) -> IO (RainDrop Int)
+draw rain = do
+  x    <- rain
+  prng <- newStdGen
+  setCursorPosition (row x) (col x)
+  putChar . toGlyph $ fst $ randomR range prng
+  return (RainDrop (succ $ row x) (col x) (count x))
+
+toGlyph x
+ | isJust a  = fromJust a
+ | otherwise = x
+ where a = lookup x dictionary
+
+dictionary =
+  let (a,b) = range
+  in zip [a..b] encoding
+
+encoding =
+  let (a,b) = splitAt 16 katakana
+      (c,d) = splitAt 7  b
+  in a ++ numbers ++ c ++ ['A'..'Z'] ++ d
+
+range    = (' ','~')
+katakana = ['･'..'ﾟ']
+numbers  = "012Ƹ߈Ƽ6ߖȣ9"
+

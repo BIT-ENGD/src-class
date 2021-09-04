@@ -1,0 +1,195 @@
+<?php
+class Restaurant extends Controller {
+
+    function Restaurant() {
+        parent::Controller();
+    }
+
+    function index() {
+
+        // Load libraries and models
+        $this->load->model('/restaurant/mRestaurantTypes');
+        $this->load->model('/restaurant/mRestaurant');
+        $this->load->model('/utilities/mUtilities');
+
+        // Get states
+        $stateSelect = array();
+        $getStates = $this->mUtilities->getStates();
+
+        if($getStates->num_rows() > 0) {
+            foreach($getStates->result() as $row) {
+                $stateSelect[$row->abbr] = $row->name;
+            }
+        }
+
+
+        // Get restaurant types
+        $restaurantTypes = array();
+        $getRestaurantTypes = $this->mRestaurantTypes->getRestaurantTypes();
+
+        if($getRestaurantTypes->num_rows() > 0) {
+            foreach($getRestaurantTypes->result() as $row) {
+                $restaurantTypes[$row->restaurant_types_id] = $row->type;
+            }
+        }
+
+        // Create form elements
+        $data['name'] = array(
+            'name'      =>  'name',
+            'id'        =>  'name',
+            'value'     =>  set_value('name'),
+            'maxlength' =>  '200',
+            'size'      =>  '50'
+        );
+
+        $data['address'] = array(
+            'name'      =>  'address',
+            'id'        =>  'address',
+            'value'     =>  set_value('address'),
+            'maxlength' =>  '200',
+            'size'      =>  '50'
+        );
+
+        $data['city'] = array(
+            'name'      =>  'city',
+            'id'        =>  'city',
+            'value'     =>  set_value('city'),
+            'maxlength' =>  '50',
+            'size'      =>  '25'        
+        );
+
+        $data['state'] = $stateSelect;
+
+        $data['zip'] = array(
+            'name'      =>  'zip',
+            'id'        =>  'zip',
+            'value'     =>  set_value('zip'),
+            'maxlength' =>  '10',
+            'size'      =>  '10'    
+        );
+
+        $data['phone'] = array(
+            'name'      =>  'phone',
+            'id'        =>  'phone',
+            'value'     =>  set_value('phone'),
+            'maxlength' =>  '15',
+            'size'      =>  '15'    
+        );
+
+        $data['url'] = array(
+            'name'      =>  'url',
+            'id'        =>  'url',
+            'value'     =>  set_value('url'),
+            'maxlength' =>  '255',
+            'size'      =>  '50'    
+        );
+
+        $data['type'] = $restaurantTypes;
+
+        $data['tags'] = array(
+            'name'      =>  'tags',
+            'id'        =>  'tags',
+            'value'     =>  set_value('tags'),
+            'maxlength' =>  '255',
+            'size'      =>  '50'    
+        );
+
+        $data['active'] = array(
+            'name'      =>  'active',
+            'id'        =>  'active',
+            'value'     =>  'Y',
+            'maxlength' =>  '1',
+            'size'      =>  '2' 
+        );
+
+        // Set page variables
+        $data_h['title'] = "Add new restaurant";
+
+        // Load views
+        $this->load->view('/template/header', $data_h);
+        $this->load->view('/restaurant/index', $data);
+        $this->load->view('/template/footer');      
+
+    }
+
+
+    /**
+     * Add the the new restaurant to the database.
+     */
+    function add() {
+
+        // Load libraries and models
+        $this->load->library('form_validation');
+        $this->load->model('/restaurant/mRestaurant');
+
+        // Define validation rules
+        $this->form_validation->set_rules('name',       'Name',     'trim|required|max_length[255]|xss_clean');
+        $this->form_validation->set_rules('address',    'Address',  'trim|required|max_length[100]|xss_clean');
+        $this->form_validation->set_rules('city',       'City',     'trim|required|max_length[128]|xss_clean');
+        //$this->form_validation->set_rules('state',        'State',    'trim|required');
+        $this->form_validation->set_rules('zip',        'Zip',      'trim|required|max_length[128]|xss_clean');
+        $this->form_validation->set_rules('phone',      'Phone',    'trim|required|max_length[10]|xss_clean');
+        $this->form_validation->set_rules('url',        'URL',      'trim|required|max_length[255]|xss_clean');
+        $this->form_validation->set_rules('tags',       'Tags',     'trim|xss_clean');
+
+
+        // Form validation
+        if ($this->form_validation->run() == FALSE) {
+
+            // On failure
+            $this->index();
+
+        } else {
+
+            // On success, prepare the data
+            $data = array(
+                'name'      =>  $_POST['name'],
+                'address'   =>  $_POST['address'],
+                'city'      =>  $_POST['city'],
+                'state'     =>  $_POST['state'],
+                'zip'       =>  $_POST['zip'],
+                'phone'     =>  $_POST['phone'],
+                'url'       =>  $_POST['url'],
+                'type'      =>  $_POST['type'],
+                'tags'      =>  $_POST['tags'],
+                'active'    =>  $_POST['active'],
+            );
+
+            // Check if the restaurant already exists
+            $check = $this->mRestaurant->getRestaurant($data['name'], $data['zip']);
+
+            // If no records were returned add the new restaurant
+            if($check->num_rows() == 0) {
+                $query = $this->mRestaurant->addRestaurant($data);
+
+                if ($query) {
+                    // On success
+                    $this->session->set_flashdata('status', '<div class="success">Added New Restaurant!</div>');
+                } else {
+                    // On failure
+                    $this->session->set_flashdata('status', '<div class="error">Could not add a new restaurant.</div>');    
+                }
+
+                redirect('restaurant/confirm', 'refresh');
+            } else {
+                // Notify the user that the restaurant already exists in the database
+                $this->session->set_flashdata('status', '<div class="notice">This restaurant already exists in the database.</div>');
+                redirect('restaurant/index');
+            }
+
+        }
+
+    }
+
+
+    function confirm() {
+
+        $data['title'] = "Confirm";
+
+        $this->load->view('/template/header');
+        $this->load->view('/restaurant/confirm', $data);
+        $this->load->view('/template/footer');
+    }
+}
+?>
+

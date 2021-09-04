@@ -1,0 +1,99 @@
+optim
+DEOptim
+RcppDE
+nloptr
+###########
+## given a set of values x and a cdf, calculate a measure of "misfit":
+## smaller value is better fit
+## x is assumed sorted in non-decr order;
+Misfit <- function(x, cdf) {
+  nevals <<- nevals + 1
+  thinkSecs <<- thinkSecs + ( Sys.time() - snapTime)
+  cat('S')
+  if(nevals %% 20 == 0) cat('\n')
+  L <- length(x)
+  cdf_x <- pmax(0.0001, pmin(0.9999, cdf(x)))
+  measure <- -L - (1/L) * sum( (2 * (1:L)-1 )* ( log( cdf_x ) + log( 1 - rev(cdf_x))))
+  snapTime <<- Sys.time()
+  cat('E')
+  return(measure)  
+}
+## Given 3 parameters nu (degrees of freedom, or shape), 
+## sigma (dispersion), gamma (skewness),
+## returns the corresponding 4-parameter student-T cdf parametrized by these params
+## (we restrict the location parameter mu to be 0).
+skewtGen <- function( p ) {
+  require(ghyp)
+  pars = student.t( nu = p[1], mu = 0, sigma = p[2], gamma = p[3] )
+  function(z) pghyp(z, pars)
+}
+
+## Fit using optim() and BFGS method
+fit_BFGS <- function(x, init = c()) {
+  x <- sort(x)
+  nevals <<- 0
+  objFun <- function(par) Misfit(x, skewtGen(par))
+  snapTime <<- Sys.time() ## global time snap shot
+  thinkSecs <<- 0 ## secs spent "thinking" between objFun calls
+  tUser <- system.time(
+              res <- optim(init, objFun,
+                           lower = c(2.1, 0.1, -1), upper = c(15, 2, 1),
+                           method = 'L-BFGS-B',
+                           control = list(trace=2, factr = 1e12, pgtol = .01 )) )[1]
+  cat('Total time = ', tUser, 
+      ' secs, ObjFun Time Pct = ', 100*(1 - thinkSecs/tUser), '\n')
+  cat('results:\n')
+  print(res$par)
+}
+
+fit_DE <- function(x) {
+  x <- sort(x)
+  nevals <<- 0
+  objFun <- function(par) Misfit(x, skewtGen(par))
+  snapTime <<- Sys.time() ## global time snap shot
+  thinkSecs <<- 0 ## secs spent "thinking" between objFun calls
+  require(RcppDE)
+  tUser <- system.time(
+              res <- DEoptim(objFun,
+                             lower = c(2.1, 0.1, -1),
+                             upper = c(15, 2, 1) )) [1]
+  cat('Total time = ',             tUser,
+      ' secs, ObjFun Time Pct = ', 100*(1 - thinkSecs/tUser), '\n')
+  cat('results:\n')
+  print(res$par)
+}
+
+set.seed(1)
+# generate 1000 standard-student-T points with nu = 4 (degrees of freedom)
+x <- rt(1000,4)
+
+fit.tuv
+ghyp
+require(ghyp)
+> system.time( print(unlist( pars <- coef( fit.tuv(x, silent = TRUE) ))[c(2,4,5,6)]))
+         nu          mu       sigma       gamma 
+ 3.16658356  0.11008948  1.56794166 -0.04734128 
+   user  system elapsed 
+   0.27    0.00    0.27 
+
+optim()
+> fit_BFGS( x, init = c(pars$nu, pars$sigma, pars$gamma) )
+N = 3, M = 5 machine precision = 2.22045e-16
+....................
+....................
+.........
+iterations 5
+function evaluations 7
+segments explored during Cauchy searches 7
+BFGS updates skipped 0
+active bounds at final generalized Cauchy point 0
+norm of the final projected gradient 0.0492174
+final function value 0.368136
+
+final  value 0.368136 
+converged
+Total time =  41.02  secs, ObjFun Time Pct =  99.77084 
+results:
+[1] 3.2389296 1.5483393 0.1161706
+
+DEoptim()

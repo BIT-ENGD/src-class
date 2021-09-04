@@ -1,0 +1,309 @@
+typedef double ThreeByThreeMatrix[3][3];    // 3x3 for an X, Y coordinate transformation matrix
+
+class Simple2DTransform
+{
+public:
+
+    ////////////////////////////////////////////////////
+    // Construction
+    ////////////////////////////////////////////////////
+
+    // we always begin life as an identity matrix (you can then apply scale, skew, etc.)
+    Simple2DTransform() 
+    {
+        Reset(); 
+    }
+
+    ////////////////////////////////////////////////////
+    // Operators
+    ////////////////////////////////////////////////////
+
+    bool operator == (const Simple2DTransform & rhs) const
+    {
+        return memcmp(m_matrix, rhs.m_matrix, sizeof(m_matrix)) == 0;
+    }
+
+    Simple2DTransform & operator *= (const Simple2DTransform & rhs)
+    {
+        return *this = GetCrossProduct(rhs);
+    }
+
+    ////////////////////////////////////////////////////
+    // Setup
+    ////////////////////////////////////////////////////
+
+    // reset to the identity matrix
+    Simple2DTransform & Reset()
+    {
+        memcpy(m_matrix, GetIdentityMatrix(), sizeof(m_matrix)); 
+        return *this;
+    }
+
+    // combine with the specified translation
+    Simple2DTransform & Translate(double x_shift, double y_shift)
+    {
+        Simple2DTransform transform;
+        translate(x_shift, y_shift, transform.m_matrix);
+        return *this *= transform;
+    }
+
+    // combine with the specified operations (these are cumulative operations, so rotating twice by 1 degree gives a total of 2 degrees rotation)
+    Simple2DTransform & Rotate(double radians)
+    {
+        Simple2DTransform transform;
+        rotate(radians, transform.m_matrix);
+        return *this *= transform;
+    }
+
+    // apply a heterogeneous scale factor
+    Simple2DTransform & Scale(double x_scale, double y_scale)
+    {
+        Simple2DTransform transform;
+        scale(x_scale, y_scale, transform.m_matrix);
+        return *this *= transform;
+    }
+
+    // apply a homogeneous scale factor
+    Simple2DTransform & Scale(double scale) 
+    {
+        return Scale(scale, scale); 
+    }
+
+    // apply a skew
+    Simple2DTransform & Skew(double skew)
+    {
+        Simple2DTransform transform;
+        skew_y(skew, transform.m_matrix);
+        return *this *= transform;
+    }
+
+    ////////////////////////////////////////////////////
+    // Queries
+    ////////////////////////////////////////////////////
+
+    // return the cross product of this and the given matrix
+    Simple2DTransform GetCrossProduct(const Simple2DTransform & rhs) const
+    {
+        Simple2DTransform result;
+        GEMM(m_matrix, rhs.m_matrix, result.m_matrix);
+        return result;
+    }
+
+    // returns the inverse of ourselves
+    Simple2DTransform GetInverse() const
+    {
+        // note: invert mucks with both matrices, so we use a copy of ourselves for it
+        Simple2DTransform original(*this), inverse;
+        invert(original.m_matrix, inverse.m_matrix);
+        return inverse;
+    }
+
+    // derivative values
+    double GetCoefficient(int i, int j) const
+    {
+        return m_matrix[i][j];
+    }
+
+    // return the cross product
+    double GetDeterminate() const
+    {
+        return m_matrix[0][0]*m_matrix[1][1] - m_matrix[0][1]*m_matrix[1][0];
+    }
+
+    // returns the square root of the determinate (this ignores heterogeneous scaling factors)
+    double GetScale() const
+    {
+        return sqrt(abs(GetDeterminate()));
+    }
+
+    // returns true if there is a scale factor
+    bool IsStretched() const
+    {
+        return (abs(abs(m_matrix[0][0]) - abs(m_matrix[1][1])) > 1.0e-7
+             || abs(abs(m_matrix[0][1]) - abs(m_matrix[1][0])) > 1.0e-7);
+    }
+
+    // true if we're the identity matrix
+    bool IsIdentity() const
+    {
+        return memcmp(m_matrix, GetIdentityMatrix(), sizeof(m_matrix)) == 0;
+    }
+
+    // returns true if this represents the same transformation as the given subtable
+    bool IsSubtableEqual(const SUBTABLE * pSubTable) const
+    {
+        ASSERT(pSubTable);
+        if (abs(pSubTable->tran1 - m_matrix[0][0]) > 1.0e-7)
+            return false;
+        if (abs(pSubTable->tran2 - m_matrix[1][0]) > 1.0e-7)
+            return false;
+        if (abs(pSubTable->tran3 - m_matrix[0][1]) > 1.0e-7)
+            return false;
+        if (abs(pSubTable->tran4 - m_matrix[1][1]) > 1.0e-7)
+            return false;
+        return true;
+    }
+
+    ////////////////////////////////////////////////////
+    // Application / Execution
+    ////////////////////////////////////////////////////
+
+    void Transform(const SimplePoint & point, SimplePoint & newpoint) const
+    {
+        newpoint.x = point.x * m_matrix[0][0] + point.y * m_matrix[1][0] + m_matrix[2][0];
+        newpoint.y = point.x * m_matrix[0][1] + point.y * m_matrix[1][1] + m_matrix[2][1];
+    }
+
+    void Transform(SimplePoint & point) const
+    {
+        SimplePoint newpoint;
+        Transform(point, newpoint);
+        point = newpoint;
+    }
+
+    void Transform(const SimpleRect & rect, SimpleRect & newrect) const
+    {
+        newrect.minX = rect.minX * m_matrix[0][0] + rect.minY * m_matrix[1][0] + m_matrix[2][0];
+        newrect.minY = rect.minX * m_matrix[0][1] + rect.minY * m_matrix[1][1] + m_matrix[2][1];
+        newrect.maxX = rect.maxX * m_matrix[0][0] + rect.maxY * m_matrix[1][0] + m_matrix[2][0];
+        newrect.maxY = rect.maxX * m_matrix[0][1] + rect.maxY * m_matrix[1][1] + m_matrix[2][1];
+    }
+
+    void Transform(SimpleRect & rect) const
+    {
+        SimpleRect newrect;
+        Transform(rect, newrect);
+        rect = newrect;
+    }
+
+    void Transform(CPoint & point) const
+    {
+        SimplePoint newpoint(point);
+        Transform(newpoint);
+        point.x = (int)(newpoint.x > 0.0 ? newpoint.x + 0.5 : newpoint.x - 0.5);
+        point.y = (int)(newpoint.y > 0.0 ? newpoint.y + 0.5 : newpoint.y - 0.5);
+    }
+
+    void Transform(SimplePoint point, CPoint & transformed) const
+    {
+        Transform(point);
+        transformed.x = (int)(point.x > 0.0 ? point.x + 0.5 : point.x - 0.5);
+        transformed.y = (int)(point.y > 0.0 ? point.y + 0.5 : point.y - 0.5);
+    }
+
+    void Transform(CPoint point, SimplePoint & transformed) const
+    {
+        transformed = point;
+        Transform(transformed);
+    }
+
+    void Transform(double dx, double dy, double & x, double & y) const
+    {
+        SimplePoint point(dx, dy);
+        Transform(point);
+        x = point.x;
+        y = point.y;
+    }
+
+    void Transform(double & x, double & y) const
+    {
+        SimplePoint point(x, y);
+        Transform(point);
+        x = point.x;
+        y = point.y;
+    }
+
+    SimplePoint GetTransformed(SimplePoint point) const
+    {
+        Transform(point);
+        return point;
+    }
+
+    CPoint GetTransformed(CPoint point) const
+    {
+        Transform(point);
+        return point;
+    }
+
+    SimpleRect GetTransformed(const CRect & rect) const
+    {
+        return SimpleRect(GetTransformed(SimplePoint(rect.left, rect.bottom)), GetTransformed(SimplePoint(rect.right, rect.top)));
+    }
+
+    SimpleRect GetTransformed(double x1, double y1, double x2, double y2) const
+    {
+        return SimpleRect(GetTransformed(SimplePoint(x1, y1)), GetTransformed(SimplePoint(x2, y2)));
+    }
+
+    double GetTransformedX(double x, double y) const
+    {
+        return GetTransformed(SimplePoint(x, y)).x;
+    }
+
+    double GetTransformedY(double x, double y) const
+    {
+        return GetTransformed(SimplePoint(x, y)).y;
+    }
+
+    double GetTransformedX(int x, int y) const
+    {
+        return GetTransformed(SimplePoint(x, y)).x;
+    }
+
+    double GetTransformedY(int x, int y) const
+    {
+        return GetTransformed(SimplePoint(x, y)).y;
+    }
+
+    double GetTransformedX(const SimplePoint & point) const
+    {
+        return GetTransformed(point).x;
+    }
+
+    double GetTransformedY(const SimplePoint & point) const
+    {
+        return GetTransformed(point).y;
+    }
+
+    int GetTransformedIntX(double x, double y) const
+    {
+        CPoint point;
+        Transform(SimplePoint(x, y), point);
+        return point.x;
+    }
+
+    int GetTransformedIntY(double x, double y) const
+    {
+        CPoint point;
+        Transform(SimplePoint(x, y), point);
+        return point.y;
+    }
+
+    int GetTransformedIntX(const SimplePoint & point) const
+    {
+        CPoint pt;
+        Transform(point, pt);
+        return pt.x;
+    }
+
+    int GetTransformedIntY(const SimplePoint & point) const
+    {
+        CPoint pt;
+        Transform(point, pt);
+        return pt.y;
+    }
+
+protected:
+    ////////////////////////////////////////////////////
+    // Static Class Operations
+    ////////////////////////////////////////////////////
+
+    static const ThreeByThreeMatrix & GetIdentityMatrix();
+
+    ////////////////////////////////////////////////////
+    // Instance Variables
+    ////////////////////////////////////////////////////
+
+    ThreeByThreeMatrix  m_matrix;
+};
+

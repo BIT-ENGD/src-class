@@ -1,0 +1,402 @@
+//public class ConnectionPool implements Runnable
+public class ConnectionPool {
+    private static Logger loger_error = Logger.getLogger("error");
+    // JDBC Driver name
+    String driverName;
+
+    // JDBC Connection URL
+    String connectionURL;
+
+    // Minimum size of the pool
+    int connectionPoolSize;
+
+    // Maximum size of the pool
+    int connectionPoolMax;
+
+    // Maximum number of uses for a single connection, or -1 for none
+    int connectionUseCount;
+
+    // Maximum connection idle time (in minutes)
+    int connectionTimeout;
+
+    // Additional JDBC properties
+    String userName;
+
+    String password;
+
+    // The Connection pool. This is a vector of ConnectionObject
+    // objects
+    Vector pool;
+
+    // The maximum number of simultaneous connections as reported
+    // by the JDBC driver
+    int maxConnections = -1;
+
+    // Scheduler scheduler;
+
+    // Timeout value
+    public static int TIMEOUT_MS = 20000;
+
+    /**
+     * Initializes the ConnectionPool object using 'ConnectionPool.cfg' as the
+     * configuration file
+     * 
+     * @return true if the ConnectionPool was initialized properly
+     */
+    /*
+     * public boolean initialize() throws Exception { return
+     * initialize("com/omh/jdbc/ConnectionPool.cfg"); }
+     */
+
+    /**
+     * Initializes the ConnectionPool object with the specified configuration
+     * file
+     * 
+     * @param config
+     *            Configuration file name
+     * @return true if the ConnectionPool was initialized properly
+     */
+    public void initialize(String driverName, String connectionURL,
+            int connectionPoolSize, int connectionPoolMax,
+            int connectionUseCount, int connectionTimeout, String userName,
+            String password) throws Exception {
+        this.driverName = driverName;
+        this.connectionURL = connectionURL;
+        this.connectionPoolSize = connectionPoolSize;
+        this.connectionPoolMax = connectionPoolMax;
+        this.connectionUseCount = connectionUseCount;
+        this.connectionTimeout = connectionTimeout;
+        this.userName = userName;
+        this.password = password;
+
+        createPool();
+
+        // scheduler = new Scheduler();
+        // scheduler.schedule(this, TIMEOUT_MS);
+
+    }
+
+    /**
+     * Destroys the pool and it's contents. Closes any open JDBC connections and
+     * frees all resources
+     */
+    public void destroy() {
+        try {
+            // Clear our pool
+            if (pool != null) {
+                // Loop throught the pool and close each connection
+                for (int i = 0; i < pool.size(); i++) {
+                    ((MangoDBConnection) pool.elementAt(i)).closeConnection();
+                }
+            }
+            pool = null;
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    /**
+     * Gets an available JDBC Connection. Connections will be created if
+     * necessary, up to the maximum number of connections as specified in the
+     * configuration file.
+     * 
+     * @return JDBC Connection, or null if the maximum number of connections has
+     *         been exceeded
+     */
+    public synchronized MangoDBConnection getConnection() {
+        // If there is no pool it must have been destroyed
+        if (pool == null) {
+            return null;
+        }
+
+        MangoDBConnection connectionObject = null;
+        int poolSize = pool.size();
+
+        // Get the next available connection
+        for (int i = 0; i < poolSize; i++) {
+            // Get the ConnectionObject from the pool
+            MangoDBConnection co = (MangoDBConnection) pool.elementAt(i);
+
+            // If this is a valid connection and it is not in use,
+            // grab it
+            if (co.isAvailable()) {
+                connectionObject = co;
+                break;
+            }
+        }
+
+        // No more available connections. If we aren't at the
+        // maximum number of connections, create a new entry
+        // in the pool
+        if (connectionObject == null) {
+            if ((connectionPoolMax < 0)
+                    || ((connectionPoolMax > 0) && (poolSize < connectionPoolMax))) {
+                // Add a new connection.
+                int i = addConnection();
+
+                // If a new connection was created, use it
+                if (i >= 0) {
+                    connectionObject = (MangoDBConnection) pool.elementAt(i);
+                }
+            } else {
+                LogManager.log("Maximum number of connections exceeded");
+                loger_error.error("Maximum number of connections exceeded");
+            }
+        }
+
+        // If we have a connection, set the last time accessed,
+        // the use count, and the in use flag
+        if (connectionObject != null) {
+            connectionObject.use();
+            connectionObject.touch();
+        }
+
+        return connectionObject;
+    }
+
+    /**
+     * Places the connection back into the connection pool, or closes the
+     * connection if the maximum use count has been reached
+     * 
+     * @param Connection
+     *            object to close
+     */
+
+    public synchronized void releaseConnection(MangoDBConnection con) {
+        removeFromPool(con);
+    }
+
+    public synchronized void release(MangoDBConnection con) {
+        if ((connectionUseCount > 0)
+                && (con.getUseCount() >= connectionUseCount)) {
+            removeFromPool(con);
+            // add new connection upon releasing one
+            addConnection();
+        } else {
+            con.touch();
+            con.free();
+        }
+        /*
+         * // Find the connection in the pool int index = find(con);
+         * System.out.println("close"); if (index != -1) { ConnectionObject co =
+         * (ConnectionObject) pool.elementAt(index);
+         *  // If the use count exceeds the max, remove it from // the pool. if
+         * ((connectionUseCount > 0) && (co.useCount >= connectionUseCount)) {
+         * trace("Connection use count exceeded"); removeFromPool(index); } else { //
+         * Clear the use count and reset the time last used co.touch();
+         * co.free(); } }
+         */
+    }
+
+    /**
+     * Prints the contents of the connection pool to the standard output device
+     */
+    public void printPool() {
+        printPool(new PrintWriter(System.out));
+    }
+
+    /**
+     * Prints the contents of the connection pool to the given PrintWriter
+     */
+    public void printPool(PrintWriter out) {
+        out.println("--ConnectionPool--");
+        if (pool != null) {
+            for (int i = 0; i < pool.size(); i++) {
+                MangoDBConnection co = (MangoDBConnection) pool.elementAt(i);
+                out.println("" + i + "=" + co);
+            }
+        }
+    }
+
+    /**
+     * Returns an enumeration of the ConnectionObject objects that represent the
+     * pool
+     */
+    public Enumeration getConnectionPoolObjects() {
+        return pool.elements();
+    }
+
+    public int returnConnectionCount() {
+        return connectionUseCount;
+    }
+
+    public int returnMaxPoolSize() {
+        return connectionPoolMax;
+    }
+
+    public int returnInitPoolSize() {
+        return connectionPoolSize;
+    }
+
+    /**
+     * Removes the ConnectionObject from the pool at the given index
+     * 
+     * @param index
+     *            Index into the pool vector
+     */
+    private synchronized void removeFromPool(MangoDBConnection con) {
+        // Make sure the pool and index are valid
+        if (pool != null) {
+            con.closeConnection();
+            pool.removeElement(con);
+        }
+    }
+
+    /**
+     * Creates the initial connection pool. A timer thread is also created so
+     * that connection timeouts can be handled.
+     * 
+     * @return true if the pool was created
+     */
+    private void createPool() throws Exception {
+        // Dump the parameters we are going to use for the pool.
+        // We don't know what type of servlet environment we will
+        // be running in - this may go to the console or it
+        // may be redirected to a log file
+        LogManager.log("JDBCDriver = " + driverName);
+        LogManager.log("JDBCConnectionURL = " + connectionURL);
+        LogManager.log("ConnectionPoolSize = " + connectionPoolSize);
+        LogManager.log("ConnectionPoolMax = " + connectionPoolMax);
+        LogManager.log("ConnectionUseCount = " + connectionUseCount);
+        LogManager.log("ConnectionTimeout = " + connectionTimeout + " seconds");
+        LogManager.log("Registering " + driverName);
+
+        Driver d = (Driver) Class.forName(driverName).newInstance();
+
+        // Create the vector for the pool
+        pool = new Vector();
+
+        // Bring the pool to the minimum size
+        fillPool(connectionPoolSize);
+    }
+
+    /**
+     * Adds a new connection to the pool
+     * 
+     * @return Index of the new pool entry, or -1 if an error has occurred
+     */
+    public int addConnection() {
+        int index = -1;
+
+        try {
+            // Calculate the new size of the pool
+            int size = pool.size() + 1;
+
+            // Create a new entry
+            fillPool(size);
+
+            // Set the index pointer to the new connection if one
+            // was created
+            if (size == pool.size()) {
+                index = size - 1;
+            }
+        } catch (Exception ex) {
+            System.out.println("SSSSSSS");
+            ex.printStackTrace();
+        }
+        return index;
+    }
+
+    /**
+     * Brings the pool to the given size
+     */
+    private synchronized void fillPool(int size) throws Exception {
+        String userID = this.userName;
+        String password = this.password;
+
+        // userID = getPropertyIgnoreCase(JDBCProperties, "user");
+        // password = getPropertyIgnoreCase(JDBCProperties, "password");
+
+        // Loop while we need to create more connections
+        while (pool.size() < size) {
+            MangoDBConnection co = new MangoDBConnectionMSSQL();
+
+            // Create the connection
+            co.makeConnection(connectionURL, userID, password);
+
+            // Do some sanity checking on the first connection in
+            // the pool
+            if (pool.size() == 0) {
+                // Get the maximum number of simultaneous connections
+                // as reported by the JDBC driver
+                maxConnections = co.getMaxConnections();
+            }
+
+            // Give a warning if the size of the pool will exceed
+            // the maximum number of connections allowed by the
+            // JDBC driver
+            if ((maxConnections > 0) && (size > maxConnections)) {
+                LogManager
+                        .log("WARNING: Size of pool will exceed safe maximum of "
+                                + maxConnections);
+            }
+
+            // Clear the in use flag
+            co.free();
+            // Set the last access time
+            co.touch();
+
+            pool.addElement(co);
+        }
+
+    } // fillPool()
+
+    /**
+     * Gets a the named propery, ignoring case. Returns null if not found
+     * 
+     * @param p
+     *            The property set
+     * @param name
+     *            The property name
+     * @return The value of the propery, or null if not found
+     */
+    private String getPropertyIgnoreCase(Properties p, String name) {
+        if ((p == null) || (name == null))
+            return null;
+
+        String value = null;
+
+        // Get an enumeration of the property names
+        Enumeration enumeration = p.propertyNames();
+
+        // Loop through the enum, looking for the given property name
+        while (enumeration.hasMoreElements()) {
+            String pName = (String) enumeration.nextElement();
+            if (pName.equalsIgnoreCase(name)) {
+                value = p.getProperty(pName);
+                break;
+            }
+        }
+
+        return value;
+    }
+
+    /**
+     * Called by the timer each time a clock cycle expires. This gives us the
+     * opportunity to timeout connections
+     */
+    /*
+     * public synchronized void run() { // No pool means no work if (pool ==
+     * null) { return; }
+     *  // Get the current time in milliseconds long now =
+     * System.currentTimeMillis();
+     *  // Check for any expired connections and remove them for (int i =
+     * pool.size() - 1; i >= 0; i--) { ConnectionObject co = (ConnectionObject)
+     * pool.elementAt(i);
+     *  // If the connection is not in use and it has not been // used recently,
+     * remove it if (!co.inUse) { if ((connectionTimeout > 0) && (co.lastAccess +
+     * (connectionTimeout * 1000) < now)) { removeFromPool(i); } } }
+     *  // Remove any connections that are no longer open for (int i =
+     * pool.size() - 1; i >= 0; i--) { ConnectionObject co = (ConnectionObject)
+     * pool.elementAt(i); try { // If the connection is closed, remove it from
+     * the pool if (co.con.isClosed()) { trace("Connection closed
+     * unexpectedly"); removeFromPool(i); } } catch (Exception ex) { } }
+     *  // Now ensure that the pool is still at it's minimum size try { if (pool !=
+     * null) { if (pool.size() < connectionPoolSize) {
+     * fillPool(connectionPoolSize); } } } catch (Exception ex) {
+     * ex.printStackTrace(); }
+     *  // Reschedule ourselves scheduler.schedule(this, TIMEOUT_MS); }
+     */
+
+}
+

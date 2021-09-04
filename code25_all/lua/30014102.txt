@@ -1,0 +1,113 @@
+function mat4:perspective(fovy, aspect, near, far)
+    assert(aspect ~= 0)
+    assert(near ~= far)
+
+    local t = math.tan(math.rad(fovy) / 2)
+    local result = mat4(
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0
+    )
+
+    result[1]  = 1 / (t * aspect)
+    result[6]  = 1 / t
+    result[11] = -(far + near) / (far - near)
+    result[12] = -1
+    result[15] = -(2 * far * near) / (far - near)
+
+    return result
+end
+
+function mat4:perspective(fovy, aspect, near, far)
+    assert(aspect ~= 0)
+    assert(near ~= far)
+
+    local result = mat4(
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0
+    )
+
+    local yScale = 1 / math.tan(math.rad(fovy) / 2)
+    local xScale = yScale / aspect
+
+    result[1]  = xScale
+    result[6]  = yScale
+    result[11] = far / (near - far)
+    result[12] = -1
+    result[15] = near * far / (near - far)
+
+    return result
+end
+
+self.projection = self.projection:perspective(45, 1920/1080, 0.001, 10)
+
+#ifdef VERTEX
+    #define v_position vertex_position
+    attribute vec3 v_normal;
+    attribute vec4 v_bone;
+    attribute vec4 v_weight;
+#endif
+
+varying vec3 f_position;
+varying vec4 f_color;
+varying vec2 f_uv;
+varying vec3 f_normal;
+
+varying vec2 f_uv_reflect;
+
+#ifdef VERTEX
+    uniform mat4    u_projection;
+    uniform mat4    u_model;
+    uniform mat4    u_view;
+
+    // this is why I want UBOs...
+    uniform mat4    u_bone_matrices[200];
+    uniform int     u_skinning = 0;
+
+    mat4 getDeformMatrix() {
+        if (u_skinning != 0) {
+            return u_bone_matrices[int(v_bone.x)] * v_weight.x +
+                    u_bone_matrices[int(v_bone.y)] * v_weight.y +
+                    u_bone_matrices[int(v_bone.z)] * v_weight.z +
+                    u_bone_matrices[int(v_bone.w)] * v_weight.w;
+        } else {
+            return mat4(1.0);
+        }
+    }
+
+    mat3 getNormalMatrix(in mat4 deform_matrix) {
+        return mat3(deform_matrix * u_model);
+    }
+
+    vec4 position(mat4 transform_projection, vec4 vertex_position) {
+        mat4 deform_matrix = getDeformMatrix();
+        vec4 f_position4 = u_view * u_model * deform_matrix * v_position;
+        f_normal = getNormalMatrix(deform_matrix) * normalize(v_normal);
+        f_color = VertexColor;
+        f_uv = VertexTexCoord.xy;
+        f_position = vec3(f_position4) / f_position4.w;
+
+        // This is confirmed bork on AMD 7970 - not sure what's up.
+        vec3 e = normalize(f_position);
+        vec3 n = normalize(getNormalMatrix(deform_matrix * u_view) * v_normal);
+        vec3 r = reflect(e, n);
+        float m = 2.0 * sqrt(
+            pow(r.x, 2.0) +
+            pow(r.y, 2.0) +
+            pow(r.z + 1.0, 2.0)
+        );
+        f_uv_reflect = - r.xy / m + 0.5;
+        f_uv_reflect.x *= -1.0;
+
+        return u_projection * f_position4;
+    }
+#endif
+
+function Camera:send(shader, view_name, proj_name)
+    shader:send(view_name or "u_view", self.view:to_vec4s())
+    shader:send(proj_name or "u_projection", self.projection:to_vec4s())
+end
+

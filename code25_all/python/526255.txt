@@ -1,0 +1,182 @@
+def windex(dict, sum, max):
+    '''an attempt to make a random.choose() function that makes
+    weighted choices accepts a dictionary with the item_key and
+    certainty_value as a pair like:
+    >>> x = [('one', 20), ('two', 2), ('three', 50)], the
+    maximum certainty value (max) and the sum of all certainties.'''
+    n = random.uniform(0, 1)
+    sum = max*len(list)-sum 
+    for key, certainty in dict.iteritems():
+        weight = float(max-certainty)/sum
+        if n < weight:
+            break
+        n = n - weight
+    return key
+
+def weightedChoices(dict, sum, max, choices=10):
+    '''an attempt to make a random.choose() function that makes
+    weighted choices accepts a dictionary with the item_key and
+    certainty_value as a pair like:
+    >>> x = [('one', 20), ('two', 2), ('three', 50)], the
+    maximum certainty value (max) and the sum of all certainties.'''
+    list = [random.uniform(0, 1) for i in range(choices)]
+    (n, list) = relavate(list.sort())
+    keys = []
+    sum = max*len(list)-sum 
+    for key, certainty in dict.iteritems():
+        weight = float(max-certainty)/sum
+        if n < weight:
+            keys.append(key)
+            if list: (n, list) = relavate(list)
+            else: break
+        n = n - weight
+    return keys
+def relavate(list):
+    min = list[0]
+    new = [l - min for l in list[1:]]
+    return (min, new)
+
+import random, time
+import psyco
+psyco.full()
+
+class ProbDict():
+    """
+    Modified version of Rex Logans RandomObject class. The more a key is randomly
+    chosen, the more unlikely it will further be randomly chosen. 
+    """
+    def __init__(self,keys_weights_values={}):
+        self._kw=keys_weights_values
+        self._keys=self._kw.keys()
+        self._len=len(self._keys)
+        self._findSeniors()
+        self._effort = 0.15
+        self._fails = 0
+    def __iter__(self):
+        return self.next()
+    def __getitem__(self, key):
+        return self._kw[key]
+    def __setitem__(self, key, value):
+        self.append(key, value)
+    def __len__(self):
+        return self._len
+    def next(self):
+        key=self._key()
+        while key:
+            yield key
+            key = self._key()
+    def __contains__(self, key):
+        return key in self._kw
+    def items(self):
+        return self._kw.items()
+    def pop(self, key):  
+        try:
+            (w, value) = self._kw.pop(key)
+            self._len -=1
+            if w == self._seniorW:
+                self._seniors -= 1
+                if not self._seniors:
+                    #costly but unlikely:
+                    self._findSeniors()
+            return [w, value]
+        except KeyError:
+            return None
+    def popitem(self):
+        return self.pop(self._key())
+    def values(self):
+        values = []
+        for key in self._keys:
+            try:
+                values.append(self._kw[key][1])
+            except KeyError:
+                pass
+        return values
+    def weights(self):
+        weights = []
+        for key in self._keys:
+            try:
+                weights.append(self._kw[key][0])
+            except KeyError:
+                pass
+        return weights
+    def keys(self, imperfect=False):
+        if imperfect: return self._keys
+        return self._kw.keys()
+    def append(self, key, value=None):
+        if key not in self._kw:
+            self._len +=1
+            self._kw[key] = [0, value]
+            self._keys.append(key)
+        else:
+            self._kw[key][1]=value
+    def _key(self):
+        for i in range(int(self._effort*self._len)):
+            ri=random.randint(0,self._len-1) #choose a random object
+            rx=random.uniform(0,self._seniorW)
+            rkey = self._keys[ri]
+            try:
+                w = self._kw[rkey][0]
+                if rx >= w: # test to see if that is the value we want
+                    w += 1
+                    self._warnSeniors(w)
+                    self._kw[rkey][0] = w
+                    return rkey
+            except KeyError:
+                self._keys.pop(ri)
+        # if you do not find one after 100 tries then just get a random one
+        self._fails += 1 #for confirming effectiveness only
+        for key in self._keys:
+            if key in self._kw:
+                w = self._kw[key][0] + 1
+                self._warnSeniors(w)
+                self._kw[key][0] = w
+                return key
+        return None
+    def _findSeniors(self):
+        '''this function finds the seniors, counts them and assess their age. It
+        is costly but unlikely.'''
+        seniorW = 0
+        seniors = 0
+        for w in self._kw.itervalues():
+            if w >= seniorW:
+                if w == seniorW:
+                    seniors += 1
+                else:
+                    seniorsW = w
+                    seniors = 1
+        self._seniors = seniors
+        self._seniorW = seniorW
+    def _warnSeniors(self, w):
+        #a weight can only be incremented...good
+        if w >= self._seniorW:
+            if w == self._seniorW:
+                self._seniors+=1
+            else:
+                self._seniors = 1
+                self._seniorW = w
+def test():
+    #test code
+    iterations = 200000
+    size = 2500
+    nextkey = size 
+
+
+    pd = ProbDict(dict([(i,[0,i]) for i in xrange(size)]))
+    start = time.clock()
+    for i in xrange(iterations):
+        key=pd._key()
+        w=pd[key][0]
+        if random.randint(0,1+pd._seniorW-w):
+            #the heavier the object, the more unlikely it will be removed
+            pd.pop(key)
+        probAppend = float(500+(size-len(pd)))/1000
+        if random.uniform(0,1) < probAppend:
+            nextkey+=1
+            pd.append(nextkey)
+    print (time.clock()-start)*1000/iterations, "msecs / iteration with", pd._fails, "failures /", iterations, "iterations"
+    weights = pd.weights()
+    weights.sort()
+    print "avg weight:", float(sum(weights))/pd._len, max(weights), pd._seniorW, pd._seniors, len(pd), len(weights)
+    print weights
+test()
+

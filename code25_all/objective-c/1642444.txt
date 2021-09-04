@@ -1,0 +1,101 @@
+setMaxConcurrentOperationCount
+main
+start
+[start]
+[start]
+@interface ConcurrentOperation : NSOperation {
+    BOOL executing;
+    BOOL finished;
+}
+- (void)beginOperation;
+- (void)completeOperation;
+@end
+
+@implementation ConcurrentOperation
+- (void)beginOperation {
+    @try {
+
+        // Test async request
+        NSURLRequest *r = [[NSURLRequest alloc] initWithURL:[NSURL URLWithString:@"http://www.google.com"]];
+        NSURLConnection *c = [[NSURLConnection alloc] initWithRequest:r delegate:self];
+        [r release];
+
+    } @catch(NSException * e) {
+        // Do not rethrow exceptions.
+    }
+}
+- (void)connectionDidFinishLoading:(NSURLConnection *)connection {
+    NSLog(@"Finished loading... %@", connection);
+    [self completeOperation];
+}
+- (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error {
+    NSLog(@"Finished with error... %@", error);
+    [self completeOperation]; 
+}
+- (void)dealloc {
+    [super dealloc];
+}
+- (id)init {
+    if (self = [super init]) {
+
+        // Set Flags
+        executing = NO;
+        finished = NO;
+
+    }
+    return self;
+}
+- (void)start {
+
+    // Main thread? This seems to be an important point
+    NSLog(@"%@ on main thread", ([NSThread isMainThread] ? @"Is" : @"Not"));
+
+    // Check for cancellation
+    if ([self isCancelled]) {
+        [self completeOperation];
+        return;
+    }
+
+    // Executing
+    [self willChangeValueForKey:@"isExecuting"];
+    executing = YES;
+    [self didChangeValueForKey:@"isExecuting"];
+
+    // Begin
+    [self beginOperation];
+
+}
+
+// Complete Operation and Mark as Finished
+- (void)completeOperation {
+    BOOL oldExecuting = executing;
+    BOOL oldFinished = finished;
+    if (oldExecuting) [self willChangeValueForKey:@"isExecuting"];
+    if (!oldFinished) [self willChangeValueForKey:@"isFinished"];
+    executing = NO;
+    finished = YES;
+    if (oldExecuting) [self didChangeValueForKey:@"isExecuting"];
+    if (!oldFinished) [self didChangeValueForKey:@"isFinished"];
+}
+
+// Operation State
+- (BOOL)isConcurrent { return YES; }
+- (BOOL)isExecuting { return executing; }
+- (BOOL)isFinished { return finished; }
+
+@end
+
+// Setup Queue
+myQueue = [[NSOperationQueue alloc] init];
+[myQueue setMaxConcurrentOperationCount:1];
+
+// Non Concurrent Op
+NonConcurrentOperation *op1 = [[NonConcurrentOperation alloc] init];
+[myQueue addOperation:op1];
+[op1 release];
+
+// Concurrent Op
+ConcurrentOperation *op2 = [[ConcurrentOperation alloc] init];
+[myQueue addOperation:op2];
+[op2 release];
+

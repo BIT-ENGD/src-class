@@ -1,0 +1,82 @@
+#pragma omp parallel default(shared) private(i,j,k,memd,memi,mdpmi,mdpme,mipmn,mipmn,mdinv,meinv,miinv,mimime,memime,gchk,spat,dtinv,mtempx,mtempy,mtempz,mtempinv) \
+                     firstprivate(memd,memi,mdpmi,mdpme,mipmn,mipmn,mdinv,meinv,miinv,mimime,memime,gchk,spat,dtinv)
+{
+.
+.
+.
+  #pragma omp single
+  printf("----- Check for smoothing -----\n");
+  #pragma omp sections
+  {
+    //Grids are now at the same timestep so we smooth
+    #pragma omp section
+    {
+      printf("-----   Smoothing of Rho by TID:%d\n",omp_get_thread_num());
+      smooth(mhd->rho,mhd->rhosmo,grid,omp_get_thread_num());
+    }
+    #pragma omp section
+    {
+      printf("-----   Smoothing of Rhoi by TID:%d\n",omp_get_thread_num());
+      smooth(mhd->rhoi,mhd->rhoismo,grid,omp_get_thread_num());
+    }
+    .
+    .
+    .
+  } /*-- End of Sections --*/
+  .
+  .
+  .
+} /*-- End of Parallel Region --*/
+
+void smooth(double ***field,char ***tsmooth,GRID *grid,int tid)
+{
+  double mtempx[grid->nx][grid->ny][grid->nz];
+  double mtempy[grid->nx][grid->ny][grid->nz];
+  double mtempz[grid->nx][grid->ny][grid->nz];
+  double mtempinv;
+  double etol=1e-10;  //Oscillation amplitude tollerance
+  double itol=1e-2;   //Inverse tollerance
+  for(i=0;i<grid->nx;i++)
+  {
+    for(j=0;j<grid->ny;j++)
+    {
+      for(k=0;k<grid->nz;k++)
+        {
+          printf("-----  SMOOTH(TID:%2d) i=%3d j=%3d k=%3d\n",tid,i,j,k);
+          mtempx[i][j][k]=0.0;
+          mtempy[i][j][k]=0.0;
+          mtempz[i][j][k]=0.0;
+          tsmooth[i][j][k]=0;
+        }
+    }
+  }
+  for(i=1;i<grid->nx-1;i++)
+  {
+    for(j=1;j<grid->ny-1;j++)
+    {
+      for(k=1;k<grid->nz-1;k++)
+      {
+        mtempinv=1.;
+        if (sqrt(field[i][j][k]*field[i][j][k]) > itol) mtempinv=1./field[i][j][k];
+        mtempx[i][j][k]=(field[i+1][j][k]-field[i][j][k])*(field[i][j][k]-field[i-1][j][k]);
+        mtempy[i][j][k]=(field[i][j+1][k]-field[i][j][k])*(field[i][j][k]-field[i][j-1][k]);
+        mtempz[i][j][k]=(field[i][j][k+1]-field[i][j][k])*(field[i][j][k]-field[i][j][k-1]);
+        if (sqrt(mtempx[i][j][k]*mtempx[i][j][k])*mtempinv*mtempinv <= etol) mtempx[i][j][k]=0.0;
+        if (sqrt(mtempy[i][j][k]*mtempy[i][j][k])*mtempinv*mtempinv <= etol) mtempy[i][j][k]=0.0;
+        if (sqrt(mtempz[i][j][k]*mtempz[i][j][k])*mtempinv*mtempinv <= etol) mtempz[i][j][k]=0.0;
+      }
+    }
+  }
+  for(i=1;i<grid->nx-1;i++)
+  {
+    for(j=1;j<grid->ny-1;j++)
+    {
+      for(k=1;k<grid->nz-1;k++)
+      {
+        if (   ((mtempx[i][j][k] < 0.0) && ((mtempx[i+1][j][k] < 0.0)||(mtempx[i-1][j][k] < 0.0))) 
+                || ((mtempy[i][j][k] < 0.0) && ((mtempy[i][j+1][k] < 0.0)||(mtempy[i][j-1][k] < 0.0)))
+                || ((mtempz[i][j][k] < 0.0) && ((mtempz[i][j][k+1] < 0.0)||(mtempx[i][j][k-1] < 0.0)))) tsmooth[i][j][k]=1;
+      }
+    }
+  }
+

@@ -1,0 +1,73 @@
+<DATAS LANG="en">
+<SCENARIO ID="19864">
+    <ORIGIN ID="329">
+        <SCENARIO_S ERR="0"></SCENARIO_S>
+        <SCENARIO_S ERR="2"></SCENARIO_S>
+    </ORIGIN>
+</SCENARIO>
+<ERRORS>
+    <ERROR ID="0" LABEL="Aggregated Major Errors" />
+    <ERROR ID="2" LABEL="Banner error" />
+</ERRORS>
+</DATAS>
+
+[("19864","329",[0,2], ["Aggregated Major Errors", "Banner error"])]
+that is 
+[(Scenario ID, Origin ID, [ERR],[Errors label])]
+
+[("19864","329",[0,2],["","*** Exception: Maybe.fromJust: Nothing
+
+errToLab
+{-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
+import Text.XML.HXT.Core
+import Data.Maybe
+
+dataURL = "test.xml"
+
+parseXML file = readDocument [ withValidate no
+                         , withRemoveWS yes  -- throw away formating WS
+                         ] file
+
+atTag tag = deep (isElem >>> hasName tag)
+
+getErrLab2 = atTag "ERRORS" >>>
+  proc l -> do
+     error <- atTag "ERROR"          -< l
+     errID <- getAttrValue "ID"     -< error
+     desc <- getAttrValue "LABEL"     -< error
+     returnA -< (errID,desc)
+
+getErr = atTag "SCENARIO_S" >>>
+     proc p -> do
+     err    <- getAttrValue "ERR" -< p
+     returnA -< read err::Int 
+
+getScenar2' errlab = atTag "SCENARIO" >>>
+     proc l -> do
+     scenarTag <- atTag "SCENARIO"     -< l
+     scenName <- getAttrValue "ID"     -< l
+     site     <- atTag "ORIGIN"          -< l
+     siteName <- getAttrValue "ID"     -< site
+     errs     <- listA getErr           -< site
+     errlab   <- listA (errToLab errlab) -< site
+     returnA -< (scenName,siteName,errs,errlab)
+
+getData= atTag "DATAS" >>>
+     proc p -> do 
+          errlab <- getErrLab2  -< p
+          datascen <- getScenar2' [errlab] -<< p
+          returnA -< datascen
+
+errToLab errlab = atTag "SCENARIO_S" >>>
+     proc p -> do
+          err    <- getAttrValue "ERR" -< p
+          returnA -<  chercheErr err  errlab 
+
+    where
+          chercheErr "0" _  = ""
+          chercheErr err taberr = fromJust.lookup err $ taberr
+
+main = do
+    site <- runX (parseXML dataURL >>> getData)
+    print site
+

@@ -1,0 +1,28 @@
+SELECT (e.error_Description || DECODE(t.trans_Comment, 'N', '', '','', ' - ' || t.trans_Comment)) AS Title,
+       t.Date_Time_Recorded AS Date_Recorded,
+       DECODE(t.user_ID,0,'System',(SELECT Full_Name FROM employee WHERE t.user_Id = user_id)) AS Recorded_by,
+           DECODE(t.user_ID,0, Dm_General.getCalendarShiftName(t.Date_Time_Recorded), (SELECT shift FROM employee WHERE t.user_Id = user_id)) AS Shift,
+          l.Lot_Number AS entity_number,
+          ms.Line_Num,
+          'L' AS Entity_Type, 
+           t.entity_id, l.lot_Id AS Lot_Id
+      FROM DAT_TRANSACTION t
+      JOIN ADM_ERRORCODES e ON e.error_id = t.error_id
+      JOIN ADM_ACTIONS a ON a.action_id = t.action_id,
+           DAT_LOT l
+                 INNER JOIN Status s ON l.Lot_Status_ID = s.Status_ID,
+          DAT_MASTER ms
+                INNER JOIN ADM_LINE LN ON ms.Line_Num = LN.Line_Num
+      WHERE
+             (e.memo_req = 'Y' OR a.memo_req = 'Y')
+          AND ms.Run_type_Id = Constants.Runtype_Production_Run --Production Run type
+           AND s.completed_type NOT IN ('D', 'C', 'R') -- Destroyed /closed / Released
+          AND LN.GEN = '2GT'
+           AND (NOT EXISTS (SELECT 1 FROM LNK_MEMO_TRANS lnk, DAT_MEMO m
+                           WHERE lnk.Trans_ID = t.trans_id AND lnk.Memo_ID = m.Memo_ID
+                           AND NVL(m.approve, 'Y') = 'Y'))--If it's null, it's 
+                                                  been created and is awaiting approval
+          AND l.Master_ID = ms.Master_ID
+           AND t.Entity_ID = l.Lot_ID
+           AND t.Entity_Type IN ('L', 'G');
+

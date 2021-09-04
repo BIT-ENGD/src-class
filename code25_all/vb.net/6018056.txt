@@ -1,0 +1,81 @@
+            Dim DSTableData As New System.Data.DataSet
+
+            If check1.Checked Then
+                DSTableData = GlobalFunctions.GlobalF.FillSparePartsTable(1)
+            Else
+                DSTableData = GlobalFunctions.GlobalF.FillSparePartsTable(0)
+            End If
+
+            dgTable.DataSource = DSTableData
+            dgTable.DataBind()
+
+...
+        Public Shared Function FillSparePartsTable(ByVal check1 As Integer) As DataSet
+            Dim DSPageData As New System.Data.DataSet
+            Dim param(1) As SqlClient.SqlParameter
+
+            param(0) = New SqlParameter("@check1", SqlDbType.Int)
+            param(0).Value = check1
+
+            ''# A Using block will ensure the .Dispose() method is called for these variables, even if an exception is thrown 
+            ''# This is IMPORTANT - not disposing your connections properly can result in an unrespsonsive database 
+            Using conn As New SQLConnection(ConfigurationSettings.AppSettings("AMDMetricsDevConnectionString")), _
+           cmd As New SQLCommand("FillSparePartsTable", conn), _
+            da As New SQLDataAdapter(cmd)
+                cmd.CommandType = CommandType.StoredProcedure
+                cmd.Parameters.AddRange(param)
+
+                da.Fill(DSPageData)
+            End Using
+
+            Return DSPageData
+        End Function
+
+USE [AMDMetrics]
+GO
+/****** Object:  StoredProcedure [dbo].[FillSparePartsTable]    Script Date: 05/16/2011 07:48:23 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER PROCEDURE [dbo].[FillSparePartsTable]
+@check1 INT
+AS
+SET NOCOUNT ON;
+
+If @check1 = 1
+     SELECT 
+        A.PART_NUM AS PN, 
+        A.PART_DESC, 
+        CASE ISNULL(A.NUM_FAILED, '') WHEN '' THEN 0 ELSE A.NUM_FAILED END AS numFailed, 
+        ISNULL(A.AVG_CENSUS, 0) AS AvgCensus, 
+        CASE ISNULL(B.Multiplier, '') WHEN '' THEN 1 ELSE B.Multiplier END AS PartMultiplier, 
+        CASE ISNULL(AVG_CENSUS, 0) WHEN 0 THEN 1 ELSE    
+           CAST(1 - (CASE ISNULL(A.NUM_FAILED, '') WHEN '' THEN 0 ELSE A.NUM_FAILED END / 
+           (CASE ISNULL(B.Multiplier, '') WHEN '' THEN 1 ELSE B.Multiplier END * AVG_CENSUS)) AS DECIMAL(9, 2)) END AS ReliabilityRate,    
+       A.PRIORITY , 
+       B.Criticality    
+      FROM [PROC].SPARE_PART_RELIABILITY A LEFT OUTER JOIN MANUAL.SPARE_PARTS_CRITICALITY B ON    
+      dbo.FORMAT_PART(A.PART_NUM) = dbo.FORMAT_PART(B.[Part Number])    
+        WHERE (A.QUERY_DATE = DateAdd(ms, -5, DateAdd(mm, DateDiff(m, 0, DateAdd(mm, -1, GETDATE())) + 1, 0)) 
+        AND CASE ISNULL(AVG_CENSUS, 0) WHEN 0 THEN 1 ELSE    
+            CAST(1 - (CASE ISNULL(A.NUM_FAILED, '') WHEN '' THEN 0 ELSE A.NUM_FAILED END / 
+            (CASE ISNULL(B.Multiplier, '') WHEN '' THEN 1 ELSE B.Multiplier END * AVG_CENSUS)) AS DECIMAL(9, 2)) END < 0.98)    
+        ORDER BY A.PRIORITY, ReliabilityRate 
+Else
+    SELECT 
+        A.PART_NUM AS PN, 
+        A.PART_DESC, 
+        CASE ISNULL(A.NUM_FAILED, '') WHEN '' THEN 0 ELSE A.NUM_FAILED END AS numFailed, 
+        ISNULL(A.AVG_CENSUS, 0) AS AvgCensus, 
+        CASE ISNULL(B.Multiplier, '') WHEN '' THEN 1 ELSE B.Multiplier END AS PartMultiplier, 
+        CASE ISNULL(AVG_CENSUS, 0) WHEN 0 THEN 1 ELSE    
+           CAST(1 - (CASE ISNULL(A.NUM_FAILED, '') WHEN '' THEN 0 ELSE A.NUM_FAILED END / 
+           (CASE ISNULL(B.Multiplier, '') WHEN '' THEN 1 ELSE B.Multiplier END * AVG_CENSUS)) AS DECIMAL(9, 2)) END AS ReliabilityRate,    
+       A.PRIORITY , 
+       B.Criticality    
+      FROM [PROC].SPARE_PART_RELIABILITY A LEFT OUTER JOIN MANUAL.SPARE_PARTS_CRITICALITY B ON    
+      dbo.FORMAT_PART(A.PART_NUM) = dbo.FORMAT_PART(B.[Part Number])    
+        WHERE(A.QUERY_DATE = DateAdd(ms, -5, DateAdd(mm, DateDiff(m, 0, DateAdd(mm, -1, GETDATE())) + 1, 0)))    
+        ORDER BY A.PRIORITY, ReliabilityRate 
+

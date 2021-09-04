@@ -1,0 +1,44 @@
+Data.Text.Lazy
+go'
+go'
+import qualified Data.Text.Lazy as T
+import qualified Data.Text.Lazy.IO as TI
+import System.IO
+import System.Environment
+import Control.Monad
+
+main = do
+  [in_en, in_ar] <- getArgs
+  [h_en, h_ar] <- mapM (`openFile` ReadMode) [in_en, in_ar]
+  hSetEncoding h_en utf8
+  en_txt <- TI.hGetContents h_en
+  let len = length $ T.lines en_txt
+  len `seq` hClose h_en
+  h_en <- openFile in_en ReadMode
+  hs@[hO_lm, hO_en, hO_ar] <- mapM (`openFile` WriteMode) ["lm.txt", "tun_"++in_en, "tun_"++in_ar]
+  mapM_ (`hSetEncoding` utf8) [h_en, h_ar, hO_lm, hO_en, hO_ar]
+  [en_txt, ar_txt] <- mapM TI.hGetContents [h_en, h_ar]
+  let txts@[_, _, _] = map T.unlines $ go len en_txt ar_txt
+  zipWithM_ TI.hPutStr hs txts
+  mapM_ (liftM2 (>>) hFlush hClose) hs
+  print "success"
+  where
+    go len en_txt ar_txt = go' (T.lines en_txt) (T.lines ar_txt)
+      where (q,r) = len `quotRem` 3000
+            go' [] [] = [[],[],[]]
+            go' en ar = let (h:bef, aft)    = splitAt q en 
+                            (hA:befA, aftA) = splitAt q ar 
+                            ~[lm,en',ar']   = go' aft aftA
+                        in [bef ++ lm, h:en', hA:ar']
+
+zipWithM_ TI.hPutStr hs txts
+fix (\loop lm en ar -> do
+  case (en,ar,lm) of
+    ([],_,lm) -> TI.hPutStr hO_lm $ T.unlines lm
+    (h:t,~(h':t'),~(lh:lt)) -> do
+      TI.hPutStrLn hO_en h
+      TI.hPutStrLn hO_ar h'
+      TI.hPutStrLn hO_lm lh
+      loop lt t t')
+  lm en ar
+

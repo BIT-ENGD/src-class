@@ -1,0 +1,121 @@
+#ifndef VWLANDMARKTABLEMODEL_H
+#define VWLANDMARKTABLEMODEL_H
+
+#include <QSqlTableModel>
+
+class GraphicsPointLandmarkItem;
+
+class VWLandmarkTableModel : public QSqlTableModel
+{
+    Q_OBJECT
+public:
+    enum Column {
+        IdColumn=0,
+        IdImageColumn=1,
+        UsernameColumn=2,
+        NameColumn=3,
+        DefinitionColumn=4
+    };
+
+    VWLandmarkTableModel(QObject *parent=0);
+
+    int idImage() const { return m_idImage; }
+    QString username() const { return m_username; }
+    void setIdImage(int idImage);
+    void setUsername(const QString &username);
+    virtual bool select();
+    bool insertPoint(GraphicsPointLandmarkItem *item);
+signals:
+protected:
+    virtual void setFilter(const QString &filter) 
+        { QSqlTableModel::setFilter(filter); }
+    virtual bool insertRowIntoTable(const QSqlRecord &values);
+protected slots:
+    void setDefaults(int row, QSqlRecord &r);
+private:
+    QString m_username;
+    int m_idImage;
+};
+
+#endif // VWLANDMARKTABLEMODEL_H
+
+
+#include "vwlandmarktablemodel.h"
+
+#include <QtGui>
+#include <QtSql>
+#include <QtCore>
+
+#include "graphicspointlandmarkitem.h"
+
+VWLandmarkTableModel::VWLandmarkTableModel(QObject *parent)
+    : QSqlTableModel(parent)
+{ 
+    setTable("vwLandmark");
+    setEditStrategy(OnManualSubmit);
+
+    connect(this, SIGNAL(primeInsert(int,QSqlRecord&)), 
+        SLOT(setDefaults(int,QSqlRecord&)));
+}
+
+void VWLandmarkTableModel::setIdImage(int idImage)
+{ m_idImage=idImage; }
+
+void VWLandmarkTableModel::setUsername(const QString &username)
+{ m_username=username; }
+
+bool VWLandmarkTableModel::select()
+{
+    Q_ASSERT(!username().isEmpty());
+
+    QString stmt="IdImage = %1 AND Username = '%2'";
+
+    setFilter(stmt.arg(idImage()).arg(username()));
+    return QSqlTableModel::select();
+}
+
+bool VWLandmarkTableModel::insertPoint(GraphicsPointLandmarkItem *item)
+{
+    QString text;
+    QTextStream out(&text);
+    int row=rowCount();
+    bool ok;
+
+    ok=insertRow(row); Q_ASSERT(ok);
+
+    QModelIndex idx=index(row, DefinitionColumn);
+
+    out<<*item;
+    ok=setData(idx, text); 
+    Q_ASSERT(ok);
+    idx=index(row, NameColumn);
+    ok=setData(idx, tr("New point landmark"));
+    Q_ASSERT(ok);
+    return ok;
+}
+
+bool VWLandmarkTableModel::insertRowIntoTable(const QSqlRecord &values)
+{
+    QString sql="EXEC InsertLandmark :IdImage,:Definition";
+    QSqlQuery q;
+    bool ok;
+
+    ok=q.prepare(sql); Q_ASSERT(ok);
+    q.bindValue(":IdImage", values.value("IdImage"));
+    q.bindValue(":Definition", values.value("Definition"));
+    q.setForwardOnly(true);
+    if(!q.exec()) {
+        setLastError(q.lastError());
+        return false;
+    }
+    qDebug()<<"hola mundo";
+    return true;
+}
+
+void VWLandmarkTableModel::setDefaults(int row, QSqlRecord &r)
+{
+    r.setValue("IdImage", idImage());
+    r.setValue("Name", "Unnamed landmark");
+    r.setValue("Username", username());
+}
+

@@ -1,0 +1,69 @@
+public IQueryable<Country> ListCountries()
+{
+  return ProjectCountry(dataContext.GetTable<ec_Country>());
+}
+
+private IQueryable<Country> ProjectCountry(IQueryable<ec_Country> query)
+{
+  var result = from country in query
+  join localized in dataContext.GetTable<ec_CountryLocalization>() on country.CountryID equals localized.CountryID
+  let regions = GetRegions(country.CountryID)
+  where localized.StatusID == 4 && localized.WebSiteID == this.webSiteID
+  select new Country(country.CountryID) {
+    CreatedDate = country.CreatedDate,
+    IsDeleted = country.IsDeleted,
+    IsoCode = country.IsoCode,
+    Name = country.Name,
+    Regions = new LazyList<Region>(regions),
+    Text = localized.Text,
+    Title = localized.Title,
+    UrlKey = country.UrlKey
+  };
+
+  return result;
+}
+
+private IQueryable<Region> GetRegions(Int32 countryID)
+{
+  var query = from r in dataContext.GetTable<ec_Region>()
+  where r.CountryID == countryID
+  orderby r.Name
+  select r;
+
+  return ProjectRegion(query);
+}
+
+private IQueryable<Region> ProjectRegion(IQueryable<ec_Region> query)
+{
+  var result = from region in query
+  join localized in dataContext.GetTable<ec_RegionLocalization>() on region.RegionID equals localized.RegionID
+  join country in ListCountries() on region.CountryID equals country.CountryID
+  let cities = GetCities(region.RegionID)
+  select new Region(region.RegionID) {
+    Cities = new LazyList<City>(cities),
+    Country = country,
+    CountryID = region.CountryID,
+    CreatedDate = region.CreatedDate,
+    IsDeleted = region.IsDeleted,
+    IsoCode = region.IsoCode,
+    Name = region.Name,
+    Text = localized.Text,
+    Title = localized.Title,
+    UrlKey = region.UrlKey
+  };
+
+  return result;
+}
+
+[TestMethod]
+public void DataProvider_Correctly_Projects_Country_Spike()
+{
+  // Act
+  Country country = dataProvider.GetCountry(1);
+
+  // Assert
+  Assert.IsNotNull(country);
+  Assert.IsFalse(String.IsNullOrEmpty(country.Description));
+  Assert.IsTrue(country.Regions.Count > 0);
+}
+

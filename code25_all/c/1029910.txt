@@ -1,0 +1,180 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <poll.h>
+#include <time.h>
+#include <sys/types.h>
+#include <fcntl.h>
+
+#define MAX_STR_LEN 1024
+static int directionFlag; /* 0 = input, 1 = output */
+static int eofFlag;
+
+/* Splits the next char from the stream inFile, with extra
+information logged if directionFlag swaps */
+void logChar(int inFilDes, int outFilDes, FILE *logFile, int direction)
+{
+    char inChar = 0;
+    if(read(inFilDes, &inChar, sizeof(char)) > 0)
+    {
+
+        if(direction != directionFlag)
+        {
+            directionFlag = direction;
+            if(direction)
+            {
+                fprintf(logFile, "\nOUTPUT: ");
+            } else {
+                fprintf(logFile, "\nINPUT: ");
+            }
+        }
+
+        write(outFilDes, &inChar, sizeof(char));
+        fputc(inChar, stderr);
+        fputc(inChar, logFile);
+    } else {
+        eofFlag = 1;
+    }
+    return;
+}
+
+int main(int argc, char* argv[])
+{
+    pid_t pid;
+
+    int childInPipe[2];
+    int childOutPipe[2];
+
+    eofFlag = 0;
+
+    /* [0] is input, [1] is output*/
+
+    if(pipe(childInPipe) < 0 || pipe(childOutPipe) < 0) {
+        fprintf(stderr,"Pipe error; aborting\n");
+            exit(1);
+    }
+
+    if((pid = fork()) == -1){
+        fprintf(stderr,"Fork error; aborting\n");
+        exit(1);
+    }
+
+    if(pid)
+    {
+        /*Parent process*/
+
+        int i;
+        int errcode;
+        time_t rawtime;
+        struct tm * timeinfo;
+        time(&rawtime);
+        timeinfo=localtime(&rawtime);
+
+        struct pollfd pollArray[2] = {
+            { .fd = 0, .events = POLLIN, .revents = 0 },
+            { .fd = childOutPipe[0], .events = POLLIN, .revents = 0 }
+        };
+        /* Yet again, 0 = input, 1 = output */
+
+        nfds_t nfds = sizeof(struct pollfd[2]);
+
+        close(childInPipe[0]);
+        close(childOutPipe[1]);
+
+        /* We don't want to change around the streams for this one,
+        as we will be logging everything - and I do mean everything */
+
+        FILE *logFile;
+        if(!(logFile = fopen("/opt/middleman/logfile.txt", "a"))) {
+            fprintf(stderr, "fopen fail on /opt/middleman/logfile.txt\n");
+            exit(1);
+        }
+
+        fprintf(logFile, "Commandline: ");
+
+        for(i=0; i < argc; i++)
+        {
+            fprintf(logFile, "%s ", argv[i]);
+        }
+        fprintf(logFile, "\nTIMESTAMP: %s\n", asctime(timeinfo));
+
+        while(!eofFlag)
+        {
+
+// RIGHT HERE is where things go to pot
+            errcode = poll(pollArray, nfds, 1);
+// All following fprintf(logfile)s do nothing
+            if(errcode < 0) {
+                fprintf(stderr, "POLL returned with error %d!", errcode);
+                eofFlag = 1;
+            }
+            if((pollArray[0].revents && POLLERR) & errno != EAGAIN ) {
+                fprintf(stderr, "POLL on input has thrown an exception!\n");
+                fprintf(stderr, "ERRNO value: %d\n", errno);
+                fprintf(logFile, "POLL on input has thrown an exception!\n");
+                eofFlag = 1;
+            } else if(pollArray[0].revents && POLLIN) {
+                logChar(pollArray[0].fd, childInPipe[1], logFile, 0);
+            } else if((pollArray[1].revents && POLLERR) & errno != EAGAIN ) {
+                fprintf(stderr, "POLL on output has thrown an exception!\n");
+                fprintf(stderr, "ERRNO value: %d\n", errno);
+                fprintf(logFile, "POLL on output has thrown an exception!\n");
+                eofFlag = 1;
+            } else if(pollArray[1].revents && POLLIN) {
+                logChar(pollArray[1].fd, 1, logFile, 1);
+            }
+
+        }
+
+        fclose(logFile);
+
+    }
+    else
+    {
+        /*Child process; switch streams and execute application*/
+        int i;
+        int catcherr = 0;
+        char stmt[MAX_STR_LEN] = "/usr/bin/";
+
+        close(childInPipe[1]);
+        close(childOutPipe[0]);
+
+        strcat(stmt, argv[0]);
+
+        if(dup2(childInPipe[0],0) < 0) {
+            fprintf(stderr, "dup2 threw error %d on childInPipe[0] to stdin!\n", errno);
+        }
+//      close(childInPipe[0]);
+
+        if(dup2(childOutPipe[1],1) < 0)
+        {
+            fprintf(stderr, "dup2 threw error %d on childInPipe[1] to stdout!\n", errno);
+        }
+
+        /* Arguments need to be in a different format for execv */
+        char* args[argc+1];
+        for(i = 0; i < argc; i++)
+        {
+            args[i] = argv[i];
+        }
+        args[i] = (char *)0;
+
+        fprintf(stderr, "Child setup complete, executing %s\n", stmt);
+        fprintf(stdout, "Child setup complete, executing %s\n", stmt);
+
+        if(execv(stmt, args) == -1) {
+            fprintf(stderr, "execvP error!\n");
+            exit(1);
+        }
+    }
+    return 0;
+}
+
+Child setup complete, executing /usr/bin/banner
+POLL on output has thrown an exception!
+ERRNO value: 0
+
+Commandline: banner testing 
+TIMESTAMP: Tue Jun 23 11:21:00 2009
+

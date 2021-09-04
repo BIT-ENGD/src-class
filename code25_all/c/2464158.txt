@@ -1,0 +1,54 @@
+BOOL TryReallyHardToDeleteFile(LPCTSTR lpFileName)
+{
+    // 1. caller without privilege
+    BOOL bSuccess = DeleteFile(lpFileName);
+    DWORD dwError = GetLastError();
+    if(!bSuccess && dwError == ERROR_ACCESS_DENIED)
+    {
+        // failed with access denied; try with privilege
+        DWORD dwOldRestorePrivilege = 0;
+        BOOL bHasRestorePrivilege = SetPrivilege(SE_RESTORE_NAME, SE_PRIVILEGE_ENABLED, &dwOldRestorePrivilege);
+        if(bHasRestorePrivilege)
+        {
+            // 2. caller with privilege
+            bSuccess = DeleteFile(lpFileName);
+            dwError = GetLastError();
+            SetPrivilege(SE_RESTORE_NAME, dwOldRestorePrivilege, NULL);
+        }
+        if(!bSuccess && dwError == ERROR_ACCESS_DENIED)
+        {
+            // failed with access denied; if caller is impersonating then try as process
+            HANDLE hToken = NULL;
+            if(OpenThreadToken(GetCurrentThread(), TOKEN_QUERY | TOKEN_IMPERSONATE, TRUE, &hToken))
+            {
+                if(RevertToSelf())
+                {
+                    // 3. process without privilege
+                    bSuccess = DeleteFile(lpFileName);
+                    dwError = GetLastError();
+                    if(!bSuccess && dwError == ERROR_ACCESS_DENIED)
+                    {
+                        // failed with access denied; try with privilege
+                        bHasRestorePrivilege = SetPrivilege(SE_RESTORE_NAME, SE_PRIVILEGE_ENABLED, &dwOldRestorePrivilege);
+                        if(bHasRestorePrivilege)
+                        {
+                            // 4. process with privilege
+                            bSuccess = DeleteFile(lpFileName);
+                            dwError = GetLastError();
+                            SetPrivilege(SE_RESTORE_NAME, dwOldRestorePrivilege, NULL);
+                        }
+                    }
+                    SetThreadToken(NULL, hToken);
+                }
+                CloseHandle(hToken);
+                hToken = NULL;
+            }
+        }
+    }
+    if(!bSuccess)
+    {
+        SetLastError(dwError);
+    }
+    return bSuccess;
+}
+

@@ -1,0 +1,166 @@
+monad
+basic
+posn
+monad
+monad
+basic
+posn
+{
+module IniLexer where
+}
+
+%wrapper "monad"
+
+
+
+$spaces = [\ \t]
+$alpha = [a-zA-Z]
+$digits = [0-9]
+$alnum = [$alpha$digits]
+
+
+@identifier = $alpha $alnum*
+
+@comment = \#.*
+
+@integer = $digits+
+
+@boolean = (true) | (false)
+
+@string = \"[^\"]*\"
+
+
+:-
+
+@integer    { mkL LInteger }
+@boolean    { mkL LBoolean }
+@string     { mkL LString }
+
+@identifier  { mkL LIdentifier }
+
+\[@identifier\] { mkL LSection }
+
+=           { mkL LAssign }
+
+\;          { mkL LEndAssign }
+@comment    ;
+[\ \t \n]+  ;
+
+
+{
+
+data LexemeClass = LInteger | LBoolean | LString | LIdentifier | LSection | LAssign | LEndAssign | LEOF
+    deriving (Eq, Show)
+
+
+mkL :: LexemeClass -> AlexInput -> Int -> Alex Token
+mkL c (p, _, _, str) len = let t = take len str
+                           in case c of
+                                LInteger -> return (IntegerNum ((read t) :: Integer) p)
+                                LBoolean -> return (BooleanVal (if t == "true"
+                                                                   then True
+                                                                   else False
+                                                               ) p)
+                                LString -> return (StringTxt (take (length t - 2) (drop 1 t)) p)
+                                LIdentifier -> return (Identifier t p)
+                                LSection -> return (SectionHeader (take (length t - 2) (drop 1 t)) p)
+                                LAssign -> return (Assignment p)
+                                LEndAssign -> return (EndAssignment p)
+
+
+-- No idea why I have to write this myself. Documentation doesn't mention it.
+alexEOF :: Alex Token
+alexEOF = return Eof
+
+
+
+data Token = SectionHeader {identifier :: String, position :: AlexPosn} |
+             Identifier {name :: String, position :: AlexPosn}          |
+             Assignment {position :: AlexPosn}                          |
+             EndAssignment {position :: AlexPosn}                       |
+             IntegerNum {value :: Integer, position :: AlexPosn}        |
+             BooleanVal {istrue :: Bool, position :: AlexPosn}          |
+             StringTxt  {text :: String, position :: AlexPosn}          |
+             Eof
+    deriving (Eq, Show)
+
+
+}
+
+{
+module Main where
+
+import IniLexer
+
+}
+
+
+
+%name parseIniFile
+%error {parseError}
+%lexer  {alexMonadScan} {AlexEOF}
+%monad {Alex}
+%tokentype {Token}
+%token
+    SECTION     {SectionHeader name _ }
+    IDENT       {Identifier name _ }
+    '='         {Assignment _ }
+    INT         {IntegerNum value _ }
+    BOOL        {BooleanVal istrue _ }
+    STRING      {StringTxt text _ }
+    ';'         {EndAssignment _ }
+
+
+%%
+
+
+ConfigFile : SequenceOfSections                    {reverse $1}
+
+SequenceOfSections : {- empty -}                   {   []  }
+                   | SequenceOfSections Section    {$2 : $1}
+
+
+Section : SECTION SectionBody                      {Section (identifier $1) (reverse $2)}
+
+
+SectionBody : {- empty -}        {[]}
+            | SectionBody AssignmentLine ';' {$2 : $1}
+
+
+AssignmentLine : IDENT '=' Value      {(name $1, $3)}
+
+Value : INT         {IntV (value $1)}
+      | BOOL        {BoolV (istrue $1)}
+      | STRING      {StringV (text $1)}
+
+
+{
+
+data Value = IntV Integer | BoolV Bool | StringV String
+    deriving (Eq, Show)
+
+data Section = Section String [(String, Value)]
+    deriving (Eq, Show)
+
+data IniFile = IniFile [Section]
+    deriving (Eq, Show)
+
+
+parseError :: [Token] -> Alex a
+parseError t = fail "a"
+
+main = do
+    s <- getContents
+    print $ parseIniFile $ runAlex s alexMonadScan
+
+}
+
+[...]
+Couldn't match expected type `(AlexReturn t1 -> Alex a0) -> t0'
+                with actual type `Alex Token'
+    The function `alexMonadScan' is applied to one argument,
+    but its type `Alex Token' has none
+[...]
+
+alexMonadScan
+posn

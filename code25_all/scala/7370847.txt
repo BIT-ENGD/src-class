@@ -1,0 +1,60 @@
+.par
+object Test {
+  val data = (1 to 500000) map { i => (i % 100) -> (i % 10000) }
+
+  def mutableIndex = {
+    val map = collection.mutable.Map[Int, Set[Int]]().withDefaultValue(
+      Set[Int]())
+    for ((k, v) <- data) { map(k) = map(k) + v }
+    map
+  }
+
+  def immutableIndex = data.groupBy(_._1).map{ case (k, seq) =>
+    k -> seq.map(_._2).toSet
+  }
+
+  def immutableParIndex = data.par.groupBy(_._1).map{ case (k, seq) =>
+    k -> seq.map(_._2).toSet
+  }
+
+  def main(args: Array[String]) {
+    def bench(id: String)(block: => Unit) {
+      val times = (new testing.Benchmark { def run() = block }).runBenchmark(10)
+      println(id + " " + times + " sum: " + times.sum)
+    }
+    println("avail procs " + Runtime.getRuntime.availableProcessors)
+    bench("mutable"){ mutableIndex }
+    bench("immutable"){ immutableIndex }
+    bench("immutable par"){ immutableParIndex }
+  }
+
+}
+
+$ scalac -d classes -optimize A.scala
+$ scala -cp classes Test
+avail procs 4
+mutable List(718, 343, 296, 297, 312, 312, 312, 312, 312, 312) sum: 3526
+immutable List(312, 266, 266, 265, 265, 265, 265, 265, 249, 265) sum: 2683
+immutable par List(546, 234, 234, 202, 187, 172, 188, 172, 187, 171) sum: 2293
+
+data
+bench
+groupBy
+def syncIndex = {
+  import collection.mutable.Builder
+  import java.util.concurrent.ConcurrentHashMap
+  import collection.JavaConverters._
+  val m = new ConcurrentHashMap[Int, Builder[Int, Set[Int]]]().asScala
+  for ((k, v) <- data.par) {
+    val bldr = Set.newBuilder[Int]
+    m.putIfAbsent(k, bldr) match {
+      case Some(bldr) => bldr.synchronized(bldr += v)
+      case None => bldr.synchronized(bldr += v)
+    }
+  }
+  val b = Map.newBuilder[Int, Set[Int]]
+  for ((k, v) <- m)
+    b += ((k, v.result))
+  b.result
+}
+

@@ -1,0 +1,92 @@
+local SPELL_LOCKOUTS = {
+-- [interruptSpellID] = lockoutDuration, -- Spell Name (Class)
+
+ [2139] = 6, -- Counterspell (Mage)
+ [1766] = 5, -- Kick (Rogue)
+ [96231] = 4, -- Rebuke (Paladin)
+ [147362] = 3, -- Counter Shot (Hunter)
+ [6552] = 4, -- Pummel (Warrior)
+ [115781] = 6, -- Optical Blast (Warlock)
+ [47528] = 4, -- Mind Freeze (Death Knight)
+ [19647] = 6, -- Spell Lock (Warlock)
+ [173320] = 5, -- Spear Hand Strike (Monk)
+ [2139] = 6, -- Counterspell (Mage)
+ [106839] = 4, -- Skull Bash (Druid)
+ [57994] = 3, -- Wind Shear (Shaman)
+ [187707] = 3, -- Muzzle (Hunter)
+ [183752] = 3, -- Consume Magic (Demon Hunter)
+}
+
+-- If this is "DBM", DBM's timers will be used. If this is "SW", Blizzard's stopwatch will be used.
+local MODE = "DBM"
+
+-- The text to display on DBM Timers.
+-- %SPELL% will be replaced with the name of the interrupt spell you cast.
+-- %ISPELL% will be replaced with the name of the spell you interrupted
+-- %DUR% will be replaced with the duration of the lockout.
+
+local BARTEXT = "%SPELL% interrupted %ISPELL%. Locked out for %DUR% seconds"
+-------------------
+-- END OF CONFIG --
+-------------------
+
+local ARENA1_GUID;
+local ARENA2_GUID;
+local ARENA3_GUID;
+local TARGET_GUID;
+local PLAYER_GUID;
+
+local ShowTimer; -- Declare the ShowTimer variable as local
+
+if MODE == "DBM" and DBM then -- If MODE is "DBM" and there's a global variable DBM
+
+ local DBM = DBM -- Create a local alias to DBM
+ local gsubTable = {} -- This table is used to handle text substitutions with gsub
+
+ ShowTimer = function(seconds, interruptSpell, interruptedSpell) -- Define the ShowTimer function
+ gsubTable.SPELL = interruptSpell -- Populate the fields of the table
+ gsubTable.ISPELL = interruptedSpell
+ gsubTable.DUR = seconds
+ local text = BARTEXT:gsub("%%(%a+)%%", gsubTable) -- Replace each occurrence of %SPELL%, %ISPELL% or %DUR% with the corresponding field of gsubTable and assing the result to the text variable
+
+ DBM:CreatePizzaTimer(seconds, text) -- Create the timer
+ end
+
+else -- Either MODE isn't "DBM", or there's no global variable DBM
+
+ ShowTimer = function(seconds)
+ Stopwatch_StartCountdown(0, 0, seconds)
+ Stopwatch_Play()
+ end
+
+end
+
+local f = CreateFrame("Frame") -- Create a frame and register some events.
+f:RegisterEvent("PLAYER_ENTERING_WORLD")
+f:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+f:SetScript("OnEvent", function(self, event, ...) -- Every time an event we're watching fires, call the corresponding method of the frame (e.g. PLAYER_ENTERING_WORLD calls f:PLAYER_ENTERING_WORLD() )
+ self[event](self, ...)
+end)
+
+function f:PLAYER_ENTERING_WORLD() -- This fires towards the end of the intitial login process.
+ ARENA1_GUID = UnitGUID("arena1") -- Record the arena1 GUID
+ ARENA2_GUID = UnitGUID("arena2") -- Record the arena2 GUID
+ ARENA3_GUID = UnitGUID("arena3") -- Record the arena3 GUID
+ TARGET_GUID = UnitGUID("target") -- Record the Target's GUID
+ PLAYER_GUID = UnitGUID("player") -- Record the player's GUID
+ self:UnregisterEvent("PLAYER_ENTERING_WORLD") -- Unregister this event, we don't care about it any more.
+end
+
+-- This fires any time someone does something combat-related near the player
+function f:COMBAT_LOG_EVENT_UNFILTERED(timestamp, event, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, ...)
+
+ local spellId, spellName, spellSchool, extraSpellID, extraSpellName, extraSchool = ... -- Get the extra arguments from the vararg
+ local lockout = SPELL_LOCKOUTS[spellId] -- Check if we have a lockout time for this interrupt spell
+
+ if lockout then -- If we do, show a timer.
+ ShowTimer(lockout, spellName, extraSpellName)
+ end
+end
+
+SPELL_LOCKOUTS
+and

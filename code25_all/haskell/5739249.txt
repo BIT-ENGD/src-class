@@ -1,0 +1,62 @@
+import Prelude as P
+import Data.Enumerator as E
+import Data.Enumerator.List as EL
+import Data.List (sort, insert)
+import IO
+import Control.Monad.Trans (lift)
+import Control.Monad (liftM)
+
+import Control.Exception as Exc
+import Debug.Trace
+
+test = run_ (readLines "numbers.txt" $$ EL.map (read ::String -> Int) =$ reorder 10 =$ printLines)
+
+reorder :: (Show a, Ord a) => (Monad m) => Int -> Enumeratee a a m b
+reorder n step = reorder' [] n step
+  where
+    reorder' acc n (Continue k) =
+      let
+        len = P.length
+        loop buf n' (Chunks xs)
+          | (n' - len xs >= 0) = continue (loop (foldr insert buf xs) (n' - len xs))
+          | otherwise  =
+              let allchunx = foldr insert buf xs
+                  (excess,store)= P.splitAt (negate (n' - len xs)) allchunx
+              in k (Chunks excess) >>== reorder' store 0
+        loop buf n' (EOF) = k (Chunks (trace ("buf:" ++ show buf) buf)) >>== undefined
+      in continue (loop acc n)
+
+printLines :: (Show a) => Iteratee a IO ()
+printLines = continue loop
+  where
+    loop (Chunks []) = printLines
+    loop (Chunks (x:xs)) = do
+      lift $ print x
+      printLines
+    loop (EOF) = yield () EOF
+
+readLines :: FilePath -> Enumerator String IO ()
+readLines filename s = do
+  h <- tryIO $ openFile filename ReadMode
+  Iteratee (Exc.finally (runIteratee $ checkContinue0 (blah h) s) (hClose h))
+  where
+    blah h loop k = do
+      x <- lift $ myGetLine h
+      case x of
+        Nothing -> continue k
+        Just line -> k (Chunks [line]) >>== loop
+    myGetLine h = Exc.catch (liftM Just (hGetLine h)) checkError
+    checkError :: IOException -> IO (Maybe String)
+    checkError e = return Nothing
+
+loop buf n' EOF = k (Chunks buf) >>== (\s -> yield s EOF)
+
+printLines :: (Show a) => Iteratee a IO ()
+printLines = continue loop
+  where
+    loop (Chunks []) = printLines
+    loop (Chunks xs) = do
+      lift $ mapM_ print xs
+      printLines
+    loop (EOF) = yield () EOF
+

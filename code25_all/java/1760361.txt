@@ -1,0 +1,128 @@
+exception in thread "Thread-0" java.lang.IllegalMonitorStateException
+        at java.lang.Object.notifyAll(Native Method)
+        at Test$A.callback(Test.java:49)
+        at Test$C.run(Test.java:115)
+
+import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Condition;
+
+public class Test {
+    public class A
+    {
+        private ReentrantLock lock;
+        private Condition cond;
+        private boolean bool;
+        private B b;
+        public A()
+        {
+            this.lock = new ReentrantLock();
+            this.cond = lock.newCondition();
+            b = new B(this);
+            bool = false;
+        }
+
+        public void doit()
+        {
+            try {
+                lock.lock();
+                b.letgo();
+                while (!bool) {
+                    System.out.println("A::doit() Block.");
+                    cond.awaitUninterruptibly();
+                }
+                System.out.println("A::doit() Done.");
+            }
+            finally {
+                lock.unlock();
+            }
+        }
+
+        public void callback() {
+            try {
+                lock.lock();
+                bool = true;
+                cond.notify();
+                System.out.println("A::callback() done.");
+            }
+            finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    public class B
+    {
+        private C c;
+        private ReentrantLock lock;
+        private Condition cond;
+        private boolean bool;
+        public B(A a)
+        {
+            this.lock = new ReentrantLock();
+            this.cond = lock.newCondition();
+            bool = false;
+            c = new C(a, this);
+            c.start();
+        }
+
+        public void letgo()
+        {
+            try {
+                lock.lock();
+                bool = true;
+            }
+            finally {
+                lock.unlock();
+            }
+        }
+
+        public void get()
+        {
+            try {
+                lock.lock();
+                while (!bool) {
+                    cond.awaitUninterruptibly();
+                }
+                bool = false;
+                return;
+            }
+            finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    public class C extends Thread
+    {
+        private A a;
+        private B b;
+
+        public C(A a, B b)
+        {
+            this.a = a;
+            this.b = b;
+        }
+
+        public void run()
+        {
+            while (true) {
+                b.get();
+                a.callback();
+            }
+        }
+    }
+
+    public static void main(String args[])
+    {
+        Test t = new Test();
+        t.test1();
+    }
+
+    public void test1()
+    {
+        A a = new A();
+        a.doit();
+    }
+}
+

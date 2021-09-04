@@ -1,0 +1,237 @@
+Private Const WM_NCPAINT As Integer = 133
+Private Const WM_NCMOUSEMOVE As Integer = 160
+Private Const WM_NCLBUTTONDOWN As Integer = 161
+Private Const WM_NCLBUTTONUP As Integer = 162
+Private Const WM_NCLBUTTONDBLCLK As Integer = 163
+Private Const WM_NCACTIVATE As Integer = 134
+Private Const WM_NCMOUSELEAVE As Integer = 674
+
+Private TitleBarButtonRectangle As Rectangle
+Private TitleBarButtonState As ButtonState
+Private TitleBarMouseIsDown As Boolean
+
+Private Enum ButtonState As Byte
+    Normal
+    Hot
+    Pressed
+End Enum
+
+
+
+
+Protected Overrides Sub WndProc(ByRef m As System.Windows.Forms.Message)
+    'Process the non client area messages here.
+
+    Select Case m.Msg
+
+        Case WM_NCPAINT, WM_NCACTIVATE, WM_NCMOUSELEAVE
+            'process the message and reset the <strong class="highlight">button</strong> to the normal state
+            'and draw it. This will draw the initial <strong class="highlight">button</strong> and repaint it
+            'if the title bar needs a paint update.
+            MyBase.WndProc(m)
+            TitleBarButtonState = ButtonState.Normal
+            TitleBarMouseIsDown = False
+            DrawButton(TitleBarButtonState)
+
+        Case WM_NCMOUSEMOVE
+            'The mouse is moving in the non client area.
+
+            If TitleBarButtonRectangle.Contains(GetNonClientPoint(CInt(m.LParam))) Then
+                'the mouse is in the <strong class="highlight">button</strong>
+                'If the mouse is down then draw it pressed if not already
+                'If the mouse is not down then draw it hot if not already
+                If TitleBarMouseIsDown Then
+                    If TitleBarButtonState <> ButtonState.Pressed Then
+                        TitleBarButtonState = ButtonState.Pressed
+                        DrawButton(TitleBarButtonState)
+                    End If
+                Else
+                    If TitleBarButtonState <> ButtonState.Hot Then
+                        TitleBarButtonState = ButtonState.Hot
+                        DrawButton(TitleBarButtonState)
+                    End If
+                End If
+
+            Else
+                'The mouse is not in the <strong class="highlight">button</strong>.
+                'If the mouse is down then draw it hot, when the
+                'mouse moves back into the <strong class="highlight">button</strong> it will be redrawn pressed.
+
+                'Otherwise draw it normal if its not already.
+                If TitleBarMouseIsDown Then
+                    If TitleBarButtonState <> ButtonState.Hot Then
+                        TitleBarButtonState = ButtonState.Hot
+                        DrawButton(TitleBarButtonState)
+                    End If
+                Else
+                    If TitleBarButtonState <> ButtonState.Normal Then
+                        TitleBarButtonState = ButtonState.Normal
+                        DrawButton(TitleBarButtonState)
+                    End If
+
+                End If
+
+            End If
+
+            'When the mouse is down and it leaves the window 
+            'it will remain in its hot or pressed state. when the
+            'mouse is let up outside the window and moved it will 
+            'recieve a message to repaint.
+
+            'Process all the mouse moves.
+            MyBase.WndProc(m)
+
+        Case WM_NCLBUTTONDOWN
+            'Left mouse <strong class="highlight">button</strong> has been held down in the non client area
+
+            'If the mouse is inside the <strong class="highlight">button</strong> then change its state to pressed
+            'and redraw it.  Store that the mouse is down.
+            If TitleBarButtonRectangle.Contains(GetNonClientPoint(CInt(m.LParam))) Then
+                TitleBarButtonState = ButtonState.Pressed
+                DrawButton(TitleBarButtonState)
+                TitleBarMouseIsDown = True
+            Else
+                'process the message it was clicked somewhere in the non client
+                'area but not in the <strong class="highlight">button</strong>.
+                MyBase.WndProc(m)
+            End If
+
+
+        Case WM_NCLBUTTONUP
+            'Mouse is being released in the non client area
+
+            If TitleBarMouseIsDown AndAlso TitleBarButtonRectangle.Contains(GetNonClientPoint(CInt(m.LParam))) Then
+                'The mouse was down and the mouse is in the <strong class="highlight">button</strong>.
+                'It has been pressed.
+                TitleBarButtonState = ButtonState.Hot
+                DrawButton(TitleBarButtonState)
+                MsgBox("The Titlebar button was clicked")
+
+            Else
+                'Process the message and reset the <strong class="highlight">button</strong> to normal if its not already.
+                MyBase.WndProc(m)
+
+                If TitleBarButtonState <> ButtonState.Normal Then
+                    TitleBarButtonState = ButtonState.Normal
+                    DrawButton(TitleBarButtonState)
+                End If
+
+            End If
+
+            'Reset that the mouse is down
+            TitleBarMouseIsDown = False
+
+        Case WM_NCLBUTTONDBLCLK
+            'Mouse has been double clicked in the non client area.
+
+            'If the cursor is in the <strong class="highlight">button</strong> then don't process the double click
+            'If processed the form will change window states.
+            If Not TitleBarButtonRectangle.Contains(GetNonClientPoint(CInt(m.LParam))) Then
+                MyBase.WndProc(m)
+            End If
+
+        Case Else
+
+            'Process the regular messages
+            MyBase.WndProc(m)
+
+    End Select
+
+End Sub
+
+Private Function GetNonClientPoint(ByVal lParam As Integer) As Point
+    'The lo word in the lparam is the x coordinate and the hi word is the y.
+    'The coordinates are in screen coordinates so subtract the location of the
+    'form to get the location <strong class="highlight">on</strong> the title bar.  This will have to be adjusted.
+    'There will be issues <strong class="highlight">on</strong> mdi forms.
+    Dim ScreenPoint As New Point(CInt(lParam And Short.MaxValue), CInt(lParam >> 16))
+    Return ScreenPoint - CType(Me.Location, Size)
+End Function
+
+Private Sub DrawButton(ByVal buttonState As ButtonState)
+    'Gets the graphics to the entire window.
+    'Draws a visual style <strong class="highlight">button</strong>.
+    'Draw your own graphics here.
+    'If using the visual style renderer then you will need
+    'any alternate drawing mode in case the renderer is not
+    'supported.  ControlPaint will draw a <strong class="highlight">button</strong> without 
+    'visual styles.
+
+    Dim EntireWindowGraphics As Graphics = Graphics.FromHdc(GetWindowDC(Me.Handle))
+
+    Dim StrFrmt As New StringFormat
+    StrFrmt.LineAlignment = StringAlignment.Center
+    StrFrmt.Alignment = StringAlignment.Center
+    StrFrmt.FormatFlags = StringFormatFlags.NoWrap
+    StrFrmt.Trimming = StringTrimming.EllipsisCharacter
+
+    Select Case buttonState
+        Case Form1.ButtonState.Normal
+            If VisualStyles.VisualStyleRenderer.IsSupported Then
+                Dim VisualRenderer As New VisualStyles.VisualStyleRenderer(VisualStyles.VisualStyleElement.Button.PushButton.Normal)
+                VisualRenderer.DrawBackground(EntireWindowGraphics, TitleBarButtonRectangle)
+            Else
+                ControlPaint.DrawButton(EntireWindowGraphics, TitleBarButtonRectangle, Windows.Forms.ButtonState.Normal)
+            End If
+
+        Case Form1.ButtonState.Hot
+            If VisualStyles.VisualStyleRenderer.IsSupported Then
+                Dim VisualRenderer As New VisualStyles.VisualStyleRenderer(VisualStyles.VisualStyleElement.Button.PushButton.Hot)
+                VisualRenderer.DrawBackground(EntireWindowGraphics, TitleBarButtonRectangle)
+            Else
+                ControlPaint.DrawButton(EntireWindowGraphics, TitleBarButtonRectangle, Windows.Forms.ButtonState.Normal)
+            End If
+
+        Case Form1.ButtonState.Pressed
+            If VisualStyles.VisualStyleRenderer.IsSupported Then
+                Dim VisualRenderer As New VisualStyles.VisualStyleRenderer(VisualStyles.VisualStyleElement.Button.PushButton.Pressed)
+                VisualRenderer.DrawBackground(EntireWindowGraphics, TitleBarButtonRectangle)
+            Else
+                ControlPaint.DrawButton(EntireWindowGraphics, TitleBarButtonRectangle, Windows.Forms.ButtonState.Pushed)
+            End If
+
+    End Select
+
+    EntireWindowGraphics.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+    EntireWindowGraphics.DrawString("Click Me", Me.Font, Brushes.Black, TitleBarButtonRectangle, StrFrmt)
+    EntireWindowGraphics.Dispose()
+    StrFrmt.Dispose()
+End Sub
+
+Private Sub SizeButton()
+    'This is hard coded for a sizable 3d window border.
+    'Other properties of the systemInformation class can
+    'adjust for fixed and single borders.
+    'SystemInformation.BorderSize
+    'SystemInformation.FixedFrameBorderSize
+
+    'if the window is maximized then its sizing border will not be
+    'displayed so the y is set to the bordersize and the height of the <strong class="highlight">button</strong>
+    'is set to the caption height.  If its not maximized the y is set to
+    '0 and the <strong class="highlight">button</strong> height is set to the caption height plus the border size.
+    If Me.WindowState = FormWindowState.Normal Then
+        TitleBarButtonRectangle.Y = 0
+        TitleBarButtonRectangle.Height = SystemInformation.CaptionHeight + SystemInformation.HorizontalResizeBorderThickness
+    Else
+        TitleBarButtonRectangle.Y = SystemInformation.HorizontalResizeBorderThickness
+        TitleBarButtonRectangle.Height = SystemInformation.CaptionHeight
+    End If
+End Sub
+
+Private Sub Form1_SizeChanged(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.SizeChanged
+    'Change the size of the <strong class="highlight">button</strong>.
+    'May have been maximized or normalized
+    SizeButton()
+End Sub
+
+'Gets the graphics to the entire window.
+<DllImport("user32.dll")> Public Shared Function GetWindowDC(ByVal hWnd As IntPtr) As IntPtr
+End Function
+
+Private Sub Form1_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+    TitleBarButtonRectangle = New Rectangle(30, 0, 75, 25)
+
+    SizeButton()
+
+End Sub
+

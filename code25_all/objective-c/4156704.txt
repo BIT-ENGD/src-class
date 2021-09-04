@@ -1,0 +1,234 @@
+NSLog()
+x
+y
+//
+//  CoverFlowView.m
+//  iWatch
+//
+//  Created by ief2 on 03/11/10.
+//  
+//
+
+#import "CoverFlowView.h"
+
+#pragma mark Defaults
+#define COVER_HEIGHT2WIDTH(a) ((float)a / 1.4)
+#define COVER_HEIGHT (200.0)
+#define COVER_WIDTH (COVER_HEIGHT2WIDTH(COVER_HEIGHT))
+#define COVER_SPACE_MIN (20.0)
+
+#pragma mark Private Methods
+@interface CoverFlowView (PrivateMethods)
+- (CGFloat)coverSpaceForMoviesPerLine:(NSUInteger *)n;
+- (void)frameDidChange;
+- (void)updateFrame;
+@end
+
+NSColor *RandomColor() {
+    float red = (float)(rand() % 255) / 254.0;
+    float green = (float)(rand() % 255) / 254.0;
+    float blue = (float)(rand() % 255) / 254.0;
+
+    NSColor *theColor = [[NSColor colorWithDeviceRed:red 
+                                               green:green 
+                                                blue:blue 
+                                               alpha:1.0] retain];
+    return [theColor autorelease];
+}
+
+#pragma mark Implementation
+@implementation CoverFlowView
+#pragma mark Init and Dealloc
+- (void)awakeFromNib {
+    srand(time(NULL));
+    NSMutableArray *colors = [[NSMutableArray alloc] initWithCapacity:100];
+    register int i;
+    for(i = 0; i < 100; i++) {
+        [colors addObject:RandomColor()];
+    }
+    self.movies = colors;
+    [colors autorelease];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self 
+                                             selector:@selector(frameDidChange) 
+                                                 name:NSViewFrameDidChangeNotification
+                                               object:self];
+
+}
+
+- (id)initWithFrame:(NSRect)frame movies:(NSArray *)movs {
+
+    self = [super initWithFrame:frame];
+    if(self != nil) {
+        self.movies = movs;
+
+        // FIXME: Debug color array to movie
+        NSMutableArray *colors = [[NSMutableArray alloc] initWithCapacity:100];
+        register int i;
+        srand((unsigned int)time(NULL));
+        for(i = 0; i < 100; i++) {
+            [colors addObject:RandomColor()];
+        }
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [_movies release];
+
+    [super dealloc];
+}
+
+#pragma mark Drawing
+- (void)drawRect:(NSRect)dirtyRect {
+    [[NSColor blackColor] setFill];
+    NSRectFill(dirtyRect);
+
+    NSUInteger moviesPerLine = 0;
+    CGFloat coverSpace = 0;
+
+    // Get the values
+    coverSpace = [self coverSpaceForMoviesPerLine:&moviesPerLine];
+
+
+
+    // if it's less than 1, break the drawing
+    if(moviesPerLine < 1) {
+        return;
+    }
+
+    // get the rows not to draw
+    // p = top left point's y
+    // h = movie cover height ->\
+    // s = space between      -->The movies height and it's space above it
+    // 
+    //           p
+    // f(x) = -------
+    //         h + s
+    double rows = ((dirtyRect.origin.y) / (COVER_HEIGHT + coverSpace));
+
+
+    // get the first movie that has to be drawn
+    // could be half-draw
+    //
+    // (NSUInteger)rows * moviesPerLine
+    NSUInteger index = (NSUInteger)rows * moviesPerLine;
+    if(!(index < [self.movies count]))
+        return;
+
+
+    // variable declaration
+    CGFloat curY;
+    CGFloat curX;
+
+    // start drawing until the line after max
+    // start the loop
+    do {
+        NSUInteger rowIndex;
+        // get the y for the movie
+        // x = movie index (start from 1)
+        // m = movies per row
+        // h = movie height
+        // s = movie space
+        //
+        //         [x - (x % m)]
+        // f(x) = (|-----------|) * (h + s) + s
+        //         [     m     ]
+        // BUT: if rows == 2, rows -= 1
+        rowIndex = ((index + 1) - ((index + 1) % moviesPerLine)) / moviesPerLine;
+        ((index + 1) % moviesPerLine == 0) ? (rowIndex -= 1) : (rowIndex = rowIndex);
+        curY = rowIndex * (COVER_HEIGHT + coverSpace) + coverSpace;
+
+
+        // get the x fot the movie
+        // x = movie index (start from 1)
+        // m = movies per line
+        // w = movie width
+        // s = cover space
+        //
+        //              
+        // f(x) = ((x - (x - (x % m))) - 1) * (w + s) + s
+        // BUT: if row == 0, row = m
+        //
+        rowIndex = (index+1) - (((index+1) - ((index + 1) % moviesPerLine)));
+        (rowIndex == 0) ? (rowIndex = moviesPerLine) : (rowIndex = rowIndex);
+        curX = (rowIndex - 1) * (COVER_WIDTH + coverSpace) + coverSpace;
+        NSLog(@"%s index: %3u || x: %5.0f || y: %5.0f", __FUNCTION__, index, curX, curY);
+
+        // Start the drawing
+        NSRect bezierPathRect = NSMakeRect(curX + coverSpace, curY, COVER_WIDTH, COVER_HEIGHT);
+        NSBezierPath *path = [NSBezierPath bezierPathWithRect:bezierPathRect];
+        [path setLineWidth:2.0];
+        [[NSColor whiteColor] setStroke];
+        [(NSColor *)[self.movies objectAtIndex:index] setFill];
+        [path fill];
+        [path stroke];
+
+        // add up values
+        index++;
+        if(!(index < [self.movies count]))
+            return;
+
+    } while(curY - (COVER_HEIGHT + coverSpace) < dirtyRect.origin.y + dirtyRect.size.height);
+}
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+#pragma mark Private Methods
+- (void)frameDidChange {
+
+}
+
+- (CGFloat)coverSpaceForMoviesPerLine:(NSUInteger *)n {
+    // x = number of covers
+    // w = view width
+    // m = cover width
+    // y = the space
+    //
+    //        w - (mx)
+    // f(x) = --------
+    //         x + 1
+
+    CGFloat m = COVER_WIDTH;
+    CGFloat w = [self bounds].size.width;
+
+    register NSUInteger x = 1;
+    CGFloat space;
+    while(1) {
+        space = ((w-(m*x)) / ( x + 1.0));
+        if(space < COVER_SPACE_MIN) {
+            x--;
+            space = ((w - (m*x)) / (x + 1.0));
+            break;
+        }
+        x++;
+    }
+
+    if(n) *n = x;
+    return space;
+}
+
+#pragma mark Properties
+@synthesize movies=_movies;
+- (void)setMovies:(NSArray *)ar {
+
+    if(ar != _movies) {
+        [_movies release];
+        _movies = [ar retain];
+
+        // Update frame size
+        NSUInteger m;
+        CGFloat space = [self coverSpaceForMoviesPerLine:&m];
+        NSUInteger lines = [ar count] / m;
+        CGFloat height = (COVER_HEIGHT + space) * ((CGFloat)lines) + space;
+        CGFloat width = [self frame].size.width;
+        NSRect frame = [self frame];
+        frame.size = NSMakeSize(width, height);
+        [self setFrame:frame];
+        [self setNeedsDisplay:YES];
+    }
+}
+@end
+

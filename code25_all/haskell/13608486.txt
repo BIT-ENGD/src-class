@@ -1,0 +1,54 @@
+{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.State (StateT, execStateT, gets, modify)
+
+class AgentDatabase d where
+  type Elem d
+  addAgent :: Elem d -> StateT d IO ()
+  withAgent :: 
+     (Elem d -> StateT d IO (Elem d)) -> String -> StateT d IO ()
+
+data SimpleUniverse d = SimpleUniverse {
+    agentDB :: d
+    -- plus other fields
+  }
+
+-- I want the methods of class AgentDatabase to "penetrate" through
+-- the outer wrapper of SimpleUniverse and operate on the agentDB field.
+instance (AgentDatabase d) => 
+    AgentDatabase (SimpleUniverse d) where
+  type Elem (SimpleUniverse d) = Elem d
+
+  -- When addAgent is invoked on a SimpleUniverse, apply it to the
+  -- agentDB field inside.
+  addAgent a = do
+    db <- gets agentDB
+    db' <- liftIO $ execStateT (addAgent a) db
+    modify (\u -> u { agentDB=db' } )
+
+  -- When withAgent is invoked on a SimpleUniverse, apply it to the
+  -- agentDB field inside.
+  withAgent program name = do
+    db <- gets agentDB
+    db' <- liftIO $ execStateT (withAgent program name) db -- line 33
+    modify (\u -> u { agentDB=db' } )
+
+amy3.hs:33:11:
+    Couldn't match type `d' with `SimpleUniverse d'
+      `d' is a rigid type variable bound by
+          the instance declaration at amy3.hs:19:25
+    When using functional dependencies to combine
+      Control.Monad.State.Class.MonadState s (StateT s m),
+        arising from the dependency `m -> s'
+        in the instance declaration in `Control.Monad.State.Class'
+      Control.Monad.State.Class.MonadState
+        (SimpleUniverse (SimpleUniverse d)) (StateT (SimpleUniverse d) IO),
+        arising from a use of `gets' at amy3.hs:33:11-14
+    In a stmt of a 'do' block: db <- gets agentDB
+    In the expression:
+      do { db <- gets agentDB;
+           db' <- liftIO $ execStateT (withAgent program name) db;
+           modify (\ u -> u {agentDB = db'}) }
+Failed, modules loaded: none.
+

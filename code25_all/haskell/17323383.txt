@@ -1,0 +1,63 @@
+gameloop :: TChan UAC ->
+            IO ()
+gameloop commandChannel = do 
+   (tickHandler, tickSink) <- newAddHandler
+   networkDescr <- compile $ makeNetworkDescription commandChannel tickHandler
+   actuate networkDescr
+   forkIO $ forever $ (timer 10) >>= tickSink
+   return ()
+
+
+makeNetworkDescription :: forall t . Frameworks t =>
+                          TChan UAC ->
+                          AddHandler () ->
+                          Moment t ()
+makeNetworkDescription commandChannel tickHandler = do
+   eTick <- fromAddHandler tickHandler
+   bCChannel <- fromPoll $ grabCommands commandChannel
+
+-- test fromPoll
+
+   test <- initial bCChannel
+   liftIO $ appendFile "testPoll.txt" $ show test
+
+-- end fromPoll test
+
+   let eCChannel = bCChannel <@  eTick
+   liftIO $ print "hi there\n"
+   reactimate $ (\n -> appendFile "Commands.txt" (show n)) <$> eCChannel
+
+
+grabCommands :: TChan UAC -> IO [UAC]
+grabCommands unval = do
+   result <- (atomically $ readTChan unval) `untilM` (atomically $ isEmptyTChan unval)
+   liftIO $ print $ show result
+   return result
+
+timer :: TimeOut -> IO ()
+timer ms = do
+   threadDelay ms
+
+main :: IO ()
+main = do
+   commandChan <- atomically $ newTChan :: IO (TChan UAC)
+   forkIO $ gameloop commandChan
+   liftIO $ print "back from fork\n"
+   atomically $ populateCC commandChan playerCommands
+   return ()
+
+populateCC :: TChan UAC -> [UAC] -> STM ()
+populateCC pChannel pCommands = mapM_ (writeTChan pChannel) pCommands
+
+playerCommands =
+   [UAC (PlayerCommand (CommandData (T.pack "1" :: AID) Look) (T.pack "1")),
+    UAC (PlayerCommand (CommandData (T.pack "2" :: AID) (Move Mongo)) (T.pack "2"))
+   ]
+
+Main
+"back from fork\n"
+"[UAC (PlayerCommand (CommandData \"1\" Look) \"1\"),UAC (PlayerCommand (CommandData    \"2\" (Move Mongo)) \"2\")]"
+"hi there\n"
+
+Commands.txt
+fromPoll

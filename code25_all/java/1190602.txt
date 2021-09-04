@@ -1,0 +1,136 @@
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+/**
+ * Extend this class to run method calls asynchronously in the second thread implemented by this class.
+ * Create method(type1 param1, type2 param2, ...) and let it call this.enqueueVoidCall("method", param1, param2, ...)
+ * 
+ * The thread executing the run-method will automatically call methodAsync with the specified parameters.
+ * To obtain the return-value, pass an implementation of AsyncCallback to this.enqueueCall().
+ * AsyncCallback.returnValue() will automatically be called upon completion of the methodAsync.
+ *  
+ */
+public class ThreadedClass extends Thread {
+    private static Object test;
+
+    private Queue<String> queue_methods = new ConcurrentLinkedQueue<String>();
+    private Queue<Object[]> queue_params = new ConcurrentLinkedQueue<Object[]>();
+    private Queue<AsyncCallback<? extends Object>> queue_callback = new ConcurrentLinkedQueue<AsyncCallback<? extends Object>>();
+
+    private volatile boolean shutdown = false;
+
+/**
+ *  The run method required by Runnable. It manages the asynchronous calls placed to this class.
+ */
+@Override
+public final void run() {
+    test = new Object();
+    while (!shutdown) {
+        if (!this.queue_methods.isEmpty()) {
+            String crtMethod = queue_methods.poll();
+            Object[] crtParamArr = queue_params.poll();
+            String methodName = crtMethod + "Async";
+
+            Method method;
+            try {
+                method = this.getClass().getMethod(methodName);
+                try {
+                    Object retVal = method.invoke(this, crtParamArr);
+                    AsyncCallback<? extends Object> crtCallback = queue_callback.poll();
+                    crtCallback.returnValue(retVal);
+                } catch (Exception ex) {}
+               } catch (SecurityException ex) {
+               } catch (NoSuchMethodException ex) {}
+        } else {
+            try {
+                synchronized(test ) {
+                    test.wait();
+                }
+            } catch (InterruptedException ex) {
+                System.out.println("READY");
+            } catch (Exception ex) {
+                System.out.println("READY, but " + ex.getMessage());
+            }
+        }
+    }
+}
+
+/**
+ * Asynchronously adds a method-call to the scheduler, specified by methodName with passed parameters 
+ * @param methodName The name of the currently called method. methodName + "Async" is being called
+ * @param parameters Parameters you may want to pass to the method
+ */
+protected final void enqueueVoidCall(String methodName, Object... parameters) {
+    List<Object> tmpParam = new ArrayList<Object>();
+    for (Object crt : parameters) {
+        tmpParam.add(crt);
+    }
+    queue_methods.add(methodName);
+    queue_params.add(parameters);
+    queue_callback.add(null);
+    test.notifyAll();
+}
+
+/**
+ * Asynchronously adds a method-call to the scheduler, specified by methodName with passed parameters 
+ * @param methodName The name of the currently called method. methodName + "Async" is being called
+ * @param callBack An instance of AsyncCallback whose returnValue-method is called upon completion of the task.
+ * @param parameters Parameters you may want to pass to the method
+ */
+protected final void enqueueCall(String methodName, AsyncCallback<? extends Object> callBack, Object... parameters) {
+    List<Object> tmpParam = new ArrayList<Object>();
+    for (Object crt : parameters) {
+        tmpParam.add(crt);
+    }
+    queue_methods.add(methodName);
+    queue_params.add(parameters);
+    queue_callback.add(callBack);
+    test.notifyAll();
+}
+
+/**
+ * Complete the currently running task, optionally return values and eventually shut down. The instance of this object becomes unusable after this call. 
+ */
+public void shutdown() {
+    shutdown=true;
+}
+
+}
+
+public class MySecondTask extends ThreadedClass {
+public void test1() {
+    this.enqueueVoidCall("test1", null);
+}
+
+public void test1Async() {
+    System.out.println("Start");
+    try {
+        // do big job here
+    } catch (Exception ex) { }
+    System.out.println("Done");
+}
+}
+
+public class TestingClass {
+public static void main(String[] args) {
+    MySecondTask test = new MySecondTask();
+    test.start();
+    System.out.println("1. Thread [1]");
+    // CORRECTION, SHOULD BE:
+    test.test1();
+    // INSTEAD OF:
+    // test.test1Async();
+    for(int q=0; q<=100000; q++) {
+        System.out.println("1:"+ new Date().getTime()+":"+ q);
+        if ((q % 1000) == 0) {
+            System.out.flush();
+        }
+    }
+    System.err.println("1. Thread [2]");
+}
+
+}
+

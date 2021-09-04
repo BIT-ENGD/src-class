@@ -1,0 +1,68 @@
+frame=73834 fps=397 q=0.0 size=      -0kB time=2462.14 bitrate=  -0.0kbits/s frame=74028 fps=397 q=0.0 size=      -0kB time=2468.64 bitrate=  -0.0kbits/s frame=74133 fps=397 q=0.0 Lsize=      -0kB time=2472.06 bitrate=  -0.0kbits/
+
+duration=( $(ffmpeg -i "$SourceFile" 2>&1 | sed -n "s/.* Duration: \([^,]*\), start: .*/\1/p") )
+fps=( $(ffmpeg -i "$SourceFile" 2>&1 | sed -n "s/.*, \(.*\) tbr.*/\1/p") )
+hours=( $(echo $duration | cut -d":" -f1) )
+minutes=( $(echo $duration | cut -d":" -f2) )
+seconds=( $(echo $duration | cut -d":" -f3) )
+# Get the integer part with cut
+frames=( $(echo "($hours*3600+$minutes*60+$seconds)*$fps" | bc | cut -d"." -f1) )
+if [ -z $frames ]; then
+    zenity --info --title "$WindowTitle" --text "Can't calculate frames, sorry."
+    exit 
+echo ""$SourceFile" has $frames frames, now converting" > $ffmpeglog
+echo ""$SourceFile" has $frames frames, now converting"
+
+progress() {
+sleep 10
+#some shenanigans due to the way ffmpeg uses carriage returns
+cat -v $ffmpeglog | tr '^M' '\n' > $ffmpeglog1
+#calculate percentage progress based on frames
+cframe=( $(tac $ffmpeglog1 | grep -m 1 frame= | awk '{print $1}' | cut -c 7-) )
+if [ -z $cframe ]; then
+    cframe=( $(tac $ffmpeglog1 | grep -m 1 frame= | awk '{print $2}') )
+fi
+if is_integer $frame; then
+    percent=$((100 * cframe / frames))
+    #calculate time left and taken etc
+    fps=( $(tac $ffmpeglog1 | grep -m 1 frame= | awk '{print $3}') )
+    if [ "$fps" = "fps=" ]; then
+        fps=( $(tac $ffmpeglog1 | grep -m 1 frame= | awk '{print $4}') )
+    fi
+    total=$(( frames + cframe + percent + fps ))
+    #simple check to ensure all values are numbers
+    if is_integer $total; then
+        #all ok continue
+        if [ -z $fps ]; then
+            echo -ne "\rffmpeg: $cframe of $frames frames, progress: $percent"%" and ETA: error fps:0"
+        else
+            if [ -z $cframe ]; then
+                echo -ne "\rffmpeg: total $frames frames, error cframes:0"
+            else
+                remaining=$(( frames - cframe ))
+                seconds=$(( remaining / fps ))
+                h=$(( seconds / 3600 ))
+                m=$(( ( seconds / 60 ) % 60 ))
+                s=$(( seconds % 60 ))
+                echo -ne "\rffmpeg: $cframe of $frames frames, progress: $percent"%" and ETA: "$h"h "$m"m "$s"s"
+            fi
+        fi
+    else
+        echo "Error, one of the values wasn't a number, trying again in 10s."
+    fi
+else
+    echo "Error, frames is 0, progress wont work, sorry."
+
+fi
+}
+
+is_integer() {
+    s=$(echo $1 | tr -d 0-9)
+    if [ -z "$s" ]; then
+        return 0
+    else
+        return 1
+    fi
+
+}
+

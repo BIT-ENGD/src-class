@@ -1,0 +1,127 @@
+CAuthentication::CAuthentication()
+
+{
+
+    m_dwLastError = ERROR_SUCCESS;
+
+    m_hCryptProv = NULL;
+
+    m_hHash = NULL;
+
+    m_hDuplicateHash = NULL;
+
+    if(!CryptAcquireContext(&m_hCryptProv, NULL, NULL, PROV_RSA_FULL, CRYPT_MACHINE_KEYSET))
+
+    {
+        m_dwLastError = GetLastError();
+
+        if (m_dwLastError == 0x80090016 )
+        {
+            if(!CryptAcquireContext(&m_hCryptProv, NULL, NULL, PROV_RSA_FULL, CRYPT_NEWKEYSET | CRYPT_MACHINE_KEYSET)) 
+            {
+                 m_dwLastError = GetLastError();
+
+                 m_hCryptProv = NULL;
+            }
+         }
+    }
+
+    if(!CryptCreateHash(m_hCryptProv, CALG_MD5, 0, 0, &m_hHash))
+    {
+        m_dwLastError = GetLastError();
+
+        m_hHash = NULL;
+    }
+}
+
+bool CAuthentication::SetHashKeyString(char* pszKeyBuffer)
+
+{
+
+    bool bHashStringSet = false;
+
+    DWORD dwHashSize = 0;
+    DWORD dwHashLen = sizeof(DWORD);
+
+    BYTE byHash[DIGITAL_SIGNATURE_LENGTH / 2]={0};
+
+    if(pszKeyBuffer != NULL && strlen(pszKeyBuffer) == DIGITAL_SIGNATURE_LENGTH)
+    {
+        if(CryptDuplicateHash(m_hHash, NULL, 0, &m_hDuplicateHash))
+        {
+            if(CryptGetHashParam(m_hDuplicateHash, HP_HASHSIZE, reinterpret_cast<BYTE*>(&dwHashSize), &dwHashLen, 0))
+            {        
+                if (dwHashSize == DIGITAL_SIGNATURE_LENGTH / 2)
+                {
+                    char*pPtr = pszKeyBuffer;
+
+                    ULONG ulTempVal = 0;
+
+                    for(ULONG ulIdx = 0; ulIdx < dwHashSize; ulIdx++)
+                    {
+                        sscanf(pPtr, "%02X", &ulTempVal);
+
+                        byHash[ulIdx] = static_cast<BYTE>(ulTempVal);
+
+                        pPtr+= 2;
+                    }
+
+                    if(CryptSetHashParam(m_hHash, HP_HASHVAL, &byHash[0], 0)) 
+                    {
+                        bHashStringSet = true;
+                    }
+                    else
+                    {
+                        pszKeyBuffer = "";
+                        m_dwLastError = GetLastError();
+                    }
+                }
+            }
+            else
+            {
+                m_dwLastError = GetLastError();
+            }
+        }
+        else
+        {
+            m_dwLastError = GetLastError();
+        }
+    }
+
+    if(m_hDuplicateHash != NULL)
+    {
+        CryptDestroyHash(m_hDuplicateHash);
+    }  
+
+    return bHashStringSet;
+}
+
+bool CAuthentication::AddDataToHash(BYTE* pbyHashBuffer, ULONG ulLength)
+
+{
+
+    bool bHashDataAdded = false;
+
+    if(CryptHashData(m_hHash, pbyHashBuffer, ulLength, 0))
+    {
+        bHashDataAdded = true;
+    }
+    else
+    {
+        m_dwLastError = GetLastError();
+    }
+
+    return bHashDataAdded;
+}
+
+CAuthentication auth;
+
+auth.SetHashKeyString("0DD72A4F2B5FD48EF70B775BEDBCA14C");
+
+if(!auth.AddDataToHash(pbyHashBuffer, ulDataLen))
+
+{
+
+    TRACE("CryptHashData function failed - Errorcode: %lu.\n", auth.GetAuthError());
+}
+

@@ -1,0 +1,190 @@
+#import <Cocoa/Cocoa.h>
+
+@interface SMLDirectoryDataSource : NSObject {
+    NSString *rootDirectory;
+}
+
+- (int)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item;
+- (id)outlineView:(NSOutlineView *)outlineView
+            child:(int)index
+           ofItem:(id)item;
+- (id)outlineView:(NSOutlineView *)outlineView objectValueForTableColumn:(NSTableColumn *)tableColumn
+           byItem:(id)item;
+- (void) setRootDirectory:(NSString *)directory;
+
+@end
+
+@interface SMLDirectoryDataItem : NSObject
+{
+    NSString *relativePath, *fullPath;
+    SMLDirectoryDataItem *parent;
+    NSMutableArray *children;
+}
+
+//+ (SMLDirectoryDataItem *)rootItem;
+- (int)numberOfChildren;// Returns -1 for leaf nodes
+- (SMLDirectoryDataItem *)childAtIndex:(int)n;// Invalid to call on leaf nodes
+- (NSString *)fullPath;
+- (NSString *)relativePath;
+
+@end
+
+#import "SMLDirectoryDataSource.h"
+
+
+@implementation SMLDirectoryDataSource
+- (id)initWithDirectory:(NSString *)path
+{
+    rootDirectory = path;
+    return self;
+}
+
+- (int)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(id)item
+{
+    return (item == nil) ? 1 : [item numberOfChildren];
+}
+
+- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item
+{
+    return (item == nil) ? NO : ([item numberOfChildren] != -1);
+}
+
+- (id)outlineView:(NSOutlineView *)outlineView
+            child:(int)index
+           ofItem:(id)item
+{
+    NSLog(@"hi there");
+    if(rootDirectory == nil)
+            rootDirectory = @"/";
+    NSLog(rootDirectory);
+    if(item == nil){
+        SMLDirectoryDataItem *item = [[SMLDirectoryDataItem alloc] initWithPath:rootDirectory parent:NULL];
+        return item;
+        [item release];
+    }
+    else
+        return [(SMLDirectoryDataItem *)item childAtIndex:index];
+}
+/*(
+- (id)outlineView:(NSOutlineView *)outlineView
+objectValueForTableColumn:(NSTableColumn *)tableColumn
+           byItem:(id)item
+{
+    if(rootDirectory == nil)
+        rootDirectory = @"/";
+    return rootDirectory;
+}
+*/
+- (void)setRootDirectory:(NSString *)directory
+{
+    rootDirectory = directory;
+}
+
+- (id)outlineView:(NSOutlineView *)outlineView objectValueForTableColumn:(NSTableColumn *)tableColumn byItem:(id)item {
+    if(item == nil)
+        return rootDirectory;
+    else
+        return (id)[(SMLDirectoryDataItem *)item relativePath];
+}
+
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(NSTableColumn *)tableColumn item:(id)item {
+    return NO;
+}
+
+@end
+
+@implementation SMLDirectoryDataItem
+
+//static SMLDirectoryDataItem *rootItem = nil;
+#define IsALeafNode ((id)-1)
+
+- (id)initWithPath:(NSString *)path parent:(SMLDirectoryDataItem *)obj
+{
+    fullPath = [path copy];
+    if (self = [super init])
+    {
+        relativePath = [[path lastPathComponent] copy];
+        parent = obj;
+    }
+    return self;
+}
+
+
+/*+ (SMLDirectoryDataItem *)rootItem
+{
+    if (rootItem == nil) rootItem = [[SMLDirectoryDataItem alloc] initWithPath:@"/" parent:nil];
+    return rootItem;
+}*/
+
+
+// Creates, caches, and returns the array of children
+// Loads children incrementally
+- (NSArray *)children
+{
+    if (children == NULL) {
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        //NSString *fullPath = [self fullPath];
+        BOOL isDir, valid = [fileManager fileExistsAtPath:fullPath isDirectory:&isDir];
+        if (valid && isDir) {
+            NSArray *array = [fileManager contentsOfDirectoryAtPath:fullPath error:NULL];
+            if (!array) {   // This is unexpected
+                children = [[NSMutableArray alloc] init];
+            } else {
+                NSInteger cnt, numChildren = [array count];
+                children = [[NSMutableArray alloc] initWithCapacity:numChildren];
+                NSString *filename = [[NSString alloc] init];
+                for (cnt = 0; cnt < numChildren; cnt++) {
+                    filename = [fullPath stringByAppendingPathComponent:[array objectAtIndex:cnt]];
+                    SMLDirectoryDataItem *item = [[SMLDirectoryDataItem alloc] initWithPath:filename parent:self];
+                    [children addObject:item];
+                    [item release];
+                }
+                [filename release];
+            }
+        } else {
+            NSLog(@"is a leaf... strange");
+            children = IsALeafNode;
+        }
+    }
+    return children;
+}
+
+
+- (NSString *)relativePath
+{
+    return relativePath;
+}
+
+
+- (NSString *)fullPath
+{
+    // If no parent, return our own relative path
+    //if (parent == nil) return relativePath;
+
+    // recurse up the hierarchy, prepending each parent’s path
+    //return [[parent fullPath] stringByAppendingPathComponent:relativePath];
+    return fullPath;
+}
+
+- (SMLDirectoryDataItem *)childAtIndex:(int)n
+{
+    return [[self children] objectAtIndex:n];
+}
+
+- (int)numberOfChildren
+{
+    id tmp = [self children];
+    return (tmp == IsALeafNode) ? (0) : [tmp count];
+}
+
+
+- (void)dealloc
+{
+    if (children != IsALeafNode) [children release];
+    [relativePath release];
+    [super dealloc];
+}
+
+@end
+

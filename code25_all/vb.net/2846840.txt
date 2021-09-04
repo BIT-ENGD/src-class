@@ -1,0 +1,88 @@
+
+fe = FrameworkElementAdapters.ContractToViewAdapter(tab.ReturnBrowserObject)
+
+ Private Sub Button1_Click(ByVal sender As Object, ByVal e As System.Windows.RoutedEventArgs) Handles Button1.Click
+        'Try
+        Dim h As EventWaitHandle
+        g = Guid.NewGuid()
+        h = New EventWaitHandle(False, EventResetMode.ManualReset, "Tab" & g.ToString)
+        StartTabProcess()
+        Dim f As Boolean = h.WaitOne(New TimeSpan(0, 0, 10), False)
+        If f = False Then
+            p.Kill()
+        End If
+        CreateIPCChannels()
+        Dim inhc As INativeHandleContract = tabClient.ReturnBrowserObject
+        fe = FrameworkElementAdapters.ContractToViewAdapter(inhc)
+        Me.Grid1.Children.Add(fe)
+
+        'Catch ex As Exception
+        '    MsgBox(ex.ToString)
+
+        'End Try
+    End Sub 
+Private Sub StartTabProcess()
+        Dim str As String = String.Format(CultureInfo.InvariantCulture, "/guid:{0} /id:{1}", New Object() {g, Process.GetCurrentProcess.Id})
+        p = New Process
+        p.StartInfo.CreateNoWindow = True
+        p.StartInfo.UseShellExecute = False
+        p.StartInfo.Arguments = str
+        p.StartInfo.FileName = "BrowserTabHost.exe"
+        p.Start()
+    End Sub
+Private Sub CreateClientIPC()
+        Dim serverProv As New BinaryServerFormatterSinkProvider()
+        serverProv.TypeFilterLevel = System.Runtime.Serialization.Formatters.TypeFilterLevel.Full
+        Dim clientProv As New BinaryClientFormatterSinkProvider()
+
+        Dim properties As System.Collections.IDictionary = New System.Collections.Hashtable()
+        properties("name") = "Client"
+        properties("portName") = g.ToString
+        properties("typeFilterLevel") = "Full"
+        properties("exclusiveAddressUse") = "False"
+        ' Create the channel. 
+        Dim serverChannel As New IpcChannel(properties, clientProv, serverProv)
+        ChannelServices.RegisterChannel(serverChannel, False)
+
+        tabClient = DirectCast(Activator.GetObject(GetType(BrowserObject), "ipc://" & g.ToString & "/TabClient"), BrowserObject)
+    End Sub
+
+<Serializable()> _
+Public Class BrowserObject
+    Inherits MarshalByRefObject
+    Public ihc As INativeHandleContract
+    Public ad As Dispatcher
+    Public handle As IntPtr
+    Public Delegate Sub ManipulateWB()
+    Dim newWeb As WebBrowser
+    Public Delegate Function CreateAndReturnWebInstance()
+    Public Property Browser As Pajocomo.Windows.Forms.WebBrowserControl
+    Dim wfh As WindowsFormsHost
+    Public Sub New()
+        ad = Dispatcher.Current
+    End Sub
+    Public Function ReturnBrowserObject() As INativeHandleContract
+        Try
+            ad.DoWork(New CreateAndReturnWebInstance(Function()
+                                                         newWeb = New WebBrowser
+                                                         'wfh.Child = newWeb
+                                                         ihc = FrameworkElementAdapters.ViewToContractAdapter(newWeb)
+                                                         Return Nothing
+                                                     End Function))
+
+            Return ihc
+        Catch ex As Exception
+            MsgBox(ex.ToString)
+        End Try
+    End Function
+    Public Sub SetDockSettings()
+        'Browser.Dispatcher.BeginInvoke(New ManipulateWB(Sub()
+        '                                                    Browser.NavigateToURL("http://neowin.net")
+        '                                                End Sub))
+    End Sub
+    Private Function CreateWebInstance()
+        '    Browser = New Controls.WebBrowser
+        Return Browser
+    End Function
+End Class
+

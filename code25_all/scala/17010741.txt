@@ -1,0 +1,90 @@
+MaxTemperatureMapper
+MaxTemperatureReducer
+MaxTemperatureDriver
+job.setJar()
+MaxTemperatureDriver
+hadoop com.koadr.hadoop.MaxTemperatureDriver  micro/sample.txt output
+hadoop jar target/classes/koadr-hadoop-1.0-SNAPSHOT.jar com.koadr.hadoop.MaxTemperatureDriver  micro/sample.txt output
+java.lang.RuntimeException: java.lang.ClassNotFoundException: Class com.koadr.hadoop.MaxTemperatureMapper not found
+at org.apache.hadoop.conf.Configuration.getClass(Configuration.java:1587)
+at org.apache.hadoop.mapreduce.task.JobContextImpl.getMapperClass(JobContextImpl.java:191)
+at org.apache.hadoop.mapred.MapTask.runNewMapper(MapTask.java:631)
+at org.apache.hadoop.mapred.MapTask.run(MapTask.java:330)
+at org.apache.hadoop.mapred.Child$4.run(Child.java:268)
+at java.security.AccessController.doPrivileged(Native Method)
+at javax.security.auth.Subject.doAs(Subject.java:415)
+at org.apache.hadoop.security.UserGroupInformation.doAs(UserGroupInformation.java:1408)
+at org.apache.hadoop.mapred.Child.main(Child.java:262)
+Caused by: java.lang.ClassNotFoundException: Class com.koadr.hadoop.MaxTemperatureMapper not found
+at org.apache.hadoop.conf.Configuration.getClassByName(Configuration.java:1493)
+at org.apache.hadoop.conf.Configuration.getClass(Configuration.java:1585)
+... 8 more
+
+class MaxTemperatureMapper extends Mapper[Object, Text, Text, IntWritable] {
+
+  private def missing( temp : String) : Boolean = {
+    temp.equals("+9999")
+  }
+
+ override def map(key: Object, value: Text, context:Mapper[Object,Text,Text,IntWritable]#Context ) = {
+    val line : String = value.toString
+    val year : String = line.substring(15, 19)
+    val temp : String = line.substring(87,92)
+
+
+    if (!missing(temp)) {
+        val airTemp : Int = Integer.parseInt(line.substring(87,92))
+        context.write(new Text(year), new IntWritable(airTemp))
+    }
+  }
+}
+
+class MaxTemperatureReducer extends Reducer[Text, IntWritable, Text, IntWritable] {
+
+  override
+  def reduce (key: Text, values: java.lang.Iterable[IntWritable], context:Reducer[Text, IntWritable, Text, IntWritable]#Context) = {
+    def maxVal(values : List[IntWritable], cMaxV : Int) : Int = {
+      if (values.isEmpty) cMaxV
+      else maxVal(values.tail,math.max(cMaxV, values.head.get()))
+    }
+    context write(new Text(key), new IntWritable(maxVal(values.toList,Integer.MIN_VALUE)) )
+  }
+
+}
+
+class MaxTemperatureDriver extends Configured with Tool {
+  override
+  def run(args : Array[String]) : Int = {
+    if (args.length != 2) {
+      System.err.printf("Usage: %s [generic options] <input> <output>\n", getClass.getSimpleName)
+      ToolRunner.printGenericCommandUsage(System.err)
+     -1
+    }
+   val job : Job = Job.getInstance(getConf, "Max Temperature")
+   job.setJarByClass(getClass)
+
+   FileInputFormat.addInputPath(job, new Path(args(0)))
+   FileOutputFormat.setOutputPath(job, new Path(args(1)))
+
+   job.setMapperClass(classOf[MaxTemperatureMapper])
+   job.setCombinerClass(classOf[MaxTemperatureReducer])
+   job.setReducerClass(classOf[MaxTemperatureReducer])
+
+   job.setOutputKeyClass(classOf[Text])
+   job.setOutputValueClass(classOf[IntWritable])
+
+   if (job.waitForCompletion(true))  0 else 1
+
+   }
+
+
+ }
+
+object MaxTemperatureDriver {
+  def main(args : Array[String]) = {
+  val exitCode : Int = ToolRunner.run(new MaxTemperatureDriver, args)
+  System.exit(exitCode)
+
+  }
+}  
+

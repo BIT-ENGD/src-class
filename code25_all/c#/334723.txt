@@ -1,0 +1,205 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Text;
+using System.Data;
+using System.Web;
+using System.Web.UI;
+using System.Web.UI.WebControls;
+
+[ViewStateModeById]
+public class SortablePagedRepeater : Repeater, INamingContainer {
+
+    private SuperRepeaterPagerBar topBar = new SuperRepeaterPagerBar();
+    private SuperRepeaterPagerBar btmBar = new SuperRepeaterPagerBar();
+
+    protected override void OnInit(EventArgs e) {
+        Page.RegisterRequiresControlState(this);
+
+        InitializeControls();
+        base.OnInit(e);
+        EnsureChildControls();
+    }
+
+    protected void InitializeControls() {
+        topBar.ID = this.ID + "__topPagerBar";
+        topBar.NumberOfPages = this._currentProperties.numOfPages;
+        topBar.CurrentPage = this.CurrentPageNumber;
+        topBar.PageChanged +=
+            new SuperRepeaterPagerBar.PageChangedEventHandler(PageChanged);
+
+        btmBar.ID = this.ID + "__btmPagerBar";
+        btmBar.NumberOfPages = this._currentProperties.numOfPages;
+        btmBar.CurrentPage = this.CurrentPageNumber;
+        btmBar.PageChanged +=
+            new SuperRepeaterPagerBar.PageChangedEventHandler(PageChanged);
+    }
+
+    protected override void CreateChildControls() {
+        EnsureDataBound();
+
+        this.Controls.Add(topBar);
+        this.Controls.Add(btmBar);
+        //base.CreateChildControls();
+    }
+
+    private void PageChanged(object sender, int newPage) {
+        this.CurrentPageNumber = newPage;
+    }
+
+    public override void DataBind() {
+        //pageDataSource();
+
+        //DataBind removes all controls from control collection...
+        base.DataBind();
+        Controls.Add(topBar);
+        Controls.Add(btmBar);
+    }
+
+    private void pageDataSource() {
+        //Create paged data source
+        PagedDataSource pds = new PagedDataSource();
+
+        pds.PageSize = this.ItemsPerPage;
+        pds.AllowPaging = true;
+
+        // first get a PagedDataSource going and perform sort if possible...
+        if (base.DataSource is System.Collections.IEnumerable) {
+            pds.DataSource = (System.Collections.IEnumerable)base.DataSource;
+        } else if (base.DataSource is System.Data.DataView) {
+            DataView data = (DataView)DataSource;
+            if (this.SortBy != null && data.Table.Columns.Contains(this.SortBy)) {
+                data.Sort = this.SortBy;
+            }
+            pds.DataSource = data.Table.Rows;
+        } else if (base.DataSource is System.Data.DataTable) {
+            DataTable data = (DataTable)DataSource;
+            if (this.SortBy != null && data.Columns.Contains(this.SortBy)) {
+                data.DefaultView.Sort = this.SortBy;
+            }
+            pds.DataSource = data.DefaultView;
+        } else if (base.DataSource is System.Data.DataSet) {
+            DataSet data = (DataSet)DataSource;
+            if (base.DataMember != null && data.Tables.Contains(base.DataMember)) {
+                if (this.SortBy != null && data.Tables[base.DataMember].Columns.Contains(this.SortBy)) {
+                    data.Tables[base.DataMember].DefaultView.Sort = this.SortBy;
+                }
+                pds.DataSource = data.Tables[base.DataMember].DefaultView;
+            } else if (data.Tables.Count > 0) {
+                if (this.SortBy != null && data.Tables[0].Columns.Contains(this.SortBy)) {
+                    data.Tables[0].DefaultView.Sort = this.SortBy;
+                }
+                pds.DataSource = data.Tables[0].DefaultView;
+            } else {
+                throw new Exception("DataSet doesn't have any tables.");
+            }
+        } else if (base.DataSource == null) {
+            // don't do anything?
+        } else {
+            throw new Exception("DataSource must be of type System.Collections.IEnumerable.  The DataSource you provided is of type " + base.DataSource.GetType().ToString());
+        }
+
+
+        if (pds != null && base.DataSource != null) {
+            //Make sure that the page doesn't exceed the maximum number of pages 
+            //available
+            if (this.CurrentPageNumber >= pds.PageCount) {
+                this.CurrentPageNumber = pds.PageCount - 1;
+            }
+
+            //Set up paging values...
+            btmBar.CurrentPage = topBar.CurrentPage = pds.CurrentPageIndex = this.CurrentPageNumber;
+            this._currentProperties.numOfPages = btmBar.NumberOfPages = topBar.NumberOfPages = pds.PageCount;
+
+            base.DataSource = pds;
+        }
+    }
+
+    public override object DataSource {
+        get {
+            return base.DataSource;
+        }
+        set {
+            //init();  //reset paging/sorting values since we've potentially changed data sources.
+            base.DataSource = value;
+            pageDataSource();
+        }
+    }
+
+    protected override void Render(HtmlTextWriter writer) {
+        topBar.RenderControl(writer);
+        base.Render(writer);
+        btmBar.RenderControl(writer);
+    }
+
+    [Serializable]
+    protected struct CurrentProperties {
+        public int pageNum;
+        public int itemsPerPage;
+        public int numOfPages;
+        public string sortBy;
+        public bool sortDir;
+    }
+
+    protected CurrentProperties _currentProperties = new CurrentProperties();
+
+    protected override object SaveControlState() {
+        return this._currentProperties;
+    }
+
+    protected override void LoadControlState(object savedState) {
+        this._currentProperties = (CurrentProperties)savedState;
+    }
+
+    [Category("Status")]
+    [Browsable(true)]
+    [NotifyParentProperty(true)]
+    [DefaultValue("")]
+    [Localizable(false)]
+    public string SortBy {
+        get { return this._currentProperties.sortBy; }
+        set {
+            //If sorting by the same column, swap the sort direction.
+            if (this._currentProperties.sortBy == value) {
+                this.SortAscending = !this.SortAscending;
+            } else {
+                this.SortAscending = true;
+            }
+            this._currentProperties.sortBy = value;
+        }
+    }
+
+    [Category("Status")]
+    [Browsable(true)]
+    [NotifyParentProperty(true)]
+    [DefaultValue(true)]
+    [Localizable(false)]
+    public bool SortAscending {
+        get { return this._currentProperties.sortDir; }
+        set { this._currentProperties.sortDir = value; }
+    }
+
+    [Category("Status")]
+    [Browsable(true)]
+    [NotifyParentProperty(true)]
+    [DefaultValue(25)]
+    [Localizable(false)]
+    public int ItemsPerPage {
+        get { return this._currentProperties.itemsPerPage; }
+        set { this._currentProperties.itemsPerPage = value; }
+    }
+
+    [Category("Status")]
+    [Browsable(true)]
+    [NotifyParentProperty(true)]
+    [DefaultValue(1)]
+    [Localizable(false)]
+    public int CurrentPageNumber {
+        get { return this._currentProperties.pageNum; }
+        set { 
+            this._currentProperties.pageNum = value;
+            pageDataSource();
+        }
+    }
+}
+

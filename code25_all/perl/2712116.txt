@@ -1,0 +1,68 @@
+Net::Msmgr
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+use Event;
+use Net::Msmgr::Object;
+use Net::Msmgr::Session;
+use Net::Msmgr::User;
+
+use constant DEBUG => 511;
+use constant EVENT_TIMEOUT => 5; # seconds
+
+my ($username, $password) = qw/my.username@live.com my.password/;
+my $buddy = 'your.username@live.com';
+
+my $user = Net::Msmgr::User->new(user => $username, password => $password);
+my $session = Net::Msmgr::Session->new;
+$session->debug(DEBUG);
+$session->login_handler(\&login_handler);
+$session->user($user);
+
+my $conv;
+
+sub login_handler {
+    my $self = shift;
+    print "LOGIN\n";
+    $self->ui_state_nln;
+    $conv = $session->ui_new_conversation;
+    $conv->invite($buddy);
+}
+
+our %watcher;
+
+sub ConnectHandler {
+    my ($connection) = @_;
+    warn "CONNECT\n";
+    my $socket = $connection->socket;
+    $watcher{$connection} = Event->io(fd => $socket,
+                                      cb => [ $connection, '_recv_message' ],
+                                      poll => 're',
+                                      desc => 'recv_watcher',
+                                      repeat => 1);
+}
+
+sub DisconnectHandler {
+    my $connection = shift;
+    print "DISCONNECT\n";
+    $watcher{$connection}->cancel;
+}
+
+$session->connect_handler(\&ConnectHandler);
+$session->disconnect_handler(\&DisconnectHandler);
+
+$session->Login;
+
+Event::loop();
+
+Dispatch Server connecting to: messenger.hotmail.com:1863
+Dispatch Server connected
+CONNECT
+Dispatch Server >>>VER 1 MSNP2 CVR0
+--> VER 1 MSNP2 CVR0
+Dispatch Server >>>USR 2 MD5 I my.username@live.com
+--> USR 2 MD5 I my.username@live.com
+Dispatch Server <<<VER 1 CVR0
+<-- VER 1 CVR0
+

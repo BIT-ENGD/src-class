@@ -1,0 +1,77 @@
+{-# LANGUAGE MonadComprehensions #-}
+module DPLL where
+import Prelude hiding (foldr)
+import Control.Monad (join,mplus,mzero,guard,msum)
+import Data.Set.Monad (Set, (\\), member, partition, toList, foldr)
+import Data.Maybe (listToMaybe)
+
+-- "Literal" propositions are either true or false
+data Lit p = T p | F p deriving (Show,Ord,Eq)
+
+neg :: Lit p -> Lit p
+neg (T p) = F p
+neg (F p) = T p
+
+-- We model DPLL like a sequent calculus
+-- LHS: a set of assumptions / partial model (set of literals)
+-- RHS: a set of goals 
+data Sequent p = (Set (Lit p)) :|-: Set (Set (Lit p)) deriving Show
+
+{- --------------------------- Goal Reduction Rules -------------------------- -}
+{- "Unit Propogation" takes literal x and A :|-: B to A,x :|-: B',
+ - where B' has no clauses with x, 
+ - and all instances of -x are deleted -}
+unitP :: Ord p => Lit p -> Sequent p -> Sequent p
+unitP x (assms :|-:  clauses) = (assms' :|-:  clauses')
+  where
+    assms' = (return x) `mplus` assms
+    clauses_ = [ c | c <- clauses, not (x `member` c) ]
+    clauses' = [ [ u | u <- c, u /= neg x] | c <- clauses_ ]
+
+{- Find literals that only occur positively or negatively
+ - and perform unit propogation on these -}
+pureRule :: Ord p => Sequent p -> Maybe (Sequent p)
+pureRule sequent@(_ :|-:  clauses) = 
+  let 
+    sign (T _) = True
+    sign (F _) = False
+    -- Partition the positive and negative formulae
+    (positive,negative) = partition sign (join clauses)
+    -- Compute the literals that are purely positive/negative
+    purePositive = positive \\ (fmap neg negative)
+    pureNegative = negative \\ (fmap neg positive)
+    pure = purePositive `mplus` pureNegative 
+    -- Unit Propagate the pure literals
+    sequent' = foldr unitP sequent pure
+  in if (pure /= mzero) then Just sequent'
+     else Nothing
+
+{- Add any singleton clauses to the assumptions 
+ - and simplify the clauses -}
+oneRule :: Ord p => Sequent p -> Maybe (Sequent p)
+oneRule sequent@(_ :|-:  clauses) = 
+   do
+   -- Extract literals that occur alone and choose one
+   let singletons = join [ c | c <- clauses, isSingle c ]
+   x <- (listToMaybe . toList) singletons
+   -- Return the new simplified problem
+   return $ unitP x sequent
+   where
+     isSingle c = case (toList c) of { [a] -> True ; _ -> False }
+
+{- ------------------------------ DPLL Algorithm ----------------------------- -}
+dpll :: Ord p => Set (Set (Lit p)) -> Maybe (Set (Lit p))
+dpll goalClauses = dpll' $ mzero :|-: goalClauses
+  where 
+     dpll' sequent@(assms :|-: clauses) = do 
+       -- Fail early if falsum is a subgoal
+       guard $ not (mzero `member` clauses)
+       case (toList . join) $ clauses of
+         -- Return the assumptions if there are no subgoals left
+         []  -> return assms
+         -- Otherwise try various tactics for resolving goals
+         x:_ -> dpll' =<< msum [ pureRule sequent
+                               , oneRule sequent
+                               , return $ unitP x sequent
+                               , return $ unitP (neg x) sequent ]
+

@@ -1,0 +1,56 @@
+    #!/usr/bin/perl
+
+use strict;
+use warnings;
+use Mail::IMAPClient;
+use IO::Socket::SSL;
+
+# Connect to IMAP via SSL and get rid of greeting message
+
+my $socket = IO::Socket::SSL->new(
+ PeerAddr  =>  'imap.gmail.com',
+ PeerPort  => 993,
+ )
+ or die "Socket(): $@";
+
+my $greeting = <$socket>;
+my ($id, $answer) = split /\s+/, $greeting;
+die "Problems loggin in: $greeting" if $answer ne 'OK';
+
+# Build a client attached to the SSL Socket and login
+
+my $client = Mail::IMAPClient->new(
+ Socket => $socket,
+ User => 'mail@gmail.com',
+ Password => 'password',
+ Port  => 993,
+ )
+ or die "new(): $@";
+
+my ($code, $output) = ("","");
+until( $code ) {
+ $output = $client->_read_line or return undef;
+ for my $o (@$output) {
+  $client->_debug("Connect: Recieved this from readline: ".join("/",@$o)."\n");
+  $client->_reord($client->Count,$o);
+  next unless $o->[Mail::IMAPClient::TYPE] eq "OUTPU";
+  ($code) = $o->[Mail::IMAPClient::DATA] =~ /^\*\s+(OK|BAD|NO)/i ;
+ }
+}
+
+if($code =~ /BYE|NO /) {
+ $client->State("Unconnected");
+ die "IMAP server disconnected";
+}
+
+$client->login;
+
+print "1";
+
+$client->select('INBOX');
+my @mails = ($client->seen(),$client->unseen);
+foreach my $id (@mails) { print "$id\n"; }
+# Terminate the connection with IMAP
+
+$client->logout();
+

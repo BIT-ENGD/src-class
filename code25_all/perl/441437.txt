@@ -1,0 +1,107 @@
+perl progress.tracker.pl progress.tracker.pl
+
+<>
+tail -f
+#!/usr/perl/v5.10.0/bin/perl -w
+#
+# @(#)$Id: progress.tracker.pl,v 1.3 2009/01/09 17:32:45 jleffler Exp jleffler $
+#
+# Track progress of a log-generating process by printing one dot per line read.
+
+use strict;
+use constant DOTS_PER_LINE => 50;
+use constant LINES_PER_BREAK => 25;
+use constant debug => 0;
+use POSIX qw( strftime );
+use Sys::AlarmCall;
+
+sub read_line
+{
+    print "-->> read_line()\n" if debug;
+    my $line = <STDIN>;
+    printf "<<-- read_line(): %s", (defined $line) ? $line : "\n" if debug;
+    return $line;
+}
+
+my $line_no = 0;
+my $timeout = 30;
+my $line;
+
+$| = 1;     # Unbuffered output
+
+while ($line = alarm_call($timeout, 'read_line', undef))
+{
+    $line_no++;
+    print ".";
+    print "\n" if ($line_no % DOTS_PER_LINE == 0);
+    printf "%s\n", strftime("%Y-%m-%d %H:%M:%S", localtime(time))
+        if ($line_no % (DOTS_PER_LINE * LINES_PER_BREAK) == 0);
+    last if $line =~ m/^Trace run finished: /;
+}
+
+print "\n";
+print $line if defined $line && $line =~ m/^Trace run finished: /;
+
+#!/usr/perl/v5.10.0/bin/perl -w
+#
+# @(#)$Id: progress.tracker.pl,v 3.2 2009/01/14 07:17:04 jleffler Exp $
+#
+# Track progress of a log-generating process by printing one dot per line read.
+
+use strict;
+use POSIX qw( strftime );
+use File::Tail;
+
+use constant DOTS_PER_LINE   => 50;
+use constant LINES_PER_BREAK => 25;
+use constant MAX_TIMEOUTS    => 10;
+use constant TIMEOUT_LENGTH  => 30; # Seconds
+
+my $timeout    = TIMEOUT_LENGTH;
+my $line_no    = 0;
+my $n_timeouts = 0;
+my $line;
+
+sub print_item
+{
+    my($item) = @_;
+    $line_no++;
+    print "$item";
+    print "\n" if ($line_no % DOTS_PER_LINE == 0);
+    printf "%s\n", strftime("%Y-%m-%d %H:%M:%S", localtime(time))
+        if ($line_no % (DOTS_PER_LINE * LINES_PER_BREAK) == 0);
+}
+
+$| = 1;     # Unbuffered output
+
+# The foreach and while loops are cribbed from File::Tail POD.
+my @files;
+foreach my $file (@ARGV)
+{
+    push(@files, File::Tail->new(name=>"$file", tail => -1, interval => 2));
+}
+
+while (1)
+{
+    my ($nfound, $timeleft, @pending) = File::Tail::select(undef, undef, undef, $timeout, @files);
+    unless ($nfound)
+    {
+        # timeout - do something else here, if you need to
+        last if ++$n_timeouts > MAX_TIMEOUTS;
+        print_item "@";
+    }
+    else
+    {
+        $n_timeouts = 0;  # New data arriving - reset timeouts
+        foreach my $tail (@pending)
+        {
+            # Read one line of the file
+            $line = $tail->read;
+            print_item ".";
+        }
+    }
+}
+
+print "\n";
+print $line if defined $line && $line =~ m/^Trace run finished: /;
+

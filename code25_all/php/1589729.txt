@@ -1,0 +1,240 @@
+//PHP
+      public function loadCargoDialogFbjsAction() {
+        $this->_helper->layout()->disableLayout();
+        $this->_helper->viewRenderer->setNoRender();
+
+        $loadableCargo = $this->getRequest()->getPost('loadableCargo');
+        $fbjs =
+          '<div id="load_cargo_select">
+            <form id="load_cargo_select_form" action="" method="POST">
+              <p>Your train has stopped in the city of ' . $loadableCargo['city'] . '</p>
+              <p>' . $loadableCargo['city'] . ' produces the following goods:</p>
+              <ul>';
+        if(count($loadableCargo['city_goods']) <= 0) {
+          $fbjs .= '<li>None</li>';
+        } else {
+          foreach($loadableCargo['city_goods'] as $goods) {
+            $fbjs .= '<li>' . $goods['name'] . '</li>';
+          }
+        }
+        $fbjs .=
+              '</ul>
+              <p>Your train is hauling the following goods:</p>
+              <ul>';
+              if(count($loadableCargo['train_goods']) <= 0) {
+                $fbjs .= '<li>None</li>';
+              } else {
+                foreach($loadableCargo['train_goods'] as $goods) {
+                  $fbjs .= '<li>' . $goods['name'] . '</li>';
+                }
+              }
+        $fbjs .=
+              '</ul>
+              <p>What would you like to do?</p>
+              <input type="button" id="load-new-submit" name="load-cargo-new" value="Load new goods" />
+              &nbsp;&nbsp;
+              <input type="button" id="discard-existing-submit" name="load-cargo-discard" value="Discard existing goods" />
+            </form>
+          </div>';
+
+        echo $fbjs;
+      }
+
+
+// JavaScript/FBJS
+    function loadCargo() {
+      var actionPrompt = document.getElementById('action-prompt');
+      actionPrompt.setTextValue('Loading cargo...');
+
+      var ajax = new Ajax();
+      ajax.responseType = Ajax.JSON;
+      ajax.ondone = function(data) {
+    //debugger;
+        ajax.responseType = Ajax.FBML;
+        ajax.ondone = function(fbjsData) {
+    //debugger;
+          if(data.loadableCargo.length == 0) {
+            moveTrainManual();
+          } else {
+            var dialog = new Dialog().showChoice('Load Cargo', fbjsData, 'Minimize', 'Pass');
+
+            var dlgBtnNew = document.getElementById('load-new-submit');
+            dlgBtnNew.cityId = data.loadableCargo.city_id;
+            dlgBtnNew.trainId = data.loadableCargo.train_id;
+            dlgBtnNew.addEventListener('click', cargoEventHandler); //loadNewCargo);
+
+            var dlgBtnDiscard = document.getElementById('discard-existing-submit');
+            dlgBtnDiscard.cityId = data.loadableCargo.city_id;
+            dlgBtnDiscard.trainId = data.loadableCargo.train_id;
+            dlgBtnDiscard.addEventListener('click', cargoEventHandler); //discardExistingCargo);
+
+            dialog.onconfirm = function() {
+              // Submit the form if it exists, then hide the dialog.
+              dialog.hide();
+              actionPrompt = document.getElementById('action-prompt');
+              actionPrompt.setInnerXHTML('<span><div id="action-text">'+
+                'The "Load cargo" dialog has been minimized'+
+                '</div>'+
+                '<div id="action-end">'+
+                '<form action="" method="POST">'+
+                '<input type="button" value="Maximize" id="next-phase" onclick="loadCargo();" />'+
+                '</form>'+
+                '</div></span>');
+              actionButton = document.getElementById('next-phase');
+              actionButton.setValue('Maximize');
+              actionButton.addEventListener('click', loadCargoEventHandler);
+            };
+            dialog.oncancel = function() {
+              moveTrainManual();
+            }
+          }
+        }
+        ajax.post(baseURL + '/turn/load-cargo-dialog-fbjs', data);
+      }
+      ajax.post(baseURL + '/turn/load-cargo');
+    }
+
+    function cargoEventHandler(evt) {
+      //new Dialog().showMessage('loadNewCargo', 'city id='+cityId+', train id='+trainId);
+    //debugger;
+      cityId = evt.target.cityId;
+      trainId = evt.target.trainId;
+
+      switch(evt.target.getId()) {
+        case 'load-new-submit':
+          ajax = new Ajax();
+          ajax.responseType = Ajax.JSON;
+          param = { 'load-cargo-submit': "Load new goods", 'city-id': cityId, 'train-id': trainId };
+          ajax.ondone = function(data) {
+            openCargoHolds = data.openCargoHolds;
+            cargoHoldsUsed = 0;
+            ajax.responseType = Ajax.FBML;
+            param = { 'openCargoHolds': data.openCargoHolds, 'cityGoods': data.cityGoods, 'trainId': data.trainId };
+            ajax.ondone = function(fbjsData) {
+        //debugger;
+              var dialog = new Dialog().showChoice('Load Cargo', fbjsData, 'Load cargo', 'Cancel');
+              dialog.onconfirm = function() {
+                var goods = [];
+                var goodsIds = [];
+                numGoods = document.getElementById('goods-count').getValue();
+
+                for(var i = 0; i < numGoods; i++) {
+                  j = i + 1;
+                  goods[i] = document.getElementById('goods-' + j).getValue();
+                  goodsIds[i] = document.getElementById('goods-id-' + j).getValue();
+                }
+                var trainId = document.getElementById('train-id').getValue();
+                param = { "goods": goods, "goods-id": goodsIds, "train-id": trainId };
+                ajax.responseType = Ajax.JSON;
+                ajax.ondone = function(data) {
+                  loadCargo();
+                }
+                ajax.post(baseURL + '/turn/do-load-cargo-new', param);
+                //dialog.hide();
+              };
+              dialog.oncancel = function() {
+                loadCargo();
+              }
+            }
+            ajax.post(baseURL + '/turn/load-cargo-new-dialog-fbjs', param);
+          }
+          ajax.post(baseURL + '/turn/load-cargo-select', param);
+          break;
+        case 'discard-existing-submit':
+          ajax = new Ajax();
+          ajax.responseType = Ajax.JSON;
+          param = { 'load-cargo-submit': "Discard existing goods", 'city-id': cityId, 'train-id': trainId };
+          ajax.ondone = function(data) {
+            ajax.responseType = Ajax.FBML;
+            param = { 'openCargoHolds': data.openCargoHolds, 'trainGoods': data.trainGoods, 'trainId': data.trainId };
+            ajax.ondone = function(fbjsData) {
+              var dialog = new Dialog().showChoice('Discard Cargo', fbjsData, 'Discard cargo', 'Cancel');
+              dialog.onconfirm = function() {
+                var goods = [];
+                var goodsIds = [];
+                numGoods = document.getElementById('goods-count').getValue();
+                for(var i = 0; i < numGoods; i++) {
+                  j = i + 1;
+                  goods[i] = document.getElementById('goods-' + j).getValue();
+                  goodsIds[i] = document.getElementById('goods-id-' + j).getValue();
+                }
+                var trainId = document.getElementById('train-id').getValue();
+                param = { "goods": goods, "goods-id": goodsIds, "train-id": trainId };
+                ajax.responseType = Ajax.JSON;
+                ajax.ondone = function(data) {
+                  loadCargo();
+                }
+                ajax.post(baseURL + '/turn/do-load-cargo-discard', param);
+                //dialog.hide();
+              };
+              dialog.oncancel = function() {
+                loadCargo();
+              }
+            }
+            ajax.post(baseURL + '/turn/load-cargo-discard-dialog-fbjs', param);
+          }
+          ajax.post(baseURL + '/turn/load-cargo-select', param);
+          break;
+      }
+      return false;
+    }
+
+var loadCargoDialog;
+
+function loadCargo() {
+  var actionPrompt = document.getElementById('action-prompt');
+  actionPrompt.setTextValue('Loading cargo...');
+
+  var ajax = new Ajax();
+  ajax.responseType = Ajax.JSON;
+  ajax.ondone = function(data) {
+//debugger;
+    ajax.responseType = Ajax.FBML;
+    ajax.ondone = function(fbjsData) {
+//debugger;
+      if(data.loadableCargo.length == 0) {
+        moveTrainManual();
+      } else {
+        if(loadCargoDialog == null) {
+          loadCargoDialog = new Dialog().showChoice('Load Cargo', fbjsData, 'Minimize', 'Pass');
+
+          var dlgBtnNew = document.getElementById('load-new-submit');
+          dlgBtnNew.cityId = data.loadableCargo.city_id;
+          dlgBtnNew.trainId = data.loadableCargo.train_id;
+          dlgBtnNew.addEventListener('click', cargoEventHandler, true); //loadNewCargo);
+
+          var dlgBtnDiscard = document.getElementById('discard-existing-submit');
+          dlgBtnDiscard.cityId = data.loadableCargo.city_id;
+          dlgBtnDiscard.trainId = data.loadableCargo.train_id;
+          dlgBtnDiscard.addEventListener('click', discardExistingCargo, true);
+
+        } else {
+          loadCargoDialog.showChoice('Load Cargo', fbjsData, 'Minimize', 'Pass');
+        }
+
+        loadCargoDialog.onconfirm = function() {
+          // Submit the form if it exists, then hide the dialog.
+          loadCargoDialog.hide();
+          actionPrompt = document.getElementById('action-prompt');
+          actionPrompt.setInnerXHTML('<span><div id="action-text">'+
+            'The "Load cargo" dialog has been minimized'+
+            '</div>'+
+            '<div id="action-end">'+
+            '<form action="" method="POST">'+
+            '<input type="button" value="Maximize" id="next-phase" onclick="loadCargo();" />'+
+            '</form>'+
+            '</div></span>');
+          actionButton = document.getElementById('next-phase');
+          actionButton.setValue('Maximize');
+          actionButton.addEventListener('click', loadCargoEventHandler);
+        };
+        loadCargoDialog.oncancel = function() {
+          moveTrainManual();
+        }
+      }
+    }
+    ajax.post(baseURL + '/turn/load-cargo-dialog-fbjs', data);
+  }
+  ajax.post(baseURL + '/turn/load-cargo');
+}
+

@@ -1,0 +1,114 @@
+<form class="lift:form.ajax">
+
+    <div class="lift:StreamInput">
+
+        <input type="hidden" name="path" />
+        <input type="hidden" name="user" />
+        <input type="hidden" name="level" />
+        <input type="hidden" name="room" />
+
+    </div>
+
+    <input type="submit" value="" />
+
+</form>
+
+import comet.StreamServer
+
+object StreamInput {
+
+    def render = {
+
+        var path = ""
+        var user = ""
+        var level = ""
+        var room = ""
+
+        def process(): JsCmd = {
+
+            val message = comet.StreamItem(user, path, level, room)
+            StreamServer ! message
+
+        }
+
+
+        "name=path" #> SHtml.onSubmit(path = _) &
+        "name=user" #> SHtml.onSubmit(user = _) &
+        "name=level" #> SHtml.onSubmit(level = _) &
+        "name=room" #> SHtml.onSubmit(room = _)
+
+    }
+
+}
+
+case class StreamItem(user: String, path: String, level: String, room: String)
+
+class StreamComet extends CometActor with CometListener {
+
+    private var streams: List[StreamItem] = Nil 
+
+    def registerWith = StreamServer
+
+    override def lowPriority = {
+
+        case v: List[StreamItem] => 
+
+            streams = v;
+            reRender();
+
+    }
+
+    def addStreams(): String = {
+
+        var script = ""
+
+        streams.foreach{stream =>
+
+            script += """
+
+                STREAMMOD.stream_view.add_stream({ 
+
+                    path : '""" + stream.path + """', 
+                    level : '""" + stream.level + """'
+
+                })
+
+            """
+
+        }
+
+        return script
+
+    }
+
+    def render = {
+
+        OnLoad(JsRaw(
+
+            addStreams()
+
+        ).cmd)
+
+    }
+
+}
+
+object StreamServer extends LiftActor with ListenerManager {
+
+    private var streams: List[StreamItem] = Nil
+
+    def createUpdate = streams
+
+    override def lowPriority = {
+
+        case StreamItem(user, path, level, room) => {
+
+            streams :+= StreamItem(user, path, level, room);
+            updateListeners()
+
+        }
+
+    }
+
+}
+

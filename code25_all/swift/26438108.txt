@@ -1,0 +1,505 @@
+didBeginContact()
+'car'
+'slowCar'
+categoryBitMask
+contactTestBitMask
+collisionTestBitMask
+dynamic
+true
+initPhysics()
+didBeginContact()
+println
+checkCollisions()
+SKSpriteNodes
+SKSpriteNodes
+SKNode
+gameNode
+backgroundLayer
+SKSpriteNode
+backGroundNode
+import SpriteKit
+
+class GameScene: SKScene, SKPhysicsContactDelegate {
+
+var viewController: GameViewController?
+
+//Set up game timers
+var dt: NSTimeInterval = 0
+var lastUpdateTime: NSTimeInterval = 0
+var lastCarSpawnedTime: NSTimeInterval = 0
+var thisCarSpawnedTime: NSTimeInterval = 0
+
+//Set up layer nodes
+var backgroundLayer: SKNode!
+var gameNode: SKNode!
+
+// Set up sprites
+var car: SKSpriteNode!
+var slowCar: SKSpriteNode!
+
+//Set up general game parameters
+var backgroundMovePointsPerSec: CGFloat = 6000.0
+let carRotatePointsPerSec: CGFloat = 4.0 * π
+var vroomPoint = CGPointZero
+var previousTouchLocation = CGPointZero
+var fingerRev = false
+var startedRev = false
+var finishedRev = false
+var carReleased = false
+var limitRotation = false
+var limitedRotation: CGFloat = 0.0
+var deviationDirection = CGPointZero
+var playableRect: CGRect
+var lastCarLane: Int = 2
+var carLaneX = 580
+var carLaneY: CGFloat = 0.0
+var carMoveDuration = 3.0
+
+
+//Set up Physicsbody bit masks
+let playerCarBitMask: UInt32 = 0x1 << 1
+let slowCarBitMask: UInt32 = 0x1 << 2
+
+
+required init(coder aDecoder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+}
+
+//Set up playable screen area to work across all devices
+override init(size: CGSize) {
+    let maxAspectRatio:CGFloat = 16.0/9.0
+    let playableWidth = size.height / maxAspectRatio
+    let playableMargin = (size.width-playableWidth)/2.0
+    playableRect = CGRect(x: (playableMargin+260), y: 0,
+        width: (playableWidth-500),
+        height: size.height)
+
+    super.init(size: size)
+}
+
+override func didMoveToView(view: SKView) {
+
+    self.initBackground()
+    self.initPhysics()
+    self.initGameArea()
+    self.setupPlayer()
+
+
+}
+
+
+//initBackground
+func initBackground() {
+    backgroundLayer = SKNode()
+    backgroundLayer.zPosition = -1
+    self.addChild(backgroundLayer)
+    backgroundColor = SKColor.whiteColor()
+
+    for i in 0...1 {
+        let background = backgroundNode()
+        background.anchorPoint = CGPointZero
+        background.position =
+            CGPoint(x: 0, y: CGFloat(i)*background.size.width)
+        background.name = "background"
+        backgroundLayer.addChild(background)
+    }
+}
+
+
+//initPhysics
+func initPhysics() {
+    println("(((((((((((((( Initiating Physicsbody ))))))))))))))")
+    self.physicsWorld.contactDelegate = self
+    self.physicsWorld.gravity = CGVector.zeroVector
+
+    println("self.physicsWorld.contactDelegate = \(self.physicsWorld.contactDelegate)")
+
+}
+
+
+//initGameArea
+func initGameArea(){
+    gameNode=SKNode()
+    gameNode.zPosition = 50
+    self.addChild(gameNode)
+}
+
+
+//setupPlayer
+func setupPlayer() {
+
+    car = SKSpriteNode(imageNamed: "redCarUp")
+    car.setScale(2.0)
+    car.position = CGPoint(x: 800, y: 400)
+    car.zPosition = 100
+    car.name = "car"
+
+    gameNode.addChild(car)
+
+    let carBody = SKPhysicsBody(
+        rectangleOfSize: car.frame.size, center: car.position)
+
+    carBody.dynamic = true
+    carBody.categoryBitMask = playerCarBitMask
+    carBody.contactTestBitMask = slowCarBitMask
+    carBody.mass = 5
+    carBody.collisionBitMask = slowCarBitMask
+    car.physicsBody = carBody
+
+    println("carBody = \(carBody)")
+    println("carBody.dynamic = \(carBody.dynamic)")
+    println("carBody.mass = \(carBody.mass)")
+    println("carBody.categoryBitMask = \(carBody.categoryBitMask)")
+    println("carBody.contactTestBitMask = \(carBody.contactTestBitMask)")
+    println("carBody.collisionBitMask = \(carBody.contactTestBitMask)")
+
+
+
+    slowCar = SKSpriteNode(imageNamed: "blueCarUp")
+    slowCar.setScale(2.0)
+    let slowCarScenePos = CGPoint(
+        x: 680,
+        y: 2048)
+
+
+    slowCar.position = gameNode.convertPoint(slowCarScenePos, fromNode: self)
+    println("slowCar.position = \(slowCar.position) ****")
+    slowCar.zPosition = 80
+    slowCar.name = "slowCar"
+
+
+
+    let slowCarBody = SKPhysicsBody(
+        rectangleOfSize: slowCar.frame.size, center: slowCar.position)
+
+
+    println("slowCar = \(slowCar) ****")
+
+    slowCarBody.dynamic = true
+    slowCarBody.categoryBitMask = slowCarBitMask
+    slowCarBody.contactTestBitMask = playerCarBitMask
+    slowCarBody.mass = 5
+    slowCarBody.collisionBitMask = playerCarBitMask
+    slowCar.physicsBody = slowCarBody
+    gameNode.addChild(slowCar)
+
+    println("slowCarBody.dynamic = \(slowCarBody.dynamic)")
+    println("slowCarBody.mass = \(slowCarBody.mass)")
+    println("slowCarBody.categoryBitMask = \(slowCarBody.categoryBitMask)")
+    println("slowCarBody.contactTestBitMask = \(slowCarBody.contactTestBitMask)")
+    println("slowCarBody.collisionBitMask = \(slowCarBody.contactTestBitMask)")
+    println("slowCarBody = \(slowCarBody)")
+    println("slowCar.physicsBody = \(slowCar.physicsBody)")
+
+    let actionMove = SKAction.moveToY(-slowCar.size.height, duration: carMoveDuration)
+    let actionRemove = SKAction.removeFromParent()
+
+    slowCar.runAction(SKAction.sequence([actionMove, actionRemove]))
+
+
+}
+
+func didBeginContact(contact: SKPhysicsContact!) {
+    println("*******************PhysicsContact********************")
+}
+
+// Set up background nodes
+func backgroundNode() -> SKSpriteNode {
+
+    let backgroundNode = SKSpriteNode()
+    backgroundNode.anchorPoint = CGPointZero
+    backgroundNode.name = "background"
+
+    let background1 = SKSpriteNode(imageNamed: "defaultRoad")
+    background1.anchorPoint = CGPointZero
+    background1.position = CGPoint(x: 160, y: 0)
+    backgroundNode.addChild(background1)
+
+    let background2 = SKSpriteNode(imageNamed: "defaultRoad")
+    background2.anchorPoint = CGPointZero
+    background2.position = CGPoint(x: 160, y: background1.size.height)
+    backgroundNode.addChild(background2)
+
+    backgroundNode.size = CGSize(
+        width: background1.size.width,
+        height: background1.size.height)
+    return backgroundNode
+}
+
+// Scroll background
+func moveBackground() {
+
+    let backgroundVelocity = CGPoint(x: 0, y: -backgroundMovePointsPerSec)
+    let amountToMove = backgroundVelocity * CGFloat(self.dt)
+    backgroundLayer.position += amountToMove
+
+    backgroundLayer.enumerateChildNodesWithName("background") {node, _ in
+        let background = node as SKSpriteNode
+        let backgroundScreenPos = self.backgroundLayer.convertPoint(
+            background.position, toNode: self)
+
+        if backgroundScreenPos.y <= -background.size.height {
+            background.position = CGPoint(
+                x: background.position.x,
+                y: background.position.y + background.size.height)
+                        }
+    }
+}
+
+
+
+func spawnCars() {
+
+    // Need to put cars into an array and change this code to pick a random vehicle and spawn it.
+    carLaneY = CGFloat(CGRectGetMaxY(playableRect))
+
+    switch lastCarLane {
+        case 1:
+            carLaneX = 980
+            carMoveDuration = 2.0
+            lastCarLane = 2
+        case 2:
+            carLaneX = 580
+            carMoveDuration = 3.0
+            lastCarLane = 1
+    default:
+        carLaneX = 580
+    }
+
+    let slowCar = SKSpriteNode(imageNamed: "blueCarUp")
+    slowCar.setScale(2.0)
+    let slowCarScenePos = CGPoint(
+        x: carLaneX,
+        y: 2048)
+
+
+    slowCar.position = gameNode.convertPoint(slowCarScenePos, fromNode: self)
+    println("slowCar.position = \(slowCar.position) ****")
+    slowCar.zPosition = 80
+    slowCar.name = "slowCar"
+
+
+
+    let slowCarBody = SKPhysicsBody(
+        rectangleOfSize: slowCar.frame.size, center: slowCar.position)
+
+
+    println("slowCar = \(slowCar) ****")
+
+    slowCarBody.dynamic = true
+    slowCarBody.categoryBitMask = 2 //slowCarBitMask
+    slowCarBody.contactTestBitMask = 1 //playerCarBitMask
+    slowCarBody.mass = 5
+    slowCarBody.collisionBitMask = 1 //playerCarBitMask
+    slowCar.physicsBody = slowCarBody
+    gameNode.addChild(slowCar)
+
+    println("slowCarBody.dynamic = \(slowCarBody.dynamic)")
+    println("slowCarBody.mass = \(slowCarBody.mass)")
+    println("slowCarBody.categoryBitMask = \(slowCarBody.categoryBitMask)")
+    println("slowCarBody.contactTestBitMask = \(slowCarBody.contactTestBitMask)")
+    println("slowCarBody.collisionBitMask = \(slowCarBody.contactTestBitMask)")
+    println("slowCarBody = \(slowCarBody)")
+
+
+    let actionMove = SKAction.moveToY(-slowCar.size.height, duration: carMoveDuration)
+    let actionRemove = SKAction.removeFromParent()
+
+    slowCar.runAction(SKAction.sequence([actionMove, actionRemove]))
+
+}
+
+
+
+func boundsCheckCar() {
+    let bottomLeft = backgroundLayer.convertPoint(CGPoint(x: CGRectGetMinX(playableRect),
+        y: 0),fromNode: self)
+    let topRight = backgroundLayer.convertPoint(CGPoint(x: CGRectGetMaxX(playableRect),
+        y: size.height), fromNode: self)
+
+
+    if car.position.x <= bottomLeft.x {
+        car.position.x = bottomLeft.x
+        vroomPoint.x = car.position.x * CGFloat.random(min: 0.05, max: 0.2)
+        rotateSprite(car, direction: vroomPoint, rotateRadiansPerSec: carRotatePointsPerSec)
+    }
+    if car.position.x >= topRight.x {
+        car.position.x = topRight.x
+        vroomPoint.x = -car.position.x * CGFloat.random(min: -0.20, max: -0.05)
+        rotateSprite(car, direction: vroomPoint, rotateRadiansPerSec: carRotatePointsPerSec)
+    }
+
+}
+
+
+override func touchesBegan(touches: NSSet, withEvent event: UIEvent) {
+    /* Called when a touch begins */
+
+    if carReleased{
+        let touch = touches.anyObject() as UITouch
+        let currentPoint = touch.locationInNode(backgroundLayer)
+        if (currentPoint.x > 0) {
+            vroomPoint.x = car.position.x * 2 //CGFloat.random(min: 0.05, max: 0.2)
+            rotateSprite(car, direction: vroomPoint, rotateRadiansPerSec: carRotatePointsPerSec)
+        }
+
+    }
+
+}
+override func touchesMoved(touches: NSSet, withEvent event: UIEvent) {
+    /* Called when a touch drags */
+
+    super.touchesBegan(touches, withEvent: event)
+    if !carReleased {
+        for touch: AnyObject in touches {
+            let currentPoint = touch.locationInNode(self)
+            let currentNode = nodeAtPoint(currentPoint)
+            let nodeName: String? = currentNode.name
+            if nodeName ==  "car" {
+                previousTouchLocation = touch.previousLocationInNode(self)
+                vroomPoint = currentPoint - previousTouchLocation
+                fingerRev = true
+                startedRev = true
+            }
+        }
+    }
+
+}
+
+override func touchesEnded(touches: NSSet,
+    withEvent event: UIEvent) {
+        if fingerRev {
+            vroomPoint = CGPointZero
+            carReleased = true
+        }
+
+        fingerRev = false
+
+
+}
+
+override func touchesCancelled(touches: NSSet, withEvent
+    event: UIEvent) {
+        if fingerRev {
+            vroomPoint = CGPointZero
+            carReleased = true
+        }
+
+        fingerRev = false
+
+}
+
+func carHitsObstacle (carObstacle: SKSpriteNode){
+    println("<<<<CRASH>>>>   Hit obstacle = \(carObstacle)")
+    //carObstacle.removeFromParent()
+}
+
+func checkCollisions(){
+    println ("Checking Collisions")
+    var hitObstacles: [SKSpriteNode] = []
+    gameNode.enumerateChildNodesWithName("slowCar") {node, _ in
+        let slowCar = node as SKSpriteNode
+        if CGRectIntersectsRect(slowCar.frame, self.car.frame){
+            hitObstacles.append(slowCar)
+            println("Had a hit")
+        }
+    }
+
+    for slowCar in hitObstacles {
+        println("carHitObstacle=\(carHitsObstacle(slowCar))")
+        carHitsObstacle(slowCar)
+    }
+}
+
+func revCar() {
+    var newPoint:CGPoint = car.position + vroomPoint
+    if (newPoint.y > 200 && newPoint.y < 600){
+        car.position.y = newPoint.y
+    }
+    self.backgroundMovePointsPerSec = (newPoint.y * 15)
+
+    if fingerRev{
+       vroomPoint.x = vroomPoint.x + CGFloat.random(min: -0.2, max: 0.2)
+       rotateSprite(car, direction: vroomPoint, rotateRadiansPerSec: carRotatePointsPerSec)
+    }
+}
+
+func rotateSprite(sprite: SKSpriteNode, direction: CGPoint, rotateRadiansPerSec: CGFloat) {
+
+    limitRotation = false
+    let shortest = shortestAngleBetween(sprite.zRotation, vroomPoint.angle)
+    let amountToRotate = min(rotateRadiansPerSec * CGFloat(dt), abs(shortest))
+    let testRotation = shortest.sign() * amountToRotate
+
+    if (testRotation >= 0.2){
+        limitRotation = true
+        self.limitedRotation = 0.2
+    }
+
+    if (testRotation <= -0.2){
+        limitRotation = true
+        self.limitedRotation = -0.2
+    }
+
+    if !limitRotation {
+        sprite.zRotation = shortest.sign() * amountToRotate
+        self.limitedRotation = 0.0
+    }else {
+        sprite.zRotation = self.limitedRotation
+    }
+}
+
+override func update(currentTime: CFTimeInterval) {
+    /* Called before each frame is rendered */
+
+    if lastUpdateTime > 0 {
+        dt = currentTime - lastUpdateTime
+    } else {
+        dt = 0
+    }
+    lastUpdateTime = currentTime
+
+    if fingerRev {
+        revCar()
+    }
+
+    if carReleased {
+        let test=self.limitedRotation
+
+        if test != 0.0{
+            switch test {
+                case 0.1:
+                    car.position.x = car.position.x - 5
+                case 0.2:
+                    car.position.x = car.position.x - 15
+                case -0.1:
+                        car.position.x = car.position.x + 5
+                case -0.2:
+                        car.position.x = car.position.x + 15
+
+                default:
+                    //Nothing happening here
+                    println("Test range not handled correctly in Switch test = \(test)")
+
+            }
+        }
+
+        boundsCheckCar()
+        moveBackground()
+        checkCollisions()
+
+
+        let spawnCarsDecision = arc4random_uniform(50)+1
+        thisCarSpawnedTime = lastUpdateTime - lastCarSpawnedTime
+        if thisCarSpawnedTime > 1.5 {
+
+            if (spawnCarsDecision == 3) {
+                spawnCars()
+                lastCarSpawnedTime = lastUpdateTime
+            }
+        }
+
+    }
+}
+}
+

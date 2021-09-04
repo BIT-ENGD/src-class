@@ -1,0 +1,86 @@
+ALTER            PROCEDURE [dbo].[GetNodeList]
+@ViewID int,
+@UserID int = null
+as
+
+Select ProcessList.*, 
+A.NDOC_DOC_ID, 
+A.NDOC_Order,
+A.OMNIBOOK_ID, 
+A.Node_Order
+from (
+    (SELECT N.NOD_ID, 
+    N.NOD_Name, 
+    N.NOD_Procname, 
+    N.NOD_Xpos, 
+    N.NOD_Ypos, 
+    N.NOD_Zpos,
+    VN.VNOD_VIE_ID
+    FROM Node N 
+    INNER JOIN View_NODe VN 
+    ON N.NOD_ID = VN.VNOD_NOD_ID
+    Where VN.VNOD_VIE_ID = @ViewID) ProcessList
+Left Join
+ (
+    SELECT N.NOD_ID, 
+    N.NOD_Name, 
+    N.NOD_Procname, 
+    N.NOD_Xpos as NOD_Xpos, 
+    N.NOD_Ypos as NOD_Ypos, 
+    N.NOD_Zpos as NOD_Zpos, 
+    VN.VNOD_VIE_ID, 
+    ND.NDOC_DOC_ID as NDOC_DOC_ID, 
+    ND.NDOC_Order as NDOC_Order,
+    null as OMNIBOOK_ID, 
+    null as Node_Order
+    FROM Node N 
+    INNER JOIN View_NODe VN 
+    ON N.NOD_ID = VN.VNOD_NOD_ID
+    LEFT JOIN NODe_DOCument ND 
+    ON N.NOD_ID = ND.NDOC_NOD_ID
+    WHERE VN.VNOD_VIE_ID=@ViewID
+    and ND.NDOC_DOC_ID is not null
+
+    and (@UserID is null 
+        or exists (Select 1 
+                from Document D 
+                where Doc_ID = ND.NDOC_DOC_ID 
+                and dbo.fn_UserCanSeeDoc(@UserID,D.Doc_ID)<>0
+        )
+    )
+
+    UNION
+
+    SELECT N.NOD_ID, 
+    N.NOD_Name, 
+    N.NOD_Procname, 
+    N.NOD_Xpos, 
+    N.NOD_Ypos, 
+    N.NOD_Zpos, 
+    VN.VNOD_VIE_ID, 
+    null, 
+    null,
+    NOM.OMNIBOOK_ID, 
+    NOM.Node_Order
+    FROM Node N 
+    INNER JOIN View_NODe VN 
+    ON N.NOD_ID = VN.VNOD_NOD_ID
+    LEFT JOIN NODe_OMNIBOOK NOM 
+    ON N.NOD_ID = NOM.NODE_ID
+    WHERE VN.VNOD_VIE_ID=@ViewID
+    and NOM.OMNIBOOK_ID is not null
+    and exists (select 1 from Omnibook_Doc where OmnibookID = NOM.OMNIBOOK_ID)
+) A
+--On ProcessList.NOD_ID = A.NOD_ID
+ON ProcessList.NOD_Xpos = A.NOD_Xpos
+And ProcessList.NOD_Ypos = A.NOD_Ypos
+And ProcessList.NOD_Zpos = A.NOD_Zpos
+And ProcessList.VNOD_VIE_ID = A.VNOD_VIE_ID
+) 
+ORDER BY 
+ProcessList.NOD_Xpos,
+ProcessList.NOD_Zpos,
+ProcessList.NOD_Ypos,
+Coalesce(A.NDOC_Order,A.Node_Order),
+Coalesce(A.NDOC_DOC_ID,A.OMNIBOOK_ID)
+

@@ -1,0 +1,111 @@
+Public Class ViewState
+    ''' <summary>
+    ''' Saves the state to the users session
+    ''' </summary>
+    ''' <param name="viewState">The viewstate object to serialize</param>
+    ''' <param name="NoSerialize"></param>
+    ''' <returns>Returns the KEY of the string that was saved.</returns>
+    ''' <remarks></remarks>
+    Function SaveState(ByVal viewState As Object, Optional ByVal NoSerialize As Boolean = False)
+        HttpContext.Current.Session("VSID") = HttpContext.Current.Session("VSID") + 1
+        If NoSerialize Then
+            HttpContext.Current.Session(CacheString) = viewState
+        Else
+            Dim Format As New LosFormatter
+            Dim Writer As New System.IO.StringWriter
+            Format.Serialize(Writer, viewState)
+            HttpContext.Current.Session(CacheString) = Writer.ToString
+        End If
+        Return HttpContext.Current.Session("VSID")
+    End Function
+    ''' <summary>
+    ''' Returns a deserialized copy of the viewstate object
+    ''' </summary>
+    ''' <param name="SQLSTATE"></param>
+    ''' <param name="NoSerialize"></param>
+    ''' <returns></returns>
+    ''' <remarks></remarks>
+    Function LoadState(ByVal SQLSTATE, Optional ByVal NoSerialize = False) As Object
+        If NoSerialize Then
+            If Not HttpContext.Current.Session(CacheString(SQLSTATE)) Is Nothing Then
+                Return HttpContext.Current.Session(CacheString(SQLSTATE))
+            Else
+                HttpContext.Current.Trace.Warn("No ViewState Object Found")
+            End If
+        Else
+            Dim Format As New LosFormatter
+            If Not HttpContext.Current.Session(CacheString(SQLSTATE)) Is Nothing Then
+                Return Format.Deserialize(HttpContext.Current.Session(CacheString(SQLSTATE)))
+            Else
+                HttpContext.Current.Trace.Warn("No ViewState Object Found")
+            End If
+        End If
+    End Function
+    ''' <summary>
+    ''' AJAX Viewstate
+    ''' Saves the state to the users session
+    ''' </summary>
+    ''' <param name="viewState">The viewstate object to serialize</param>
+    ''' <param name="VSID">The ID that the page uses to find the viewstate item</param>
+    ''' <param name="NoSerialize"></param>
+    ''' <returns>Returns the KEY of the string that was saved.</returns>
+    ''' <remarks></remarks>
+    Function SaveState(ByVal viewState As Object, ByVal VSID As String, Optional ByVal NoSerialize As Boolean = False)
+        HttpContext.Current.Session("VSID") = HttpContext.Current.Session("VSID") + 1
+        If NoSerialize Then
+            If VSID = "" Then
+                HttpContext.Current.Session(CacheString) = viewState
+                Return HttpContext.Current.Session("VSID")
+            Else
+                HttpContext.Current.Session("VSID") = HttpContext.Current.Session("VSID") + 1
+                HttpContext.Current.Session(CacheString) = viewState
+                HttpContext.Current.Session(CacheString(VSID)) = viewState
+                Return HttpContext.Current.Session("VSID")
+            End If
+        Else
+            Dim Format As New LosFormatter
+            Dim Writer As New System.IO.StringWriter
+            Format.Serialize(Writer, viewState)
+            If VSID = "" Then
+                HttpContext.Current.Session("VSID") = HttpContext.Current.Session("VSID") + 1
+                HttpContext.Current.Session(CacheString) = Writer.ToString
+                Return HttpContext.Current.Session("VSID")
+            Else
+                HttpContext.Current.Session("VSID") = HttpContext.Current.Session("VSID") + 1
+                HttpContext.Current.Session(CacheString) = Writer.ToString
+                HttpContext.Current.Session(CacheString(VSID)) = Writer.ToString
+                Return HttpContext.Current.Session("VSID")
+            End If
+        End If
+    End Function
+    ''' <summary>
+    ''' Gets the string representing the cached viewstate object.
+    ''' </summary>
+    ''' <param name="VSID">Use this to override the session VSID property and use your own.</param>
+    ''' <value></value>
+    ''' <returns></returns>
+    ''' <remarks></remarks>
+    Public ReadOnly Property CacheString(Optional ByVal VSID As Integer = 0) As String
+        Get
+            If VSID = 0 Then
+                Return "ViewState" & HttpContext.Current.Session("VSID")
+            Else
+                Return "ViewState" & VSID
+            End If
+        End Get
+    End Property
+End Class
+
+Protected Overrides Sub SavePageStateToPersistenceMedium(ByVal viewState As Object)
+        Dim VState As New ViewState
+        If String.IsNullOrEmpty(Request.Form("__SQLVIEWSTATE")) = False Then
+            RegisterHiddenField("__SQLVIEWSTATE", VState.SaveState(viewState, Request.Form("__SQLVIEWSTATE")))
+        Else
+            RegisterHiddenField("__SQLVIEWSTATE", VState.SaveState(viewState))
+        End If
+    End Sub
+    Protected Overrides Function LoadPageStateFromPersistenceMedium() As Object
+        Dim VState As New ViewState
+        Return VState.LoadState(Request.Form("__SQLVIEWSTATE"))
+    End Function
+

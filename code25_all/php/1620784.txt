@@ -1,0 +1,103 @@
+<?php
+
+define('BASE_PATH', substr(dirname(dirname(__FILE__)), 0, -22));
+
+// set the include path
+set_include_path(BASE_PATH
+                 . '/../../library'
+                 . PATH_SEPARATOR
+                 . BASE_PATH
+                 . '/library'
+                 . PATH_SEPARATOR
+                 . get_include_path());
+
+// autoload classes from the library
+function __autoload($class) {
+    include str_replace('_', '/', $class) . '.php';
+}
+
+$configuration = new Zend_Config_Ini(BASE_PATH
+                                     . '/application'
+                                     . '/configs/application.ini',
+                                     'development');
+$dbAdapter = Zend_Db::factory($configuration->database);
+Zend_Db_Table_Abstract::setDefaultAdapter($dbAdapter);
+
+function _getTable($table)
+{
+    include BASE_PATH
+    . '/application/modules/default/models/'
+    . $table
+    . '.php';
+    return new $table();
+}
+
+$albums = _getTable('Albums');
+$media = _getTable('Media');
+
+if (false === empty($_FILES)) {
+
+    $tempFile = $_FILES['Filedata']['tmp_name'];
+    $extension = end(explode('.', $_FILES['Filedata']['name']));
+
+    // insert temporary row into the database
+    $data = array();
+    $data['type'] = 'photo';
+    $data['type2'] = 'public';
+    $data['status'] = 'temporary';
+    $data['user_id'] = $_REQUEST['user_id'];
+    $paths = $media->add($data, $extension, $dbAdapter);
+
+    // save the photo
+    move_uploaded_file($tempFile,
+                       BASE_PATH . '/public/' . $paths[0]);
+
+    // create a thumbnail
+    include BASE_PATH . '/library/My/PHPThumbnailer/ThumbLib.inc.php';
+    $thumb = PhpThumbFactory::create('/' . $paths[0]);
+    $thumb->adaptiveResize(85, 85);
+    $thumb->save(BASE_PATH . '/public/' . $paths[1]);
+
+    // add watermark to the bottom right corner
+    $pathToFullImage = BASE_PATH . '/public/' . $paths[0];
+    $size = getimagesize($pathToFullImage);
+    switch ($extension) {
+        case 'gif':
+            $im = imagecreatefromgif($pathToFullImage);
+            break;
+        case 'jpg':
+            $im = imagecreatefromjpeg($pathToFullImage);
+            break;
+        case 'png':
+            $im = imagecreatefrompng($pathToFullImage);
+            break;
+    }
+    if (false !== $im) {
+        $white = imagecolorallocate($im, 255, 255, 255);
+        $font = BASE_PATH . '/public/fonts/arial.ttf';
+        imagefttext($im,
+                    13, // font size
+                    0, // angle
+                    $size[0] - 132, // x axis (top left is [0, 0])
+                    $size[1] - 13, // y axis
+                    $white,
+                    $font,
+                    'HunnyHive.com');
+        switch ($extension) {
+            case 'gif':
+                imagegif($im, $pathToFullImage);
+                break;
+            case 'jpg':
+                imagejpeg($im, $pathToFullImage, 100);
+                break;
+            case 'png':
+                imagepng($im, $pathToFullImage, 0);
+                break;
+        }
+        imagedestroy($im);
+    }
+
+    echo "1";
+
+}
+

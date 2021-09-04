@@ -1,0 +1,106 @@
+<?php
+include 'zzserver.php';
+function distance($player1, $player2) {
+    global $strengthMax, $maxStrengthMax, $motivationMax, $ageMax;
+    // $playerX = array(strength, maxStrength, motivation, age, id);
+    $distance = 0;
+    $distance += abs($player1['strength']-$player2['strength'])/$strengthMax;
+    $distance += abs($player1['maxStrength']-$player2['maxStrength'])/$maxStrengthMax;
+    $distance += abs($player1['motivation']-$player2['motivation'])/$motivationMax;
+    $distance += abs($player1['age']-$player2['age'])/$ageMax;
+    return $distance;
+}
+function calculateCentroids() {
+    global $cluster;
+    $clusterCentroids = array();
+    foreach ($cluster as $key=>$value) {
+        $strenthValues = array();
+        $maxStrenthValues = array();
+        $motivationValues = array();
+        $ageValues = array();
+        foreach ($value as $clusterEntries) {
+            $strenthValues[] = $clusterEntries['strength'];
+            $maxStrenthValues[] = $clusterEntries['maxStrength'];
+            $motivationValues[] = $clusterEntries['motivation'];
+            $ageValues[] = $clusterEntries['age'];
+        }
+        if (count($strenthValues) == 0) { $strenthValues[] = 0; }
+        if (count($maxStrenthValues) == 0) { $maxStrenthValues[] = 0; }
+        if (count($motivationValues) == 0) { $motivationValues[] = 0; }
+        if (count($ageValues) == 0) { $ageValues[] = 0; }
+        $clusterCentroids[$key] = array('strength'=>array_sum($strenthValues)/count($strenthValues), 'maxStrength'=>array_sum($maxStrenthValues)/count($maxStrenthValues), 'motivation'=>array_sum($motivationValues)/count($motivationValues), 'age'=>array_sum($ageValues)/count($ageValues));
+    }
+    return $clusterCentroids;
+}
+function assignPlayersToNearestCluster() {
+    global $cluster, $clusterCentroids;
+    $playersWhoChangedClusters = 0;
+    // BUILD NEW CLUSTER ARRAY WHICH ALL PLAYERS GO IN THEN START
+    $alte_cluster = array_keys($cluster);
+    $neuesClusterArray = array();
+    foreach ($alte_cluster as $alte_cluster_entry) {
+        $neuesClusterArray[$alte_cluster_entry] = array();
+    }
+    // BUILD NEW CLUSTER ARRAY WHICH ALL PLAYERS GO IN THEN END
+    foreach ($cluster as $oldCluster=>$clusterValues) {
+        // FOR EVERY SINGLE PLAYER START
+        foreach ($clusterValues as $player) {
+            // MEASURE DISTANCE TO ALL CENTROIDS START
+            $abstaende = array();
+            foreach ($clusterCentroids as $CentroidId=>$centroidValues) {
+                $distancePlayerCluster = distance($player, $centroidValues);
+                $abstaende[$CentroidId] = $distancePlayerCluster;
+            }
+            arsort($abstaende);
+            if ($neuesCluster = each($abstaende)) {
+                $neuesClusterArray[$neuesCluster['key']][] = $player; // add to new array
+                // player $player['id'] goes to cluster $neuesCluster['key'] since it is the nearest one
+                if ($neuesCluster['key'] != $oldCluster) {
+                    $playersWhoChangedClusters++;
+                }
+            }
+            // MEASURE DISTANCE TO ALL CENTROIDS END
+        }
+        // FOR EVERY SINGLE PLAYER END
+    }
+    $cluster = $neuesClusterArray;
+    return $playersWhoChangedClusters;
+}
+// CREATE k CLUSTERS START
+$k = 5; // Anzahl Cluster
+$cluster = array();
+for ($i = 0; $i < $k; $i++) {
+    $cluster[$i] = array();
+}
+// CREATE k CLUSTERS END
+// PUT PLAYERS IN RANDOM CLUSTERS START
+$sql1 = "SELECT ids, staerke, talent, trainingseifer, wiealt FROM ".$prefix."spieler LIMIT 0, 90";
+$sql2 = mysql_abfrage($sql1);
+$anzahlSpieler = mysql_num_rows($sql2);
+$anzahlSpielerProCluster = $anzahlSpieler/$k;
+$strengthMax = 0;
+$maxStrengthMax = 0;
+$motivationMax = 0;
+$ageMax = 0;
+$counter = 0; // for $anzahlSpielerProCluster so that all clusters get the same number of players
+while ($sql3 = mysql_fetch_assoc($sql2)) {
+    $assignedCluster = floor($counter/$anzahlSpielerProCluster);
+    $cluster[$assignedCluster][] = array('strength'=>$sql3['staerke'], 'maxStrength'=>$sql3['talent'], 'motivation'=>$sql3['trainingseifer'], 'age'=>$sql3['wiealt'], 'id'=>$sql3['ids']);
+    if ($sql3['staerke'] > $strengthMax) { $strengthMax = $sql3['staerke']; }
+    if ($sql3['talent'] > $maxStrengthMax) { $maxStrengthMax = $sql3['talent']; }
+    if ($sql3['trainingseifer'] > $motivationMax) { $motivationMax = $sql3['trainingseifer']; }
+    if ($sql3['wiealt'] > $ageMax) { $ageMax = $sql3['wiealt']; }
+    $counter++;
+}
+// PUT PLAYERS IN RANDOM CLUSTERS END
+$m = 1;
+while ($m < 16) {
+    $clusterCentroids = calculateCentroids(); // calculate new centroids of the clusters
+    $playersWhoChangedClusters = assignPlayersToNearestCluster(); // assign each player to the nearest cluster
+    if ($playersWhoChangedClusters == 0) { $m = 1001; }
+    echo '<li>Iteration '.$m.': '.$playersWhoChangedClusters.' players have changed place</li>';
+    $m++;
+}
+print_r($cluster);
+?>
+

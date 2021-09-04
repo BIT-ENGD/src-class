@@ -1,0 +1,138 @@
+package engine;
+
+import junit.framework.Assert;
+import junit.framework.TestCase;
+
+public class StringFunctionsTest extends TestCase {
+
+    public void testEscapeXMLSimple(){
+        final String simple = "<xml><SvcRsData>a<![CDATA[<sender>John & Smith</sender>]]></SvcRsData></xml> ";      
+        final String expected = "<xml><SvcRsData>a&#60;sender&#62;John &#38; Smith&#60;/sender&#62;</SvcRsData></xml> ";
+        String result = StringFunctions.escapeXML(simple);
+        Assert.assertTrue(result.equals(expected));
+    }
+
+    public void testEscapeXMLCDATAInsideCDATA(){
+        final String stringWithCDATAInsideCDATA = "<xml><SvcRsData>a<![CDATA[<sender>John <![CDATA[Inner & CD ]]>& Smith</sender>]]></SvcRsData></xml> ";       
+        final String expected = "<xml><SvcRsData>a&#60;sender&#62;John &#60;![CDATA[Inner &#38; CD & Smith</sender>]]></SvcRsData></xml> ";
+        String result = StringFunctions.escapeXML(stringWithCDATAInsideCDATA);      
+        Assert.assertTrue(result.equals(expected));
+    }
+
+    public void testEscapeXMLCDATAWithoutClosingTag(){      
+        final String stringWithCDATAWithoutClosingTag = "<xml><SvcRsData>a<![CDATA[<sender>John & Smith</sender></SvcRsData></xml> ";
+        try{
+            String result = StringFunctions.escapeXML(stringWithCDATAWithoutClosingTag);
+        }catch(StringIndexOutOfBoundsException exception){
+            Assert.assertNotNull(exception);
+        }   
+    }
+
+    public void testEscapeXMLCDATAWithTwoCDATAClosingTags(){        
+        final String stringWithCDATAWithTwoClosingTags = "<xml><SvcRsData>a<![CDATA[<sender>John Inner & CD ]]>& Smith</sender>]]>bcd & efg</SvcRsData></xml> ";        
+        final String expectedAfterSecondClosingTagNotEscaped = "<xml><SvcRsData>a&#60;sender&#62;John Inner &#38; CD & Smith</sender>]]>bcd & efg</SvcRsData></xml> ";
+        String result = StringFunctions.escapeXML(stringWithCDATAWithTwoClosingTags);
+        Assert.assertTrue(result.equals(expectedAfterSecondClosingTagNotEscaped));
+    }
+
+    public void testEscapeXMLSimpleTwoCDATA(){
+        final String stringWithTwoCDATA = "<xml><SvcRsData>a<![CDATA[<sender>John & Smith</sender>]]>abc<sometag>xyz</sometag><sometag2><![CDATA[<recipient>Gorge & Doe</recipient>]]></sometag2></SvcRsData></xml> ";      
+        final String expected = "<xml><SvcRsData>a&#60;sender&#62;John &#38; Smith&#60;/sender&#62;abc<sometag>xyz</sometag><sometag2>&#60;recipient&#62;Gorge &#38; Doe&#60;/recipient&#62;</sometag2></SvcRsData></xml> ";
+        String result = StringFunctions.escapeXML(stringWithTwoCDATA);
+        Assert.assertTrue(result.equals(expected));
+    }
+
+    public void testEscapeXMLOverlappingCDATA(){
+        final String stringWithTwoCDATA = "<xml><SvcRsData>a<![CDATA[<sender>John & <![CDATA[Smith</sender>]]>abc<sometag>xyz</sometag><sometag2><recipient>Gorge & Doe</recipient>]]></sometag2></SvcRsData></xml> ";      
+        final String expectedMess = "<xml><SvcRsData>a&#60;sender&#62;John &#38; &#60;![CDATA[Smith&#60;/sender&#62;abc<sometag>xyz</sometag><sometag2><recipient>Gorge & Doe</recipient>]]></sometag2></SvcRsData></xml> ";
+        String result = StringFunctions.escapeXML(stringWithTwoCDATA);
+        Assert.assertTrue(result.equals(expectedMess));
+    }
+
+}
+
+package engine;
+
+public class StringFunctions {
+
+    public static String escapeXML(String s) {
+        StringBuffer result = new StringBuffer();
+        int stringSize = 0;
+        int posIniData = 0, posFinData = 0, posIniCData = 0, posFinCData = 0;
+        String stringPreData = "", stringRsData = "", stringPosData = "", stringCData = "", stringPreCData = "", stringTempRsData = "";
+        String stringNewRsData = "", stringPosCData = "", stringNewCData = "";
+        short caracter;
+
+        stringSize = s.length();
+        posIniData = s.indexOf("<SvcRsData>");
+        if (posIniData > 0) {
+            posIniData = posIniData + 11;
+            posFinData = s.indexOf("</SvcRsData>");
+            stringPreData = s.substring(0, posIniData);
+            stringRsData = s.substring(posIniData, posFinData);
+            stringPosData = s.substring(posFinData, stringSize);
+            stringTempRsData = stringRsData;
+            posIniCData = stringRsData.indexOf("<![CDATA[");
+            if (posIniCData > 0) {
+                while (posIniCData > 0) {
+                    posIniCData = posIniCData + 9;
+                    posFinCData = stringTempRsData.indexOf("]]>");
+                    stringPreCData = stringTempRsData.substring(0,
+                            posIniCData - 9);
+                    stringCData = stringTempRsData.substring(posIniCData,
+                            posFinCData);
+                    stringPosCData = stringTempRsData.substring(
+                            posFinCData + 3, stringTempRsData.length());
+
+                    stringNewCData = replaceCharacter(stringCData);
+                    stringTempRsData = stringTempRsData.substring(
+                            posFinCData + 3, stringTempRsData.length());
+                    stringNewRsData = stringNewRsData + stringPreCData
+                            + stringNewCData;
+                    posIniCData = stringTempRsData.indexOf("<![CDATA[");
+                }
+            } else {
+                stringNewRsData = stringRsData;
+            }
+            stringNewRsData = stringNewRsData + stringPosCData;
+            s = stringPreData + stringNewRsData + stringPosData;
+            stringSize = s.length();
+        }
+
+        for (int i = 0; i < stringSize; i++) {
+            caracter = (short) s.charAt(i);
+            if (caracter > 128) {
+                result.append("&#");
+                result.append(caracter);
+                result.append(';');
+            } else {
+                result.append((char) caracter);
+            }
+        }
+        return result.toString();
+
+    }
+
+    private static String replaceCharacter(String s) {
+        StringBuffer result = new StringBuffer();
+        int stringSize = s.length();
+        short caracter;
+
+        for (int i = 0; i < stringSize; i++) {
+
+            caracter = (short) s.charAt(i);
+            if (caracter > 128 || caracter == 34 || caracter == 38
+                    || caracter == 60 || caracter == 62) {
+                result.append("&#");
+                result.append(caracter);
+                result.append(';');
+            } else {
+                result.append((char) caracter);
+            }
+        }
+        return result.toString();
+
+    }
+
+}
+

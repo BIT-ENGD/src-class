@@ -1,0 +1,176 @@
+@synthesize activityIndicator;
+@synthesize pckCountries;
+
+// Implement viewDidLoad to do additional setup after loading the view, typically from a nib.
+- (void)viewDidLoad { 
+
+ countriesList = [[NSMutableArray alloc] initWithCapacity:20]; 
+ [self getCountriesList];
+
+ NSLog(@"%@", [countriesList count]);
+
+
+ [super viewDidLoad];
+
+}
+
+- (void)dealloc {
+ [activityIndicator release];
+    [xmlParser release];
+    //[soapResults release];
+
+    [super dealloc];
+}
+
+- (void) getCountriesList{
+
+
+ NSString *soapMsg = 
+ [NSString stringWithFormat:
+  @"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+  "<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">"
+  "<soap:Body>"
+  "<getCountries xmlns=\"http://www.smsbug.com/api/\" />"
+  "</soap:Body>"
+  "</soap:Envelope>"
+  ];
+
+ NSURL *url = [NSURL URLWithString: 
+      @"http://www.smsbug.com/api/webservice.asmx"];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+ NSString *msgLength = [NSString stringWithFormat:@"%d", [soapMsg length]];
+ [req addValue:@"text/xml; charset=utf-8" 
+forHTTPHeaderField:@"Content-Type"];
+    [req addValue:@"http://www.smsbug.com/api/getCountries" 
+forHTTPHeaderField:@"SOAPAction"];
+    [req addValue:msgLength forHTTPHeaderField:@"Content-Length"];   
+    [req setHTTPMethod:@"POST"];
+    [req setHTTPBody: [soapMsg dataUsingEncoding:NSUTF8StringEncoding]];
+ conn = [[NSURLConnection alloc] initWithRequest:req delegate:self];
+    if (conn) {
+        webData = [[NSMutableData data] retain];
+
+
+  } 
+}
+
+-(void) connection:(NSURLConnection *) connection 
+didReceiveResponse:(NSURLResponse *) response {
+ [webData setLength: 0];
+}
+
+-(void) connection:(NSURLConnection *) connection 
+ didReceiveData:(NSData *) data {
+ [webData appendData:data];
+ NSLog(@"%@", webData);
+}
+
+-(void) connection:(NSURLConnection *) connection 
+  didFailWithError:(NSError *) error {
+ [webData release];    
+ [connection release];
+}
+
+-(void) connectionDidFinishLoading:(NSURLConnection *) connection {
+    NSLog(@"DONE READING WEATHER WEB SERVICE. Received Bytes: %d", [webData length]);
+    NSString *theXML = [[NSString alloc] 
+                        initWithBytes: [webData mutableBytes] 
+                        length:[webData length] 
+                        encoding:NSUTF8StringEncoding];
+    //---shows the XML to test---
+    NSLog(theXML);    
+
+    [theXML release]; 
+
+ // stop activity indicator animation
+    [activityIndicator stopAnimating];    
+
+
+ //-----------------------------------------------------------------
+ // start parsing received XML message
+ //-----------------------------------------------------------------
+ if (xmlParser)
+ {
+  [xmlParser release];
+ }
+ xmlParser = [[NSXMLParser alloc] initWithData: webData];
+ [xmlParser setDelegate:self]; 
+ [xmlParser setShouldResolveExternalEntities:YES];
+ [xmlParser parse];
+
+ // clear memory
+    [connection release];
+    [webData release];
+}
+
+-(void) parser:(NSXMLParser *) parser 
+didStartElement:(NSString *) elementName 
+  namespaceURI:(NSString *) namespaceURI 
+ qualifiedName:(NSString *) qName
+ attributes:(NSDictionary *) attributeDict {
+
+ //NSLog(elementName);
+ if ([elementName isEqualToString:@"Country_Name"])
+ {  
+  countryFound = YES;
+ }
+}
+
+-(void)parser:(NSXMLParser *) parser foundCharacters:(NSString *)string
+{      
+
+  if([string isEqualToString:@"Data Not Found"])
+  {
+   errorOccured = YES;
+  }
+  else if(countryFound == YES)
+  {   
+   //NSLog(string);
+   [countriesList addObject:string];
+
+  }
+  else
+  { 
+   [soapResults appendString: string];
+  }     
+}
+
+-(void)parser:(NSXMLParser *)parser 
+didEndElement:(NSString *)elementName 
+ namespaceURI:(NSString *)namespaceURI 
+qualifiedName:(NSString *)qName
+{
+ if(errorOccured == YES)
+ { 
+  UIAlertView *alert = [[UIAlertView alloc] 
+         initWithTitle:@"No Data!"                           
+         message:@"Sorry"
+         delegate:self  
+         cancelButtonTitle:@"OK" 
+         otherButtonTitles:nil];
+  [alert show];
+  [alert release];
+  [soapResults setString:@""];  
+  errorOccured = FALSE;
+ }
+ else
+ {  
+  if ([elementName isEqualToString:@"Country_Name"])
+  {   
+   countryFound = FALSE;
+  }  
+ }
+}
+
+- (NSInteger)numberOfComponentsInPickerView:(UIPickerView *)pickerView{
+ return 1;
+}
+
+- (NSInteger)pickerView:(UIPickerView *)pickerView numberOfRowsInComponent:(NSInteger)component{ 
+ return countriesList.count;
+}
+
+- (NSString *)pickerView:(UIPickerView *)pickerView titleForRow:(NSInteger)row forComponent:(NSInteger)component{
+ return [countriesList objectAtIndex:row];
+}
+

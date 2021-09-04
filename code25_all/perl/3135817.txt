@@ -1,0 +1,106 @@
+<tr bgcolor="#ffffff">
+<td valign="top">
+<a href="http://oreilly.com/catalog/googlehks">Google Hacks</a><br />
+</td>
+<td valign="top" nowrap="nowrap">0-596-00447-8</td>
+<td valign="top" align="right">$24.95</td>
+<td valign="top" nowrap="nowrap" align="center"> 
+<a href="http://safari.oreilly.com/0596004478">Read it on Safari</a>
+</td>
+<td valign="top" nowrap="nowrap">
+<a href="http://examples.oreilly.com/googlehks">Get examples</a>
+</td>
+</tr>
+
+#!/usr/bin/perl -w
+use strict;
+use LWP::Simple;
+use HTML::TreeBuilder;
+
+my $url = 'http://oreilly.com/store/complete.html';
+my $page = get( $url ) or die $!;
+my $p = HTML::TreeBuilder->new_from_content( $page );
+my($book);
+my($edition);
+
+my @links = $p->look_down(
+        _tag => 'a',
+        href => qr{^ \Qhttp://oreilly.com/complete/\E \w+ 
+
+$}x
+);
+
+my @rows = map { $_->parent->parent } @links;
+
+my @books;
+for my $row (@rows) {
+        my %book;
+        my @cells = $row->look_down( _tag => 'td' );
+        $book{title}    =$cells[0]->as_trimmed_text;
+        $book{price}    =$cells[2]->as_trimmed_text;
+        $book{price} =~ s/^\$//;
+
+        $book{url}              = get_url( $cells[0] );
+        $book{ebook}    = get_url( $cells[3] );
+        $book{safari}   = get_url( $cells[4] );
+        $book{examples} = get_url( $cells[5] );
+        push @books, \%book;
+}
+
+sub get_url {
+        my $node = shift;
+        my @hrefs = $node->look_down( _tag => 'a');
+        return unless @hrefs;
+        my $url = $hrefs[0]->atr('href');
+        $url =~ s/\s+$//;
+        return $url;
+}
+
+$p = $p->delete; #we don't need this anymore.
+
+{
+        my $count = 1;
+        my @perlbooks = sort { $a->{price} <=> $b->{price} }
+                                        grep { $_->{title} =~/perl/i } @books;
+        print $count++, "\t", $_->{price}, "\t", $_->{title} for @perlbooks;
+}
+
+{
+        my @perlbooks = grep { $_->{title} =~ /perl/i } @books;
+        my @javabooks = grep { $_->{title} =~ /java/i } @books;
+        my $diff =  @javabooks - @perlbooks;
+        print "There are ".@perlbooks." Perl books and ".@javabooks. " Java books. $diff more Java than Perl.";
+}
+
+for my $book ( $books[34] ) {
+        my $url = $book->{url};
+        my $page = get( $url );
+        my $tree = HTML::TreeBuilder->new_from_content( $page );
+        my ($pubinfo) = $tree->look_down(
+
+
+        _tag => 'span',
+
+
+        class => 'secondary2'
+        );
+        my $html = $pubinfo->as_HTML; print $html;
+        my ($pages) = $html =~ /(\d+) pages/,
+        my ($edition) = $html =~ /(\d)(?:st|nd|rd|th) Edition/;
+        my ($date) = $html =~ /(\w+ (19|20)\d\d)/;
+
+        print "\n$pages $edition $date\n";
+
+        my ($img_node) = $tree->look_down(
+
+
+        _tag => 'img',
+
+
+        src  => qr{^/catalog/covers/},
+        );
+        my $img_url = 'http://www.oreilly.com'.$img_node->attr('src');
+        my $cover = get( $img_url );
+        # now save $cover to disk
+}
+

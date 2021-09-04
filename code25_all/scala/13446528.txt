@@ -1,0 +1,92 @@
+case class Foo(id: Option[Int])
+case class Bar(arg0: String, id: Option[Int])
+case class Baz(arg0: Int, id: Option[Int], arg2: String)
+
+copy
+val newId = Some(1)
+
+Foo(None).copy(id = newId)
+Bar("bar", None).copy(id = newId)
+Baz(42, None, "baz").copy(id = newId)
+
+type Copyable[T] = { def copy(id: Option[Int]): T }
+
+// THIS DOES *NOT* WORK FOR CASE CLASSES
+def withId[T <: Copyable[T]](obj: T, newId: Option[Int]): T =
+  obj.copy(id = newId)
+
+import scala.reflect.macros.Context
+
+object Entity {
+
+  import scala.language.experimental.macros
+  import scala.reflect.macros.Context
+
+  def withId[T](entity: T, id: Option[Int]): T = macro withIdImpl[T]
+
+  def withIdImpl[T: c.WeakTypeTag](c: Context)(entity: c.Expr[T], id: c.Expr[Option[Int]]): c.Expr[T] = {
+
+    import c.universe._
+
+    val currentType = entity.actualType
+
+    // reflection helpers
+    def equals(that: Name, name: String) = that.encoded == name || that.decoded == name
+    def hasName(name: String)(implicit method: MethodSymbol) = equals(method.name, name)
+    def hasReturnType(`type`: Type)(implicit method: MethodSymbol) = method.typeSignature match {
+      case MethodType(_, returnType) => `type` == returnType
+    }
+    def hasParameter(name: String, `type`: Type)(implicit method: MethodSymbol) = method.typeSignature match {
+      case MethodType(params, _) => params.exists { param =>
+        equals(param.name, name) && param.typeSignature == `type`
+      }
+    }
+
+    // finding method entity.copy(id: Option[Int])
+    currentType.members.find { symbol =>
+      symbol.isMethod && {
+        implicit val method = symbol.asMethod
+        hasName("copy") && hasReturnType(currentType) && hasParameter("id", typeOf[Option[Int]])
+      }
+    } match {
+      case Some(symbol) => {
+        val method = symbol.asMethod
+        val param = reify((
+          c.Expr[String](Literal(Constant("id"))).splice,
+          id.splice)).tree
+        c.Expr(
+          Apply(
+            Select(
+              reify(entity.splice).tree,
+              newTermName("copy")),
+            List( /*id.tree*/ )))
+      }
+      case None => c.abort(c.enclosingPosition, currentType + " needs method 'copy(..., id: Option[Int], ...): " + currentType + "'")
+    }
+
+  }
+
+}
+
+Apply
+id
+c.Expr[Option[Int]]
+c.Expr(
+  Apply(
+    Select(
+      reify(entity.splice).tree,
+      newTermName("copy")),
+    List(/*?id?*/)))
+
+entity.copy(id = id)
+
+case class Test(s: String, id: Option[Int] = None)
+
+// has to be compiled by its own
+object Test extends App {
+
+  assert( Entity.withId(Test("scala rulz"), Some(1)) == Test("scala rulz", Some(1)))
+
+}
+
+/*?id?*/

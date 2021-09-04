@@ -1,0 +1,31 @@
+USE Reports
+
+CREATE TABLE #Changes
+(
+ReportId int,
+LiveId int
+)
+
+/* Collect in a temp table the ids or rows which have been deleted or changed
+in the live db L.DEX_ROW_ID will be null if the row has been deleted */
+
+INSERT INTO #Changes
+SELECT R.DEX_ROW_ID, L.DEX_ROW_ID
+FROM MyTable R LEFT OUTER JOIN Live1.dbo.MyTable L ON L.DEX_ROW_ID = R.DEX_ROW_ID
+WHERE R.CompanyId = 1 AND L.DEX_ROW_ID IS NULL OR L.TS <> R.TS
+
+/* Delete rows that have been deleted or changed on the live db 
+I wonder if using join syntax would run better than the subquery. */
+DELETE FROM MyTable
+WHERE CompanyId = 1 AND DEX_ROW_ID IN (SELECT ReportId FROM #Changes)
+
+/* Recopy rows that have changed in the live db */
+INSERT INTO MyTable
+SELECT 1 AS CompanyId, * FROM Live1.dbo.MyTable L
+WHERE L.DEX_ROW_ID IN (SELECT ReportId FROM #Changes WHERE LiveId IS NOT NULL)
+
+/* Copy the rows that are new in the live db */
+INSERT INTO MyTable
+SELECT 1 AS CompanyId, * FROM Live1.dbo.MyTable
+WHERE DEX_ROW_ID > (SELECT MAX(DEX_ROW_ID) FROM MyTable WHERE CompanyId = 1)
+

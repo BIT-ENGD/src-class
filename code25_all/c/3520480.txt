@@ -1,0 +1,150 @@
+//----------------semmaphore.h ---------------------------------
+#define SEM_NAME "semaphore.h",'a'
+#define SEM_MAX   3
+#define FREE      0
+#define DATA      1
+#define ROOM      2
+#define S_WAIT   -1
+#define S_SIGNAL  1
+#define NO_EVENT -1
+
+ int sem_config(int, int);
+ int sem_wait(int, int);
+ int sem_signal(int, int);
+
+  //----------------semmaphore.c ---------------------------------
+
+#include <assert.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#include "semaphore.h"
+
+static int sem_id;
+
+static union semun 
+{
+    int val; /* value for SETVAL */
+    struct semid_ds *buf; /* buffer for IPC_STAT & IPC_SET */
+    ushort array[1]; 
+} sem_attr;
+
+  static struct sembuf asem[1];
+  static key_t s_key;
+
+ int sem_config(int event, int init_val)
+    {
+int x;
+s_key = ftok(SEM_NAME);
+if ( -1 == (sem_id = semget(s_key, SEM_MAX, 0666|IPC_CREAT ) ) {
+    perror("semget");
+    return -1;
+}
+  if ( event == NO_EVENT )
+    return 0;   
+sem_attr.val = init_val;
+if ( -1 == semctl(sem_id, event, SETVAL, sem_attr ) )
+{
+    perror("semctl SETVAL");
+    return -1;
+}
+if ( -1 == ( x = semctl(sem_id, event, GETVAL, sem_attr ) ) )
+  {
+    perror("semctl GETVAL");
+    return -1;
+  }
+    assert( x == init_val );
+    return 0;
+  }
+//------------------------------------------------------------
+int sem_wait(int event, int nwaits)
+ {
+asem[0].sem_num = event;
+asem[0].sem_op = nwaits * S_WAIT;
+asem[0].sem_flg = 0;
+if ( event == NO_EVENT )    /*remove semaphore set*/
+    if ( -1 == semctl(sem_id, 0, IPC_RMID, sem_attr ) )
+    {
+        perror("semctl IPC_RMID");
+        return -1;
+    }
+    else
+        return 0;
+if ( -1 == semop(sem_id, asem, 1 ) )
+{
+    perror("semop");
+    return -1;
+}
+return 0;
+   }
+ //------------------------------------------------------------
+ int sem_signal(int event, int nsignals)
+    {
+  asem[0].sem_num = event;
+  asem[0].sem_op = nsignals * S_SIGNAL;
+  asem[0].sem_flg = 0;
+  if ( event == NO_EVENT )
+    if ( -1 == semctl(sem_id, 0, IPC_RMID, sem_attr ) )
+    {
+        perror("semctl IPC_RMID");
+        return -1;
+    }
+    else
+        return 0;
+if ( -1 == semop(sem_id, asem, 1 ) )
+{
+    perror("semop");
+    return -1;
+}
+return 0;
+   }
+   //========================PROBLEM STARTS HERE=================
+#include <stdio.h>
+#include "semaphore.h"
+
+main()
+ {
+ char op, discard;
+ int event, nval;
+ do {
+   printf("Enter semaphore operation ");
+   printf("s(ignal)/w(ait)/i(nit)/f(ind)/c(leanup)");
+   scanf("%c%c", &op, &discard);
+   printf("Enter semaphore no and initial value :");
+   scanf("%d%d%c",&event,&nval,&discard);
+   switch ( op )
+    {
+       case 'i':
+             // Get semaphore for the forks
+             sem_config(event, nval); 
+             printf("Initialized semaphore\n");
+             break;
+
+    case 'f':
+             break;
+
+    case 's':
+             sem_signal(event, 1) 
+             break;
+
+    case 'w':
+             sem_wait(event, nval)
+             break;
+
+    case 'c':
+             break;
+
+    default: 
+             if ( -1 == sem_wait(NO_EVENT, 0) )
+             {
+               printf("semctl IPC_RMID failed\n");
+               exit(1);
+             }
+             printf("done\n");
+             exit(0);
+    }
+ } while (1);
+  return 0; 
+}
+

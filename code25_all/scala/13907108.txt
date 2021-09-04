@@ -1,0 +1,56 @@
+package com.test1
+
+import scala.language.implicitConversions
+import shapeless._
+import FromTraversable._
+import Traversables._
+import Nat._
+import Tuples._
+
+trait ToArity[P, N <: Nat]
+
+object ToArity {
+  implicit def prod1[P <: Product1[_]] = new ToArity[P, _1] {}
+  implicit def prod2[P <: Product2[_, _]] = new ToArity[P, _2] {}
+  // ad nauseum...
+}
+
+trait SizedHListAux[A, N <: Nat, T <: HList]
+
+object SizedHListAux {
+  implicit def base[A, H <: HList] = new SizedHListAux[A, _0, HNil] {}
+  implicit def induct[A, H <: HList, N <: Nat, P <: Nat](implicit r: PredAux[N,P], k: SizedHListAux[A, P, H]) = new SizedHListAux[A, N, A :: H] {}
+}
+
+trait SomeFun {
+  type Result
+  def apply(): Result
+}
+
+// I want to abstract over A, the contained type in the List
+// over P the Product type which is the arg notably its arity
+// This means we need to recover arity of the Product type and render it in value space
+// and also means that we need to compute the type of the intermediate HList
+object SomeFun {
+  def produce(m: SomeFun): m.Result = m()
+
+  implicit def fromF1[T, A, P <: Product, N <: Nat, H <: HList](f1: (P => T, List[A]))(implicit k: ToArity[P, N], toI: ToInt[N], l: SizedHListAux[A, N, H], toHL: FromTraversable[H], tp: TuplerAux[H, P]) =
+    new SomeFun {
+      type Result = (T, List[A])
+      def apply(): Result = {
+        val (f, as) = f1
+        val (ts, rest) = (as.take(toI()), as.drop(toI()))
+        f((toHL(ts).get).tupled) -> rest
+      }
+    }
+  // Debug Arity checker
+  def printArity[P <: Product, N <: Nat](p: P)(implicit k: ToArity[P, N], toI: ToInt[N]) = println("Arity: " + toI())
+}
+
+object Test {
+  val thedata = List("foo", "bar", "baz", "bob")
+  val tfn = (x: (String, String)) => println("%s and %s".format(x._1, x._2))
+  def foo = SomeFun.printArity("a" -> "b")
+  //def doit = SomeFun.produce((tfn, thedata)) // Adding this line does not compile
+}
+

@@ -1,0 +1,96 @@
+import java.sql.Connection
+
+import scala.concurrent.{ Future, blocking, future }
+import scala.concurrent.ExecutionContext.Implicits.global
+
+import anorm.{ SQL, SqlQuery, SqlRow, sqlToSimple, toParameterValue }
+import play.api.Logger
+import play.api.Play.current
+import play.api.db.DB
+
+object Queries {
+
+  private val readDataSource: String = play.Configuration.root().getString("data.provider.api.source", "default")
+  //better IO execution context
+
+  import play.api.libs.concurrent.Execution.Implicits.defaultContext
+
+  private val dataSetDescription: SqlQuery = SQL("SELECT DISTINCT platform, name FROM data_nugget")
+
+  private val identityCreationTime: SqlQuery = SQL("SELECT i.creation_time FROM identity i WHERE platform = {pfm} AND userid = {uid};")
+
+  private val identityData: SqlQuery = SQL("SELECT n.name, n.value FROM data_nugget n WHERE platform = {pfm} AND userid = {uid};")
+
+  private val playerData: SqlQuery = SQL("SELECT n.platform, n.name, n.value, r.userid, r.registration_time FROM data_nugget n JOIN registration r ON n.platform=r.platform AND n.userid=r.userid  WHERE r.playerid = {pid} AND r.application = {app};")
+
+  private def withAsyncAnormConnection(function: Connection => Stream[SqlRow]): Future[List[SqlRow]] = {
+    future {
+      blocking {
+        DB.withConnection(readDataSource)(c => function(c)).toList
+      }
+    }
+  }
+
+  def fetchDistinctDataNames(): Future[List[SqlRow]] = {
+    withAsyncAnormConnection(implicit c => dataSetDescription())
+  }
+
+  def fetchIdentityCreationTime(platform: String, userid: String): Future[List[SqlRow]] = {
+    withAsyncAnormConnection(implicit c => identityCreationTime.on("pfm" -> platform, "uid" -> userid)())
+  }
+
+  def fetchIdentityData(platform: String, userid: String): Future[List[SqlRow]] = {
+    withAsyncAnormConnection(implicit c => identityData.on("pfm" -> platform, "uid" -> userid)())
+  }
+
+  def fetchRegistrationData(game: String, playerid: String): Future[List[SqlRow]] = {
+    withAsyncAnormConnection(implicit c => playerData.on("app" -> game, "pid" -> playerid)())
+  }
+
+}
+
+(Error,com.mysql.jdbc.SQLError.createSQLException(SQLError.java:1073)
+com.mysql.jdbc.SQLError.createSQLException(SQLError.java:987)
+com.mysql.jdbc.SQLError.createSQLException(SQLError.java:982)
+com.mysql.jdbc.SQLError.createSQLException(SQLError.java:927)
+com.mysql.jdbc.ResultSetImpl.checkClosed(ResultSetImpl.java:794)
+com.mysql.jdbc.ResultSetImpl.next(ResultSetImpl.java:7139)
+anorm.Sql$$anonfun$resultSetToStream$1.apply(Anorm.scala:527)
+anorm.Sql$$anonfun$resultSetToStream$1.apply(Anorm.scala:527)
+anorm.Useful$.unfold(Anorm.scala:315)
+anorm.Useful$$anonfun$unfold$1.apply(Anorm.scala:317)
+anorm.Useful$$anonfun$unfold$1.apply(Anorm.scala:317)
+scala.collection.immutable.Stream$Cons.tail(Stream.scala:1078)
+scala.collection.immutable.Stream$Cons.tail(Stream.scala:1070)
+scala.collection.immutable.Stream.foreach(Stream.scala:548)
+scala.collection.generic.Growable$class.$plus$plus$eq(Growable.scala:48)
+scala.collection.mutable.ListBuffer.$plus$plus$eq(ListBuffer.scala:178)
+scala.collection.mutable.ListBuffer.$plus$plus$eq(ListBuffer.scala:45)
+scala.collection.TraversableLike$class.to(TraversableLike.scala:629)
+scala.collection.AbstractTraversable.to(Traversable.scala:105)
+scala.collection.TraversableOnce$class.toList(TraversableOnce.scala:243)
+scala.collection.AbstractTraversable.toList(Traversable.scala:105)
+controllers.dataprovider.data.Queries$$anonfun$withAsyncAnormConnection$1$$anonfun$apply$1.apply(Queries.scala:31)
+controllers.dataprovider.data.Queries$$anonfun$withAsyncAnormConnection$1$$anonfun$apply$1.apply(Queries.scala:31)
+scala.concurrent.impl.ExecutionContextImpl$DefaultThreadFactory$$anon$2$$anon$3.block(ExecutionContextImpl.scala:44)
+scala.concurrent.forkjoin.ForkJoinPool.managedBlock(ForkJoinPool.java:2803)
+scala.concurrent.impl.ExecutionContextImpl$DefaultThreadFactory$$anon$2.blockOn(ExecutionContextImpl.scala:41)
+scala.concurrent.package$.blocking(package.scala:50)
+controllers.dataprovider.data.Queries$$anonfun$withAsyncAnormConnection$1.apply(Queries.scala:30)
+controllers.dataprovider.data.Queries$$anonfun$withAsyncAnormConnection$1.apply(Queries.scala:30)
+scala.concurrent.impl.Future$PromiseCompletingRunnable.liftedTree1$1(Future.scala:24)
+scala.concurrent.impl.Future$PromiseCompletingRunnable.run(Future.scala:24)
+scala.concurrent.forkjoin.ForkJoinTask$AdaptedRunnableAction.exec(ForkJoinTask.java:1417)
+scala.concurrent.forkjoin.ForkJoinTask.doExec(ForkJoinTask.java:262)
+scala.concurrent.forkjoin.ForkJoinPool$WorkQueue.runTask(ForkJoinPool.java:975)
+scala.concurrent.forkjoin.ForkJoinPool.runWorker(ForkJoinPool.java:1478)
+scala.concurrent.forkjoin.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:104))
+
+future {
+    blocking {
+      DB.withConnection(implicit c => {
+        SQL("SELECT DISTINCT platform, name FROM data_nugget")().map(row => (row[String]("platform"), row[String]("name"))).toArray
+      })
+    }
+  }
+

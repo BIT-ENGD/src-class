@@ -1,0 +1,92 @@
+local redis = require "resty.redis"
+local red = redis:new()
+local md5 = require "md5"
+
+local ip = ngx.var.remote_addr
+local secs = ngx.time()
+local uid_key = ip .. secs
+local uid = md5.sumhexa(uid_key)
+local cookie = ngx.var.cookie_uid
+local red_cookie = red:hget("cookie:"..uid, uid)
+
+local ok, err = red:connect("127.0.0.1", 6379)
+if not ok then
+    ngx.say("failed to connect to Redis: ", err)
+    return
+end
+
+local args = ngx.req.get_headers()
+local date_time = ngx.http_time(secs)
+
+if cookie == nil or cookie ~= red_cookie then
+    ngx.header['Set-Cookie'] = "path=/; uid=" .. uid
+    local res, err = red:hmset("cookie:".. uid,
+                               "uid", uid,
+                               "date_time", date_time,
+                               "user-agent", args["user-agent"]
+                               )
+    if not res then
+        ngx.say("failed to set cookie: ", err)
+    end
+end
+
+location /cookie {
+    default_type "text/plain";
+    lua_code_cache off;
+    content_by_lua_file /lua/test.lua;
+}
+
+local redis = require "resty.redis"
+local md5 = require "md5"
+local parser = require "redis.parser"
+
+local ip = ngx.var.remote_addr
+local secs = ngx.time()
+local uid_key = ip .. secs
+local uid = md5.sumhexa(uid_key)
+
+local args = ngx.req.get_headers()
+local date_time = ngx.http_time(secs)
+
+local test_cookie = ngx.location.capture("/redis_check_cookie", {args = {cookie_uid="cookie:"..uid}});
+if test_cookie.status ~= 200 or not test_cookie.body then
+    ngx.log(ngx.ERR, "failed to query redis")
+    ngx.exit(500)
+end
+
+local reqs = {
+    {"hmset", "cookie:"..uid, "path=/"}
+}
+
+local raw_reqs = {}
+for i, req in ipairs(reqs) do
+    table.insert(raw_reqs, parser.build_query(req))
+end
+
+local res = ngx.location.capture("/redis_set_cookie?" .. #reqs,
+    { body = table.concat(raw_reqs, "")
+    })
+
+local replies = parser.parse_replies(res.body, #reqs)
+for i, reply in ipairs(replies) do
+    ngx.say(reply[1])
+end
+
+upstream my_redis {
+    server 127.0.0.1:6379;
+    keepalive 1024 single;
+}
+
+    location /redis_check_cookie {
+        internal;
+        set_unescape_uri $cookie_uid $arg_cookie_uid;
+        redis2_query hexists $cookie_uid uid;
+        redis2_pass my_redis;
+    }
+
+    location /redis_set_cookie {
+        internal;
+        redis2_raw_queries $args $echo_request_body;
+        redis2_pass my_redis;
+    }
+

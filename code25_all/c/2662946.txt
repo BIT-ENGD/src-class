@@ -1,0 +1,347 @@
+#ifndef __NM__DUPF__H__
+#define __NM__DUPF__H__
+#define NUM_THREADS 15
+#define BLOCK_SIZE 8192
+
+/* Thread argument structure */
+struct thread_arg_s {
+    const char *name_f1;        /* First file name */
+    const char *name_f2;        /* Second file name */
+    int cursor;                 /* Where to seek in the file */
+};
+typedef struct thread_arg_s thread_arg;
+
+/**
+ * 'arg' is of type thread_arg.
+ * Checks if the specified file blocks are 
+ * duplicates.
+ */
+void *check_block_dup(void *arg);
+
+/**
+ * Checks if two files are duplicates
+ */
+int check_dup(const char *name_f1, const char *name_f2);
+
+/**
+* Returns a valid pointer to a file.
+* If the file (given by the path/name 'fname') cannot be opened
+* in 'mode', the program is interrupted an error message is shown.
+**/
+FILE *safe_fopen(const char *name, const char *mode);
+
+#endif
+
+#include <errno.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "dupf.h"
+
+FILE *safe_fopen(const char *fname, const char *mode)
+{
+    FILE *f = NULL;
+    f = fopen(fname, mode);
+    if (f == NULL) {
+        char emsg[255];
+        sprintf(emsg, "FOPEN() %s\t", fname);
+        perror(emsg);
+        exit(-1);
+    }
+    return (f);
+}
+
+void *check_block_dup(void *arg)
+{
+    const char *name_f1 = NULL, *name_f2 = NULL;    /* File names */
+    FILE *f1 = NULL, *f2 = NULL;                    /* Streams */
+    int cursor = 0;                                 /* Reading cursor */
+    char buff_f1[BLOCK_SIZE], buff_f2[BLOCK_SIZE];  /* Character buffers */
+    int rchars_1, rchars_2;                         /* Readed characters */
+    /* Initializing variables from 'arg' */
+    name_f1 = ((thread_arg*)arg)->name_f1;
+    name_f2 = ((thread_arg*)arg)->name_f2;
+    cursor = ((thread_arg*)arg)->cursor;
+    /* Opening files */
+    f1 = safe_fopen(name_f1, "r");
+    f2 = safe_fopen(name_f2, "r");
+    /* Setup cursor in files */
+    fseek(f1, cursor, SEEK_SET);
+    fseek(f2, cursor, SEEK_SET);
+    /* Initialize buffers */
+    rchars_1 = fread(buff_f1, 1, BLOCK_SIZE, f1);
+    rchars_2 = fread(buff_f2, 1, BLOCK_SIZE, f2);
+    if (rchars_1 != rchars_2) {
+        /* fread failed to read the same portion.
+         * program cannot continue */
+        perror("ERROR WHEN READING BLOCK");
+        exit(-1);
+    }
+    while (rchars_1-->0) {
+        if (buff_f1[rchars_1] != buff_f2[rchars_1]) {
+            /* Different characters */
+            fclose(f1);
+            fclose(f2);
+            pthread_exit("notdup");
+        }
+    }
+    /* Close streams */
+    fclose(f1);
+    fclose(f2);
+    pthread_exit("dup");
+}
+
+int check_dup(const char *name_f1, const char *name_f2)
+{
+    int num_blocks = 0;             /* Number of 'blocks' to check */
+    int num_tsp = 0;                /* Number of threads spawns */
+    int tsp_iter = 0;               /* Iterator for threads spawns */
+    pthread_t *tsp_threads = NULL;
+    thread_arg *tsp_threads_args = NULL;
+    int tsp_threads_iter = 0;
+    int thread_c_res = 0;           /* Thread creation result */
+    int thread_j_res = 0;           /* Thread join res */
+    int loop_res = 0;               /* Function result */
+    int cursor;
+    struct stat buf_f1;
+    struct stat buf_f2;
+
+    if (name_f1 == NULL || name_f2 == NULL) {
+        /* Invalid input parameters */
+        perror("INVALID FNAMES\t");
+        return (-1);
+    }
+
+    if (stat(name_f1, &buf_f1) != 0 || stat(name_f2, &buf_f2) != 0) {
+        /* Stat fails */
+        char emsg[255];
+        sprintf(emsg, "STAT() ERROR: %s %s\t", name_f1, name_f2);
+        perror(emsg);
+        return (-1);
+    }
+
+    if (buf_f1.st_size != buf_f2.st_size) {
+        /* File have different sizes */
+        return (1);
+    }
+
+    /* Files have the same size, function exec. is continued */
+    num_blocks = (buf_f1.st_size / BLOCK_SIZE) + 1;
+    num_tsp = (num_blocks / NUM_THREADS) + 1;
+    cursor = 0;
+    for (tsp_iter = 0; tsp_iter < num_tsp; tsp_iter++) {
+        loop_res = 0;
+        /* Create threads array for this spawn */
+        tsp_threads = malloc(NUM_THREADS * sizeof(*tsp_threads));
+        if (tsp_threads == NULL) {
+            perror("TSP_THREADS ALLOC FAILURE\t");
+            return (-1);
+        }
+        /* Create arguments for every thread in the current spawn */
+        tsp_threads_args = malloc(NUM_THREADS * sizeof(*tsp_threads_args));
+        if (tsp_threads_args == NULL) {
+            perror("TSP THREADS ARGS ALLOCA FAILURE\t");
+            return (-1);
+        }
+        /* Initialize arguments and create threads */
+        for (tsp_threads_iter = 0; tsp_threads_iter < NUM_THREADS;
+                tsp_threads_iter++) {
+            if (cursor >= buf_f1.st_size) {
+                break;
+            }
+            tsp_threads_args[tsp_threads_iter].name_f1 = name_f1;
+            tsp_threads_args[tsp_threads_iter].name_f2 = name_f2;
+            tsp_threads_args[tsp_threads_iter].cursor = cursor;
+            thread_c_res = pthread_create(
+                               &tsp_threads[tsp_threads_iter],
+                               NULL,
+                               check_block_dup,
+                               (void*)&tsp_threads_args[tsp_threads_iter]);
+            if (thread_c_res != 0) {
+                perror("THREAD CREATION FAILURE");
+                return (-1);
+            }
+            cursor+=BLOCK_SIZE;
+        }
+        /* Join last threads and get their status */
+        while (tsp_threads_iter-->0) {
+            void *thread_res = NULL;
+            thread_j_res = pthread_join(tsp_threads[tsp_threads_iter],
+                                        &thread_res);
+            if (thread_j_res != 0) {
+                perror("THREAD JOIN FAILURE");
+                return (-1);
+            }
+            if (strcmp((char*)thread_res, "notdup")==0) {
+                loop_res++;
+                /* Closing other threads and exiting by condition
+                 * from loop. */
+                while (tsp_threads_iter-->0) {
+                    pthread_cancel(tsp_threads[tsp_threads_iter]);
+                }
+            }
+        }
+        free(tsp_threads);
+        free(tsp_threads_args);
+        if (loop_res > 0) {
+            break;
+        }
+    }
+    return (loop_res > 0) ? 1 : 0;
+}
+
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "dupf.h"
+
+/**
+* Safely assures that a file is opened. 
+* If cannot open file, the flow of the program is interrupted.
+* The error code returned is -1.
+**/
+FILE *safe_fopen(const char *fname, const char *mode)
+{
+    FILE *f = NULL;
+    f = fopen(fname, mode);
+    if (f == NULL) {
+        char emsg[1024];
+        sprintf(emsg, "Cannot open file: %s\t", fname);
+        perror(emsg);
+        exit(-1);
+    }
+    return (f);
+}
+
+/**
+* Check if two files have the same size.
+* Returns:
+* -1    Error.
+* 0 If they have the same size.
+* 1 If the don't have the same size.
+**/
+int check_same_size(const char *f1_name, const char *f2_name, off_t *f1_size, off_t *f2_size)
+{
+    struct stat f1_stat, f2_stat;
+    if((f1_name == NULL) || (f2_name == NULL)){
+        fprintf(stderr, "Invalid filename passed to function [check_same_size].\n");
+        return (-1);
+    }
+    if((stat(f1_name, &f1_stat) != 0) || (stat(f2_name, &f2_stat) !=0)){
+        fprintf(stderr, "Cannot apply stat. [check_same_size].\n");
+        return (-1);
+    }
+    if(f1_size != NULL){
+        *f1_size = f1_stat.st_size;
+    }
+    if(f2_size != NULL){
+        *f2_size = f2_stat.st_size;
+    }
+    return (f1_stat.st_size == f2_stat.st_size) ? 0 : 1;
+}
+
+/**
+* Test if two files are duplicates.
+* Returns:
+* -1    Error.
+* 0 If they are duplicates.
+* 1 If they are not duplicates.
+**/
+int check_dup_plain(char *f1_name, char *f2_name, int block_size)
+{
+    if ((f1_name == NULL) || (f2_name == NULL)){
+        fprintf(stderr, "Invalid filename passed to function [check_dup_plain].\n");
+        return (-1);
+    }
+    FILE *f1 = NULL, *f2 = NULL;
+    char f1_buff[block_size], f2_buff[block_size];
+    size_t rch1, rch2;
+    if(check_same_size(f1_name, f2_name, NULL, NULL) == 1){
+        return (1);
+    }
+    f1 = safe_fopen(f1_name, "r");
+    f2 = safe_fopen(f2_name, "r");
+    while(!feof(f1) && !feof(f2)){
+        rch1 = fread(f1_buff, 1, block_size, f1);
+        rch2 = fread(f2_buff, 1, block_size, f2);
+        if(rch1 != rch2){
+            fprintf(stderr, "Invalid reading from file. Cannot continue. [check_dup_plain].\n");
+            return (-1);
+        }
+        while(rch1-->0){
+            if(f1_buff[rch1] != f2_buff[rch1]){
+                return (1);
+            }
+        }
+    }
+    fclose(f1);
+    fclose(f2);
+    return (0);
+}
+
+/**
+* Test if two files are duplicates.
+* Returns:
+* -1    Error.
+* 0 If they are duplicates.
+* 1 If they are not duplicates.
+**/
+int check_dup_memmap(char *f1_name, char *f2_name)
+{
+    struct stat f1_stat, f2_stat;
+    char *f1_array = NULL, *f2_array = NULL;
+    off_t f1_size, f2_size;
+    int f1_des, f2_des, cont, res;
+    if((f1_name == NULL) || (f2_name == NULL)){
+        fprintf(stderr, "Invalid filename passed to function [check_dup_memmap].\n");
+        return (-1);    
+    }
+    if(check_same_size(f1_name, f2_name, &f1_size, &f2_size) == 1){
+        return (1);
+    }
+    f1_des = open(f1_name, O_RDONLY);
+    f2_des = open(f2_name, O_RDONLY);
+    if((f1_des == -1) || (f2_des == -1)){
+        perror("Cannot open file");
+        exit(-1);       
+    }
+    f1_array = mmap(0, f1_size * sizeof(*f1_array), PROT_READ, MAP_SHARED, f1_des, 0);
+    if(f1_array == NULL){
+        fprintf(stderr, "Cannot map file to memory [check_dup_memmap].\n");
+        return (-1);
+    }
+    f2_array = mmap(0, f2_size * sizeof(*f2_array), PROT_READ, MAP_SHARED, f2_des, 0);
+    if(f2_array == NULL){
+        fprintf(stderr, "Cannot map file to memory [check_dup_memmap].\n");
+        return (-1);
+    }
+    cont = f1_size;
+    res = 0;
+    while(cont-->0){
+        if(f1_array[cont]!=f2_array[cont]){
+            res = 1;
+            break;
+        }
+    }
+    munmap((void*) f1_array, f1_size * sizeof(*f1_array));
+    munmap((void*) f2_array, f2_size * sizeof(*f2_array));
+    return res;
+}
+
+int main(int argc, char *argv[])
+{
+    printf("result: %d\n",check_dup_memmap("f2","f1"));
+    return (0);
+}
+

@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:cxf="http://www.mulesoft.org/schema/mule/cxf" xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:spring="http://www.springframework.org/schema/beans" version="CE-3.3.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd 
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd 
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd 
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd 
+http://www.mulesoft.org/schema/mule/cxf http://www.mulesoft.org/schema/mule/cxf/current/mule-cxf.xsd 
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd ">
+    <configuration>
+    <default-threading-profile doThreading="false"/>
+  </configuration>
+
+    <queued-asynchronous-processing-strategy name="limitThreads" maxThreads="2"/>
+
+    <flow name="Poll_DirectoryFlow1" doc:name="Poll_DirectoryFlow1" processingStrategy="limitThreads">
+        <file:inbound-endpoint path="/home/administrator/Downloads/Input" responseTimeout="10000" doc:name="File" pollingFrequency="5000" fileAge="5000">
+
+        </file:inbound-endpoint>
+        <scripting:component doc:name="Script">
+            <scripting:script engine="Groovy">
+                <property key="originalFilename" value="#[header:originalFilename]"/>
+                <scripting:text><![CDATA[def filename = message.getInboundProperty('originalFilename')
+                                                        println "$filename"
+                                                        def directory = message.getInboundProperty('directory')
+                                                        println "$directory"
+                                                        "mkdir processed".execute()
+                                                        def command = ["/home/administrator/ocr.sh", "$directory/$filename", "/home/administrator/Downloads/Output/$filename"]
+                                                        println "$command"
+                                                        def proc = "pwd".execute()
+                                                        command.execute()
+                                                        proc.waitFor()
+                                                        println "${proc.in.text}"]]></scripting:text>
+            </scripting:script>
+        </scripting:component>
+        <echo-component doc:name="Echo"/>        
+    </flow>
+</mule>
+
+#!/bin/bash
+
+#Setting variables
+PARAM=$#
+TMPDIR=./split
+INFILENAME=${1##*/}
+OUTFILENAME=${2##*/}
+echo "1 is $1"
+echo "2 is $2"
+echo "infilename is $INFILENAME"
+echo "outfilename is $OUTFILENAME"
+
+#Logging I/O filenames
+echo "infile: $1" >> error.log
+echo "outfile: $2" >> error.log
+
+#If the temporary directory doesn't exist, make it
+if [ ! -d "$TMPDIR" ];
+then
+    mkdir $TMPDIR
+fi
+
+#Check to see that the correct number of params have been passed.
+if [[ $PARAM -lt 2 ]];
+then
+    echo "Usage: $0 source.pdf output.pdf"
+    echo "output.pdf is the desired output file"
+    echo "source.pdf is a file to be OCR'd"
+    exit 1
+fi
+
+#Make sure the input file is a PDF
+if [ "${1##*.}" == "pdf" ];
+then
+    multilayer=false
+
+    #Check to see if the input file is a multi-layered pdf with searchable text
+        if grep -Fl "Font" "$1"; then multilayer=true; fi
+
+    #If it's not multi-layered, then perform the OCR
+    if [ "$multilayer" == "false" ];
+    then
+        mkdir $TMPDIR/"$INFILENAME/"
+        echo "making temporary directory $TMPDIR/$INFILENAME"
+        #Split the PDF into pdf's of one page per df in a temporary directory
+        pdftk "$1" burst output "$TMPDIR/$INFILENAME/pg_%04d.pdf"
+        echo "burse output to $TMPDIR/$INFILENAME/pg_%04d.pdf"
+        mv "$1" processed/
+        for files in "$TMPDIR/$INFILENAME/"*
+            do
+            echo "$files"
+                    filename=$(basename "$files")
+                    filename="${filename%.*}"
+
+            #Convert the pdf page into an image
+                    gs -r300 -o "$TMPDIR/$INFILENAME/$filename.jpeg" -sDEVICE=jpeg "$TMPDIR/$INFILENAME/$filename.pdf"
+
+            #Perform the OCR against the image
+                    tesseract "$TMPDIR/$INFILENAME/$filename.jpeg" "$TMPDIR/$INFILENAME/$filename" hocr
+
+            #Combine the OCR'd image and OCR'd text into a multi-layer PDF file of that page
+                    hocr2pdf -i "$TMPDIR/$INFILENAME/$filename.jpeg" -o "$TMPDIR/$INFILENAME/$filename.pdf" < "$TMPDIR/$INFILENAME/$filename.html"
+                    compressed="$filename-compressed.pdf"
+
+            #Compress the multi-layered PDF of the page
+                    gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dNOPAUSE -dQUIET -dBATCH -sOutputFile="$TMPDIR/$INFILENAME/$compressed $TMPDIR/$INFILENAME/$filename.pdf"
+                    mv "$TMPDIR/$INFILENAME/$compressed" "$TMPDIR/$INFILENAME/$filename"
+            done
+
+        #Concatenate all of the multiline PDF pages into a single PDF file
+        pdftk "$TMPDIR/$INFILENAME/"*.pdf cat output "$OUTFILENAME"
+        compressed="$OUTFILENAME-compressed.pdf"
+
+        #Compress the multi-layered PDF
+        gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dNOPAUSE -dQUIET -dBATCH -sOutputFile="$compressed" "$OUTFILENAME"
+        mv "$compressed" "$2"
+        rm -rf "$TMPDIR/$INFILENAME"
+    else
+        echo "The input file is multi-layered"
+        mv "$1" "$2"
+    fi
+else
+    echo "Please enter a valid input pdf file"
+    exit 2
+fi
+

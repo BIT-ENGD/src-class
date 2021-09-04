@@ -1,0 +1,55 @@
+require 'rubygems'
+require 'mongrel'
+require 'config/settings'
+require File.join(Settings::UTILS_DIR, "dispatcher.rb") 
+
+class FrontController < Mongrel::HttpHandler
+  def process(request, response)
+
+    route = Dispatcher.new.dispatch(request.params["REQUEST_URI"]) 
+    controller = route["class"] 
+    action = route["method"]
+    params = route["params"]
+    action_output = controller.new.send(action, params)
+
+    response.start(200) do |head, out|
+      head["Content-Type"] = "text/html" 
+      out << action_output 
+    end 
+  end 
+end
+
+h = Mongrel::HttpServer.new("192.168.0.103", "3000") 
+h.register("/", FrontController.new)
+h.run.join
+
+require File.join(Settings::CONFIG_DIR, "controllers.rb")
+
+class Dispatcher
+  def dispatch(uri)
+
+    uri = uri.split("/")
+    if uri.size == 0
+      return {"class" => Controllers.const_get(:ArticleActions), "method" => :index, "params" => nil}
+    end 
+
+    route = {}
+    unless uri[1].nil? and uri[2].nil?
+      controller_class = uri[1].capitalize << "Actions" # All controllers classes follow this form : ControllerActions
+      controller_method = uri[2]
+      route["class"] = Controllers.const_defined?(controller_class) ? Controllers.const_get(controller_class) : nil 
+      route["method"] = ( route["class"] and route["class"].method_defined?(controller_method) ) ? controller_method : nil 
+      route["params"] = uri.slice(3, uri.size) ? uri.slice(3, uri.size) : nil 
+    end 
+
+    # If url not valid
+    if route["class"].nil? or route["method"].nil?
+      route["class"] = Controllers.const_get(:ErrorActions)
+      route["method"] = :error404
+      route["params"] =  nil 
+    end 
+
+    route
+  end 
+end
+

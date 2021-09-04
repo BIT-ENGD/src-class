@@ -1,0 +1,52 @@
+DEFINE_GUID(GUID_CLASS_COMPORT, 0x4d36e978, 0xe325, 0x11ce, 0xbf, 0xc1, \
+            0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18);
+
+
+GUID *serial_port_guid = const_cast<GUID *>(&GUID_CLASS_COMPORT);
+HDEVINFO device_info = INVALID_HANDLE_VALUE;
+SP_DEVICE_INTERFACE_DETAIL_DATA *detail_data = 0;
+
+device_info = SetupDiGetClassDevs(
+   serial_port_guid, 0, 0, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+if(device_info != INVALID_HANDLE_VALUE)
+{
+   uint4 const detail_data_size = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA) + 256;
+   detail_data = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA *>(new char[detail_data_size]);
+   SP_DEVICE_INTERFACE_DATA ifc_data;
+   bool more_interfaces = true;
+   int rcd;
+   memset(&ifc_data, 0, sizeof(ifc_data)); 
+   memset(detail_data, 0, detail_data_size);
+   ifc_data.cbSize = sizeof(ifc_data);
+   detail_data->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+   for(uint4 index = 0; more_interfaces; ++index)
+   {
+      rcd = SetupDiEnumDeviceInterfaces(device_info, 0, serial_port_guid, index, &ifc_data);
+      if(rcd)
+      {
+         // we need to get the details of this device
+         SP_DEVINFO_DATA device_data = { sizeof(SP_DEVINFO_DATA) };
+         rcd = SetupDiGetDeviceInterfaceDetail(
+            device_info, &ifc_data, detail_data, detail_data_size, 0, &device_data);
+         if(rcd)
+         {
+            StrAsc device_path(detail_data->DevicePath);
+            byte friendly_name[256];
+
+            rcd = SetupDiGetDeviceRegistryProperty(
+               device_info, &device_data, SPDRP_FRIENDLYNAME, 0, friendly_name, sizeof(friendly_name), 0);
+            if(rcd)
+            {
+               std::for_each(
+                  port_names.begin(),
+                  port_names.end(),
+                  update_friendly_name(
+                     reinterpret_cast<char const *>(friendly_name)));
+            }
+         }
+         else
+            more_interfaces = false;
+      }
+   }
+}
+

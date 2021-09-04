@@ -1,0 +1,91 @@
+Vector
+k
+BangPatterns
+prev
+fw
+foldl'
+{-# Language BangPatterns #-}
+
+import           Control.DeepSeq
+import           Control.Monad       (forM_)
+import           Data.List           (foldl')
+import qualified Data.Map.Strict     as M
+import           Data.Vector         (Vector, (!), (//))
+import qualified Data.Vector         as V
+import qualified Data.Vector.Mutable as V hiding (length, replicate, take)
+
+type Graph = Vector (M.Map Int Double)
+type TwoDVector = Vector (Vector Double)
+
+infinity :: Double
+infinity = 1/0
+
+-- calculate shortest path between all pairs in the given graph, if there are
+-- negative cycles, return Nothing
+allPairsShortestPaths :: Graph -> Int -> Maybe TwoDVector
+allPairsShortestPaths g v =
+  let initial = fw g v V.empty 0
+      results = foldl' (fw g v) initial [1..v]
+  in if negCycle results
+        then Nothing
+        else Just results
+  where -- check for negative elements along the diagonal
+        negCycle a = any not $ map (\i -> a ! i ! i >= 0) [0..(V.length a-1)]
+
+-- one step of the Floyd-Warshall algorithm
+fw :: Graph -> Int -> TwoDVector -> Int -> TwoDVector
+fw g v !prev k = V.create $ do                                           -- ← bang
+  curr <- V.new v
+  forM_ [0..(v-1)] $ \i ->
+    V.write curr i $ V.create $ do
+      ivec <- V.new v
+      forM_ [0..(v-1)] $ \j -> do
+        let d = distance g prev i j k
+        V.write ivec j d
+      return ivec
+  return curr
+
+distance :: Graph -> TwoDVector -> Int -> Int -> Int -> Double
+distance g _ i j 0 -- base case; 0 if same vertex, edge weight if neighbours
+  | i == j    = 0.0
+  | otherwise = M.findWithDefault infinity j (g ! i)
+distance _ a i j k = let c1 = a ! i ! j
+                        c2 = (a ! i ! (k-1))+(a ! (k-1) ! j)
+                        in min c1 c2
+
+ghc -O2
+ results = foldl' (fw g v) initial [1..50]
+
++RTS -p -hc
++RTS -p -hd
+deepseq
+fw
+prev
+let d = prev `deepseq` distance g prev i j k
+
+prev
+deepseq
+deepseq
+Vector
+Vector
+graph.txt
+main
+main = do
+  ls <- fmap lines $ readFile "graph.txt"
+  let numVerts = head . map read . words . head $ ls
+  let edges = map (map read . words) (tail ls)
+  let g = V.create $ do
+        g' <- V.new numVerts
+        forM_ [0..(numVerts-1)] (\idx -> V.write g' idx M.empty)
+        forM_ edges $ \[f,t,w] -> do
+          -- subtract one from vertex IDs so we can index directly
+          curr <- V.read g' (f-1)
+          V.write g' (f-1) $ M.insert (t-1) (fromIntegral w) curr
+        return g'
+  let a = allPairsShortestPaths g numVerts
+  case a of
+    Nothing -> putStrLn "Negative cycle detected."
+    Just a' -> do
+      putStrLn  $ "The shortest, shortest path has length "
+              ++ show ((V.minimum . V.map V.minimum) a')
+

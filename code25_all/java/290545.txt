@@ -1,0 +1,99 @@
+HelloInterface -> A Hello World interface for RMI
+Server -> The server app'
+Client -> The client app'
+
+package rmi;
+import java.rmi.RMISecurityManager;
+import java.io.*;
+
+public class NativeRMISecurityManager extends RMISecurityManager
+{
+    private boolean unix;
+    protected static ThreadLocal user = new ThreadLocal();
+
+    /*
+     * On interdit l'utilisation du constructeur par defaut
+     * pour obliger l'utilisation du constructeur avec user. 
+     */
+    private NativeRMISecurityManager()
+    {
+        super();
+    }
+
+    public NativeRMISecurityManager (final String user)
+    {
+        super();
+        String OS = System.getProperty("os.name").toLowerCase();
+        unix = (OS.compareTo("windows") != 0); /* Assume that if not 
+                            * windows, then "UNIX/POSIX" 
+                            */
+        /*
+         * ThreadLocal's user : Each thread is considered 
+         * to have different access rights to the machine
+         */
+
+        NativeRMISecurityManager.user.set(user);
+
+        if (!unix)
+        {
+            System.out.println("Systeme : "+OS);
+        }
+    }
+
+    public void checkRead(String file)
+    {
+        super.checkRead(file);
+        /*
+         * If we are on a **IX platform we want to check that 
+         * the _user_ has access rights.
+         */
+        if (unix)
+        {
+            String str_user = (String)NativeRMISecurityManager.user.get();
+
+            if (file == null)
+            {
+                throw new SecurityException("file = NULL !!!");
+            }
+        if (str_user == null)
+            {
+                throw new SecurityException("user = NULL in the ThreadLocal!!!");
+            }
+
+            int ret = c_checkRead(
+                    file, 
+                    str_user
+                    );
+            if (ret != 0)
+            {
+                throw new SecurityException("Access error: " + file);
+            }
+        }
+    }
+
+    public native int c_checkRead(String file, String user);
+}
+
+String user = "my_user";
+System.setSecurityManager(new NativeRMISecurityManager(user));
+
+Exception in thread "RMI TCP Connection(1)-192.168.42.207"     java.lang.ExceptionInInitializerError
+        at sun.rmi.transport.StreamRemoteCall.getInputStream(StreamRemoteCall.java:111)
+        at sun.rmi.transport.Transport.serviceCall(Transport.java:118)
+        at sun.rmi.transport.tcp.TCPTransport.handleMessages(TCPTransport.java:466)
+        at sun.rmi.transport.tcp.TCPTransport$ConnectionHandler.run(TCPTransport.java:707)
+        at java.lang.Thread.run(Thread.java:595)
+Caused by: java.lang.SecurityException: user = NULL dans le ThreadLocal!!!
+        at rmi.NativeRMISecurityManager.checkRead(NativeRMISecurityManager.java:62)
+        at java.io.File.exists(File.java:700)
+        at java.lang.ClassLoader$3.run(ClassLoader.java:1689)
+        at java.security.AccessController.doPrivileged(Native Method)
+        at java.lang.ClassLoader.loadLibrary0(ClassLoader.java:1686)
+        at java.lang.ClassLoader.loadLibrary(ClassLoader.java:1668)
+        at java.lang.Runtime.loadLibrary0(Runtime.java:822)
+        at java.lang.System.loadLibrary(System.java:993)
+        at sun.security.action.LoadLibraryAction.run(LoadLibraryAction.java:50)
+        at java.security.AccessController.doPrivileged(Native Method)
+        at sun.rmi.server.MarshalInputStream.<clinit>(MarshalInputStream.java:97)
+        ... 5 more
+

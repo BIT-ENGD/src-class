@@ -1,0 +1,85 @@
+import logging
+log = logging.getLogger(__name__)
+
+import sys
+from Queue import Queue
+from threading import Thread, activeCount
+
+def run(input, worker, args = None, simulteneousWorkerLimit = None):
+    queue = Queue()
+    threads = []
+
+    if args is not None:
+        if len(args) > 0:
+            args = list(args)
+            args = [worker, queue] + args
+            args = tuple(args)
+        else:
+            args = (worker, queue)
+
+    # start threads
+    for i in range(4):
+        t = Thread(target = __thread, args = args)
+        t.daemon = True
+        t.start()
+        threads.append(t)
+
+    # add ThreadTermSignal
+    inputData = list(input)
+    inputData.extend([ThreadTermSignal] * 4)
+
+    # put in the queue
+    for data in inputData:
+        queue.put(data)
+
+    # block until all contents are downloaded
+    queue.join()
+    log.critical("** A log line that appears fine **")
+
+    del queue
+    for thread in threads:
+        del thread
+    del threads
+
+class ThreadTermSignal(object):
+    pass
+
+def __thread(worker, queue, *args):
+    try:
+        while True:
+            data = queue.get()
+            if data is ThreadTermSignal:
+                sys.exit()
+            try:
+                log.critical("** I don't appear when run under pylons **")
+            finally:
+                queue.task_done()
+    except SystemExit:
+        queue.task_done()
+        pass
+
+[loggers]
+keys = root
+
+[handlers]
+keys = wsgierrors
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = wsgierrors
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = WARNING
+formatter = generic
+
+[handler_wsgierrors]
+class = pylons.log.WSGIErrorsHandler
+args = ()
+level = WARNING
+format = generic
+

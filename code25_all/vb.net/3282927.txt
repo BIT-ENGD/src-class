@@ -1,0 +1,111 @@
+Dim sc As New ServiceController(ServiceName, ComputerName)
+
+Imports System.Runtime.InteropServices
+Imports System.Net
+Imports System.IO
+Imports System.ServiceProcess
+
+Module Module1
+
+    Sub Main()
+        Dim Computername As String = "SomeComputer"
+        'Create connection to remote computer'
+        Using nc As New NetworkConnection("\\" + Computername, New NetworkCredential("Domain\User", "Password"))
+            Dim sc As New ServiceController("Windows Firewall/Internet Connection Sharing (ICS)", Computername)
+            'now we can start/stop/whatever we want here'
+        End Using
+        Console.ReadLine()
+    End Sub
+
+    Public Class NetworkConnection
+        Implements IDisposable
+
+
+        Private _networkName As String
+
+        Public Sub New(ByVal networkName As String, ByVal credentials As NetworkCredential)
+            _networkName = networkName
+
+            Dim netResource = New NetResource() With { _
+             .Scope = ResourceScope.GlobalNetwork, _
+             .ResourceType = ResourceType.Disk, _
+             .DisplayType = ResourceDisplaytype.Share, _
+             .RemoteName = networkName _
+            }
+
+            Dim result = WNetAddConnection2(netResource, credentials.Password, credentials.UserName, 0)
+
+            If result <> 0 Then
+                Throw New IOException("Error connecting to remote share", result)
+            End If
+        End Sub
+
+        Protected Overrides Sub Finalize()
+            Try
+                Dispose(False)
+            Finally
+                MyBase.Finalize()
+            End Try
+        End Sub
+
+        Public Sub Dispose() Implements System.IDisposable.Dispose
+            Dispose(True)
+            GC.SuppressFinalize(Me)
+        End Sub
+
+        Protected Sub Dispose(ByVal disposing As Boolean)
+            WNetCancelConnection2(_networkName, 0, True)
+        End Sub
+
+        <DllImport("mpr.dll")> _
+        Private Shared Function WNetAddConnection2(ByVal netResource As NetResource, ByVal password As String, ByVal username As String, ByVal flags As Integer) As Integer
+        End Function
+
+        <DllImport("mpr.dll")> _
+        Private Shared Function WNetCancelConnection2(ByVal name As String, ByVal flags As Integer, ByVal force As Boolean) As Integer
+        End Function
+    End Class
+
+    <StructLayout(LayoutKind.Sequential)> _
+    Public Class NetResource
+        Public Scope As ResourceScope
+        Public ResourceType As ResourceType
+        Public DisplayType As ResourceDisplaytype
+        Public Usage As Integer
+        Public LocalName As String
+        Public RemoteName As String
+        Public Comment As String
+        Public Provider As String
+    End Class
+
+    Public Enum ResourceScope As Integer
+        Connected = 1
+        GlobalNetwork
+        Remembered
+        Recent
+        Context
+    End Enum
+
+    Public Enum ResourceType As Integer
+        Any = 0
+        Disk = 1
+        Print = 2
+        Reserved = 8
+    End Enum
+
+    Public Enum ResourceDisplaytype As Integer
+        Generic = &H0
+        Domain = &H1
+        Server = &H2
+        Share = &H3
+        File = &H4
+        Group = &H5
+        Network = &H6
+        Root = &H7
+        Shareadmin = &H8
+        Directory = &H9
+        Tree = &HA
+        Ndscontainer = &HB
+    End Enum
+End Module
+

@@ -1,0 +1,80 @@
+typedef struct { 
+    uint32_t identifier; 
+    uint32_t datatype; 
+} PacketHeader; 
+
+typedef struct { 
+    PacketHeader header; 
+    int32_t dataItem1;
+    int32_t dataItem2;
+} MyPacket;
+static const uint32_t kPacketIdentifier = 'pkt'; 
+
+-(void) init{
+// do all the setup, open the sockets, start bonjour.
+        // start the listener thread 
+        [NSThread detachNewThreadSelector:@selector(listenThread) toTarget:self withObject:nil]; 
+}
+
+- (void)objectOfInterestChanged:(ObjectOfInterest *)interestingObject { 
+
+    PositionPacket packet; 
+
+     packet.dataItem1 = CFSwapInt32HostToBig(round(interestingObject.someFloat)); 
+     packet.dataItem2 = CFSwapInt32HostToBig(round(interestingObject.someFloat)); 
+
+    [self sendUpdatePacket:packet]; 
+} 
+
+- (void)sendUpdatePacket:(MyPacket)packet{ 
+
+    packet.header.identifier = CFSwapInt32HostToBig(kPacketIdentifier); 
+    packet.header.datatype = CFSwapInt32HostToBig(kPacketType); 
+
+    for(NSNetService *service in _services) 
+        for(NSData *address in [service addresses]) 
+            sendto(_socket, &packet, sizeof(packet), 0, [address bytes], [address length]); 
+}
+
+- (void)listenThread { 
+    while(1) 
+    { 
+        MyPacket packet; 
+        struct sockaddr addr; 
+        socklen_t socklen = sizeof(addr); 
+        ssize_t len = recvfrom(_socket, &packet, sizeof(packet), 0, &addr,  &socklen); 
+        if(len != sizeof(packet)) 
+            continue; 
+        if(CFSwapInt32BigToHost(packet.basePacket.header.identifier) != kPacketIdentifier)
+            continue; 
+        //if(CFSwapInt32BigToHost(packet.basePacket.header.datatype) != kPacketType)
+        //    continue; 
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init]; 
+        NSData *packetData = [NSData dataWithBytes:&packet length:sizeof(packet)]; 
+        NSData *addressData = [NSData dataWithBytes:&addr length:socklen]; 
+        NSArray *arguments = [NSArray arrayWithObjects:packetData, addressData, nil]; 
+        //SEL mainThreadSEL = @selector(mainThreadReceivedPositionPacket:); 
+        SEL mainThreadSEL; 
+        if(CFSwapInt32BigToHost(packet.basePacket.header.datatype) == kPacketType)
+            mainThreadSEL = @selector(mainThreadReceivedPacket:); 
+        [self performSelectorOnMainThread:mainThreadSEL withObject:arguments waitUntilDone:YES]; 
+        [pool release]; 
+    } 
+} 
+
+- (void)mainThreadReceivedPacket:(NSArray *)arguments { 
+    // extract the objects from the array created above 
+    NSData *packetData = [arguments objectAtIndex:0]; 
+    NSData *addressData = [arguments objectAtIndex:1]; 
+    const MyPacket *packet = [packetData bytes]; 
+
+   // ...accounting for differences in endianness 
+    int32_t x = CFSwapInt32BigToHost(packet->dataItem1); 
+    int32_t y = CFSwapInt32BigToHost(packet->dataItem2); 
+
+    AnObject *update;
+    update.interestingUpdate = CGThingMake(x, y);  
+
+    [delegate networkController:self didReceiveUpdate:update fromAddress:addressData]; 
+} 
+

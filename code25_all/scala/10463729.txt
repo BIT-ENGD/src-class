@@ -1,0 +1,62 @@
+package errorhandling
+
+import scalaz._
+import Scalaz._
+
+class LowerServiceA {
+  def doStuff(): Validation[LowerServiceAError, Int] = Success(1)
+}
+sealed trait LowerServiceAError
+// ... more specific error types
+
+class LowerServiceB {
+  def doStuff(): Validation[LowerServiceBError, Int] = Success(1)
+}
+sealed trait LowerServiceBError
+// ... more specific error types
+
+class LowerServiceC {
+  def doStuff(): Validation[LowerServiceCError, Int] = Success(1)
+}
+sealed trait LowerServiceCError
+// ... more specific error types
+
+sealed trait UpperError {}
+// ... more specific error types
+trait IsUpperError[E] {
+  def apply(e: E): UpperError
+}
+object IsUpperError {
+  implicit val lowerServiceAErrorIsUpperError: IsUpperError[LowerServiceAError] = new IsUpperError[LowerServiceAError] {
+    def apply(err: LowerServiceAError) = new UpperError {}
+  }
+
+  implicit val lowerServiceBErrorIsUpperError: IsUpperError[LowerServiceBError] = new IsUpperError[LowerServiceBError] {
+    def apply(err: LowerServiceBError) = new UpperError {}
+  }
+
+  implicit val lowerServiceCErrorIsUpperError: IsUpperError[LowerServiceCError] = new IsUpperError[LowerServiceCError] {
+    def apply(err: LowerServiceCError) = new UpperError {}
+  }
+}
+
+object UpperError {
+  implicit def upperError[E: IsUpperError, A](v: Validation[E, A]): Validation[UpperError, A] =
+    v.fail.map(e => implicitly[IsUpperError[E]].apply(e)).validation
+}
+
+class UpperService(serviceA: LowerServiceA, serviceB: LowerServiceB, serviceC: LowerServiceC) {
+  def doStuff(): Validation[UpperError, Int] = {
+    for {
+      // I'd like to avoid the repeated type-hints or .fail.map(...).validation here
+      a <- serviceA.doStuff() // : Validation[UpperError, Int]
+      b <- serviceB.doStuff() // : Validation[UpperError, Int]
+      c <- serviceC.doStuff()
+    } yield a + b + c
+  }
+}
+
+ErrorHandling.scala:56: error: could not find implicit value for evidence parameter of type errorhandling.IsUpperError[java.lang.Object]
+  b <- serviceB.doStuff() //: Validation[UpperError, Int]
+    ^
+

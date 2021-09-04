@@ -1,0 +1,112 @@
+import OpenGL
+import foo
+all:
+    g++ -shared -o foo.so -fPIC \
+        -I/usr/include/boost-1_37/ -I/usr/include/python2.5 \
+        -lpython2.5 -lboost_python-1_37 \
+        foo.cpp
+
+from OpenGL import *
+import foo
+
+b = foo.B()
+
+for i in range(10):
+    b.elements.append(foo.A())
+
+for e in b.elements:
+    print e
+
+# Crash here if `from OpenGL import *` is present.
+
+#include <boost/python.hpp>
+#include <boost/shared_ptr.hpp>
+#include <vector>
+
+namespace bp = boost::python;
+
+struct A {
+    typedef boost::shared_ptr<A> ptr;
+};
+
+struct B {
+    typedef boost::shared_ptr<B> ptr;
+    std::vector<A::ptr> elements;
+};
+
+
+// Proxies B::elements without converting them 
+// back and forth between lists.
+struct ElementProxy {
+
+    static ElementProxy 
+    init(B::ptr b)
+    {
+        return ElementProxy(b);
+    }
+
+    ElementProxy(B::ptr b)
+    : b_(b)
+    {}
+
+    size_t
+    len() 
+    {
+        return (*b_).elements.size();
+    }
+
+    A::ptr
+    getitem(size_t i) 
+    {
+        if (i >= len()) {
+            PyErr_SetString(PyExc_IndexError, "Index out of bounds.");
+            bp::throw_error_already_set();
+        }
+        return (*b_).elements[i];
+    }
+
+    void
+    append(A::ptr e) 
+    {
+        (*b_).elements.push_back(e);
+    }
+
+    static boost::python::class_<ElementProxy> 
+    wrap() 
+    {
+        return bp::class_<ElementProxy>("ElementProxy", bp::no_init)
+
+            .def("__len__", &ElementProxy::len, 
+                 (bp::arg("self")),
+                 "Returns the number of contained elements"
+                 )
+
+            .def("__getitem__", &ElementProxy::getitem, 
+                 (bp::arg("self"), bp::arg("i")), 
+                 "Returns the element at given index"
+                 )
+
+            .def("append", &ElementProxy::append, 
+                 (bp::arg("self"), bp::arg("element")), 
+                 "Appends an element"
+                 )
+            ;
+    }
+
+private:
+
+    B::ptr b_;
+};
+
+
+
+BOOST_PYTHON_MODULE(foo) {
+
+    bp::class_<A, A::ptr, boost::noncopyable>("A") ;
+
+    ElementProxy::wrap();
+
+    bp::class_<B, B::ptr, boost::noncopyable>("B")
+        .add_property("elements", &ElementProxy::init) ;
+}
+

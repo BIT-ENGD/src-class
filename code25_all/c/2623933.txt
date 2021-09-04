@@ -1,0 +1,158 @@
+ typedef int buffer_item;
+
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <pthread.h>
+ #include <semaphore.h>
+ #include <unistd.h>
+
+ #define BUFF_SIZE 10
+ #define RAND_DIVISOR 100000000
+ #define TRUE 1
+
+ //two threads
+ void *Producer(void *param);  
+ void *Consumer(void *param);
+
+ int insert_item(buffer_item item);
+ int remove_item(buffer_item *item);
+ int returnRandom();
+
+
+ //the global semaphores
+
+ sem_t empty, full, mutex;
+
+ //the buffer
+
+ buffer_item buf[BUFF_SIZE];
+
+ //buffer counter
+ int counter;
+
+ //number of random numbers to produce
+ int numRand;
+
+ int main(int argc, char** argv) {
+ /* thread ids and attributes */
+ pthread_t pid, cid;  
+ pthread_attr_t attr;
+ pthread_attr_init(&attr);
+ pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
+
+ numRand = atoi(argv[1]);
+ sem_init(&empty,0,BUFF_SIZE);
+ sem_init(&full,0,0);
+ sem_init(&mutex,0,0);
+
+ printf("main started\n");
+ pthread_create(&pid, &attr, Producer, NULL);
+ pthread_create(&cid, &attr, Consumer, NULL);
+ printf("main gets here");
+ pthread_join(pid, NULL);
+ pthread_join(cid, NULL);
+ printf("main done\n");
+
+ return 0;
+
+ }
+
+ //generates a randum number between 1 and 100
+ int returnRandom()
+ {
+  int num;
+  srand(time(NULL));
+  num = rand() % 100 + 1;
+  return num;
+ }
+
+ //begin producing items
+ void *Producer(void *param) {
+    buffer_item item;
+    int i;
+    for(i = 0; i < numRand; i++)
+    {
+     //sleep for a random period of time
+     int rNum = rand() / RAND_DIVISOR;
+     sleep(rNum);
+
+     //generate a random number
+     item = returnRandom();
+
+     //acquire the empty lock
+     sem_wait(&empty);
+
+     //acquire the mutex lock
+     sem_wait(&mutex);
+
+      if(insert_item(item)) 
+      {
+     fprintf(stderr, " Producer report error condition\n");
+      }
+      else 
+      {
+     printf("producer produced %d\n", item);
+      }
+      /* release the mutex lock */
+     sem_post(&mutex);
+     /* signal full */
+     sem_post(&full);
+    }
+    return NULL;
+ }
+
+ /* Consumer Thread */
+ void *Consumer(void *param) {
+    buffer_item item;
+    int i;
+    for(i = 0; i < numRand; i++) {
+    /* sleep for a random period of time */
+    int rNum = rand() / RAND_DIVISOR;
+    sleep(rNum);
+
+    /* aquire the full lock */
+    sem_wait(&full);
+    /* aquire the mutex lock */
+    sem_wait(&mutex);
+    if(remove_item(&item)) {
+    fprintf(stderr, "Consumer report error condition\n");
+    }
+    else {
+    printf("consumer consumed %d\n", item);
+    }
+    /* release the mutex lock */
+    sem_post(&mutex);
+    /* signal empty */
+    sem_post(&empty);
+    }
+    return NULL;
+ }
+
+  /* Add an item to the buffer */
+ int insert_item(buffer_item item) {
+    /* When the buffer is not full add the item
+    and increment the counter*/
+    if(counter < BUFF_SIZE) {
+    buf[counter] = item;
+    counter++;
+    return 0;
+    }
+    else { /* Error the buffer is full */
+    return -1;
+    }
+ }
+
+ /* Remove an item from the buffer */
+ int remove_item(buffer_item *item) {
+    /* When the buffer is not empty remove the item
+    and decrement the counter */
+    if(counter > 0) {
+    *item = buf[(counter-1)];
+    counter--;
+    return 0;
+    }
+    else { /* Error buffer empty */
+    return -1;
+    }
+ }
+

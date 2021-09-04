@@ -1,0 +1,39 @@
+Thread.abort_on_exception = true
+
+fork do
+  puts "Initializing data source process... (PID: #{Process.pid})"
+  data = DataSource.new(files)
+
+  BrB::Service.start_service(:object => data, :verbose => false, :host => host, :port => port)
+  EM.reactor_thread.join
+end
+8.times do |t|  
+  fork do
+    data = BrB::Tunnel.create(nil, "brb://#{host}:#{port}", :verbose => false)
+
+    puts "Launching #{threads_num} worker threads... (PID: #{Process.pid})"    
+
+    threads = []
+    threads_num.times { |i|
+      threads << Thread.new {
+        while true
+          begin
+            worker = Worker.new(data, config)
+
+          rescue OutOfTargetsError
+            break
+
+          rescue Exception => e
+            puts "An unexpected exception was caught: #{e.class} => #{e}"
+            sleep 5
+
+          end
+        end
+      }
+    }
+    threads.each { |t| t.join }
+
+    data.stop_service
+    EM.stop
+  end
+end

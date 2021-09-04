@@ -1,0 +1,65 @@
+Timeout::Error: execution expired
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/connection.rb:19:in `connect'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:134:in `block in connect_to'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:197:in `with_timeout'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:133:in `connect_to'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:18:in `connect'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:78:in `reconnect'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:156:in `rescue in ensure_connected'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:153:in `ensure_connected'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:180:in `block in ensure_connected'
+/home/avishai/.rvm/rubies/ruby-1.9.1-p378/lib/ruby/1.9.1/monitor.rb:190:in `mon_synchronize'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:176:in `synchronize'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:180:in `ensure_connected'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:58:in `block in process'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:118:in `logging'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:57:in `process'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis/client.rb:29:in `call'
+[GEM_ROOT]/gems/redis-2.1.1/lib/redis.rb:510:in `incrby'
+[GEM_ROOT]/gems/redis-namespace-0.10.0/lib/redis/namespace.rb:190:in `method_missing'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/adapters/redis_adapter.rb:65:in `block in metric_track'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/adapters/redis_adapter.rb:64:in `each'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/adapters/redis_adapter.rb:64:in `each_with_index'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/adapters/redis_adapter.rb:64:in `metric_track'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/metric/base.rb:140:in `track!'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/playground.rb:163:in `track!'
+[GEM_ROOT]/gems/vanity-1.5.0/lib/vanity/helpers.rb:52:in `track!'
+app/controllers/downloads_controller.rb:80:in `go'
+
+  # GET /downloads/1/go
+  def go
+    @download = Download.find(params[:id])
+
+    # Redirect & track the outbound click
+    cookies[:subid] = { :value => "#{@download.to_param}", :expires => 30.days.from_now, :domain => ".example.com", :path => "/" }
+    cookies[:download_type] = { :value => "#{@download.download_type}", :expires => 30.days.from_now, :domain => ".example.com", :path => "/" }    
+    redirect_to @download.destination.strip, :status => :see_other
+    track! :download_start
+  end
+
+environment.rb
+# monkey patch vanity to force new redis connection when Passenger forks
+if defined?(PhusionPassenger) 
+
+  class Vanity::Playground 
+    def reconnect_redis 
+      @redis = nil
+      # Need to remove method or unable to force a reconnect because it
+      # hits the method, not the variable.
+      class << self ; self ; end.send(:remove_method, :redis)
+      redis # Make a new connectiont to redis
+    end 
+  end
+
+  PhusionPassenger.on_event(:starting_worker_process) do |forked| 
+    if forked 
+      # We’re in smart spawning mode.
+      begin
+        Vanity.playground.reconnect_redis 
+      rescue Exception => e
+        RAILS_DEFAULT_LOGGER.error "Error connecting to redis: #{e.to_s}" 
+      end
+    end 
+  end 
+end
+

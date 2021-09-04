@@ -1,0 +1,56 @@
+#include <stdio.h>
+#include <sys/mman.h>
+#include <assert.h>
+#include <signal.h>
+
+#define HEAP_SIZE 4096
+
+unsigned long int *heap;
+
+void gc(int n) {
+  signal(SIGBUS, SIG_DFL); // just for debugging
+  printf("GC TIME\n");
+}
+
+int main () {
+
+  // Allocate twice the required heap size (two semi-spaces)
+  heap = mmap(NULL, HEAP_SIZE * 2, PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED,
+              -1, 0);
+  assert (heap != MAP_FAILED);
+  // 2nd semi-space is unreadable. Using "bump-pointer allocation", a SIGBUS
+  // tells us we are out of space and need to GC.
+  void *guard = mmap(heap + HEAP_SIZE, HEAP_SIZE, PROT_NONE, MAP_ANON |
+                     MAP_SHARED | MAP_FIXED, -1, 0);
+  assert (guard != MAP_FAILED);
+  signal(SIGBUS, gc);
+  heap[HEAP_SIZE] = 90; // pretend we are out of heap space
+  return 0;
+} 
+
+$ gcc debug.c
+$ ./a.out
+GC TIME
+Bus error
+
+$ gdb ./a.out 
+GNU gdb 6.3.50-20050815 (Apple version gdb-1346) (Fri Sep 18 20:40:51 UTC 2009)
+... snip ...
+(gdb) handle SIGSEGV SIGBUS nostop noprint
+Signal        Stop  Print   Pass to program Description
+SIGBUS        No    No  Yes     Bus error
+SIGSEGV       No    No  Yes     Segmentation fault
+(gdb) break gc
+Breakpoint 1 at 0x100000d6f
+
+(gdb) run
+Starting program: /snip/a.out 
+Reading symbols for shared libraries +. done
+
+Program received signal EXC_BAD_ACCESS, Could not access memory.
+Reason: KERN_PROTECTION_FAILURE at address: 0x0000000100029000
+0x0000000100000e83 in main ()
+(gdb) 
+
+0x0000000100000e83 <main+247>:  movq   $0x5a,(%rax)
+

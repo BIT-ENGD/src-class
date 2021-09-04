@@ -1,0 +1,71 @@
+import akka.actor.{Props, ActorSystem, ActorRef, Actor}
+
+object RomanNumberAcceptor extends App {
+
+  val allLegalNumbers = List("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"
+  )
+
+  val someWrongNumbers = List("IXX", "VV", "VX", "IIII", "IVV", "XXX", "XXI", "XXV", "IIX", "IIIV")
+
+  for (number <- allLegalNumbers)
+    State testNumber number
+
+  for (number <- someWrongNumbers)
+    State testNumber number
+
+  // this stop signal is too early
+  State.stop()
+}
+
+case class WordData(fullWord: String, remainder: String)
+
+object State {
+  val ErrorStateId: Int = -1
+
+  private val data = Map(
+    0 -> (Map('I' -> 1, 'V' -> 5, 'X' -> 10), false),
+    1 -> (Map('I' -> 2, 'V' -> 4, 'X' -> 9), true),
+    2 -> (Map('I' -> 3, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    3 -> (Map('I' -> ErrorStateId, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    4 -> (Map('I' -> ErrorStateId, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    5 -> (Map('I' -> 6, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    6 -> (Map('I' -> 2, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    9 -> (Map('I' -> ErrorStateId, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    10 -> (Map('I' -> 1, 'V' -> 5, 'X' -> 20), true),
+    20 -> (Map('I' -> ErrorStateId, 'V' -> ErrorStateId, 'X' -> ErrorStateId), true),
+    ErrorStateId -> (Map.empty[Char, Int], false)
+  )
+
+  val system = ActorSystem("RomanNumberAcceptor")
+
+  val states: Map[Int, ActorRef] =
+    for ((id, (map, accepted)) <- State.data)
+      yield id -> system.actorOf(Props(State(id, map, accepted)), name = "s"+id)
+
+  def testNumber(s: String) {
+    states(0) ! WordData(s, s)
+  }
+
+  def stop() {
+    for (a <- states.values)
+      system stop a
+    system.shutdown()
+  }
+}
+
+case class State(id: Int, transMap: Map[Char, Int], accepted: Boolean) extends Actor {
+  def receive = {
+    case WordData(fullWord, _) if `id` == State.ErrorStateId =>
+      println("Error: "+fullWord)
+    case WordData(fullWord, remainder) if remainder.isEmpty =>
+      println((if (accepted) "Success: " else "Error: ") + fullWord)
+    case WordData(fullword, remainder) =>
+      // maybe some heavy operation here
+      (0 to 1e4.toInt).sum
+
+      val nextAktor = transMap(remainder.head)
+      State.states(nextAktor) ! WordData(fullword, remainder.tail)
+  }
+}
+

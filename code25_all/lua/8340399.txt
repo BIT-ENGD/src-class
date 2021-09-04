@@ -1,0 +1,120 @@
+new
+getdate
+setdate
+DT = DateTime.new()
+DT:setdate(1, 1, 2011)
+day, month, year = DT:getdate()
+print("Day: " .. day .. " Month: " .. month .." Year: " .. year)
+
+_attempt to index global 'DT' (a userdata value)_
+Const
+  MetaPosDateTime = 'DateTime';
+
+Type
+  tLuaDateTime = tDateTime;
+  pLuaDateTime = ^tLuaDateTime;
+
+  Function newdatetime(aState : pLua_State) : longint; cdecl;
+  Var
+    NewData : pLuaDateTime;
+  Begin
+    Result := 0;
+    NewData := lua_newuserdata(aState, SizeOf(tLuaDateTime)); 
+    NewData^ := now; 
+    luaL_newmetatable(aState, MetaPosDateTime);
+    lua_setmetatable(aState, -2);    
+    Result := 1;
+  End;
+
+  Function setdate(aState : pLua_State) : longint; cdecl;
+  Var
+    DT : pLuaDateTime;
+    ParamType : integer;
+    day, month, year : lua_Integer;
+  Begin
+    Result := 0;
+    DT := luaL_checkudata(aState, 1, MetaPosDateTime);
+    luaL_argcheck(aState, DT <> Nil, 1, 'DataTime expected');
+    ParamType := lua_type(aState, 2); 
+    If (ParamType = LUA_TTABLE) Then 
+      Begin
+        { GetData from Table }
+      End
+    Else
+      Begin // param order must be: day, month, year
+        day := luaL_checkinteger(aState, 2);
+        month := luaL_checkinteger(aState, 3);
+        year := luaL_checkinteger(aState, 4);
+      End;
+    DT^:= EncodeDate(year, month, day);
+  End;
+
+  Function getdate(aState : pLua_State) : longint; cdecl;
+  Var
+    DT : pLuaDateTime;
+    Day, Month, Year : Word;
+  Begin
+    DT := luaL_checkudata(aState, 1, MetaPosDateTime);
+    luaL_argcheck(aState, DT <> Nil, 1, 'DataTime expected');
+    DecodeDate(DT^, Year, Month, Day);
+    lua_pushinteger(aState, Day);
+    lua_pushinteger(aState, Month);
+    lua_pushinteger(aState, Year);
+  End;
+
+Procedure RegisterDateTime(aState : pLua_State; aName: string);
+Var
+  Funcs : packed Array[0..3] of luaL_reg;
+Begin
+  Funcs[0].name := 'new';
+  Funcs[0].func := newdatetime;
+  Funcs[1].name := 'setdate';
+  Funcs[1].func := setdate;
+  Funcs[2].name := 'getdate';
+  Funcs[2].func := getdate;
+  Funcs[3].name := Nil;
+  Funcs[3].func := Nil;
+  luaL_register(aState, PAnsiChar(aName), Funcs[0]);
+End;
+
+require
+RegisterDateTime
+Type
+  tLuaFuncDef = Record
+    FuncName : string;
+    Func : Lua_CFunction;
+  End;
+
+tLuaFuncList = Array of tLuaFuncDef;
+
+Procedure RegisterLuaObject(aState : pLua_State; aObjectName: string; aFuncList: tLuaFuncList);
+Var
+  i : Integer;
+Begin
+  If (aObjectName = '') Or (High(aFuncList) < 0) Then
+    Exit;
+
+  lua_newtable(aState); 
+  For i := Low(aFuncList) To High(aFuncList) Do 
+    If Assigned(aFuncList[i].Func) And Not (aFuncList[i].FuncName = '') Then
+      Begin
+        lua_pushcfunction(aState, aFuncList[i].Func);
+        lua_setfield(aState, -2, pAnsiChar(aFuncList[i].FuncName));
+      End;
+  lua_SetGlobal(aState, pAnsiChar(aObjectName));
+End;
+
+Procedure RegisterDateTime(aState : pLua_State, aName: string);
+Var
+  FuncList : tLuaFuncList;
+Begin
+  SetLength(FuncList, 3);
+  FuncList[0].FuncName := 'new';
+  FuncList[0].Func := newdatetime;
+  FuncList[1].FuncName := 'setdate';
+  FuncList[1].Func := setdate;
+  FuncList[2].FuncName := 'getdate';
+  FuncList[2].Func := getdate;
+  RegisterLuaObject(aState, aName, FuncList);
+End;
+

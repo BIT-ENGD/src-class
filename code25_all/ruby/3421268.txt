@@ -1,0 +1,42 @@
+describe 'AmazonImporter' do
+    before(:each) do
+        Kernel.**stubs**(:sleep).with(1)
+    end
+    # iterates through the amazon categories, and for each one, loads ideas with 
+    # the right response group, upserting ideas as it goes
+    # then goes through, and fleshes out all of the ideas that only have asins.
+    describe "find_new_ideas" do
+        before(:all) do
+            @xml = File.open(File.expand_path('../amazon_ideas_in_category.xml', __FILE__), 'r') {|f| f.read }
+        end
+
+        before(:each) do
+            @category = AmazonCategory.new(:name => "name", :amazon_id => 1036682)
+            @response = Amazon::Ecs::Response.new(@xml)
+            @response_group = "MostGifted"
+            @asin = 'B002EL2WQI'
+            @request_hash = {:operation => "BrowseNodeLookup", :browse_node_id => @category.amazon_id,
+                                                    :response_group => @response_group}
+            Amazon::Ecs.**expects**(:send_request).with(has_entries(@request_hash)).returns(@response)
+            GiftIdea.expects(:first).with(has_entries({:site_key => @asin})).returns(nil)
+            GiftIdea.any_instance.expects(:save)            
+        end
+
+        it "sleeps for 1 second after each amazon request" do
+            Kernel.**expects**(:sleep).with(1)
+            AmazonImporter.new.find_new_ideas(@category, @response_group)
+        end
+
+        it "loads the ideas for the given response group from amazon" do
+            Amazon::Ecs.**expects**(:send_request).
+                with(has_entries(@request_hash)).
+                returns(@response)
+
+            **AmazonImporter.new.find_new_ideas(@category, @response_group)**
+        end
+
+        it "tries to load those ideas from repository" do
+            GiftIdea.expects(:first).with(has_entries({:site_key => @asin}))
+            **AmazonImporter.new.find_new_ideas(@category, @response_group)**
+        end
+

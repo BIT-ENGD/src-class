@@ -1,0 +1,87 @@
+-- | Continuous distributions of scalars are represented as a
+-- | histogram where each bar has approximately constant area but
+-- | variable width and height.  A histogram with N bars is stored as
+-- | a list of N+1 values.
+data Continuous = C {
+      cN :: Int,
+      -- ^ Number of bars in the histogram.
+      cAreas :: [Double],
+      -- ^ Areas of the bars.  @length cAreas == cN@
+      cBars :: [Double]
+      -- ^ Boundaries of the bars.  @length cBars == cN + 1@
+    } deriving (Show, Read)
+
+
+{- | Add distributions.  If two random variables @vX@ and @vY@ are
+taken from distributions @x@ and @y@ respectively then the
+distribution of @(vX + vY)@ will be @(x .+. y).
+
+This is implemented as the convolution of distributions x and y.
+Each is a histogram, which is to say the sum of a collection of
+uniform distributions (the "bars").  Therefore the convolution can be
+computed as the sum of the convolutions of the cross product of the
+components of x and y.
+
+When you convolve two uniform distributions of unequal size you get a
+trapezoidal distribution. Let p = p2-p1, q - q2-q1.  Then we get:
+
+
+>   |                              |
+>   |     ______                   |
+>   |     |    |           with    |  _____________
+>   |     |    |                   |  |           |
+>   +-----+----+-------            +--+-----------+-
+>         p1   p2                     q1          q2
+> 
+>  gives    h|....... _______________
+>            |       /:             :\
+>            |      / :             : \                1
+>            |     /  :             :  \     where h = -
+>            |    /   :             :   \              q
+>            |   /    :             :    \
+>            +--+-----+-------------+-----+-----
+>             p1+q1  p2+q1       p1+q2   p2+q2
+
+However we cannot keep the trapezoid in the final result because our
+representation is restricted to uniform distributions.  So instead we
+store a uniform approximation to the trapezoid with the same area:
+
+>           h|......___________________
+>            |     | /               \ |
+>            |     |/                 \|
+>            |     |                   |
+>            |    /|                   |\
+>            |   / |                   | \
+>            +-----+-------------------+--------
+>               p1+q1+p/2          p2+q2-p/2
+
+-}
+(.+.) :: Continuous -> Continuous -> Continuous
+c .+. d = C {cN     = length bars - 1,
+             cBars  = map fst bars, 
+             cAreas = zipWith barArea bars (tail bars)}
+    where
+      -- The convolve function returns a list of two (x, deltaY) pairs.
+      -- These can be sorted by x and then sequentially summed to get
+      -- the new histogram.  The "b" parameter is the product of the
+      -- height of the input bars, which was omitted from the diagrams
+      -- above.
+      convolve b c1 c2 d1 d2 =
+          if (c2-c1) < (d2-d1) then convolve1 b c1 c2 d1 d2 else convolve1 b d1 
+d2 c1 c2
+      convolve1 b p1 p2 q1 q2 = 
+          [(p1+q1+halfP, h), (p2+q2-halfP, (-h))]
+               where 
+                 halfP = (p2-p1)/2
+                 h = b / (q2-q1)
+      outline = map sumGroup $ groupBy ((==) `on` fst) $ sortBy (comparing fst) 
+$ concat
+                [convolve (areaC*areaD) c1 c2 d1 d2 |
+                 (c1, c2, areaC) <- zip3 (cBars c) (tail $ cBars c) (cAreas c),
+                 (d1, d2, areaD) <- zip3 (cBars d) (tail $ cBars d) (cAreas d)
+                ]
+      sumGroup pairs = (fst $ head pairs, sum $ map snd pairs)
+
+      bars = tail $ scanl (\(_,y) (x2,dy) -> (x2, y+dy)) (0, 0) outline
+      barArea (x1, h) (x2, _) = (x2 - x1) * h
+

@@ -1,0 +1,129 @@
+    End Function
+<AcceptVerbs(HttpVerbs.Post)>
+Function IPN_Handler(ByVal sender As Object, ByVal e As System.EventArgs)
+    Dim strFormValues As String = Request.Form.ToString()
+    Dim strNewValue
+
+    Dim Txn_id As String = Request.Form("txn_id")
+    Dim mc_gross_1 As String = Request.Form("mc_gross_1")
+    Dim mc_gross_2 As String = Request.Form("mc_gross_2")
+    Dim mc_gross_3 As String = Request.Form("mc_gross_3")
+    Dim mc_gross_4 As String = Request.Form("mc_gross_4")
+    Dim num_cart_items As String = Request.Form("num_cart_items")
+    Dim Receiver_email As String = Request.Form("receiver_email")
+    Dim Item_name1 As String = Request.Form("item_name1")
+    Dim Item_name2 As String = Request.Form("item_name2")
+    Dim Item_name3 As String = Request.Form("item_name3")
+    Dim Item_name4 As String = Request.Form("item_name4")
+    Dim Quantity As String = Request.Form("quantity")
+    Dim Invoice As String = Request.Form("invoice")
+    Dim Custom As Integer = Request.Form("custom")
+    Dim transaction_subject As Integer = Request.Form("transaction_subject")
+    Dim Payment_status As String = Request.Form("payment_status")
+    Dim Pending_reason As String = Request.Form("pending_reason")
+    If Payment_status <> "Pending" Then
+        Pending_reason = " "
+    End If
+    Dim Payment_date As String = Request.Form("payment_date")
+    Dim Payment_fee As String = Request.Form("payment_fee")
+    Dim Payment_gross As String = Request.Form("payment_gross")
+    Dim Txn_type As String = Request.Form("txn_type")
+    Dim First_name As String = Request.Form("first_name")
+    Dim Last_name As String = Request.Form("last_name")
+    Dim Address_street As String = Request.Form("address_street")
+    Dim Address_city As String = Request.Form("address_city")
+    Dim Address_state As String = Request.Form("address_state")
+    Dim Address_zip As String = Request.Form("address_zip")
+    Dim Address_country As String = Request.Form("address_country")
+    Dim Address_status As String = Request.Form("address_status")
+    Dim Address_country_code As String = Request.Form("address_country_code")
+    Dim Payer_email As String = Request.Form("payer_email")
+    Dim Payer_status As String = Request.Form("payer_status")
+    Dim Payer_id As Integer = Request.Form("payer_id")
+    Dim Payment_type As String = Request.Form("payment_type")
+    Dim Notify_version As String = Request.Form("notify_version")
+    Dim Verify_sign As String = Request.Form("verify_sign")
+    Dim Ipn_Track_Id As String = Request.Form("ipn_track_id")
+
+    Dim req As HttpWebRequest = CType(WebRequest.Create("https://www.sandbox.paypal.com/cgi-bin/webscr"),  _
+                    HttpWebRequest)
+
+    req.Method = "POST"
+    req.ContentType = "application/x-www-form-urlencoded"
+    strNewValue = strFormValues + "&cmd=_notify-validate"
+    req.ContentLength = strNewValue.Length
+    Dim stOut As StreamWriter = New StreamWriter(req.GetRequestStream(), _
+                                                 Encoding.ASCII)
+
+    stOut.Write(strNewValue)
+    stOut.Close()
+
+    Dim strResponse As HttpWebResponse = CType(req.GetResponse(), HttpWebResponse)
+    Dim ipnResponseStream As Stream = strResponse.GetResponseStream
+    Dim encode As Encoding = System.Text.Encoding.GetEncoding("utf-8")
+    Dim readStream As New StreamReader(ipnResponseStream, encode)
+    Dim read(256) As [Char]
+    Dim count As Integer = readStream.Read(read, 0, 256)
+    While count > 0
+        Dim IpnResponse As New [String](read, 0, count)
+        count = readStream.Read(read, 0, 256)
+
+        If IpnResponse = "VERIFIED" Then
+            Dim db As New mysql_31309_schoolEntities
+            Dim _payment_tracker As New payment_tracker
+            _payment_tracker.txn_id = Txn_id
+            _payment_tracker.Class_1_ID = Item_name1
+            _payment_tracker.Class_2_ID = Item_name2
+            _payment_tracker.Class_3_ID = Item_name3
+            _payment_tracker.Class_4_ID = Item_name4
+            _payment_tracker.num_cart_items = num_cart_items
+            _payment_tracker.reciever_email = Receiver_email
+            _payment_tracker.payer_id = Custom
+            _payment_tracker.payment_status = Payment_status
+            _payment_tracker.payment_date = Payment_date
+            _payment_tracker.first_name = First_name
+            _payment_tracker.last_name = Last_name
+            _payment_tracker.address1 = Address_street
+            _payment_tracker.city = Address_city
+            _payment_tracker.state = Address_state
+            _payment_tracker.zipcode = Address_zip
+            _payment_tracker.payment_fee = Payment_fee
+            _payment_tracker.payment_gross = Payment_gross
+            If Payment_status <> "Pending" Then
+                _payment_tracker.pending_reason = " "
+            Else
+                _payment_tracker.payment_status = Payment_status
+            End If
+            _payment_tracker.ipn_track_id = Ipn_Track_Id
+            db.payment_tracker.AddObject(_payment_tracker)
+            db.SaveChanges()
+
+        Else
+            If Payment_status = "Completed" Then
+
+                Dim reg As reg_info = db.reg_info.Single(Function(f) f.id = Payer_id)
+                reg.paid = "Paid"
+                reg.date_paid = Payment_date
+                reg.payment_method = Payment_type
+                db.SaveChanges()
+
+
+            Else
+                If IpnResponse = "INVALID" Then
+                    Return Nothing
+
+                End If
+            End If
+
+        End If
+
+    End While
+
+    readStream.Close()
+    strResponse.Close()
+
+
+    Return Nothing
+
+End Function
+

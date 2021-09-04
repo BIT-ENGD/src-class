@@ -1,0 +1,188 @@
+char *substr(const char *pstr, int start, int numchars)
+{
+ char *pnew;
+ pnew=malloc(numchars+1);  //this line fails
+ if (pnew==0)
+ {
+  free(pnew);
+  pnew=malloc(numchars+1);
+ }
+
+
+ strncpy(pnew, pstr + start, numchars);
+ pnew[numchars] = '\0';
+ return pnew;
+
+}
+
+counter = 0;
+/* Specify struct sock address */
+memset(&remoteServerAddr, 0, sizeof(remoteServerAddr));
+remoteServerAddr.sin_len = sizeof(remoteServerAddr);
+remoteServerAddr.sin_family = AF_INET;
+remoteServerAddr.sin_port = htons(11000); // Net byte order required
+remoteServerAddr.sin_addr.s_addr = inet_addr("10.252.85.26");
+
+/* Create an TCP socket */
+tcpSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+if (tcpSocket != -1)
+{
+    /* Connect to server */
+    errorCode = connect(tcpSocket, (struct sockaddr*) &remoteServerAddr,
+            sizeof(remoteServerAddr));
+    if (errorCode == -1)
+    {
+        /* Connection failed */
+        errorCode = socketerror();
+        sprintf(msgbuf, "Error %d", errorCode);
+        displayMsg("connect:", "Failed!!!", msgbuf, NULL, 0x0100FFFF);
+    }
+    else
+    {
+        /* Send packets */
+        divresult=div(sizeof(dataBuffer), BUF_SIZE);
+        PacketsToSend=divresult.quot;
+        if (divresult.rem>0)
+        {
+            PacketsToSend=PacketsToSend+1;
+        }
+
+        while (counter < PacketsToSend)
+        {
+
+            packet= substr(dataBuffer, counter*BUF_SIZE, BUF_SIZE);
+            errorCode = send(tcpSocket, packet,strlen(packet) , 0);
+            if (errorCode == -1)
+            {
+                errorCode = socketerror();
+                sprintf(msgbuf, "Error %d", errorCode);
+                displayMsg("send:", "Failed!!!", msgbuf, NULL, 0x0100FFFF);
+                break;
+            }
+            counter++;
+        }
+        memset(RecPacket, 0, BUF_SIZE);
+        errorCode = recv(tcpSocket, RecPacket, BUF_SIZE,0);
+        if (errorCode == -1)
+        {
+            errorCode = socketerror();
+        }
+
+        switch (CommandType)
+        {
+        case CommandType_SendOneTrans:
+        case CommandType_SendOfflineData:
+            cmdIRes=substr(RecPacket, 14, 10);
+            ret= atoi(cmdIRes);
+            break;
+
+        case CommandType_TransConfirm:
+            cmdIRes=substr(RecPacket, 11, 2);
+            if (strcmp(cmdIRes, "ok")==0)
+            {
+                ret= 1;
+            }
+            else
+            {
+                ret= 0;
+            }
+            break;
+        case CommandType_VoucherList:
+            SaveVoucherList(RecPacket);
+            ret= 1;
+            break;
+
+        case CommandType_Identify:
+            cmdIRes= substr(RecPacket, 7, 2);
+            if (strcmp(cmdIRes, "ok")==0)
+            {
+                ret=1;
+            }
+            else
+            {
+                ret= 0;
+            }
+            break;
+
+        default:
+            break;
+        }
+
+
+
+    }
+    /* Close the socket */
+    close(tcpSocket);
+    free(RecPacket);
+    free(cmdIRes);
+    free(packet);
+    free(msgbuf);
+    return ret;
+}
+else
+{
+    errorCode = socketerror();
+    sprintf(msgbuf, "Error %d", errorCode);
+    displayMsg("socket:", "Failed!!!", msgbuf, NULL, 0x0100FFFF);
+}
+return (errorCode);
+
+memset(TerminalNo, 0, sizeof(TerminalNo));
+strcpy(TerminalNo, (char *)getTerminalNo());
+
+memset(msg, 0, sizeof(msg));
+if (trans.success==0)
+{
+
+    memset(msg, 0, sizeof(msg));
+    memset(voucherId, 0, sizeof(voucherId));
+    sprintf(voucherId, "%d", trans.voucherId);
+    memset(Amount, 0, sizeof(Amount));
+    sprintf(Amount, "%d", trans.Amount);
+
+    memset(isOnline, 0, sizeof(isOnline));
+    sprintf(isOnline, "%d", trans.isOnline);
+
+    strcpy(msg, "<Req_fin>");
+    strcat(msg, TerminalNo);
+    strcat(msg, ",");
+    strcat(msg, voucherId);
+    strcat(msg, ",");
+    strcat(msg, trans.cardNo);
+    strcat(msg, ",");
+    strcat(msg, Amount);
+    strcat(msg, ",");
+    strcat(msg, trans.dateOf);
+    strcat(msg, ",");
+    strcat(msg, trans.TimeOf);
+    strcat(msg, ",1");
+    strcat(msg, "<EOF>");
+    retVal= SendData(msg, CommandType_SendOneTrans);
+
+    if (retVal>=1)
+    {
+        sprintf(ReturnedId, "%i", retVal);
+        memset(msg, 0, sizeof(msg));
+        strcpy(msg, "<Req_fin_c>");
+        strcat(msg, TerminalNo);
+        strcat(msg, ",");
+
+        strcat(msg, ReturnedId);
+        strcat(msg, "<EOF>");
+        trans.success=1;
+        retValCon= SendData(msg, CommandType_TransConfirm);
+        if (retValCon!=0)
+        {
+            trans.success=1;
+            ret=1;
+        }
+    }
+
+    free(msg);
+    free(TerminalNo);
+    free(Amount);
+    free(voucherId);
+    return ret;
+    //free(ReturnedId);
+}
+

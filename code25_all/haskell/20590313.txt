@@ -1,0 +1,85 @@
+{
+module Lexer where
+}
+
+%wrapper "posn"
+
+$white = [\ \t\n]
+
+tokens :-
+
+$white+ ;
+[xX] { \pos s -> MkToken pos X }
+"+"  { \pos s -> MkToken pos Plus }
+"*"  { \pos s -> MkToken pos Times }
+"("  { \pos s -> MkToken pos LParen }
+")"  { \pos s -> MkToken pos RParen }
+
+{
+data Token = MkToken AlexPosn TokenClass
+           deriving (Show, Eq)
+
+data TokenClass = X
+                | Plus
+                | Times
+                | LParen
+                | RParen
+                  deriving (Show, Eq)
+
+tkPos :: Token -> (Int, Int)
+tkPos (MkToken (AlexPn _ line col) _) = (line, col)
+}
+
+{
+module Parser where
+
+import Lexer
+}
+
+%name simple
+%tokentype { Token }
+%token
+    '(' { MkToken _ LParen }
+    ')' { MkToken _ RParen }
+    '+' { MkToken _ Plus }
+    '*' { MkToken _ Times }
+    x   { MkToken _ X }
+
+%%
+
+Expr : Term '+' Expr     { NAdd $1 $3 (astAttr $1) }
+     | Term              { $1 }
+
+Term : Factor '*' Term   { NMul $1 $3 (astAttr $1) }
+     | Factor            { $1 }
+
+Factor : x               { NX (tkPos $1) }
+       | '(' Expr ')'    { $2 }
+
+
+{
+data AST a = NX a
+           | NMul (AST a) (AST a) a
+           | NAdd (AST a) (AST a) a
+             deriving (Show, Eq)
+
+astAttr :: AST a -> a
+astAttr (NX a)       = a
+astAttr (NMul _ _ a) = a
+astAttr (NAdd _ _ a) = a
+
+happyError :: [Token] -> a
+happyError _ = error "parse error"
+}
+
+module Main where
+
+import Lexer
+import Parser
+
+main :: IO ()
+main = do
+  s <- getContents
+  let toks = alexScanTokens s
+  print $ simple toks
+

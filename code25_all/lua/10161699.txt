@@ -1,0 +1,83 @@
+extern "C"
+{
+#include "lua.h"
+#include <lauxlib.h>
+#include <lualib.h>
+};
+
+#include <cstdio>
+#include <string>
+#include <cstdlib>
+
+using namespace std;
+
+struct Tracker 
+{
+    size_t m_usage;
+}g_tracker;
+
+void*
+Allocator(void* ud, void* ptr, size_t osize, size_t nsize)
+{
+    Tracker* pTracker = (Tracker*)ud;
+    void* pRet = NULL;
+    if( nsize == 0 )
+    {
+        pTracker->m_usage -= osize;
+        //printf("Free %d bytes; ", osize);
+        free(ptr);
+    }
+    else
+    {
+        pTracker->m_usage -= osize;
+        //printf("first Free %d bytes; ", osize);
+        pTracker->m_usage += nsize;
+        //printf("then alloc %d bytes; ", nsize);
+        pRet = realloc(ptr, nsize);
+    }
+
+    //printf("current usage: %d bytes\n", pTracker->m_usage);
+    return pRet;
+}
+
+int main()
+{
+    lua_State* L = lua_newstate(Allocator, &g_tracker );
+    luaL_openlibs(L);
+
+    char buf[4096];
+    while(true)
+    {
+        fgets(buf, 4096, stdin);                        
+
+        if( strlen(buf) > 1 && 0 != luaL_dostring(L, buf) )
+        {
+            const char* errmsg = lua_tostring(L, -1);
+            printf("%s\n", errmsg);
+        }
+
+        printf("current usage: %d bytes \n", g_tracker.m_usage);
+    }
+}
+
+press enter
+current usage: 18867 bytes
+a=nil; b=nil; c=nil;
+current usage: 19311 bytes
+collectgarbage()
+current usage: 18900 bytes
+d=nil; e=nil; f=nil;
+current usage: 19345 bytes
+collectgarbage()
+current usage: 18900 bytes
+collectgarbage()
+current usage: 18900 bytes  
+for a = 1, 1000, 1 do b = nil end; collectgarbage()
+current usage: 19206 bytes
+collectgarbage()
+current usage: 18900 bytes
+for i = 1, 1000, 1 do X = {}; for j = 1, 1000, 1 do X[j] = j end ; X = nil; collectgarbage() ; end
+current usage: 19391 bytes
+collectgarbage()
+current usage: 18900 bytes
+

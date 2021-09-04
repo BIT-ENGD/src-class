@@ -1,0 +1,143 @@
+- (void)loadQuestionSetFromNetworkWithID:(NSNumber *)p_id andTitle:(NSString *)p_title
+{
+NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:kTriviaQuestionSetURL, [p_id intValue]]]];
+[UIApplication sharedApplication].networkActivityIndicatorVisible = YES;
+NSData *response = [NSURLConnection sendSynchronousRequest:request returningResponse:nil error:nil];
+[UIApplication sharedApplication].networkActivityIndicatorVisible = NO;
+NSString *json_string = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];
+
+NSArray *questions = [[[sbjson objectWithString:json_string error:nil] valueForKeyPath:@"Q"] objectAtIndex:0];
+
+NSError *error;
+
+NSFetchRequest *questionsetRequest = [[NSFetchRequest alloc] init];
+NSEntityDescription *questionsetEntity = [NSEntityDescription entityForName:@"QuestionSet" inManagedObjectContext:[self managedObjectContext]];
+NSPredicate *questionsetPredicate = [NSPredicate predicateWithFormat:@"id = %d", [p_id intValue]];
+
+[questionsetRequest setEntity:questionsetEntity];
+[questionsetRequest setPredicate:questionsetPredicate];
+
+QuestionSet *qs = nil;
+NSArray *questionSetObjects = [[self managedObjectContext] executeFetchRequest:questionsetRequest error:&error];
+if (questionSetObjects == nil){
+    // Handle errors
+}
+if ([questionSetObjects count] > 0)
+    qs = [questionSetObjects objectAtIndex:0];
+else
+    qs = [NSEntityDescription insertNewObjectForEntityForName:@"QuestionSet" inManagedObjectContext:[self managedObjectContext]];
+
+qs.id = p_id;
+qs.title = p_title; 
+
+for (int i = 0; i < [questions count]; i++)
+{
+    NSFetchRequest *questionRequest = [[NSFetchRequest alloc] init];
+    NSEntityDescription *questionEntity = [NSEntityDescription entityForName:@"Question" inManagedObjectContext:[self managedObjectContext]];
+    NSPredicate *questionPredicate = [NSPredicate predicateWithFormat:@"(id = %d)", [[[questions objectAtIndex:i] objectForKey:@"id"] intValue]];
+
+    [questionRequest setEntity:questionEntity];
+    [questionRequest setPredicate:questionPredicate];
+
+    Question *q = nil;
+    NSArray *questionObjects = [[self managedObjectContext] executeFetchRequest:questionRequest error:&error];
+    if (questionObjects == nil){
+        // Handle errors
+    }
+    if ([questionObjects count] > 0)
+        q = [questionObjects objectAtIndex:0];
+    else
+        q = [NSEntityDescription insertNewObjectForEntityForName:@"Question" inManagedObjectContext:[self managedObjectContext]];
+
+    q.id = [NSNumber numberWithInt:[[[questions objectAtIndex:i] objectForKey:@"id"] intValue]];
+    q.question = [[questions objectAtIndex:i] objectForKey:@"text"];
+    q.answer = [NSNumber numberWithInt:[[[questions objectAtIndex:i] objectForKey:@"ca"] intValue]];
+
+    for (int j = 0; j < [[[questions objectAtIndex:i] objectForKey:@"A"] count]; j++)
+    {
+        NSFetchRequest *answerRequest = [[NSFetchRequest alloc] init];
+        NSEntityDescription *answerEntity = [NSEntityDescription entityForName:@"Answer" inManagedObjectContext:[self managedObjectContext]];
+        NSPredicate *answerPredicate = [NSPredicate predicateWithFormat:@"(id = %d)", [[[[[questions objectAtIndex:i] objectForKey:@"A"] objectAtIndex:j] objectForKey:@"id"] intValue]];
+
+        [answerRequest setEntity:answerEntity];
+        [answerRequest setPredicate:answerPredicate];
+
+        Answer *a = nil;
+        NSArray *answerObjects = [[self managedObjectContext] executeFetchRequest:answerRequest error:&error];
+        if (answerObjects == nil){
+            // Handle errors
+        }
+        if ([answerObjects count] > 0)
+            a = [answerObjects objectAtIndex:0];
+        else
+            a = [NSEntityDescription insertNewObjectForEntityForName:@"Answer" inManagedObjectContext:[self managedObjectContext]];
+
+        a.id = [NSNumber numberWithInt:[[[[[questions objectAtIndex:i] objectForKey:@"A"] objectAtIndex:j] objectForKey:@"id"] intValue]];
+        a.answer = [[[[questions objectAtIndex:i] objectForKey:@"A"] objectAtIndex:j] objectForKey:@"text"];
+
+        a.questions = [a.questions setByAddingObject:q];
+        q.answers = [q.answers setByAddingObject:a];
+
+        [answerRequest release];
+    }
+
+    q.questionsets = [q.questionsets setByAddingObject:qs];
+    qs.questions = [qs.questions setByAddingObject:q];
+
+    [questionRequest release];
+
+}
+
+[questionsetRequest release];
+
+[[self managedObjectContext] save:&error];
+
+[json_string release];
+
+[self loadTrivia];
+NSLog(@"After Load: %@", self.questionsets);
+}
+
+- (BOOL)loadTrivia
+{
+NSError *error;
+NSFetchRequest *request = [[NSFetchRequest alloc] init];
+NSEntityDescription *entity = [NSEntityDescription entityForName:@"QuestionSet" inManagedObjectContext:[self managedObjectContext]];
+[request setEntity:entity];
+self.questionsets = [[self managedObjectContext] executeFetchRequest:request error:&error];
+return YES;
+}
+
+- (NSString *)description
+{
+return [NSString stringWithFormat:@"\
+        \n\tid: %@\
+        \n\ttitle: %@\
+        \n\tquestions: %@\n",
+        self.id, 
+        self.title, 
+        self.questions];
+}
+
+- (NSString *)description
+{
+return [NSString stringWithFormat:@"\
+        \n\tid: %@\
+        \n\tanswer: %@\
+        \n\tquestion: %@\
+        \n\tanswers: %@\n", 
+        self.id, 
+        self.answer, 
+        self.question, 
+        self.answers];
+}
+
+- (NSString *)description
+{
+return [NSString stringWithFormat:@"\
+        \n\tid: %@\
+        \n\tanswer: %@\n",
+        self.id, 
+        self.answer];
+}
+

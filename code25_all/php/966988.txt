@@ -1,0 +1,206 @@
+echo $this->action('auth', 'login-widget');
+
+class AuthController extends Zend_Controller_Action {    
+    // This method is invoked by Zend_View_Helper_Action to render the
+    // login widget
+    public function loginWidgetAction () {
+        $flashMessenger = $this->_helper->flashMessenger->setNamespace('login');
+        $this->view->messages = $flashMessenger->getMessages();
+    }
+
+    public function loginAction () {
+        if($this->getRequest()->isPost()) {
+            $result = Auth::doLogin($this->getRequest()->getPost());
+            if($result->isValid()) {
+                $this->_redirect('user');
+            } 
+            else {
+                $flashMessenger = $this->_helper->flashMessenger->
+                                                  setNamespace('login');
+                foreach($result->getMessages() as $message) {
+                    $flashMessenger->addMessage($message);    
+                }
+            }
+        }
+        // This will be changed to redirect either to the index page,
+        // or the page the request originated from if available.
+        $this->_redirect('');
+    }
+    [...]
+}
+
+/**
+ * Model for encapsulating the actions that deals with authentication,
+ * such as registering and activating users, as well as logging in and
+ * logging out.
+ * @todo: Refactor this to remove static methods
+ */
+class Auth {
+
+    /**
+     * 
+     * @return Zend_Auth_Result
+     */
+    public static function doLogin ($credentials) {
+        $authAdapter = new Auth_Adapter_DbTable(
+            Zend_Db_Table::getDefaultAdapter(),
+            'Users',
+            'username',
+            'pwdHash',
+            'SHA1(CONCAT(?, salt))'
+        );
+        $authAdapter->setIdentity($credentials['username']);
+        $authAdapter->setCredential($credentials['password']);
+        $auth = Zend_Auth::getInstance();
+        return $auth->authenticate($authAdapter);
+}
+[...]
+}
+
+class Auth_Adapter_DbTable extends Zend_Auth_Adapter_DbTable {    
+
+    /**
+     * authenticate() - defined by Zend_Auth_Adapter_Interface.  This method 
+     * is called to attempt an authenication.  Previous to this call, this
+     * adapter would have already been configured with all necessary 
+     * information to successfully connect to a database table and attempt
+     * to find a record matching the provided identity.
+     *
+     * @throws Zend_Auth_Adapter_Exception if answering the authentication 
+     * query is impossible
+     * @see library/Zend/Auth/Adapter/Zend_Auth_Adapter_DbTable#authenticate()
+     * @return MedU_Auth_Result
+     */
+    public function authenticate() {
+        return parent::authenticate();
+    }
+
+    /**
+     * _authenticateValidateResult() - This method attempts to validate that
+     * the record in the result set is indeed a record that matched the 
+     * identity provided to this adapter.
+     * 
+     * Additionally it checks that the user account is activated. 
+     *
+     * @param array $resultIdentity
+     * @return MedU_Auth_Result
+     */
+    protected function _authenticateValidateResult($resultIdentity)
+    {
+        $result = parent::_authenticateValidateResult($resultIdentity);
+        if(!$result->isValid()) { return $result; }
+
+        $this->_checkAccountIsActivated($resultIdentity);
+        $this->_checkAccountIsSuspended($resultIdentity);
+
+        // Overwrite the username supplied by the user and instead
+        // use the name supplied upon registration, i.e if the
+        // user signs in as uSERNAME and registered as Username,
+        // the identity is Username
+        $this->_authenticateResultInfo['identity'] = 
+            $resultIdentity[$this->_identityColumn]; 
+
+        return $this->_authenticateCreateAuthResult();
+    }
+
+    protected function _checkAccountIsActivated ($resultIdentity) {
+        if(!$resultIdentity['activated']) {
+            $this->_authenticateResultInfo['code'] = 
+                MedU_Auth_Result::FAILURE_NOT_ACTIVATED;
+            $this->_authenticateResultInfo['messages'] = 
+                array('The account has not yet been activated. 
+                       Please click on the link provided in the 
+                       activation email.');
+        }
+    }
+
+    protected function _checkAccountIsSuspended ($resultIdentity) {
+        if($resultIdentity['suspended']) {
+            $this->_authenticateResultInfo['code'] = 
+                MedU_Auth_Result::FAILURE_SUSPENDED;
+            $this->_authenticateResultInfo['messages'] = 
+                  array('The account has been suspended. 
+                         If you feel this is a mistake, 
+                         please contact our support: support@meduniverse.com');
+        }
+    }
+
+    /**
+     * _authenticateCreateAuthResult() - This method creates a 
+     * MedU_Auth_Result object from the information that has 
+     * been collected during the authenticate() attempt.
+     *
+     * @return MedU_Auth_Result
+     */
+    protected function _authenticateCreateAuthResult()
+    {
+        return new MedU_Auth_Result(
+            $this->_authenticateResultInfo['code'],
+            $this->_authenticateResultInfo['identity'],
+            $this->_authenticateResultInfo['messages']
+           );
+    }
+}
+
+// The fetchForm-view helper returns a Zend_Form object. 
+// The form definition (xml) is attached below in the
+// code box below this one.
+<div class="box">
+    <h3>Login</h3>
+    <?php if($this->messages) : ?>
+            <ul class="errors">
+                <?php foreach($this->messages as $message) : ?>
+                    <li><?php echo $message ?></li>
+
+                <?php endforeach; ?>
+            </ul>
+    <?php endif; ?>
+    <div>
+        <?php echo $this->fetchForm('user', 'login') ?>
+    </div>
+</div>
+
+// Configuration of the Login form. 'user' and 'login' are 
+// just keys for the view helper to return the correct form
+<forms>
+    <user>
+        <login>
+            <action value="/auth/login" />
+            <method value="post" />
+            <elements>
+                <username>
+                    <type value="text"></type>
+                    <options>
+                        <label value="Username" />
+                        <required value="true" />
+                        <validators>
+                            <alnum validator="alnum" />
+                            <strlen validator="StringLength">
+                                <options min="6" max="45" />
+                            </strlen>
+                        </validators>
+                    </options>
+                </username>
+
+                <password>
+                    <type value="password" />
+                    <options>
+                        <label value="Password" />
+                        <required value="true" />
+                        <validators>
+                            <strlen validator="StringLength">
+                                <options min="6" max="20" />
+                            </strlen>
+                        </validators>
+                    </options>
+                </password>
+
+                <submit>
+                    <type value="submit" />
+                    <options>
+                        <label value="Log in" />
+                    </options>
+                </submit>
+            </elements>
+    </login>
+

@@ -1,0 +1,71 @@
+static const int maxLog = 10000;
+
+int main()
+{
+    int servSock;
+    signal(SIGPIPE, SIG_IGN);
+    if((servSock = socket(AF_INET, SOCK_STREAM, 0)) < 0 )
+    {
+        printf("socket create fail\n");
+        exit(-1);   
+    }
+    int val = 1;
+    if(setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val))<0)
+    {
+        DieWithUserMessage("setsockopt error");
+    }
+
+    struct sockaddr_in serverAddr;
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serverAddr.sin_port = htons(22000);
+
+    if(bind(servSock, (struct sockaddr *) &serverAddr, 
+                sizeof(serverAddr)) < 0)
+    {
+        printf("socket bind  fail\n");
+        exit(-1);   
+    }
+
+    if(listen(servSock, maxLog) < 0)
+    {
+        printf("listen failed\n");
+        exit(-1);
+    }   
+
+    fd_set read_set;
+    FD_ZERO(&read_set);
+    FD_SET(servSock, &read_set);
+    int maxfd1 = servSock + 1; 
+    std::set<int> fd_readset;
+
+    for(;;){    
+        struct timeval tv;
+        tv.tv_sec = 5;
+        int ret = select(maxfd1, &read_set, NULL, NULL, tv);       
+        if(ret == 0)
+            continue;
+
+        if(ret < 0)
+            DieWithUserMessage("select error");
+
+        if(FD_ISSET(servSock, &read_set))
+        {
+            struct sockaddr_in clntAddr;
+            socklen_t clntAddrlen = sizeof(clntAddr);
+            int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrlen);
+            if(clntSock < 0)
+            {
+                printf("accept failed()");
+                exit(-1);
+            }   
+
+            maxfd1 = 1 +  (servSock>=clntSock? servSock:clntSock);
+            FD_SET(clntSock, &read_set );
+            fd_readset.insert(clntSock); 
+         }
+
+    } 
+}
+

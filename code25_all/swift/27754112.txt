@@ -1,0 +1,167 @@
+@IBAction func loadLoaction(sender: AnyObject) {
+    placeManager.loadRandomLoaction(lat, longitude: long)
+}
+
+func placeDidLoad(place: Place) {
+    nameLabel.text = place.name
+    imageView.image = place.image
+}
+
+import Foundation
+import Alamofire
+
+extension Alamofire.Request {
+    class func imageResponseSerializer() -> Serializer {
+        return { request, response, data in
+            if data == nil {
+                return (nil, nil)
+            }
+
+            let image = UIImage(data: data!, scale: UIScreen.mainScreen().scale)
+
+            return (image, nil)
+        }
+    }
+
+    func responseImage(completionHandler: (NSURLRequest, NSHTTPURLResponse?, UIImage?, NSError?) -> Void) -> Self {
+        return response(serializer: Request.imageResponseSerializer(), completionHandler: { (request, response, image, error) in
+            completionHandler(request, response, image as? UIImage, error)
+        })
+    }
+}
+
+public protocol PlaceDelegate: class {
+    func placeDidLoad(place: Place)
+}
+
+public class Place : NSObject {
+
+    var delegate: PlaceDelegate?
+
+    public var name: String?
+    public var category: String?
+    public var image_url: String?
+    public var snippet_text: String?
+    public var address: String?
+    public var distance: String?
+    public var url: String?
+    public var image: UIImage = UIImage()
+
+    var dispatch_group = dispatch_group_create()
+
+    init(fromResponseDict responseDict: Dictionary<String, String>, delegate: PlaceDelegate) {
+        self.delegate = delegate
+
+        // Set props
+        self.name = responseDict["name"] 
+        self.category = responseDict["category"]
+        self.image_url = responseDict["image_url"]!
+        self.snippet_text = responseDict["snippet_text"]
+        self.url = responseDict["url"]
+        self.address = responseDict["address"]!
+
+        super.init()
+
+        // Load image
+        self.loadImage()
+
+        // Dispatch if success
+        dispatch_group_notify(self.dispatch_group, dispatch_get_main_queue(), {                
+            self.delegate?.placeDidLoad(self)
+        })
+
+
+    }
+
+    // (3) Load the image        
+    func loadImage() {
+        dispatch_group_enter(self.dispatch_group);           
+
+        var request:Alamofire.Request = Alamofire.request(.GET, self.image_url!).responseImage() {
+            (request, _, image, error) in
+            if error == nil && image != nil {
+                NSLog("imageRequestSuccess")
+
+                self.image = image!
+
+                // Dispatch if success
+                dispatch_group_leave(self.dispatch_group)
+            } else {
+                NSLog("imageRequestFailure")
+
+                // Dispatch also to handle failure
+                dispatch_group_leave(self.dispatch_group)
+            }
+        }
+    }
+}
+
+
+public protocol PlaceManagerDelegate: class {
+    func placeDidLoad(place: Place)
+}
+
+public class PlaceManager : NSObject, PlaceDelegate {
+
+    public weak var delegate: PlaceManagerDelegate?
+
+    var isLoading = false
+
+    enum Router: URLRequestConvertible {
+        static let baseURLString = "http://api.domain.com"
+
+        // Endpoints
+        case RandomPlace(lat:Double, long:Double)
+
+        var URLRequest: NSURLRequest {
+            let (path: String, parameters: [String: AnyObject]) = {
+                switch self {
+                case .RandomPlace (let lat, let long):
+                    let params : [ String : AnyObject] = ["ll": "\(lat),\(long)", "", "debug":"true"]
+                    return ("/getRandomLocation", params)
+                }
+            }()
+
+            let URL = NSURL(string: Router.baseURLString)
+            let URLRequest = NSURLRequest(URL: URL!.URLByAppendingPathComponent(path))
+            let encoding = Alamofire.ParameterEncoding.URL
+
+            return encoding.encode(URLRequest, parameters: parameters).0
+        }
+    }
+
+    public func loadRandomLoaction(latitude:Double, longitude:Double) {
+
+        if isLoading {
+            return
+        }
+
+        isLoading = true
+
+        // (1) Make the API Call 
+        Alamofire.request(PlaceManager.Router.RandomPlace(lat: latitude, long: longitude)).responseJSON() {
+            (_, _, JSON, error) in
+
+            if error == nil {
+
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0)) {
+
+                    if let responseDict = JSON as? Dictionary<String, String> {
+                        // (2) Create the model  
+                        let place = Place(fromResponseDict: responseDict, delegate:self)
+                    }                        
+                }
+            } else {
+                NSLog(error!.localizedDescription)
+            }
+            self.isLoading = false
+        }
+    }
+
+    // (4) Update the UI
+    public func placeDidLoad(place: Place) {
+        self.delegate?.placeDidLoad(place)
+    }
+
+}
+

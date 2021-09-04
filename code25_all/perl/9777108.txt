@@ -1,0 +1,77 @@
+#!/usr/bin/perl
+use xSV;
+use Win32;
+use Win32::OLE;
+# use strict;
+.
+.
+.
+.  
+  while ($line = <GROUPS>) {
+        chomp($line);
+        if ($line =~ m/^  user  .*/) {
+            $line =~ s/^  user.\s//;
+            my ($objRootDSE, $strDomain, $strUsername, $objConnection, $objCommand, $objRecordSet, $strDN, $arrSplitResponse, $strLName, $strFName, $strUserType);
+            use constant ADS_SCOPE_SUBTREE => 2;
+            # Get domain components
+            $objRootDSE = Win32::OLE->GetObject('LDAP://RootDSE');
+            $strDomain = $objRootDSE->Get('DefaultNamingContext');
+            # Get username to search for
+            $strUsername = $line;
+            # Set ADO connection
+            $objConnection = Win32::OLE->new('ADODB.Connection');
+            $objConnection->{Provider} = 'ADsDSOObject';
+            $objConnection->Open('Active Directory Provider');
+            # Set ADO command
+            $objCommand = Win32::OLE->new('ADODB.Command');
+            $objCommand->{ActiveConnection} = $objConnection;
+            $objCommand->SetProperty("Properties", 'Searchscope', ADS_SCOPE_SUBTREE);
+            $objCommand->{CommandText} = 'SELECT distinguishedName, userAccountControl, pwdLastSet FROM \'LDAP://' . $strDomain . '\' WHERE objectCategory=\'user\' AND samAccountName = \'' . $strUsername . '\'';
+            # Set recordset to hold the query result
+            $objRecordSet = $objCommand->Execute;
+            # If a user was found - Retrieve the distinguishedName
+            if (!$objRecordSet->EOF) {
+                $strDN = $objRecordSet->Fields('distinguishedName')->Value;
+                $strAcctControl = $objRecordSet->Fields('userAccountControl')->Value;
+                $strpwdLS = sprintf($objRecordSet->Fields('pwdLastSet')->Value);
+                @arrSplitResponse = split(/,/, $strDN);
+                $strLName = substr($arrSplitResponse[0],3);
+                if ($strLName =~ m/\\$/) {
+                    $strLName = substr($strLName,0,-1);
+                }
+                $strFName = $arrSplitResponse[1];
+                if ($strFName =~ m/OU=/) {
+                    $strUserType = $strFName;
+                    $strFName = "";
+                    $strUserType = substr($strUserType,3);
+                } else {
+                    $strUserType = substr($arrSplitResponse[2],3);
+                    }
+                if ($strAcctControl == 512) {
+                    $strAcctControl = "Active";
+                } else {
+                    $strAcctControl = "Disabled";
+                }
+            } else {
+                print "No user found";
+            }
+            &debug("Match!: $line in $group\n");
+            $csv->print_data(
+                AccountName => $line,
+                LastName => $strLName,
+                FirstName => $strFName,
+                SYSGenericAcct => $strUserType,
+                AccessLevel => $group,
+                AccessCapability => "User",
+                Description => $desc,
+                Status => $strAcctControl,
+                LastPwdChange => $strpwdLS
+            );
+        } else {
+            $group = $line;
+            chomp($desc = <GROUPS>);
+            chomp($group2 = <GROUPS>);
+            &debug("$group\n$desc\n$group\n");
+        }
+    }
+

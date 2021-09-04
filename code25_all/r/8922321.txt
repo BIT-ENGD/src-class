@@ -1,0 +1,68 @@
+   library(RCurl)
+   library(RJSONIO)
+   library(maptools)
+
+   #unchanged from Breyal's code
+   construct.geocode.url <- function(address, return.call = "json", sensor = "false") {
+     root <- "http://maps.google.com/maps/api/geocode/"
+     u <- paste(root, return.call, "?address=", address, "&sensor=", sensor, sep = "")
+     return(URLencode(u))
+   }
+
+  #obviously this would be better vectorized, but I left it in this form to help me
+  #understand where the errors were coming from
+  batchGeoCode <- function(address.list) {
+    lat<-vector(mode="numeric",length=length(address.list))
+    lng<-vector(mode="numeric",length=length(address.list))
+
+    for(i in 1:length(address.list)){
+      address<-address.list[i]
+      u <- construct.geocode.url(address)
+      doc <- getURL(u)
+      x <- fromJSON(doc,simplify = FALSE)
+
+      #I put the try in here just so I could see if it was always getting
+      #hung on the same address or the same special character or the like
+      errtest<-try(x$results[[1]]$geometry$location$lat)
+      if(is(errtest, 'try-error')){
+        lat[i]=0
+        lng[i]=0
+      }else{
+        lat[i] <- x$results[[1]]$geometry$location$lat
+        lng[i] <- x$results[[1]]$geometry$location$lng
+      }
+    }
+    points.df<-data.frame(lat,lng)
+    coordinates(points.df)=~lng+lat 
+    points.sp<-SpatialPoints(coords=points.df,
+      proj4string=CRS("+proj=longlat +datum=WGS84"))
+    return(points.sp)
+   }
+
+   #some sample data that is enough to cause a fail for me--groceries and mini marts in 
+   #South Seattle. All of these return a valid address when entered individually in 
+   #Google Maps
+   address.list<-c("T W YOUNG MARKET 7144 BEACON AVE S SEATTLE WA 98108",                       
+    "RAINIER MARKET CTR 3625 1ST AVE S SEATTLE WA 98134",                        
+    "JING JING ASIAN MARKET 12402 SE 38TH ST BELLEVUE WA 98006",                 
+    "HILAL MARKET PLACE 15061 MILITARY RD S SEATAC WA 98188",                    
+    "GUADALUPE MARKET 1111 SW 128TH ST BURIEN WA 98146",                         
+    "JAMAL MARKET 14645 TUKWILA INTERNATIONAL BL TUKWILA WA 98168",              
+    "C & D INTL MARKET  SEATTLE WA 98198",                                       
+    "GUERRERO MARKET 17730 AMBAUM BLVD S # B SEATTLE WA 98148",                  
+    "MI CASA MARKET 17174 116TH AVE SE RENTON WA 98058",                         
+    "GUERRERO MARKET 17730 AMBAUM BLVD S # B SEATTLE WA 98148",                  
+    "MI CASA MARKET 17174 116TH AVE SE RENTON WA 98058",                         
+    "BILISEE MARKET 8300 RAINIER AVE S SEATTLE WA 98118",                        
+    "ALI SEATAC INTL MARKET 16324 INTERNATIONAL BLVD SEATAC WA 98188",           
+    "OCEAN MARKET 2119 RAINIER AVE S SEATTLE WA 98144",                          
+    "RED APPLE MARKETS 9627 DES MOINES MEMORIAL DR SEATTLE WA 98108",            
+    "ANKGOR MARKET 9660 16TH AVE SW SEATTLE WA 98106",                           
+    "SIXTEENTH AVENUE GROCERY 9001 16TH AVE SW SEATTLE WA 98106",                
+    "RAINIER ORIENTAL MARKET 9237 RAINIER AVE S SEATTLE WA 98118",               
+    "CLEAN MACHINE LAUNDRYMAT  SEATTLE WA 98118",                                
+    "HALIN GROCERY & DELI  SEATTLE WA 98118")    
+
+   #call the function
+   result<-batchGeoCode(address.list)
+

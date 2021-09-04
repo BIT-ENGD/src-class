@@ -1,0 +1,218 @@
+sicosim: error. Type 0 not yet supported by outtb.
+    int bro_sens_send (scicos_block *block)
+{
+    int rc, i;
+    bro_fist_t packet[BUFFER_SIZE];
+
+    for (i = 1; i < block->nin; i++) {
+        bro_encode_sci_datablock(&packet[i-1], block->inptr[i]);
+    };
+
+    printf ("Data for first block: %i, %i, %.2f\n", packet[0].port, packet[0].operation, packet[0].data);
+
+    rc = send(block->inptr[0][0], packet, sizeof(bro_fist_t) * BUFFER_SIZE, 0);
+
+    if (rc < 0)
+    {
+        perror("send() failed");
+        return -1;
+    }
+
+    printf("%d bytes of data were sent\n", rc);
+    return 0;
+}
+
+int bro_sens_read (scicos_block *block)
+{
+    int rc, i;
+    bro_fist_t packet[BUFFER_SIZE];
+
+    rc = recv(block->inptr[0][0], packet, sizeof(bro_fist_t) * BUFFER_SIZE, 0);
+    printf("%d bytes of data were received\n", rc);
+    if (rc < 0)
+    {
+        perror("recv() failed");
+        return -1;
+    }
+
+    printf("Starting to set outputs :3 [%i]\n", block->nout);
+
+    for (i = 0; i < block->nout; i++) {
+        printf("Next Step defining outputs :D [%i]\n", i);
+        bro_decode_sci_datablock(&packet[i], &block->outptr[i][0]);
+        printf("Output value for port %i is: %.2f[%i]\n", i, block->outptr[i][0], block->outsz[(2*block->nout)+i]);
+
+    }
+
+    return 0;
+}
+
+void bro_comm_sens_disp (scicos_block *block, int flag)
+{
+    switch (flag) {
+        case 1: /* set output */
+            bro_sens_send(block);
+            bro_sens_read(block);
+            break;
+        case 2: /* get input */
+            break;
+        case 4: /* initialisation */
+            break;
+        case 5: /* ending */
+            break;
+        default:
+            break;
+    }
+}
+
+function [x,y,typ] = SENS_Disp(job,arg1,arg2)
+    x=[];y=[];typ=[];
+    select job
+    case 'plot' then
+        exprs=arg1.graphics.exprs;
+
+        standard_draw(arg1)
+    case 'getinputs' then
+        [x,y,typ]=standard_inputs(arg1)
+    case 'getoutputs' then
+        [x,y,typ]=standard_outputs(arg1)
+    case 'getorigin' then
+        [x,y]=standard_origin(arg1)
+    case 'set' then
+        x=arg1
+        model=arg1.model;graphics=arg1.graphics;
+        exprs=graphics.exprs;
+    case 'define' then
+        model       = scicos_model()
+        model.sim   = list('bro_comm_sens_disp',4)
+        model.out   = [1;1;1;1;1;1;1]
+        model.out2  = [1;1;1;1;1;1;1]
+        model.outtyp= [1;1;1;1;1;1;1]
+        model.in    = [1;3;3;3;3;3;3;3]
+        model.in2   = [1;1;1;1;1;1;1;1]
+        model.intyp = [3;1;1;1;1;1;1;1]
+        model.evtin = []
+        model.rpar  = []
+        model.ipar  = []
+        model.dstate=[1];
+        model.blocktype='c'
+        model.dep_ut=[%t %f]
+        exprs=[]
+        gr_i=['xstringb(orig(1),orig(2),[''Sensors'';+''Dispatcher''],sz(1),sz(2),''fill'');']
+        x=standard_define([3 2],model,exprs,gr_i)
+    end
+endfunction
+
+/*set vectors of outtb*/
+                for (j=0; j<nlnk; j++) { /*for each link*/
+                        subheader=(int *)(listentry(il_state_outtb,j+1)); /*get header of outtbl(j+1)*/
+                        outtbsz[j]=subheader[1]; /*store dimensions*/
+                        outtbsz[j+nlnk]=subheader[2];
+
+                        switch (subheader[0]) { /*store type and address*/
+                                /*matrix of double*/
+                        case 1  :
+                                switch (subheader[3]) {
+                                case 0  :
+                                        outtbtyp[j]=SCSREAL_N;  /*double real matrix*/
+                                        outtbptr[j]=(SCSREAL_COP *)(subheader+4);
+                                        break;
+
+                                case 1  :
+                                        outtbtyp[j]=SCSCOMPLEX_N;  /*double complex matrix*/
+                                        outtbptr[j]=(SCSCOMPLEX_COP *)(subheader+4);
+                                        break;
+
+                                default :
+                                        Scierror(888,\
+                                                 "%s : error. Type %d of double scalar matrix not yet supported "
+                                                 "for outtb.\n",\
+                                                 fname,subheader[3]);
+                                        FREE(outtbptr);
+                                        FREE(outtbtyp);
+                                        FREE(outtbsz);
+                                        FREE(opar);
+                                        FREE(oparsz);
+                                        FREE(opartyp);
+                                        FREE(oz);
+                                        FREE(ozsz);
+                                        FREE(oztyp);
+                                        FREE(lfunpt);
+                                        freeparam;
+                                        FREE(outtb_elem);
+                                        break;
+                                }
+                                break;
+
+                                /*matrix of integers*/
+                        case 8  :
+                                switch (subheader[3]) {
+                                case 1  :
+                                        outtbtyp[j]=SCSINT8_N;  /*int8*/
+                                        outtbptr[j]=(SCSINT8_COP *)(subheader+4);
+                                        break;
+
+                                case 2  :
+                                        outtbtyp[j]=SCSINT16_N;  /*int16*/
+                                        outtbptr[j]=(SCSINT16_COP *)(subheader+4);
+                                        break;
+
+                                case 4  :
+                                        outtbtyp[j]=SCSINT32_N;  /*int32*/
+                                        outtbptr[j]=(SCSINT32_COP *)(subheader+4);
+                                        break;
+
+                                case 11 :
+                                        outtbtyp[j]=SCSUINT8_N; /*uint8*/
+                                        outtbptr[j]=(SCSUINT8_COP *)(subheader+4);
+                                        break;
+
+                                case 12 :
+                                        outtbtyp[j]=SCSUINT16_N; /*uint16*/
+                                        outtbptr[j]=(SCSUINT16_COP *)(subheader+4);
+                                        break;
+
+                                case 14 :
+                                        outtbtyp[j]=SCSUINT32_N; /*uint32*/
+                                        outtbptr[j]=(SCSUINT32_COP *)(subheader+4);
+                                        break;
+
+                                default :
+                                        Scierror(888,\
+                                                 "%s : error. Type %d of integer scalar matrix not yet supported "
+                                                 "for outtb.\n",\
+                                                 fname,subheader[3]);
+                                        FREE(outtbptr);
+                                        FREE(outtbtyp);
+                                        FREE(outtbsz);
+                                        FREE(opar);
+                                        FREE(oparsz);
+                                        FREE(opartyp);
+                                        FREE(oz);
+                                        FREE(ozsz);
+                                        FREE(oztyp);
+                                        FREE(lfunpt);
+                                        freeparam;
+                                        FREE(outtb_elem);
+                                        break;
+                                }
+                                break;
+
+                        default :
+                                Scierror(888,"%s : error. Type %d not yet supported for outtb.\n",fname,subheader[0]);
+                                FREE(outtbptr);
+                                FREE(outtbtyp);
+                                FREE(outtbsz);
+                                FREE(opar);
+                                FREE(oparsz);
+                                FREE(opartyp);
+                                FREE(oz);
+                                FREE(ozsz);
+                                FREE(oztyp);
+                                FREE(lfunpt);
+                                freeparam;
+                                FREE(outtb_elem);
+                                return 0;
+                                break;
+                        }
+

@@ -1,0 +1,67 @@
+Private Sub CreateDataForm(ByVal tableName As String, ByVal displayName As String) ', ByVal subDataForms As IList(Of Object))
+    Try
+        Dim dataFormClassName As String = "frm" & MakeValidName(displayName)
+        Dim dataFormFileName As String = dataFormClassName & cVBSuffix
+        Dim templateFileName As String = DataFormTemplate.Name
+        Dim templateClassName As String = Replace(templateFileName, cVBSuffix, String.Empty)
+
+        'copy form template to data forms folder
+        'copy files associated with main projectitem
+        Dim newPItem As ProjectItem = Nothing
+
+        For i As Integer = 1 To DataFormTemplate.FileCount
+            newPItem = DataFormsFolder.ProjectItems.AddFromFileCopy(DataFormTemplate.FileNames(CShort(i)))
+        Next
+
+        'copy files associated with sub projectitems
+        For Each item As ProjectItem In DataFormTemplate.ProjectItems
+            For i As Integer = 1 To item.FileCount
+                DataFormsFolder.ProjectItems.AddFromFileCopy(item.FileNames(CShort(i)))
+            Next
+        Next
+
+        newPItem.Name = dataFormFileName
+
+        newPItem.ContainingProject.Save()
+
+        'fix class name for dataform template
+        FixDataFormClassName(DataFormTemplate, dataFormClassName, templateClassName)
+
+        newPItem.ContainingProject.Save()
+
+        Application.DoEvents()
+
+        'get table metadata
+        Dim lGetColumnInfo As DataColumnCollection = GetColumnInfo(tableName)
+
+
+        'add field controls
+        ConvertColumnInfoToFormControls(newPItem, lGetColumnInfo, tableName, displayName)
+
+    Catch ex As Exception
+        DisplayExceptionMessage(ex)
+    End Try
+End Sub
+
+Private Shared Sub FixDataFormClassName(ByVal pItem As ProjectItem, ByVal dataFormClassName As String, ByVal templateClassName As String)
+    If pItem.Document IsNot Nothing Then
+        pItem.Document.Close(vsSaveChanges.vsSaveChangesPrompt)
+    End If
+    For i As Integer = 1 To pItem.FileCount
+        Dim dftFile As New IO.FileInfo(pItem.FileNames(CShort(i)))
+        Dim tr As IO.TextReader = dftFile.OpenText() 'IO.FileMode.Open, IO.FileAccess.ReadWrite, IO.FileShare.None)
+        Dim sb As New Text.StringBuilder
+        Dim newData As String = tr.ReadToEnd().Replace(dataFormClassName, templateClassName)
+        tr.Close()
+        Dim sw As New IO.StreamWriter(dftFile.FullName)
+        sw.Write(newData)
+        sw.Close()
+    Next
+
+    If pItem.FileCodeModel IsNot Nothing Then CType(pItem.FileCodeModel, FileCodeModel2).Synchronize()
+
+    For Each item As ProjectItem In pItem.ProjectItems
+        FixDataFormClassName(item, dataFormClassName, templateClassName)
+    Next
+End Sub
+

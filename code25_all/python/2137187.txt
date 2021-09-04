@@ -1,0 +1,61 @@
+import urllib2, multiprocessing
+from threading import Thread
+from Queue import Queue
+from multiprocessing import Queue as ProcessQueue, Process
+
+def download(url):
+    """Download a page from an url.
+    url [str]: url to get.
+    return [unicode]: page downloaded.
+    """
+    if settings.DEBUG:
+        print u'Downloading %s' % url
+    request = urllib2.Request(url)
+    response = urllib2.urlopen(request)
+    encoding = response.headers['content-type'].split('charset=')[-1]
+    content = unicode(response.read(), encoding)
+    return content
+
+def downloader(url_queue, page_queue):
+    def _downloader(url_queue, page_queue):
+        while True:
+            try:
+                url = url_queue.get()
+                page_queue.put_nowait({'url': url, 'page': download(url)})
+            except Exception, err:
+                print u'Error downloading %s' % url
+                raise err
+            finally:
+                url_queue.task_done()
+
+    ## Init internal workers
+    internal_url_queue = Queue()
+    internal_page_queue = Queue()
+    for num in range(multiprocessing.cpu_count()):
+        worker = Thread(target=_downloader, args=(internal_url_queue, internal_page_queue))
+        worker.setDaemon(True)
+        worker.start()
+
+    # Loop waiting closing
+    for url in iter(url_queue.get, 'STOP'):
+        internal_url_queue.put(url)
+
+    # Wait for closing
+    internal_url_queue.join()
+
+# Init the queues
+url_queue = ProcessQueue()
+page_queue = ProcessQueue()
+
+# Init the process
+download_worker = Process(target=downloader, args=(url_queue, page_queue))
+download_worker.start()
+
+import module
+
+module.url_queue.put('http://foobar1')
+module.url_queue.put('http://foobar2')
+module.url_queue.put('http://foobar3')
+module.url_queue.put('STOP')
+downloader.download_worker.join()
+

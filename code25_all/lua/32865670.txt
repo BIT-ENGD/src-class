@@ -1,0 +1,210 @@
+-- execute this script by calling: dgate "--lua:dofile('BatchDicomMove.lua')"
+
+-- MOP: Query=STUDY|SERIES Move=STUDY+StudyInstanceUID
+-- GEPACS_RSD: Query=* Move=SERIES
+
+inputFile       = 'PatientList.txt'
+srcAet          = 'NUKALFA'
+destAet         = 'ONCO_PACS_RD'
+modalities      = {'CT','PT'}
+includeStr      = {'Standard','standard','AC'}  -- if non are desired enter {}
+includeOrAnd    = 'or'                          -- choose 'and', 'or'
+excludeStr      = {'NAC','CTAC'}                -- if non are desired enter {}
+excludeOrAnd    = 'nor'                         -- choose 'neither', 'nor'
+select          = 'newest'                      -- choose 'newest', 'oldest', 'all'
+relativeToTime  = 'before'                      -- choose 'before', 'after', 'exact'
+
+
+
+
+for line in io.lines(inputFile) do
+    -- Loop through all patients
+
+    date = ''
+    date1 = ''
+    date2 = ''
+    stringSplit = string.find(line,' ')
+    if stringSplit == nil then
+        ptId = line
+    else
+        ptId = string.sub(line,0,stringSplit-1)
+        date = string.sub(line,stringSplit+1)
+        if string.len(date) == 18 then
+            stringSplit = string.find(date,' ')
+            if stringSplit == nil then
+                date = ''
+            else
+                date = ''
+                date1 = string.sub(date,0,stringSplit-1)
+                date2 = string.sub(line,stringSplit+1)
+            end
+        elseif string.len(date) ~= 9 then
+            date = ''
+        end
+    end
+    -- ptIdAlts ensures that the patient will be found nomater if '-' is included in the ID or not
+    stringSplit = string.find(ptId,'-')
+    if stringSplit == nil then
+        ptId = string.sub(ptId,0,7) .. '-' .. string.sub(ptId,8)
+    end
+    stringSplit = string.find(ptId,'-')
+    ptIdAlts = {ptId,string.sub(ptId,0,stringSplit-1) .. string.sub(ptId,stringSplit+1)}
+
+    print('  Query: patient', ptIdAlts[1], 'from', srcAet, 'to', destAet)
+
+    -- an extra loop have been added as part of implementation of ptIdAlts
+    b = {}
+    for key, ptId in ipairs(ptIdAlts) do
+        for key, modality in ipairs(modalities) do
+
+            -- create query for dicom move
+            q = newdicomobject()
+            q.PatientID = ptId
+            q.Modality = modality
+            -- values to retrive should be included in the query
+            q.StudyInstanceUID  = ''
+            q.SeriesInstanceUID = ''
+            q.PatientName = ''
+            q.SeriesDescription = ''
+            q.StudyDate = ''
+
+            -- execute query for infomation on patient data on the source machine
+            a = dicomquery(srcAet, 'SERIES', q) -- sets QueryRetrieveLevel at call time
+            for i=1,#a do 
+                b[#b+1] = a[i-1] 
+            end
+        end
+    end
+
+    -- Remove unwanted resultes
+
+    c = {}
+    if date ~= '' then
+        for i, a in ipairs(b) do
+            if a.StudyDate ~= nil then
+                if relativeToTime == 'exact' then
+                    if a.StudyDate == date then
+                        c[#c+1] = a
+                    end
+                elseif relativeToTime == 'before' then
+                    if a.StudyDate <= date then
+                        c[#c+1] = a
+                    end
+                else
+                    if a.StudyDate >= date then
+                        c[#c+1] = a
+                    end
+                end
+            end
+        end
+    elseif (date1 ~= '') and (date2 ~= '') then
+        for i, a in ipairs(b) do
+            if (a.StudyDate ~= nil) and (a.StudyDate >= date1) and (a.StudyDate <= date2) then
+                c[#c+1] = a
+            end
+        end
+    else
+        c = b
+    end
+    b = c
+
+    c = {}
+    if #includeStr ~= 0 then
+        for key, a in ipairs(b) do
+            if a.SeriesDescription ~= nil then
+                if includeOrAnd == 'or' then
+                    for key, include in ipairs(includeStr) do
+                        if string.match(a.SeriesDescription,include) ~= nil then
+                            c[#c+1] = a
+                            break
+                        end
+                    end
+                else
+                    for key, include in ipairs(includeStr) do
+                        if string.match(a.SeriesDescription,include) == nil then
+                            break
+                        end
+                        c[#c+1] = a
+                    end
+                end
+            end
+        end
+        b = c
+    end
+
+    c = {}
+    if #excludeStr ~= 0 then
+        for key, a in ipairs(b) do
+            if a.SeriesDescription ~= nil then
+                if excludeOrAnd == 'nor' then
+                    for key, exclude in ipairs(excludeStr) do
+                        if string.match(a.SeriesDescription,exclude) ~= nil then
+                            break
+                        end
+                        c[#c+1] = a
+                    end
+                else
+                    for key, exclude in ipairs(excludeStr) do
+                        if string.match(a.SeriesDescription,exclude) == nil then
+                            c[#c+1] = a
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        b = c
+    end
+
+    c = {}
+    if select == 'newest' then
+        for key, modality in ipairs(modalities) do
+            for i, a in ipairs(b) do
+                if a.StudyDate ~= nil then
+                    if c[key] == nil then
+                        c[key] = a
+                    elseif c[key].StudyDate < a.StudyDate then
+                        c[key] = a
+                    end
+                end
+            end
+        end
+    elseif select == 'oldest' then
+        for key, modality in ipairs(modalities) do
+            for i, a in ipairs(b) do
+                if a.StudyDate ~= nil then
+                    if c[key] == nil then
+                        c[key] = a
+                    elseif c[key].StudyDate > a.StudyDate then
+                        c[key] = a
+                    end
+                end
+            end
+        end
+    else
+        c = b
+    end
+    b = c
+
+    n = #b
+    print('  Query results:', n)
+
+    for key, a in ipairs(b) do
+        cmd = newdicomobject()
+        cmd.PatientID = b.PatientID
+        cmd.StudyInstanceUID = b.StudyInstanceUID
+        cmd.SeriesInstanceUID = b.SeriesInstanceUID
+
+        if srcAet == 'MOP_SCP' then
+            cmd.QueryRetrieveLevel = 'STUDY' -- only level supported by the MOP for dicom move
+            cmd.Modality = b.Modality
+        else
+            cmd.QueryRetrieveLevel = 'SERIES' -- tested on GEPACS_RSD
+        end
+
+        -- execute the move
+        --dicommove(srcAet, destAet, cmd);
+    end
+end
+print('  Done.')
+

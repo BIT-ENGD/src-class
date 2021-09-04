@@ -1,0 +1,90 @@
+lineFragmentRectForProposedRect(proposedRect: NSRect,
+        sweepDirection: NSLineSweepDirection,
+        movementDirection: NSLineMovementDirection,
+        remainingRect: NSRectPointer) -> NSRect
+import Cocoa
+
+class CASTextContainer: NSTextContainer {
+    var mainView: CASTextView = CASTextView()
+    var textSubviews: Array<AnyObject>  {
+        get {
+            return mainView.subviews
+        }
+    }
+
+    override var simpleRectangularTextContainer: Bool {
+        get {
+            return false
+        }
+    }
+
+    func rectForActiveRange() -> NSRect {
+        let range = layoutManager.glyphRangeForCharacterRange(textView.selectedRange, actualCharacterRange:nil)
+        var rect = layoutManager.boundingRectForGlyphRange(range, inTextContainer: self)
+        rect = NSOffsetRect(rect, textView.textContainerOrigin.x, textView.textContainerOrigin.y)
+        return rect;
+    }
+
+    override func lineFragmentRectForProposedRect(proposedRect: NSRect,
+        sweepDirection: NSLineSweepDirection,
+        movementDirection: NSLineMovementDirection,
+        remainingRect: NSRectPointer) -> NSRect
+    {
+        remainingRect.initialize(NSZeroRect)
+        var frames: Array<NSRect> = []
+        if textSubviews.isEmpty {
+            let fullRect = NSMakeRect(0, 0, containerSize.width, containerSize.height)
+            return NSIntersectionRect(fullRect, proposedRect)
+        }
+
+        for view in textSubviews {
+            frames.append(view.frame)
+        }
+
+        // Sort the array so that the frames are ordered by increasing origin x coordinate.
+        let fullRect = NSMakeRect(0, 0, containerSize.width, containerSize.height)
+        let region = NSIntersectionRect(fullRect, proposedRect)
+        let sortedFrames: Array<NSRect> = sorted(frames, { (first: NSRect, second: NSRect) -> Bool in
+            return first.origin.x < second.origin.x
+        })
+
+        // Get the first rectangle height that overlaps with the text region's height.
+        var textDrawingRegion = NSZeroRect
+        var subviewFrame = NSZeroRect // Will be needed later to set remainingRect pointer.
+        var precedingRegion: NSRect = NSZeroRect // Hold the view frame preceding our insertion point.
+        for frame in sortedFrames {
+            if region.origin.y + NSHeight(region) >= frame.origin.y &&
+                region.origin.y <= frame.origin.y + NSHeight(frame)
+            {
+                if region.origin.x <= frame.origin.x {
+                    // Calculate the distance between the preceding subview and the approaching one.
+                    var width: CGFloat = frame.origin.x - precedingRegion.origin.x - NSWidth(precedingRegion)
+                    textDrawingRegion.origin = region.origin
+                    textDrawingRegion.size = NSMakeSize(width, NSHeight(region))
+                    subviewFrame = frame
+                    break
+                }
+
+                else {
+                    precedingRegion = frame
+                }
+            }
+        }
+
+        if textDrawingRegion == NSZeroRect {
+            return region
+        }
+
+        else {
+            // Set the "break" in the text to the subview's location:
+            let nextRect = NSMakeRect(subviewFrame.origin.x + NSWidth(subviewFrame),
+                region.origin.y,
+                NSWidth(proposedRect),
+                NSHeight(proposedRect))
+
+            remainingRect.initialize(nextRect)
+            return textDrawingRegion
+        }
+    }
+}
+

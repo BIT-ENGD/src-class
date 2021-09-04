@@ -1,0 +1,72 @@
+                                 -GET--> handleGET >-> packRequest >-> socketWriteD
+                                 |
+socketReadS >-> parseRequest >-routeRequest
+                                 |
+                                 -POST-> handlePOST >-> packRequest >-> socketWriteD
+
+HTTPRequest RequestLine Headers Message
+HTTPResponse StatusLine Headers Message
+socketReadS
+parseRequest
+HTTPRequest
+handle<method>
+HTTPRequest
+HTTPResponse
+packRequest
+ByteString
+socketWriteS
+routeRequest'''
+parseRequest
+routeRequest
+routeRequest''' ::
+    (Monad m, Proxy p1, Proxy p2, Proxy p3)
+    => () -> Consumer p1 HTTPRequest (Pipe p2 HTTPRequest HTTPRequest (Pipe p3 HTTPRequest HTTPRequest m)) r
+routeRequest''' () = runIdentityP . hoist (runIdentityP . hoist runIdentityP) $ forever $ do
+    httpReq <- request ()
+    let method = getMethod httpReq
+    let (URI uri) = getURI httpReq
+    case method of
+      GET -> lift $ respond httpReq
+      POST -> lift $ lift $ respond httpReq
+
+routeRequest'' = runProxyK $ routeRequest''' <-< unitU
+routeRequest' socket = runProxyK $ raiseK (p4 socket <-< handleGET) <-< routeRequest''
+routeRequest socket = (p4 socket <-< handlePOST) <-< (routeRequest' socket)
+
+handleGET
+handlePOST
+handleGET :: Proxy p => () -> p () HTTPRequest r ByteString IO r
+handleGET () = runIdentityP $ do
+    httpReq <- request ()
+    let (URI uri) = getURI httpReq
+    lift $ Prelude.putStrLn "GET"
+    respond $ B.append (B.pack "GET ") uri
+
+
+handlePOST :: Proxy p => () -> p () HTTPRequest r ByteString IO r
+handlePOST () = runIdentityP $ do
+    httpReq <- request ()
+    let (URI uri) = getURI httpReq
+    lift $ Prelude.putStrLn "POST"
+    respond $ B.append (B.pack "POST ") uri
+
+p1 socket = socketReadS 32 socket
+p2 = parseRequestProxy 
+p4 socket = socketWriteD socket
+
+main = serveFork (Host "127.0.0.1") "8080" $
+    \(socket, remoteAddr) -> do
+        ret <- runProxy $ runEitherK $ p1 socket >-> printD >-> p2 >-> printD  >-> routeRequest socket 
+        Prelude.putStrLn $ show ret
+
+parseRequestProxy
+parseRequestProxy
+  :: (Monad m, Proxy p) =>
+     ()
+     -> Pipe
+          (EitherP Control.Proxy.Attoparsec.Types.BadInput p)
+          ByteString
+          HTTPRequest
+          m
+          r
+

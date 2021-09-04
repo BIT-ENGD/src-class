@@ -1,0 +1,91 @@
+pOperator
+pParens
+pPacked pParenL (pWSpaces *> pParenR)
+
+in: "(x)"
+out: Single "x"
+
+in: "(x )"
+out: Single "x"
+
+in: "(x)"
+out: Single "x"
+
+in: "(x )" 
+out: Multi (Single "x") (Single "x")
+--  Correcting steps: 
+--    Inserted  'x' at position LineColPos 0 3 3 expecting one of ['\t', ' ', 'x']
+
+import Prelude hiding(lex)
+import Data.Char hiding (Space)
+import qualified Text.ParserCombinators.UU as UU
+import           Text.ParserCombinators.UU hiding(parse)
+import qualified Text.ParserCombinators.UU.Utils as Utils
+import           Text.ParserCombinators.UU.BasicInstances hiding (Parser)
+
+
+data El = Multi El El
+        | Single String
+        deriving (Show)
+
+
+---------- Example core grammar ----------
+
+pElement     = Single <$> pSyms "x"
+pOperator    = applyAll <$> pElement <*> pMany (flip <$> (Multi <$ pWSpaces1) <*> pElement)
+
+---------- Basic combinators ----------
+
+applyAll x (f:fs) = applyAll (f x) fs
+applyAll x []     = x
+
+pSpace    = pSym ' '
+pTab      = pSym '\t'
+pWSpace   = pSpace <|> pTab
+pWSpaces  = pMany pWSpace
+pWSpaces1 = pMany1 pWSpace
+pMany1 p  = (:) <$> p <*> pMany p
+
+pSyms []       = pReturn []
+pSyms (x : xs) = (:) <$> pSym x <*> pSyms xs
+
+pParenL     = Utils.lexeme $ pSym '('
+pParenR     = Utils.lexeme $ pSym ')'
+pParens     = pPacked pParenL (pWSpaces *> pParenR)
+
+---------- Program ----------
+
+pProgram = pParens pOperator
+-- if you replace it with following line, it works:
+--  pProgram = pParens pElement
+-- so it seems like something in pOperator is greedy
+
+tests = [ ("test", "(x)")
+        , ("test", "(x )")
+        ]
+
+---------- Helpers ----------
+
+type Parser a = P (Str Char String LineColPos) a
+
+parse p s = UU.parse ( (,) <$> p <*> pEnd) (createStr (LineColPos 0 0 0) s)
+
+main :: IO ()
+main = do 
+    mapM_ (\(desc, p) -> putStrLn ("\n=== " ++ desc ++ " ===") >> run pProgram p) tests
+    return ()
+
+run :: Show t =>  Parser t -> String -> IO ()
+run p inp = do  let (a, errors) =  parse p inp
+                putStrLn ("--  Result: \n" ++ show a)
+                if null errors then  return ()
+                               else  do putStr ("--  Correcting steps: \n")
+                                        show_errors errors
+                putStrLn "-- "
+             where show_errors :: (Show a) => [a] -> IO ()
+                   show_errors = sequence_ . (map (putStrLn . show))
+
+pOperator    = applyAll <$> pElement <*> pMany (flip <$> (Multi <$ pWSpaces1) <*> pElement)
+
+foldr pChainl pElement (Multi <$ pWSpaces1)
+

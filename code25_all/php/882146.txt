@@ -1,0 +1,57 @@
+BEGIN;
+INSERT INTO requests (user_id, description, date) VALUES ('4', 'This dont worth anything', NOW());
+UPDATE users SET num_requests = (num_requests + 1) WHERE id = '4';
+--something gone wrong, cancel the transaction
+ROLLBACK;
+UPDATE users SET last_activity = NOW() WHERE id = '4'
+COMMIT;
+
+/* skip the connection */
+pg_query($pgConnection, "BEGIN");
+pg_query($pgConnection, "INSERT INTO requests (user_id, description, date) VALUES ('$id_user', 'This dont worth anything', NOW())");
+pg_query($pgConnection, "UPDATE users SET num_requests = (num_requests + 1) WHERE id = '$id_user'");
+//something gone wrong, cancel the transaction
+pg_query($pgConnection, "ROLLBACK");
+pg_query($pgConnection, "UPDATE users SET last_activity = NOW() WHERE id = '$id_user'");
+pg_query($pgConnection, "COMMIT");
+
+/* skip the connection */
+pg_prepare($pgConnection, 'insert_try', "INSERT INTO requests (user_id, description, date) VALUES ('$1', '$2', $3)");
+pg_query($pgConnection, "BEGIN");
+pg_execute($pgConnection, 'insert_try', array($user_id, 'This dont worth anything', date("Y-m-d")));
+/* and so on ...*/
+
+<?php
+$dbh = new PDO('pgsql:host=127.0.0.1;dbname=test', 'myuser', 'xxxxxx');
+
+$rollback = false;
+
+$dbh->beginTransaction();
+
+//create the prepared statements
+$insert_order = $dbh->prepare('INSERT INTO h_orders (id, id_customer, date, code) VALUES (?, ?, ?, ?)');
+$insert_items = $dbh->prepare('INSERT INTO h_items (id, id_order, descr, price) VALUES (?, ?, ?, ?)');
+$delete_order = $dbh->prepare('DELETE FROM p_orders WHERE id = ?');
+
+//move the orders from p_orders to h_orders (history)
+$qeOrders = $dbh->query("SELECT id, id_customer, date, code FROM p_orders LIMIT 1");
+while($rayOrder = $qeOrders->fetch(PDO::FETCH_ASSOC)){
+    //h_orders already contain a row with id 293
+    //lets make the query fail
+    $insert_order->execute(array('293', $rayOrder['id_customer'], $rayOrder['date'], $rayOrder['code'])) OR var_dump($dbh->errorInfo());
+    //this is the real execute
+    //$insert_order->execute(array($rayOrder['id'], $rayOrder['id_customer'], $rayOrder['date'], $rayOrder['code'])) OR die(damnIt('insert_order'));
+    //for each order, i move the items too
+    $qeItems = $dbh->query("SELECT id, id_order, descr, price FROM p_items WHERE id_order = '" . $rayOrder['id'] . "'") OR var_dump($dbh->errorInfo());
+    while($rayItem = $qeItems->fetch(PDO::FETCH_ASSOC)){
+        $insert_items->execute(array($rayItem['id'], $rayItem['id_order'], $rayItem['descr'], $rayItem['price'])) OR var_dump($dbh->errorInfo());
+    }
+    //if everything is ok, delete the order from p_orders
+    $delete_order->execute(array($rayOrder['id'])) OR var_dump($dbh->errorInfo());
+}
+//in here i'll use a bool var to see if anythings gone wrong and i need to rollback,
+//or all good and commit
+$dbh->rollBack();
+//$dbh->commit();
+?>
+

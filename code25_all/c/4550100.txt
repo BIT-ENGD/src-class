@@ -1,0 +1,177 @@
+#include <stdio.h>
+
+void func(int i, ...);
+int main(int argc, char *argv);
+
+int main(int argc, char *argv) {
+
+    unsigned long long f = 6799000015ULL;
+    unsigned long long *g;
+
+    //g points to f
+    g = &f;
+
+    printf("natural: %llu in hex: %llX address: %x\n", *g, *g, g);
+
+    //put pointer onto stack
+    func(6, g, g);
+
+    return 0;
+}
+
+void func(int i, ...) {
+
+    unsigned long long *f;
+
+    //pop value off
+    f = *(&i + 1);
+
+    printf("address: %x natural: %llu in hex: %llX\n", f, *f, *f);
+
+}
+
+unsigned long long f = 6799000015ULL;
+unsigned long long *g;
+
+g = &f;
+
+kprintf("ull test: 1=%U 2=%X 3=%x 4= 5=\n", g, g, g);
+
+void kprintf(char *format, ...)
+{
+ char buffer[KPRINTF_BUFFER_SIZE];
+
+ int bpos = 0; /* position to write to in buffer */
+ int fpos = 0; /* position of char to print in format string */
+ char ch; /* current character being processed*/
+
+ /*
+  * We have a variable number of paramters so we
+  * have to increment from the position of the format
+  * argument.
+ */
+ int arg_offset = 1;
+
+ /*
+  * Think this through Phill. &format = address of format on stack.
+  * &(format + 1) = address of argument after format on stack.
+  * void *p = &(format + arg_offset);
+  * kprintf("xxx %i %s", 32, "hello");
+  * memory would look like = [ 3, 32, 5, "xxx", 32, "hello" ]
+  * get to 32 via p = &(format + 1); (int)p (because the int is copied, not a pointer)
+  * get to hello via p = &(format + 2); (char*)p;
+  */
+
+ void *arg;
+ unsigned long long *llu;
+ arg = (void*) (&format + arg_offset);
+ llu = (unsigned long long*) *(&format + arg_offset);
+
+ while (1)
+ {
+  ch = format[fpos++];
+
+  if (ch == '\0')
+   break;
+
+  if (ch != '%')
+   buffer[bpos++] = ch;
+  else
+  {
+   ch = format[fpos++];
+   if (ch == 's')
+    bpos += strcpy(&buffer[bpos], KPRINTF_BUFFER_SIZE - bpos, (char*)arg);
+   else if (ch == '%')
+    buffer[bpos++] = '%';
+   else if (ch == 'i')
+    bpos += int_to_str(&buffer[bpos], KPRINTF_BUFFER_SIZE - bpos, *((int*)arg));
+   else if (ch == 'x')
+    bpos += int_to_hex_str(&buffer[bpos], KPRINTF_BUFFER_SIZE - bpos, *((int*)arg));
+   else if (ch == 'o')
+    bpos += int_to_oct_str(&buffer[bpos], KPRINTF_BUFFER_SIZE - bpos, *((int*)arg));
+   else if (ch == 'X') {
+    //arg is expected to be a pointer we need to further dereference.
+    bpos += unsigned_long_long_to_hex(&buffer[bpos], KPRINTF_BUFFER_SIZE - bpos, *llu);
+   } else if (ch == 'U') {
+    bpos += unsigned_long_long_to_str(&buffer[bpos], KPRINTF_BUFFER_SIZE - bpos, *llu);
+   } else
+   {
+    puts("invalid char ");
+    putch(ch);
+    puts(" passed to kprintf\n");
+   }
+
+   arg_offset++;
+   arg = (void *)(&format + arg_offset);
+   llu = (unsigned long long*) *(&format + arg_offset);
+  }
+ }
+
+ buffer[bpos] = '\0';
+ puts(buffer);
+}
+
+int unsigned_long_long_to_hex(char *buffer, int max_size, unsigned long long number)
+{
+ return ull_number_to_str(buffer, max_size, number, BASE_HEX);
+}
+
+int unsigned_long_long_to_str(char *buffer, int max_size, unsigned long long number) {
+ return ull_number_to_str(buffer, max_size, number, BASE_DECIMAL);
+}
+
+int ull_number_to_str(char *buffer, int max_size, unsigned long long number, int base) {
+
+ int bufpos = 0;
+
+ unsigned int lo_byte = (unsigned int) number;
+ unsigned int hi_byte = (unsigned int) (number >> 32);
+
+ bufpos = number_to_str(buffer, max_size, lo_byte, base);
+ bufpos += number_to_str(buffer + bufpos, max_size, hi_byte, base);
+
+ return bufpos;
+
+}
+
+#define NUMERIC_BUFF_SIZE (11 * (ADDRESS_SIZE / 32))
+
+int number_to_str(char *buffer, int max_size, int number, int base)
+{
+ char *char_map = "0123456789ABCDEF";
+
+ int remain = 0;
+ char buff_stack[NUMERIC_BUFF_SIZE];
+ int stk_pnt = 0;
+ int bpos = 0;
+
+ /* with this method of parsing, the digits come out backwards */
+ do 
+ {
+  if (stk_pnt > NUMERIC_BUFF_SIZE)
+  {
+   puts("Number has too many digits to be printed. Increasse NUMBERIC_BUFF_SIZE\n");
+   return 0;
+  }
+
+  remain = number % base;
+  number = number / base;
+  buff_stack[stk_pnt++] = char_map[remain];
+ } while (number > 0);
+
+ /* before writing...ensure we have enough room */
+ if (stk_pnt > max_size)
+ {
+  //error. do something?
+  puts("number_to_str passed number with too many digits to go into buffer\n");
+  //printf("error. stk_pnt > max_size (%d > %d)\n", stk_pnt, max_size);
+  return 0;
+ }
+
+ /* reorder */
+ while (stk_pnt > 0)
+  buffer[bpos++] = buff_stack[--stk_pnt];
+
+ return bpos;
+}
+

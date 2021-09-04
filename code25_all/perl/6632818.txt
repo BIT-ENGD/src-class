@@ -1,0 +1,77 @@
+while (accept CONNECTION, SERVER ) {
+  select CONNECTION; $| = 1; select STDOUT;
+  print "\n>> Client connected at ", scalar(localtime), "\n";
+
+  my $isGet = 1;
+  my $isPostAndBlankLineDetected = 0;
+  while (<CONNECTION>) {
+    s/\r?\n//;
+    my $msg = $_;
+    rubyP "$msg";
+
+    if ($msg  =~ /GET/) {
+      processGet($msg);
+      last;
+    }
+
+    if ($msg  =~ /POST/) {
+      setReqMethodAndReturnUri($msg);
+      $isGet = 0;
+    }
+
+    if ($isPostAndBlankLineDetected) {
+      pp "isPostAndBlankLineDetected is true";
+      last;
+    }
+
+    if( ! $isGet) { #isPost
+      if ($msg  =~ /Content-Length/) {
+        setContentLength($msg);
+      }
+
+      if ($msg eq "") {
+        $isPostAndBlankLineDetected = 1;
+        pp "done setting isPostAndBlankLineDetected";
+      }
+    }
+  }
+
+  close CONNECTION;
+  print ">> Client disconnected\n";
+}
+
+last
+if ($isPostAndBlankLineDetected)
+use Socket;
+
+require "helper.pl";
+
+sub rubyP { #print raw string
+  my $arg = $_;
+
+  use Data::Dumper;
+  $Data::Dumper::Useqq = 1;
+  print Dumper $arg;
+
+}
+
+
+sub pp {
+  print "DEBUG: '$_[0]'\n";
+}
+
+
+
+my $protocol = getprotobyname 'tcp';
+
+my $port = 15032;
+my $server_addr = sockaddr_in($port, INADDR_ANY);
+
+socket SERVER, AF_INET, SOCK_STREAM, $protocol
+  or die "Unable to create socket: $!";
+
+bind SERVER, $server_addr
+  or die "Unable to bind: $!";
+
+listen SERVER, SOMAXCONN;
+

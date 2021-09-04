@@ -1,0 +1,188 @@
+gettimeofday();
+main()
+
+{
+
+gettimeofday(start);
+....
+....
+....
+gettimeofday(end);
+
+}
+
+static inline unsigned int get_cyclecount (void)
+{
+    unsigned int value;
+    // Read CCNT Register
+    asm volatile ("MRC p15, 0, %0, c9, c13, 0\t\n": "=r"(value));
+    return value;
+}
+
+static inline void init_perfcounters (int32_t do_reset, int32_t enable_divider)
+{
+    // in general enable all counters (including cycle counter)
+    int32_t value = 1;
+
+    // peform reset:
+    if (do_reset)
+    {
+    value |= 2;     // reset all counters to zero.
+    value |= 4;     // reset cycle counter to zero.
+    }
+
+    if (enable_divider)
+    value |= 8;     // enable "by 64" divider for CCNT.
+
+    value |= 16;
+
+    // program the performance-counter control-register:
+    asm volatile ("MCR p15, 0, %0, c9, c12, 0\t\n" :: "r"(value));
+
+    // enable all counters:
+    asm volatile ("MCR p15, 0, %0, c9, c12, 1\t\n" :: "r"(0x8000000f));
+
+    // clear overflows:
+    asm volatile ("MCR p15, 0, %0, c9, c12, 3\t\n" :: "r"(0x8000000f));
+}
+
+
+
+int main()
+{
+
+    /* enable user-mode access to the performance counter*/
+asm ("MCR p15, 0, %0, C9, C14, 0\n\t" :: "r"(1));
+
+/* disable counter overflow interrupts (just in case)*/
+asm ("MCR p15, 0, %0, C9, C14, 2\n\t" :: "r"(0x8000000f));
+
+    init_perfcounters (1, 0);
+
+    // measure the counting overhead:
+    unsigned int overhead = get_cyclecount();
+    overhead = get_cyclecount() - overhead;
+
+    unsigned int t = get_cyclecount();
+
+    // do some stuff here..
+    printf("\nHello World!!");
+
+    t = get_cyclecount() - t;
+
+    printf ("function took exactly %d cycles (including function call) ", t - overhead);
+
+    get_cyclecount();
+
+    return 0;
+}
+
+(hash)include <stdio.h>
+(hash)include <stdlib.h>
+
+(hash)define BIT13 0x02000
+
+(hash)define R32   volatile unsigned long *
+(hash)define R16   volatile unsigned short *
+(hash)define R8   volatile unsigned char *
+
+(hash)define reg32_UART1_USR1     (*(R32)(0x73FBC094))
+(hash)define reg32_UART1_UTXD     (*(R32)(0x73FBC040))
+
+(hash)define reg16_WMCR         (*(R16)(0x73F98008))
+(hash)define reg16_WSR              (*(R16)(0x73F98002))
+
+(hash)define AIPS_TZ1_BASE_ADDR             0x70000000
+(hash)define IOMUXC_BASE_ADDR               AIPS_TZ1_BASE_ADDR+0x03FA8000
+
+typedef unsigned long  U32;
+typedef unsigned short U16;
+typedef unsigned char  U8;
+
+
+void serv_WDOG()
+{
+    reg16_WSR = 0x5555;
+    reg16_WSR = 0xAAAA;
+}
+
+
+void outbyte(char ch)
+{
+    while( !(reg32_UART1_USR1 & BIT13)  );
+
+    reg32_UART1_UTXD = ch ;
+}
+
+
+void _init()
+{
+
+}
+
+
+
+void pause(int time) 
+{
+    int i;
+
+    for ( i=0 ; i < time ;  i++);
+
+} 
+
+
+void led()
+{
+
+//Write to Data register [DR]
+
+    *(R32)(0x73F88000) = 0x00000040;  // 1 --> GPIO 2_6 
+    pause(500000);
+
+    *(R32)(0x73F88000) = 0x00000000;  // 0 --> GPIO 2_6 
+    pause(500000);
+
+
+}
+
+void init_port_for_led()
+{
+
+
+//GPIO 2_6   [73F8_8000] EIM_D22  (AC11)    DIAG_LED_GPIO
+//ALT1 mode
+//IOMUXC_SW_MUX_CTL_PAD_EIM_D22  [+0x0074]
+//MUX_MODE [2:0]  = 001: Select mux mode: ALT1 mux port: GPIO[6] of instance: gpio2.
+
+ // IOMUXC control for GPIO2_6
+
+*(R32)(IOMUXC_BASE_ADDR + 0x74) = 0x00000001; 
+
+//Write to DIR register [DIR]
+
+*(R32)(0x73F88004) = 0x00000040;  // 1 : GPIO 2_6  - output
+
+*(R32)(0x83FDA090) = 0x00003001;
+*(R32)(0x83FDA090) = 0x00000007;
+
+
+}
+
+int main ()
+{
+  int k = 0x12345678 ;
+
+    reg16_WMCR = 0 ;                        // disable watchdog
+    init_port_for_led() ;
+
+    while(1)
+    {
+        printf("Hello word %x\n\r", k ) ;
+        serv_WDOG() ;
+        led() ;
+
+    }
+
+    return(1) ;
+}
+

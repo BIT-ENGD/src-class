@@ -1,0 +1,96 @@
+# echoserver.py
+
+from cogen.core import sockets, schedulers, proactors
+from cogen.core.coroutines import coroutine
+import sys, socket
+
+port = 1200
+
+@coroutine
+def server():
+    srv = sockets.Socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    addr = ('0.0.0.0', port)
+    srv.bind(addr)
+    srv.listen(64)
+    print "Listening on", addr
+    while 1:
+        conn, addr = yield srv.accept()
+        m.add(handler, args=(conn, addr))
+
+client_count = 0
+
+@coroutine
+def handler(sock, addr):
+    global client_count
+    client_count += 1
+    print "SERVER: [connect] clients=%d" % client_count
+    fh = sock.makefile()
+    yield fh.write("WELCOME TO (modified) ECHO SERVER !\r\n")
+    yield fh.flush()
+    try:
+        while 1:
+            line = yield fh.readline(1024)
+            #print `line`
+            if line.strip() == 'exit':
+                yield fh.write("GOOD BYE")
+                yield fh.close()
+                raise sockets.ConnectionClosed('goodbye')
+            yield fh.write(line)
+            yield fh.flush()
+    except sockets.ConnectionClosed:
+        pass
+    fh.close()
+    sock.close()
+    client_count -= 1
+    print "SERVER: [disconnect] clients=%d" % client_count
+
+m = schedulers.Scheduler()
+m.add(server)
+m.run()
+
+# echoc.py
+
+import sys, os, traceback, socket, time
+from cogen.common import *
+from cogen.core import sockets
+
+port, conn_count = 1200, 10000
+clients = 0
+
+@coroutine
+def client(num):
+    sock = sockets.Socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    reader = None
+    try:
+        try:
+            # remove this sleep and we start to see 
+            # 'connection reset by peer' errors
+            time.sleep(0.001)
+            yield sock.connect(("127.0.0.1", port))
+        except Exception:
+            print 'Error in client # ', num
+            traceback.print_exc()
+            return
+        global clients
+        clients += 1
+        print "CLIENT #=%d [connect] clients=%d" % (num,clients)
+        reader = sock.makefile('r')
+        while 1:
+            line = yield reader.readline(1024)
+    except sockets.ConnectionClosed:
+        pass
+    except:
+        print "CLIENT #=%d got some other error" % num
+    finally:
+        if reader: reader.close()
+        sock.close()
+        clients -= 1
+        print "CLIENT #=%d [disconnect] clients=%d" % (num,clients)
+
+m = Scheduler()
+for i in range(0, conn_count):
+    m.add(client, args=(i,))
+m.run()
+

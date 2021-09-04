@@ -1,0 +1,97 @@
+ Protected Sub btnupload_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles btnUpload.Click
+    If (IsPostBack) Then
+        HandleUploadedFile()
+        Dim savePath As String = "Images\"
+        If (fileUpload.HasFile) Then
+            Dim fileName As String = fileUpload.FileName
+            savePath = Server.MapPath(savePath) + fileName
+            fileUpload.SaveAs(savePath)
+            Me.Label1.Text = "Your file was saved as " & fileName
+            adp.Insert(fileUpload.FileName)
+        Else
+            Me.Label1.Text = "You did not specify a file to upload."
+        End If
+    End If
+End Sub
+
+(fileUpload.HasFile)=false
+Private Sub HandleUploadedFile()
+    ' get the root of the web site 
+    Dim root As String = Server.MapPath("~/")
+
+    ' clean up the path 
+    If Not root.EndsWith("\") Then
+        root += "\"
+    End If
+
+    ' make a folder to store the images in 
+    Dim fileDirectory As String = root & "Images/"
+
+    ' create the folder if it does not exist 
+    If Not System.IO.Directory.Exists(fileDirectory) Then
+        System.IO.Directory.CreateDirectory(fileDirectory)
+    End If
+
+    ' make a link to the new file 
+    Dim link As String = "<a href='Images/{0}' target='_blank'>{1}</a>{2}{3}"
+
+    ' loop through the file in the request 
+    For i As Integer = 0 To Request.Files.Count - 1
+
+        ' get the file instance 
+        Dim fi As HttpPostedFile = Request.Files.[Get](i)
+
+        ' create a byte array to store the file bytes 
+        Dim fileBytes As Byte() = New Byte(fi.ContentLength - 1) {}
+
+        ' fill the byte array 
+        Using stream As System.IO.Stream = fi.InputStream
+            stream.Read(fileBytes, 0, fi.ContentLength)
+        End Using
+
+        ' create a random file name 
+        Dim fileName As String = Guid.NewGuid().ToString()
+
+        'write the original file to the file system 
+        File.WriteAllBytes(fileDirectory + fileName & ".jpg", fileBytes)
+        litText.Text += String.Format(link, fileName & ".jpg", fileName & " Original", "<br/>", "")
+
+        ' write the resized file to the file system 
+        File.WriteAllBytes(fileDirectory + fileName & "_small.jpg", ResizeImageFile(fileBytes, 100))
+        litText.Text += String.Format(link, fileName & "_small.jpg", fileName & " Small", "<br/>", "<br/>")
+
+        ' cleanup 
+        litText.Visible = True
+        fileBytes = Nothing
+    Next
+End Sub
+Private Shared Function ResizeImageFile(ByVal imageFile As Byte(), ByVal targetSize As Integer) As Byte()
+    Using oldImage As System.Drawing.Image = System.Drawing.Image.FromStream(New MemoryStream(imageFile))
+        Dim newSize As Size = CalculateDimensions(oldImage.Size, targetSize)
+        Using newImage As New Bitmap(newSize.Width, newSize.Height, PixelFormat.Format24bppRgb)
+            Using canvas As Graphics = Graphics.FromImage(newImage)
+                canvas.SmoothingMode = SmoothingMode.AntiAlias
+                canvas.InterpolationMode = InterpolationMode.HighQualityBicubic
+                canvas.PixelOffsetMode = PixelOffsetMode.HighQuality
+                canvas.DrawImage(oldImage, New Rectangle(New Point(0, 0), newSize))
+                Dim m As New MemoryStream()
+                newImage.Save(m, ImageFormat.Jpeg)
+                Return m.GetBuffer()
+            End Using
+        End Using
+    End Using
+End Function
+Private Shared Function CalculateDimensions(ByVal oldSize As Size, ByVal targetSize As Integer) As Size
+    Dim newSize As New Size()
+    If oldSize.Height > oldSize.Width Then
+        newSize.Width = CInt((oldSize.Width * (CSng(targetSize) / CSng(oldSize.Height))))
+        newSize.Height = targetSize
+    Else
+        newSize.Width = targetSize
+        newSize.Height = CInt((oldSize.Height * (CSng(targetSize) / CSng(oldSize.Width))))
+    End If
+    Return newSize
+End Function
+
+End Class
+

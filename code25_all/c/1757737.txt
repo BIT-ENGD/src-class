@@ -1,0 +1,57 @@
+SHCNE_UPDATEIMAGE
+WM_SETTINGCHANGE
+#if 1
+    // First attempt: using shell functions
+    wchar_t icon_path[MAX_PATH];
+    int icon_index;
+    UINT icon_flags;
+
+    IShellFolder *desktop_folder;
+    IShellFolder *sub_folder;
+    IExtractIcon *extract_icon;
+    LPITEMIDLIST pidl;
+
+    SHGetDesktopFolder(&desktop_folder);
+
+    wchar_t *folder_path = L"C:\\Documents and Settings\\All Users\\Start Menu\\Programs\\MyCompany\\";
+    desktop_folder->ParseDisplayName(NULL, NULL, folder_path, NULL, &pidl,
+        NULL);
+    desktop_folder->BindToObject(pidl, NULL, IID_IShellFolder,
+        (void**) &sub_folder);
+    sub_folder->ParseDisplayName(NULL, NULL, L"MyApp.lnk", NULL, &pidl,
+        NULL);
+
+    sub_folder->GetUIObjectOf(NULL, 1, (LPCITEMIDLIST*) &pidl,
+        IID_IExtractIcon, NULL, (void**) &extract_icon);
+
+    extract_icon->GetIconLocation(0, icon_path, MAX_PATH,
+        &icon_index, &icon_flags);
+
+    SHFILEINFO sfi;
+    DWORD_PTR result = SHGetFileInfo(shortcut_path, 0, &sfi, sizeof(sfi), 
+        SHGFI_SYSICONINDEX | SHGFI_LARGEICON);
+    SHUpdateImage(icon_path, icon_index, icon_flags, sfi.iIcon);
+    // sfi.iIcon should be correct, but we'll try both, just for fun...
+    SHChangeNotify(SHCNE_UPDATEIMAGE, SHCNF_DWORD, NULL,
+        (LPCVOID) icon_index);
+    SHChangeNotify(SHCNE_UPDATEIMAGE, SHCNF_DWORD, NULL,
+        (LPCVOID) sfi.iIcon);
+#else
+    // Second attempt: broadcasting a settings change
+    HKEY reg;
+    RegCreateKeyEx(HKEY_CURRENT_USER,
+        L"Control Panel\\Desktop\\WindowMetrics", 0, NULL, 0,
+        KEY_SET_VALUE, NULL, &reg, NULL);
+    DWORD value;
+    value = 33;
+    RegSetValueEx(reg, L"Shell Icon Size", 0, REG_DWORD, (BYTE*) &value,
+        sizeof(value));
+    value = 32;
+    SendMessage(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETNONCLIENTMETRICS,
+        (int) L"WindowMetrics");
+    RegSetValueEx(reg, L"Shell Icon Size", 0, REG_DWORD, (BYTE*) &value,
+        sizeof(value));
+    SendMessage(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETNONCLIENTMETRICS,
+        (int) L"WindowMetrics");
+#endif
+

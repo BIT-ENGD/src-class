@@ -1,0 +1,112 @@
+State
++RTS -K100M
+-- Lone algebraic data type holding the simulation configuration.
+data SimConfig = SimConfig {
+        numDimensions :: !Int            -- strict
+    ,   numWalkers    :: !Int            -- strict
+    ,   simArray      :: IntMap [Double] -- strict spine
+    ,   logP          :: Seq Double      -- strict spine
+    ,   logL          :: Seq Double      -- strict spine
+    ,   pairStream    :: [(Int, Int)]    -- lazy (infinite) list of random vals
+    ,   doubleStream  :: [Double]        -- lazy (infinite) list of random vals
+    } deriving Show
+
+-- The transition kernel for the simulation.
+simKernel :: State SimConfig ()
+simKernel = do
+    config <- get
+    let arr   = simArray      config
+    let n     = numWalkers    config
+    let d     = numDimensions config
+    let rstm0 = pairStream    config
+    let rstm1 = doubleStream  config
+    let lp    = logP          config
+    let ll    = logL          config
+
+    let (a, b)    = head rstm0                           -- uses random stream    
+    let z0 = head . map affineTransform $ take 1 rstm1   -- uses random stream
+            where affineTransform a = 0.5 * (a + 1) ^ 2
+
+
+    let proposal  = zipWith (+) r1 r2
+            where r1    = map (*z0)     $ fromJust (IntMap.lookup a arr)
+                  r2    = map (*(1-z0)) $ fromJust (IntMap.lookup b arr)
+
+    let logA = if val > 0 then 0 else val
+            where val = logP_proposal + logL_proposal - (lp `index` (a - 1)) - (ll `index` (a - 1)) + ((fromIntegral n - 1) * log z0)
+                  logP_proposal = logPrior proposal
+                  logL_proposal = logLikelihood proposal
+
+    let cVal       = (rstm1 !! 1) <= exp logA            -- uses random stream
+
+    let newConfig = SimConfig { simArray = if   cVal
+                                           then IntMap.update (\_ -> Just proposal) a arr
+                                           else arr
+                              , numWalkers = n
+                              , numDimensions = d
+                              , pairStream   = drop 1 rstm0
+                              , doubleStream = drop 2 rstm1
+                              , logP = if   cVal
+                                       then Seq.update (a - 1) (logPrior proposal) lp
+                                       else lp
+                              , logL = if   cVal
+                                       then Seq.update (a - 1) (logLikelihood proposal) ll
+                                       else ll
+                              }
+
+    put newConfig
+
+main = do 
+    -- (some stuff omitted)
+    let sim = logL $ (`execState` initConfig) . replicateM 100000 $ simKernel
+    print sim
+
+System.Random
+(,)
+State
+(,)
+simKernel
+pairStream
+  1,220,911,360 bytes allocated in the heap
+     787,192,920 bytes copied during GC
+     186,821,752 bytes maximum residency (10 sample(s))
+       1,030,400 bytes maximum slop
+             449 MB total memory in use (0 MB lost due to fragmentation)
+
+                                    Tot time (elapsed)  Avg pause  Max pause
+  Gen  0      2159 colls,     0 par    0.80s    0.81s     0.0004s    0.0283s
+  Gen  1        10 colls,     0 par    0.96s    1.09s     0.1094s    0.4354s
+
+  INIT    time    0.00s  (  0.00s elapsed)
+  MUT     time    0.95s  (  0.97s elapsed)
+  GC      time    1.76s  (  1.91s elapsed)
+  EXIT    time    0.00s  (  0.00s elapsed)
+  Total   time    2.72s  (  2.88s elapsed)
+
+  %GC     time      64.9%  (66.2% elapsed)
+
+  Alloc rate    1,278,074,521 bytes per MUT second
+
+  Productivity  35.1% of total user, 33.1% of total elapsed
+
+State
+-fprof-auto
+COST CENTRE                       MODULE                             no.     entries  %time %alloc   %time %alloc
+
+MAIN                              MAIN                                58           0    0.0    0.0   100.0  100.0
+ main                             Main                               117           0    0.0    0.0   100.0  100.0
+  main.randomList                 Main                               147           1   62.0   55.5    62.0   55.5
+  main.arr                        Main                               142           1    0.0    0.0     0.0    0.0
+   streamToAssocList              Main                               143           1    0.0    0.0     0.0    0.0
+    streamToAssocList.go          Main                               146           5    0.0    0.0     0.0    0.0
+  main.pairList                   Main                               137           1    0.0    0.0     9.5   16.5
+   consPairStream                 Main                               138           1    0.7    0.9     9.5   16.5
+    consPairStream.ys             Main                               140           1    4.3    7.8     4.3    7.8
+    consPairStream.xs             Main                               139           1    4.5    7.8     4.5    7.8
+  main.initConfig                 Main                               122           1    0.0    0.0     0.0    0.0
+   logLikelihood                  Main                               163           0    0.0    0.0     0.0    0.0
+   logPrior                       Main                               161           5    0.0    0.0     0.0    0.0
+  main.sim                        Main                               118           1    1.0    2.2    28.6   28.1
+   simKernel                      Main                               120           0    4.8    5.1    27.6   25.8 
+
+randomList

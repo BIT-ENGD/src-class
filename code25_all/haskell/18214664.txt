@@ -1,0 +1,60 @@
+import Language.Haskell.Exts.Syntax
+import Language.Haskell.Exts 
+import Data.Map hiding (foldr, map)
+import Control.Monad.Trans
+
+increment :: Ord a => a -> Map a Int -> Map a Int
+increment a = insertWith (+) a 1
+
+fromName :: Name -> String
+fromName (Ident s) = s
+fromName (Symbol st) = st
+
+fromQName :: QName -> String
+fromQName (Qual _ fn) = fromName fn
+fromQName (UnQual n) = fromName n
+
+fromLiteral :: Literal -> String
+fromLiteral (Int int) = show int
+
+fromQOp :: QOp -> String
+fromQOp (QVarOp qn) = fromQName qn
+
+vars :: Exp -> Map String Int
+vars (List (x:xs)) = vars x
+vars (Lambda _ _ e1) = vars e1
+vars (EnumFrom e1) = vars e1
+vars (App e1 e2) = unionWith (+) (vars e1) (vars e2)
+vars (Let _ e1) = vars e1
+vars (NegApp e1) = vars e1
+vars (Var qn) = increment (fromQName qn) empty
+vars (Lit l) = increment (fromLiteral l) empty
+vars (Paren e1) = vars e1
+vars (InfixApp exp1 qop exp2) = increment (fromQOp qop) $ unionWith (+) (vars exp1) (vars exp2)
+
+
+
+match :: [Match] -> Map String Int
+match rhss = foldr (unionWith (+) ) empty (map (\(Match  a b c d e f) -> rHs e) rhss)
+
+rHS :: GuardedRhs -> Map String Int
+rHS (GuardedRhs _ _ e1) = vars e1
+
+rHs':: [GuardedRhs] -> Map String Int
+rHs' gr = foldr (unionWith (+)) empty (map (\(GuardedRhs a b c) -> vars c) gr)
+
+rHs :: Rhs -> Map String Int
+rHs (GuardedRhss gr) = rHs' gr
+rHs (UnGuardedRhs e1) = vars e1
+
+decl :: [Decl] -> Map String Int
+decl decls =  foldr (unionWith (+) ) empty (map fun decls )
+    where fun (FunBind f) = match f
+          fun _ = empty
+
+pMod' :: (ParseResult Module) -> Map String Int
+pMod' (ParseOk (Module _ _ _ _ _ _ dEcl)) = decl dEcl 
+
+pMod :: FilePath -> Map String Int
+pMod = pMod' . liftIO . parseFile 
+

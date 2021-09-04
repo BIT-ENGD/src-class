@@ -1,0 +1,137 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Diagnostics;
+
+namespace LockPlay {
+
+    static class RWLSExtension {
+        struct Disposable : IDisposable {
+            readonly Action _action;
+            public Disposable(Action action) {
+                _action = action;
+            }
+            public void Dispose() {
+                _action();
+            }
+        } // end struct
+        public static IDisposable ReadLock(this ReaderWriterLockSlim rwls) {
+            rwls.EnterReadLock();
+            return new Disposable(rwls.ExitReadLock);
+        }
+        public static IDisposable UpgradableReadLock(this ReaderWriterLockSlim rwls) {
+            rwls.EnterUpgradeableReadLock();
+            return new Disposable(rwls.ExitUpgradeableReadLock);
+        }
+        public static IDisposable WriteLock(this ReaderWriterLockSlim rwls) {
+            rwls.EnterWriteLock();
+            return new Disposable(rwls.ExitWriteLock);
+        }
+    } // end class
+
+    class Program {
+
+        class MonitorList<T> : List<T>, IList<T> {
+            object _syncLock = new object();
+            public MonitorList(IEnumerable<T> collection) : base(collection) { }
+            T IList<T>.this[int index] {
+                get {
+                    lock(_syncLock)
+                        return base[index];
+                }
+                set {
+                    lock(_syncLock)
+                        base[index] = value;
+                }
+            }
+        } // end class
+
+        class RWLSList<T> : List<T>, IList<T> {
+            ReaderWriterLockSlim _rwls = new ReaderWriterLockSlim();
+            public RWLSList(IEnumerable<T> collection) : base(collection) { }
+            T IList<T>.this[int index] {
+                get {
+                    try {
+                        _rwls.EnterReadLock();
+                        return base[index];
+                    } finally {
+                        _rwls.ExitReadLock();
+                    }
+                }
+                set {
+                    try {
+                        _rwls.EnterWriteLock();
+                        base[index] = value;
+                    } finally {
+                        _rwls.ExitWriteLock();
+                    }
+                }
+            }
+        } // end class
+
+        class RWLSExtList<T> : List<T>, IList<T> {
+            ReaderWriterLockSlim _rwls = new ReaderWriterLockSlim();
+            public RWLSExtList(IEnumerable<T> collection) : base(collection) { }
+            T IList<T>.this[int index] {
+                get {
+                    using(_rwls.ReadLock())
+                        return base[index];
+                }
+                set {
+                    using(_rwls.WriteLock())
+                        base[index] = value;
+                }
+            }
+        } // end class
+
+        static void Main(string[] args) {
+            const int ITERATIONS = 100;
+            const int WORK = 10000;
+            const int WRITE_THREADS = 4;
+            const int READ_THREADS = WRITE_THREADS * 3;
+
+            // create data - first List is for comparison only... not thread safe
+            int[] copy = new int[WORK];
+            IList<int>[] l = { new List<int>(copy), new MonitorList<int>(copy), new RWLSList<int>(copy), new RWLSExtList<int>(copy) };
+
+            // test each list
+            Thread[] writeThreads = new Thread[WRITE_THREADS];
+            Thread[] readThreads = new Thread[READ_THREADS];
+            foreach(var list in l) {
+                Stopwatch sw = Stopwatch.StartNew();
+                for(int k=0; k < ITERATIONS; k++) {
+                    for(int i = 0; i < writeThreads.Length; i++) {
+                        writeThreads[i] = new Thread(p => {
+                            IList<int> il = p as IList<int>;
+                            int c = il.Count;
+                            for(int j = 0; j < c; j++) {
+                                il[j] = j;
+                            }
+                        });
+                        writeThreads[i].Start(list);
+                    }
+                    for(int i = 0; i < readThreads.Length; i++) {
+                        readThreads[i] = new Thread(p => {
+                            IList<int> il = p as IList<int>;
+                            int c = il.Count;
+                            for(int j = 0; j < c; j++) {
+                                int temp = il[j];
+                            }
+                        });
+                        readThreads[i].Start(list);
+                    }
+                    for(int i = 0; i < readThreads.Length; i++)
+                        readThreads[i].Join();
+                    for(int i = 0; i < writeThreads.Length; i++)
+                        writeThreads[i].Join();
+                };
+                sw.Stop();
+                Console.WriteLine("time: {0} class: {1}", sw.Elapsed, list.GetType());
+            }
+            Console.WriteLine("DONE");
+            Console.ReadLine();
+        }
+    } // end class
+} // end namespace
+
+lock

@@ -1,0 +1,71 @@
+Actor.actorOf
+Actor.register
+Actor.remote
+import collection.mutable.{ArrayBuffer, HashSet}
+import akka.actor.Actor
+
+sealed trait Event    
+/** Join tells the peer that there is a new peer and 
+  * requests a list of known peers and messages. */
+case class Join(user: String, ipAddress: String) extends Event
+/** Join tells the peer that there is a new peer. */
+case class Register(user: String, ipAddress: String) extends Event
+case class Leave(user: String, ipAddress: String) extends Event    
+case object GetChatLog extends Event
+case object GetPeers extends Event
+case class ChatLog(log: Seq[Message]) extends Event
+case class Peers(peers: Seq[Peer]) extends Event
+case class Message(sender: String, time: Long, message: String) extends Event
+
+class ChatPeer(val name: String, ipAddress: String) extends Actor {
+  val chat = Actor.remote.actorFor("chat:service", ipAddress, 2552) //This is not what I want...
+  val messages = ArrayBuffer[Message]()
+  val peers = HashSet[Peer]()
+
+  def join = {
+    (chat ? Join(name, ipAddress)).as[(Seq[Peer], Seq[Message])]
+  }
+
+  def register = chat ! Register(name, ipAddress)
+
+  def leave = chat ! Leave(name, ipAddress)
+
+  def send(message: String) = {
+    val msg = Message(name, System.currentTimeMillis(), message)
+    messages += msg
+    chat ! msg
+  }
+
+  def getMessages = (chat ? GetChatLog).as[ChatLog]
+    .getOrElse(throw new Exception("Couldn't get the chat log from ChatServer"))
+
+  def getPeers = (chat ? GetPeers).as[Peers]
+    .getOrElse(throw new Exception("Couldn't get the peers from ChatServer"))
+
+
+  def receive = {
+    case msg@Message(from, time, message) =>
+      println(msg)
+      messages += msg
+
+    case GetChatLog =>
+      self reply messages
+
+    case GetPeers =>
+      self reply peers
+
+    case Join =>
+      peers += Peer(name, ipAddress)
+      self reply ((peers, messages))
+
+    case Register(user, ipAddress) =>
+      peers += Peer(user, ipAddress)
+
+    case Leave(user, ipAddress) =>
+      peers -= Peer(user, ipAddress)
+
+  }
+}
+
+case class Peer(name: String, ipAddress: String)
+

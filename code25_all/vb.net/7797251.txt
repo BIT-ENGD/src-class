@@ -1,0 +1,71 @@
+Private Sub SetupVirtualSerialPort()
+  Dim portName As String = "COM" + (m_DeviceContext * -1).ToString
+  Const baud As Int32 = 9600    '7680000
+  Const parity As Parity = parity.None
+  Const databits As Int32 = 8
+  Const stopbits As StopBits = stopbits.One
+  m_SerialPort = New SerialPort(portName, baud, parity, databits, stopbits)
+  m_SerialPort.WriteTimeout = VSPtimeout
+  m_SerialPort.ReadTimeout = VSPtimeout
+  m_SerialPort.ReadBufferSize = 2 * RETURN_BUFFER_SIZE
+  m_SerialPort.WriteBufferSize = 2 * COMMAND_BUFFER_SIZE
+  m_SerialPort.Open()
+
+  ' Register event handlers
+  AddHandler m_SerialPort.ErrorReceived, AddressOf m_DriverInterface.Handle_VSP_Error
+End Sub
+
+
+Public Function WriteReadVSPort(ByVal commandLength As Int32, ByVal returnLength As Int32)             As Int32
+
+  Const RetryLimit As Int32 = 5
+  Dim NumberRetries As Int32 = 0
+  Dim Offset As Int32 = 0
+  Dim ExceptionOccurred As Boolean = False
+  Dim NumberBytes As Int32 = 0
+
+  Try '  Writing
+    m_SerialPort.Write(m_CommandBuffer, 0, commandLength)
+  Catch exc As InvalidOperationException
+    MessageBox.Show("InvalidOperationException", Application.ProductName)
+    ExceptionOccurred = True
+  Catch exc As TimeoutException
+    MessageBox.Show("TimeoutException", Application.ProductName)
+    ExceptionOccurred = True
+  End Try
+
+  If Not ExceptionOccurred Then
+
+    Try ' Reading
+
+      ' Working around a problem here: reads are returning fewer 
+      ' bytes than requested, though not signalling a timeout exception.
+      ' Therefore, we retry if we got fewer bytes than expected, up to five times.
+      While NumberRetries < RetryLimit And returnLength > Offset
+
+        NumberBytes = m_SerialPort.Read(m_ReturnBytes, Offset, returnLength - Offset)
+        Offset += NumberBytes
+        NumberRetries += 1
+        If returnLength <> NumberBytes Then
+          System.Diagnostics.Debug.Print("Number of bytes read (" & NumberBytes &
+            ") not what was requested (" & returnLength & "). Accumulated " & Offset)
+        End If
+
+      End While
+
+    Catch exc As InvalidOperationException
+      MessageBox.Show("InvalidOperationException", Application.ProductName)
+      ExceptionOccurred = True
+    Catch exc As TimeoutException
+      MessageBox.Show("TimeoutException", Application.ProductName)
+      ExceptionOccurred = True
+    End Try
+
+  If ExceptionOccurred Then
+    Return 1
+  Else
+    Return 0
+  End If
+
+End Function
+

@@ -1,0 +1,348 @@
+ALTER PROCEDURE [dbo].[slot_sp_EngineerTimeslots_Group]
+    @PROPREF        VARCHAR(50),    
+    @PRIORITYCODE   VARCHAR(3),
+    @JOBLENGTH      INT = 0,
+    @TIMESLOT       VARCHAR(3)  
+
+AS
+
+SET NOCOUNT ON
+
+    DECLARE @TOTALDAYS          INT
+    DECLARE @TOTALDAYSTARGET    INT
+    DECLARE @COUNTER            INT
+    DECLARE @STARTTIME          DATETIME
+    DECLARE @MIDDAYTIME         DATETIME
+    DECLARE @ENDTIME            DATETIME
+    DECLARE @STARTDATE          DATETIME
+    DECLARE @iSTARTDATE         DATETIME
+    DECLARE @CONTRACT           VARCHAR(10)
+
+    SET @iSTARTDATE = GETDATE()
+    SET @STARTDATE = CONVERT(DATETIME,CONVERT(VARCHAR(10),@iSTARTDATE,120) + ' 00:00:00',120)
+
+    SELECT @CONTRACT = CONTRACT FROM [tbl_property] WHERE [PROPREF] = @PROPREF
+
+-- Get the contract Start/MidDay/End times
+Select 
+    @STARTTIME = CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), ContractStartTime, 108),
+    @MIDDAYTIME = CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), ContractMiddayTime, 108), 
+    @ENDTIME = CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), ContractEndTime, 108) 
+From 
+    [tbl_contract]
+WHERE 
+    [tbl_contract].[CONTRACT]=@CONTRACT     
+
+-- Get Priority Times
+Select 
+    @TOTALDAYS =
+        CASE 
+            WHEN ROUND(NEARCOMPLETEDURATION/24,0) < NEARCOMPLETEDURATION/24 THEN ROUND(NEARCOMPLETEDURATION/24,0) + 1
+            ELSE ROUND(NEARCOMPLETEDURATION/24,0) 
+        END,
+    @TOTALDAYSTARGET =
+        CASE 
+            WHEN ROUND(COMPLETEDURATION/24,0) < COMPLETEDURATION/24 THEN ROUND(COMPLETEDURATION/24,0) + 1
+            ELSE ROUND(COMPLETEDURATION/24,0)  
+        END 
+FROM [ltbl_order_priority]
+WHERE
+    [ltbl_order_priority].[CONTRACT] = @CONTRACT
+AND [ltbl_order_priority].[PRIORITYCODE] = @PRIORITYCODE
+
+-- Not sure what this is for yet butits going to be fun!
+SET @COUNTER = 0
+
+BEGIN
+
+--Create Temp Table
+
+CREATE TABLE 
+    #TempEngineer 
+        (
+            TempEngineer varchar(30), 
+            BookedDate DateTime, 
+            BookedFromTime DateTime, 
+            BookedToTime DateTime, 
+            TotalDays INT,  
+            JobMins INT, 
+            MinPMTime DateTime, 
+            BTime DATETIME
+        )
+
+While (@COUNTER <= @TOTALDAYS)
+    Begin
+--Get details of active engineers from engineer table
+
+    INSERT #TempEngineer 
+            SELECT   
+                    dbo.tbl_engineer.ENGINEER AS Engineer, 
+                    @STARTDATE AS StartDate, 
+                    CASE
+                        WHEN ISNULL(dbo.tbl_engineer.STARTTIME,'') = '' THEN CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), @STARTTIME, 108) 
+                        ELSE CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), dbo.tbl_engineer.STARTTIME, 108)
+                    END AS StartTime,
+                    CASE
+                        WHEN ISNULL( dbo.tbl_engineer.ENDTIME,'') = '' THEN CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), @ENDTIME, 108)
+                        ELSE CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), dbo.tbl_engineer.ENDTIME, 108)
+                    END AS EndTime, 
+                    @TOTALDAYS AS TotalDays, 
+                    NULL AS JobMins,
+                    NULL AS MinPMTime,
+                    NULL AS BTime
+            FROM    dbo.tbl_engineer 
+            WHERE   dbo.tbl_engineer.ACTIVE = 1
+            AND     Engineer NOT IN (SELECT Engineer    
+                    FROM  slot_tbl_Schedule  
+                    WHERE      bookedDate <= DATEADD(DAY, @TOTALDAYS, @STARTDATE)
+                    AND        bookedDate >= @STARTDATE)
+
+
+--Get Details of Free time form schedule table              
+    INSERT #TempEngineer 
+            SELECT     
+                    slot_tbl_Schedule.Engineer AS Engineer, 
+                    slot_tbl_Schedule.BookedDate AS BookDate,
+                    slot_tbl_Schedule.FromTime AS FromTime, 
+                    ISNULL(slot_tbl_Schedule.ToTime, CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), ENDTIME, 108)) AS ToTime, 
+                    @TOTALDAYS AS TotalDays, 
+                    NULL AS JobMins,
+                    NULL AS MinPMTime,
+                    NULL AS BTime
+
+            FROM       
+                    (
+                        SELECT     
+                                Engineer, 
+                                BookedDate, 
+                                ToTime AS FromTime,
+                                (SELECT     MIN(fromTime) FROM slot_tbl_Schedule x WHERE x.engineer = s1.engineer AND x.bookedDate = s1.bookedDate AND x.fromTime >= s1.ToTime) AS ToTime 
+                        FROM    slot_tbl_Schedule s1 
+                        WHERE   CONVERT(DATETIME,CONVERT(VARCHAR(10),bookedDate,120),120) =  @STARTDATE 
+
+                        UNION ALL 
+
+                        SELECT     e2.Engineer, s2.BookedDate,  CONVERT(VARCHAR(10), @STARTDATE, 120) + ' ' + CONVERT(VARCHAR(5), e2.StartTime, 114) AS FromTime, MIN(s2.FromTime) AS ToTime 
+                        FROM       tbl_engineer e2 INNER JOIN slot_tbl_Schedule s2 ON s2.engineer = e2.engineer                     
+                        WHERE      CONVERT(DATETIME,CONVERT(VARCHAR(10),s2.bookedDate,120),120) =  @STARTDATE   
+                        GROUP BY   e2.Engineer, s2.BookedDate, e2.StartTime 
+                        HAVING     MIN(s2.FromTime) > e2.StartTime
+                    )
+
+                slot_tbl_Schedule INNER JOIN dbo.tbl_engineer engineer ON engineer.ENGINEER = slot_tbl_Schedule.Engineer 
+
+        Select @COUNTER = @COUNTER + 1
+        Select @STARTDATE = DATEADD(Day, 1, @STARTDATE)
+
+
+    END -- While End
+
+END -- Temp Table End
+
+--Data from above select statements which is in the temp table  
+--
+CREATE TABLE 
+    #TempEngineerGroup 
+        (
+            AppointmentType VARCHAR(50),
+            BookedDate DateTime, 
+            BookedFromTime DateTime, 
+            BookedToTime DateTime, 
+            TotalDays INT,  
+            JobMins INT
+        )
+
+IF @TIMESLOT = 'AM'
+            INSERT INTO [#TempEngineerGroup] 
+            SELECT  'FreeTime' AS [AppointmentType], BookedDate, BookedFromTime, BookedToTime, TotalDays, DATEDIFF(mi,BookedFromTime, BookedToTime) AS [JobMins]
+            FROM #TempEngineer 
+            WHERE (DATEDIFF(mi,BookedFromTime, BookedToTime) >= @JOBLENGTH) 
+                AND (DATEDIFF(mi,BookedFromTime, BookedToTime) < 600) 
+                AND BookedFromTime < CONVERT(DATETIME,CONVERT(VARCHAR(10), BookedFromTime, 120) + ' ' + CONVERT(VARCHAR(5), @MIDDAYTIME, 114),120)
+
+            UNION
+
+            SELECT [slot_tbl_Schedule].[AppointmentType],[slot_tbl_Schedule].[BookedDate],[slot_tbl_Schedule].[FromTime],[slot_tbl_Schedule].[ToTime],0,[slot_tbl_Schedule].[JobMins]
+            FROM [slot_tbl_Schedule]
+            INNER JOIN [#TempEngineer] ON [slot_tbl_Schedule].[Engineer] = [#TempEngineer].[TempEngineer]
+            WHERE [slot_tbl_Schedule].[BookedDate] BETWEEN @iSTARTDATE AND DATEADD(dd,@TOTALDAYS,@iSTARTDATE)
+            ORDER BY BookedFromTime
+
+IF @TIMESLOT = 'AT'
+            INSERT INTO [#TempEngineerGroup] 
+            SELECT 'FreeTime' AS [AppointmentType], BookedDate, BookedFromTime, BookedToTime, TotalDays, DATEDIFF(mi,BookedFromTime, BookedToTime) AS JobMins 
+            FROM #TempEngineer 
+            WHERE (DATEDIFF(mi,BookedFromTime, BookedToTime) >= @JOBLENGTH) 
+                AND (DATEDIFF(mi,BookedFromTime, BookedToTime) < 600) 
+
+            UNION
+
+            SELECT [slot_tbl_Schedule].[AppointmentType], [slot_tbl_Schedule].[BookedDate],[slot_tbl_Schedule].[FromTime],[slot_tbl_Schedule].[ToTime],0,[slot_tbl_Schedule].[JobMins]
+            FROM [slot_tbl_Schedule]
+            INNER JOIN [#TempEngineer] ON [slot_tbl_Schedule].[Engineer] = [#TempEngineer].[TempEngineer]
+            WHERE [slot_tbl_Schedule].[BookedDate] BETWEEN @iSTARTDATE AND DATEADD(dd,@TOTALDAYS,@iSTARTDATE)
+            ORDER BY BookedFromTime
+
+IF @TIMESLOT = 'PM'
+            INSERT INTO [#TempEngineerGroup] 
+            SELECT 'FreeTime' AS [AppointmentType], BookedDate, BookedFromTime, BookedToTime, TotalDays, DATEDIFF(mi,BookedFromTime, BookedToTime) AS JobMins
+            FROM (
+                    SELECT TempEngineer, BookedDate, BookedFromTime AS BTime, BookedToTime, TotalDays, JobMins, MinPMTime,
+                            CASE
+                                WHEN BookedFromTime >=  CONVERT(DATETIME,CONVERT(VARCHAR(10), BookedFromTime, 120) + ' ' + CONVERT(VARCHAR(5), @MIDDAYTIME, 114),120) Then BookedFromTime
+                                WHEN BookedFromTime <  CONVERT(DATETIME,CONVERT(VARCHAR(10), BookedFromTime, 120) + ' ' + CONVERT(VARCHAR(5), @MIDDAYTIME, 114),120) Then MinPMTime
+                            END AS BookedFromTime
+                    FROM (
+                            SELECT  TempEngineer, BookedDate, BookedFromTime, BookedToTime, TotalDays, DATEDIFF(mi,BookedFromTime, BookedToTime) AS JobMins,
+                                    max(CASE WHEN BookedFromTime < CONVERT(DATETIME,CONVERT(VARCHAR(10), BookedFromTime, 120) + ' ' + CONVERT(VARCHAR(5), @MIDDAYTIME, 114),120) AND IsNull(PMAppointments, 0) >= 0 THEN CONVERT(DATETIME,CONVERT(VARCHAR(10), BookedFromTime, 120) + ' ' + CONVERT(VARCHAR(5), @MIDDAYTIME, 114),120)
+                                             WHEN BookedFromTime > CONVERT(DATETIME,CONVERT(VARCHAR(10), BookedFromTime, 120) + ' ' + CONVERT(VARCHAR(5), @MIDDAYTIME, 114),120) AND IsNull(PMAppointments, 0) >= 0 THEN BookedFromTime END) AS MinPMTime
+                            FROM (  
+                                    SELECT TempEngineer, BookedDate, BookedFromTime, BookedToTime, TotalDays, DATEDIFF(mi,BookedFromTime, BookedToTime) AS JobMins,
+                                            CASE  
+                                                WHEN convert(datetime,convert(varchar(5),BookedFromTime,108),120) >= convert(datetime,convert(varchar(5),@ENDTIME,108),120) THEN DATEDIFF(mi,convert(datetime,convert(varchar(5),BookedFromTime,108),120), convert(datetime,convert(varchar(5),@ENDTIME,108),120))/@JOBLENGTH
+                                                WHEN convert(datetime,convert(varchar(5),BookedToTime,108),120) >= convert(datetime,convert(varchar(5),@MIDDAYTIME,108),120) THEN DATEDIFF(mi,convert(datetime,convert(varchar(5),@MIDDAYTIME,108),120), convert(datetime,convert(varchar(5),BookedToTime,108),120))/@JOBLENGTH                                 
+                                            END As PMAppointments                
+                                    FROM #TempEngineer  
+
+                                )INSIDEQUERY_A
+                                GROUP BY TempEngineer, BookedDate, BookedFromTime, BookedToTime, TotalDays, JobMins
+                        )INSIDEQUERY_B              
+                        GROUP BY TempEngineer, BookedDate, BookedFromTime, BookedToTime, TotalDays, JobMins, MinPMTime
+                )OUTSIDEQUERY       
+                WHERE (DATEDIFF(mi,BookedFromTime, BookedToTime) >= @JOBLENGTH) 
+                        AND (DATEDIFF(mi,BookedFromTime, BookedToTime) < 600)
+                GROUP BY TempEngineer, BookedDate, BookedFromTime, BookedToTime, TotalDays, JobMins, MinPMTime
+
+            UNION
+
+            SELECT [slot_tbl_Schedule].[AppointmentType], [slot_tbl_Schedule].[BookedDate],[slot_tbl_Schedule].[FromTime],[slot_tbl_Schedule].[ToTime],0,[slot_tbl_Schedule].[JobMins]
+            FROM [slot_tbl_Schedule]
+            INNER JOIN [#TempEngineer] ON [slot_tbl_Schedule].[Engineer] = [#TempEngineer].[TempEngineer]
+            WHERE [slot_tbl_Schedule].[BookedDate] BETWEEN @iSTARTDATE AND DATEADD(dd,@TOTALDAYS,@iSTARTDATE)
+            ORDER BY BookedFromTime
+
+
+DECLARE @C1_AppointmentType VARCHAR(50)
+DECLARE @C1_BookedDate DateTime
+DECLARE @C1_BookedFromTime DateTime
+DECLARE @C1_BookedToTime DateTime
+DECLARE @C1_TotalDays INT
+DECLARE @C1_JobMins INT
+
+DECLARE @WC_AppointmentType VARCHAR(50)
+DECLARE @WC_BookedDate DateTime
+DECLARE @WC_BookedFromTime DateTime
+DECLARE @WC_BookedToTime DateTime
+DECLARE @WC_TotalDays INT
+DECLARE @WC_JobMins INT
+
+DECLARE @Saved AS BIT
+
+CREATE TABLE 
+    #TempEngineerGroupMain 
+        (
+            AppointmentType VARCHAR(50),
+            BookedDate DateTime, 
+            BookedFromTime DateTime, 
+            BookedToTime DateTime, 
+            TotalDays INT,  
+            JobMins INT
+        )
+
+
+DECLARE c1 CURSOR READ_ONLY
+FOR 
+    SELECT *
+    FROM [#TempEngineerGroup]
+    ORDER BY  [BookedDate] ASC, [AppointmentType] ASC, BookedFromTime ASC, [JobMins] desc
+
+OPEN c1
+    FETCH NEXT FROM c1 INTO @C1_AppointmentType, @C1_BookedDate, @C1_BookedFromTime, @C1_BookedToTime, @C1_TotalDays, @C1_JobMins
+
+SET @Saved = 0
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF ISNULL(@WC_AppointmentType,'') = ''
+    BEGIN
+        SET @WC_AppointmentType = @C1_AppointmentType
+        SET @WC_BookedDate = @C1_BookedDate
+        SET @WC_BookedFromTime = @C1_BookedFromTime
+        SET @WC_BookedToTime = @C1_BookedToTime
+        SET @WC_TotalDays = @C1_TotalDays
+        SET @WC_JobMins = @C1_JobMins
+    END
+    ELSE -- Start Checks
+        BEGIN
+            IF @C1_BookedDate != @WC_BookedDate -- Different Date
+                BEGIN                   
+                    INSERT INTO [#TempEngineerGroupMain] ([AppointmentType],[BookedDate],[BookedFromTime],[BookedToTime],[TotalDays],[JobMins])
+                        VALUES ( @WC_AppointmentType, @WC_BookedDate, @WC_BookedFromTime, @WC_BookedToTime, @WC_TotalDays, DATEDIFF(mi,@WC_BookedFromTime,@WC_BookedToTime))
+                    SET @WC_AppointmentType = @C1_AppointmentType
+                    SET @WC_BookedDate = @C1_BookedDate
+                    SET @WC_BookedFromTime = @C1_BookedFromTime
+                    SET @WC_BookedToTime = @C1_BookedToTime
+                    SET @WC_TotalDays = @C1_TotalDays
+                    SET @WC_JobMins = @C1_JobMins
+                    SET @Saved = 0
+                END
+            IF @C1_AppointmentType != @WC_AppointmentType -- Different Appointment so Store Value
+                BEGIN   
+                    INSERT INTO [#TempEngineerGroupMain] ([AppointmentType],[BookedDate],[BookedFromTime],[BookedToTime],[TotalDays],[JobMins])
+                        VALUES ( @WC_AppointmentType, @WC_BookedDate, @WC_BookedFromTime, @WC_BookedToTime, @WC_TotalDays, DATEDIFF(mi,@WC_BookedFromTime,@WC_BookedToTime))
+                    SET @WC_AppointmentType = @C1_AppointmentType
+                    SET @WC_BookedDate = @C1_BookedDate
+                    SET @WC_BookedFromTime = @C1_BookedFromTime
+                    SET @WC_BookedToTime = @C1_BookedToTime
+                    SET @WC_TotalDays = @C1_TotalDays
+                    SET @WC_JobMins = @C1_JobMins
+                    SET @Saved = 0
+                END
+            ELSE IF @C1_BookedDate = @WC_BookedDate AND @C1_AppointmentType = @WC_AppointmentType AND @C1_BookedFromTime <= @WC_BookedFromTime AND @C1_BookedToTime >= @WC_BookedFromTime 
+                BEGIN -- Change Start Time
+                    SET @WC_BookedFromTime = @C1_BookedFromTime
+                    SET @Saved = 0
+                END
+            ELSE IF @C1_BookedDate = @WC_BookedDate AND @C1_AppointmentType = @WC_AppointmentType AND @C1_BookedFromTime <= @WC_BookedToTime AND @C1_BookedToTime >= @WC_BookedFromTime 
+                BEGIN -- Change End Time
+                    SET @WC_BookedToTime = @C1_BookedToTime
+                    SET @Saved = 0
+                END
+            ELSE IF @C1_BookedDate = @WC_BookedDate AND @C1_AppointmentType = @WC_AppointmentType AND @C1_BookedFromTime < @WC_BookedFromTime AND @C1_BookedToTime < @WC_BookedFromTime
+                BEGIN -- New
+                    INSERT INTO [#TempEngineerGroupMain] ([AppointmentType],[BookedDate],[BookedFromTime],[BookedToTime],[TotalDays],[JobMins])
+                        VALUES ( @WC_AppointmentType, @WC_BookedDate, @WC_BookedFromTime, @WC_BookedToTime, @WC_TotalDays, DATEDIFF(mi,@WC_BookedFromTime,@WC_BookedToTime))
+                    SET @WC_AppointmentType = @C1_AppointmentType
+                    SET @WC_BookedDate = @C1_BookedDate
+                    SET @WC_BookedFromTime = @C1_BookedFromTime
+                    SET @WC_BookedToTime = @C1_BookedToTime
+                    SET @WC_TotalDays = @C1_TotalDays
+                    SET @WC_JobMins = @C1_JobMins
+                    SET @Saved = 1
+                END
+            ELSE IF @C1_BookedDate = @WC_BookedDate AND @C1_AppointmentType = @WC_AppointmentType AND @C1_BookedFromTime > @WC_BookedToTime 
+                BEGIN -- New
+                    INSERT INTO [#TempEngineerGroupMain] ([AppointmentType],[BookedDate],[BookedFromTime],[BookedToTime],[TotalDays],[JobMins])
+                        VALUES ( @WC_AppointmentType, @WC_BookedDate, @WC_BookedFromTime, @WC_BookedToTime, @WC_TotalDays, DATEDIFF(mi,@WC_BookedFromTime,@WC_BookedToTime))
+                    SET @WC_AppointmentType = @C1_AppointmentType
+                    SET @WC_BookedDate = @C1_BookedDate
+                    SET @WC_BookedFromTime = @C1_BookedFromTime
+                    SET @WC_BookedToTime = @C1_BookedToTime
+                    SET @WC_TotalDays = @C1_TotalDays
+                    SET @WC_JobMins = @C1_JobMins
+                    SET @Saved = 1
+                END
+        END
+    FETCH NEXT FROM c1 INTO @C1_AppointmentType, @C1_BookedDate, @C1_BookedFromTime, @C1_BookedToTime, @C1_TotalDays, @C1_JobMins
+END 
+
+IF @Saved = 0 
+    INSERT INTO [#TempEngineerGroupMain] ([AppointmentType],[BookedDate],[BookedFromTime],[BookedToTime],[TotalDays],[JobMins])
+    VALUES ( @WC_AppointmentType, @WC_BookedDate, @WC_BookedFromTime, @WC_BookedToTime, @WC_TotalDays, DATEDIFF(mi,@WC_BookedFromTime,@WC_BookedToTime))
+
+CLOSE c1
+DEALLOCATE c1
+
+SELECT *
+FROM [#TempEngineerGroupMain]
+

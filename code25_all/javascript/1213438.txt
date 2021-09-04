@@ -1,0 +1,430 @@
+resultsChange
+true
+resultsChange
+false
+destroy
+(function($){
+
+    $.fn.Napalm_GameSelector = function(settings) {
+        if (this.length > 1) { return false; }
+        var $element = $(this);
+
+        if (settings == 'destroy') {
+            if (!$element.data('Napalm_Selector')) { return; }
+            $element.data('Napalm_Selector').destroy();
+            $element.removeData('Napalm_Selector');
+            return;
+        }
+        if ($element.data('Napalm_Selector')) { return; }
+
+        /* Verify parent element has id */
+        if ($element.attr('id').length < 1) {
+            Napalm_Error.failure('Base element has no ID');
+            return false;
+        }
+
+        /* Verify parent element type */
+        if ($element.attr('type') !== 'text') {
+            Napalm_Error.failure('Must be attached to a text field');
+            return false;
+        }
+
+        $element.data('Napalm_Selector', new SelectorObject(this, settings));
+        delete settings;
+        delete $element;
+    };
+
+    var defaults = {
+            /* General */
+        id: false,
+        formname: false,
+        selectedId: false,
+        callTyping: false, 
+        callStart: false,
+        callComplete: false,
+        callResults: false,
+        callNoresults: false,
+        callSelected: false,
+        callUnselected: false,
+        classLoader: 'dataselector_loader',
+        classResults: 'dataselector_results',
+        classNoresults: 'dataselector_noresults',
+        classTruncated: 'dataselector_truncated',
+        keyDelay: 1500,
+        keyLength: 2,
+        resultsTimeout: 0,
+        resultsOffclick: true,
+        resultsAnchor: 'left',
+        resultsChange: true,
+        resultsChangeText: 'Change Game',
+            /* Specific */
+        showGamebox: false,
+        showGameinfo: true,
+        classBoxart: 'boxart',
+        infoBackground: false
+    };
+
+    var SelectorObject = function(element, settings) {
+
+        var $element = $(element);
+        var obj = this;
+
+        var options = $.extend({}, defaults, settings);
+
+        var componentName = 'User_My_GamesLibrary';
+
+        var id = false;
+        var menuTimeout = false;
+        var keyTimeout = false;
+
+        var typingStarted = false;
+        var typingFinished = false;
+
+
+        /* INIT */
+
+        /* Option: ID */
+        if (options.id !== false) {
+            id = options.id;
+            $element.attr('id', id);
+        } else {
+            id = $element.attr('id');
+        }
+
+        $element.parent().attr('onSubmit','javascript:return false;');
+        $element.attr('autocomplete','off');
+
+
+        /* METHODS */
+
+        this.select = function(element) {
+            var self = this;
+            $element.val('');
+            if (!parseInt(element)) {
+                itemid = $(element).attr('rel');
+            } else {
+                itemid = element;
+            }
+            $element.hide();
+            $('#'+id+'-formelement').attr('value', itemid);
+            $element.after(this.templates.selected(id+'-selected', itemid));
+            /* Change Link */
+            if (options.resultsChange) {
+                $('#'+id+'-selected a').click(function() {
+                    /* User Callback: callUnselected */
+                    if (typeof(options.callUnselected) == 'function') { options.callUnselected(); }
+
+                    self.reset();
+                    return false;
+                });
+            }
+            /* Clean up */
+            this.clear();
+            /* User Callback: callComplete */
+            if (typeof(options.callSelected) == 'function') { options.callSelected(itemid); }
+        }
+
+        this.binding = function() {
+            var self = this;
+            $element.bind('keydown click', function(e) {
+                clearTimeout(keyTimeout);
+                if (e.keyCode == 13 || e.type == 'click') {
+                    if ($.trim($element.val()).length >= options.keyLength) { 
+                        self.search();
+                    }
+                } else if (e.keyCode != 38 && e.keyCode != 40) {
+                    /* User Callback: callStart */
+                    if (!typingStarted) {
+                        typingStarted = true;
+                        if (typeof(options.callStart) == 'function') { options.callStart(); }
+                    }
+                    /* User Callback: callTyping */
+                    if (typeof(options.callTyping) == 'function') { options.callTyping(); }
+
+                    if ($.trim($element.val()).length >= options.keyLength) {
+                        keyTimeout = setTimeout(function() {
+                            self.search();
+                        },options.keyDelay);
+                    }
+                }
+            });
+        }
+
+        this.search = function() {
+            var self = this;
+            /* User Callback: callEnd */
+            if (typeof(options.callEnd) == 'function') { options.callEnd(); }
+            /* Remove Any Existing Elements */
+            this.clear();
+            /* Content Exists? */
+            if ($element.val().length < 1) { return false; }
+            /* Loading Template */
+            $element.after(this.templates.loading(id+'-loading', options.classLoader));
+            $('#'+id+'-loading').css('position','absolute');
+            $('#'+id+'-loading').css({
+                top: ($element.position().top+$element.outerHeight(true))+'px',
+                left: $element.position().left+'px'
+            });
+            /* Get Data */
+            Napalm_DataQuery['getGames']($.trim($element.val()), function(data) {
+                /* Remove Loading Template */
+                $('#'+id+'-loading').remove();
+                /* Setup Offclick */
+                if (options.resultsOffclick) {
+                    $('body').bind('click',function() { self.clear(); });
+                }
+                if (data['count']) {
+                    /* Build Item Data */
+                    var items = '';
+                    $.each(data['items'], function(k, v) {
+                        items += self.templates.resultsitem(id+'-item-'+v['id'], v['id'], v['title']);
+                    });
+                    if (data['truncated']) {
+                        items += self.templates.truncateditem(id+'-item-truncated', options.classTruncated);
+                    }
+                    /* Inject Results */
+                    $('body').append(self.templates.results(id+'-results', items, options.classResults));
+                    //$element.after(self.templates.results(id+'-results', items, options.classResults));
+                    $results = $('#'+id+'-results');
+                    var offset = $element.offset();
+                    $results
+                        .css({
+                            zIndex: 9999,
+                            position: 'absolute',
+                            minWidth: $element.outerWidth(),
+                            top: Math.round(offset.top+$element.innerHeight())+'px',
+                            left: Math.round(offset.left)+'px'
+                        });
+
+                    /*
+                    switch (options.resultsAnchor.toLowerCase()) {
+                        case 'right':
+                            $results.css('left',(Napalm_Position.absolute($element).right-Napalm_Position.width('#'+id+'-results'))+'px');
+                            break;
+                        case 'left':
+                            $results.css('left',Napalm_Position.absolute($element).left+'px');
+                            break;
+                    }
+                    */
+
+                    $resultsItems = $('ul > li:not(.truncated)', $results);
+
+                    /* Binding Clicks */
+                    $resultsItems.click(function() {
+                        self.select(this);
+                    });
+                    /* Handle Arrow Keys */
+                    var resultIndex = -1;
+                    $(window).keydown(function(e) {
+                        switch (e.keyCode) {
+                            case 38: /* Up Arrow */
+                                $element.blur()
+                                if (resultIndex > 0) {
+                                    resultIndex--;
+                                    /* Release Previous */
+                                    if (resultIndex < $resultsItems.size()-1) {
+                                        node = $resultsItems[resultIndex+1];
+                                        $(node).removeClass('active');
+                                        delete node;
+                                    }
+                                    node = $resultsItems[resultIndex];
+                                    $(node).addClass('active');
+                                    /* Container Scrolling */
+                                    self.scroll(node);
+                                    delete node;
+                                }
+                                return false;
+                                break;
+                            case 40: /* Down Arrow */
+                                $element.blur()
+                                if (resultIndex < $resultsItems.size()-1) {
+                                    resultIndex++;
+                                    /* Release Previous */
+                                    if (resultIndex > 0) {
+                                        node = $resultsItems[resultIndex-1];
+                                        $(node).removeClass('active');
+                                        delete node;
+                                    }
+                                    /* Paint New */
+                                    node = $resultsItems[resultIndex];
+                                    $(node).addClass('active');
+                                    /* Container Scrolling */
+                                    self.scroll(node);
+                                    delete node;
+                                }
+                                return false;
+                                break;
+                            case 13: /* Enter */
+                                $element.blur()
+                                if (resultIndex > -1) {
+                                    self.select($resultsItems[resultIndex]);
+                                }
+                                return false;
+                                break
+                        }
+                        return true;
+                    });
+                    /* Setup Menu Timeout */
+                    if (options.resultsTimeout > 0) {
+                        menuTimeout = setTimeout(function() {
+                            self.clear();
+                        },options.resultsTimeout);
+                    }
+                    /* User Callback: callResults */
+                    if (typeof(options.callResults) == 'function') { options.callResults(); }
+                    /* User Callback: callComplete */
+                    if (typeof(options.callComplete) == 'function') { options.callComplete(); }
+                } else {
+                    /* No Results */
+                    /* User Callback: callNoresults */
+                    if (typeof(options.callNoresults) == 'function') { options.callNoresults(); }
+                    /* Inject Noresults Template */
+                    $element.after(self.templates.noresults(id+'-noresults', options.classNoresults));
+                    /* User Callback: callComplete */
+                    if (typeof(options.callComplete) == 'function') { options.callComplete(); }
+                }
+            });
+        }
+
+        this.scroll = function(node) {
+            var self = this;
+            var viewport = { top: $('#'+self.id+'-results').scrollTop(),
+                             bottom: ($('#'+self.id+'-results').scrollTop() + $('#'+self.id+'-results').height()),
+                             height: ($('#'+self.id+'-results').scrollTop() + $('#'+self.id+'-results').height()) - $('#'+self.id+'-results').scrollTop() }
+
+            var pos = Napalm_Position.position(node);
+            var item =  { top: $(node).prevAll().size() * (pos.bottom - pos.top),
+                          bottom: ($(node).prevAll().size()+1) * (pos.bottom - pos.top),
+                          height: pos.bottom - pos.top
+                        }
+            delete pos;
+
+            /* Check Viewport Boundries */
+            if (item.top < viewport.top) { /* Top */
+                $('#'+id+'-results').scrollTop(item.top);
+            } else if (item.bottom > viewport.bottom) { /* Bottom */
+                $('#'+id+'-results').scrollTop(item.bottom - viewport.height);
+            }
+        }
+
+        this.clear = function() {
+            $('#'+id+'-loading').remove();
+            $('#'+id+'-results').remove();
+            $('#'+id+'-noresults').remove();
+            $('body').unbind('click');
+            $(window).unbind('keydown');
+            clearTimeout(menuTimeout);
+            typingStarted = false;
+            typingFinished = false;
+        }
+
+        this.reset = function() {
+            $element.show();
+            $('#'+id+'-selected').remove();
+            $element.focus();
+        }
+
+        this.destroy = function() {
+            this.clear();
+            this.reset();
+            delete $element;
+            delete obj;
+            delete options;
+            delete componentName;
+            delete id;
+            delete menuTimeout;
+            delete keyTimeout;
+            delete typingStarted;
+            delete typingFinished;
+        }
+
+        this.templates = {
+            loading: function(_id, _class) {
+                return  '<div id="'+_id+'" class="'+_class+'">' +
+                        '   <img src="http://i.rebuild.sb.napalmriot.com/common/ajax/spinner2.gif" width="16" height="16" />' +
+                        '   Searching..' +
+                        '</div>';
+            },
+            noresults: function(_id, _class) {
+                return  '<div id="'+_id+'" class="'+_class+'">' +
+                        '   No games found matching your search' +
+                        '</div>';
+            },
+            results: function(_id, _items, _class) {
+                return  '<div id="'+_id+'" class="'+_class+'">'+
+                        '   <ul class="dieBullets">'+
+                        '       '+_items+
+                        '   </ul>'+
+                        '</div>';
+            },
+            resultsitem: function(_id, _content_id, _content_value) {
+                return  '<li id="'+_id+'" rel="'+_content_id+'">'+
+                        '   '+_content_value+
+                        '</li>';
+            },
+            truncateditem: function(_id) {
+                return  '<li id="'+_id+'" class="truncated">'+
+                        '   Refine your search<br />to see more results'+
+                        '</li>';
+            },
+            selected: function(_id, _content_id) {
+                var self = this;
+
+                var gameURL = '';
+                var gameTitle = '';
+
+                sendData = JSON.stringify({"gameid":_content_id});
+
+                $.ajax({
+                    type:'GET',
+                    async:false,
+                    url:window.urls['component']+componentName+';getBoxartUrl;'+escape(escape(sendData)),
+                    dataType:'json',
+                    success:function(data) {
+                        if (data.success) {
+                            gameURL = data.response.url;
+                            gameTitle = data.response.title;
+                        } else {
+                            Napalm_UI.error(data.response);
+                        }
+                    }
+                });
+
+                if (options.infoBackground) { var bgcolor = options.infoBackground; } else { var bgcolor = ''; }
+
+                var html =  '<div id="'+_id+'">'+
+                        '   <img src="'+gameURL+'" title="'+gameTitle+'" class="'+options.classBoxart+'" width="100" height="143" rel="'+_content_id+'" />'+
+                        '   <img src="http://i.napalmriot.com/boxart.php?id='+_content_id+'&bgcolor='+bgcolor+'" title="'+gameTitle+'" width="31" height="150" />';
+                if (options.resultsChange) {
+                    html += '   <br />'+
+                            '   <a href="#">'+options.resultsChangeText+'</a>';
+                }
+                html +=     '</div>';
+
+                delete gameURL;
+                delete gameTitle;
+                delete bgcolor;
+                delete _id;
+                delete _content_id;
+
+                return html;
+            }
+        }      
+
+        /* Option Get/Set */
+        this.option = function(key, value) {
+            if (typeof(options[key]) == 'undefined') { return false; }
+            if (typeof(value) == 'undefined') { return options[key]; }
+            if (options[key] = value) { return true; }
+            return false;            
+        }
+
+        /* Option: SelectedId */
+        if (options.selectedId !== false) {
+            this.select(options.selectedId);
+        }
+
+        this.binding();
+    };
+})(jQuery);
+

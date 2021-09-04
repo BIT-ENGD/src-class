@@ -1,0 +1,73 @@
+unixodbc and unixodbc-dev: 2.2.11-16build3
+tdsodbc: 0.82-4
+libsybdb5: 0.82-4
+freetds-common and freetds-dev: 0.82-4
+python2.6-dev
+
+/etc/unixodbc.ini
+[FreeTDS]
+Description             = TDS driver (Sybase/MS SQL)
+Driver          = /usr/lib/odbc/libtdsodbc.so
+Setup           = /usr/lib/odbc/libtdsS.so
+CPTimeout               = 
+CPReuse         = 
+UsageCount              = 2
+
+/etc/freetds/freetds.conf
+[global]
+    tds version = 8.0
+    client charset = UTF-8
+    text size = 4294967295
+
+31e2fae4adbf1b2af1726e5668a3414cf46b454f
+http://github.com/mkleehammer/pyodbc
+python setup.py install
+import pyodbc
+odbcstring = "SERVER=10.32.42.69;UID=sa;PWD=secret;DATABASE=Common;DRIVER=FreeTDS"
+con = pyodbc.connect(odbcstring)
+cur = con.cursor()
+
+cur.execute("""
+IF EXISTS(SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_NAME = 'testing')
+   DROP TABLE testing
+""")
+cur.execute('''
+CREATE TABLE testing (
+    id INTEGER NOT NULL IDENTITY(1,1), 
+    myimage IMAGE NULL, 
+    PRIMARY KEY (id)
+)
+    ''')
+con.commit()
+
+cur = con.cursor()
+# using web data for exact reproduction of the error by all.
+# I'm actually reading a local file in my real code.
+url = 'http://www.forestwander.com/wp-content/original/2009_02/west-virginia-mountains.jpg'
+data = urllib2.urlopen(url).read()
+
+sql = "INSERT INTO testing (myimage) VALUES (?)"
+
+cur.execute(sql, (data,))
+cur.execute(sql, (pyodbc.Binary(data),)) 
+con.commit()
+
+cur.execute('SELECT DATALENGTH(myimage) FROM testing WHERE id = 1')
+data_inside = cur.fetchone()[0]
+assert data_inside == len(data)
+
+cur.execute('SELECT myimage FROM testing WHERE id = 1')
+result = cur.fetchone()
+returned_data = str(result[0]) # transforming buffer object
+print 'Original: %d; Returned: %d' % (len(data), len(returned_data))
+assert data == returned_data
+
+Original: 4744611; Returned: 4096
+Traceback (most recent call last):
+  File "/home/nosklo/devel/teste_mssql_pyodbc_unicode.py", line 53, in <module>
+    assert data == returned_data
+AssertionError
+
+IMAGE
+DATALENGTH

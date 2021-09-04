@@ -1,0 +1,38 @@
+async
+use threads ( 'yield',
+              'exit' => 'threads_only',
+              'stack_size' => 2*16384 );
+use threads::shared;
+use Time::HiRes qw/sleep/;
+
+...
+
+$start = [Time::HiRes::gettimeofday()];
+my $running :shared = 0;
+foreach ($entry) {
+  async(
+    sub {
+           local $SIG{KILL} = sub { threads->exit };
+           { lock $running; ++$running };
+
+           ...
+
+           { lock $running; --$running };
+        },
+  $_)->detach;
+}
+
+while ($running) {
+  sleep 0.005;
+  last if (Time::HiRes::tv_interval($start) > 5);
+}
+
+if ($running) {
+  my @running = threads->list(threads::running);
+  foreach (@running) {
+    $_->kill('KILL')->detach;
+  }
+}
+
+print "I am still alive\n";
+

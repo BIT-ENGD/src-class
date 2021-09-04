@@ -1,0 +1,153 @@
+trait Protocol
+
+trait Handler [+proto <: Protocol] {
+  def handle : PartialFunction[Protocol,Unit] 
+  /* can not name the actual protocol type since handler for a subtype also fully supports handling supertype
+besides any message extends other subtype ot the supertype since the scala use matching with case classes
+and these algebraic type realization is seemed excluded from strait scala type system
+  */
+}
+
+/*
+==============
+using scenario
+==============
+*/
+
+trait SumMsg extends Protocol
+case class Sum(op : Int) extends SumMsg
+case class Sub(op : Int) extends SumMsg
+
+trait ProdMsg extends Protocol
+case class Mul(op : Int) extends ProdMsg
+case class Diff(op : Int) extends ProdMsg {
+  require (0 != op, "Division by zero is not permited")
+}
+
+/* stackable traites */
+trait NullHandler {
+  def handle : PartialFunction[Protocol,Unit] = { case _ => {} }
+}
+
+trait SumHandler extends Handler [SumMsg] with NullHandler{
+  var store : Int
+  abstract override def handle : PartialFunction[Protocol,Unit] = ({
+case Sum(op) => { this.store += op}
+case Sub(op) => { this.store -= op}
+  }: PartialFunction[Protocol,Unit]) orElse super.handle
+}
+
+trait MulHandler extends Handler [ProdMsg] with NullHandler{
+  var store : Int
+  abstract override def handle : PartialFunction[Protocol,Unit] = ({
+case Mul(op) => {this.store *= op}
+case Diff(op) => {this.store /= op}
+  }: PartialFunction[Protocol,Unit]) orElse super.handle
+}
+
+/* concrete classes */
+class SumAccum (var store: Int) extends SumHandler
+
+class MulAccum (var store: Int) extends MulHandler
+
+class ArithmAccum (var store: Int) extends SumHandler with MulHandler
+
+/* producers */
+class ProduceSums (val accum : Handler [SumMsg]) {
+  var state : Boolean = true
+  def touch() = if (this.state)
+{
+  this.state = false
+  this.accum.handle(Sum(2))
+} else {
+  this.state = true
+  this.accum.handle(Sub(1))
+}
+}
+
+class ProduceProds (val accum : Handler [ProdMsg]) {
+  var state : Boolean = true
+  def touch() = if (this.state)
+{
+  this.state = false
+  this.accum.handle(Mul(2))
+} else {
+  this.state = true
+  this.accum.handle(Diff(2))
+}
+}
+
+/* tying together via cake pattern */
+trait ProtocolComp {
+  type Proto <: Protocol
+}
+
+trait ProducerComp { this: ProtocolComp =>
+  type ProducerT <: {def touch()}
+  def getProducer(accum : Handler[Proto]) : ProducerT
+}
+
+trait HandlerComp { this: ProtocolComp =>
+  type HandlerT <: Handler[Proto]
+  def getHandler(store:Int) : HandlerT
+}
+
+trait AppComp extends ProtocolComp with ProducerComp with HandlerComp {
+  val initStore = 1
+  def test() {
+val handler = getHandler(initStore)
+val producer = getProducer(handler)
+producer.touch()
+  }
+}
+
+/* different examples of compositions */
+
+/* correct usage */
+
+object One extends AppComp{
+  override type Proto = SumMsg
+  override type ProducerT = ProduceSums
+  override type HandlerT = SumAccum
+  override def getProducer(accum : Handler[Proto]) = new ProduceSums(accum)
+  override def getHandler(store : Int) = new SumAccum(store)
+}
+
+object Two extends AppComp{
+  override type Proto = SumMsg
+  override type ProducerT = ProduceSums
+  override type HandlerT = ArithmAccum
+  override def getProducer(accum : Handler[Proto]) = new ProduceSums(accum)
+  override def getHandler(store : Int) = new ArithmAccum(store)
+}
+
+object Three extends AppComp{
+  override type Proto = SumMsg with ProdMsg
+  override type ProducerT = ProduceSums
+  override type HandlerT = ArithmAccum
+  override def getProducer(accum : Handler[Proto]) = new ProduceSums(accum)
+  override def getHandler(store : Int) = new ArithmAccum(store)
+}
+
+/* incorrect usage
+static type checking protects from some kind of logic errors
+*/
+
+object Four extends AppComp{
+  override type Proto = SumMsg
+  override type ProducerT = ProduceProds
+  override type HandlerT = SumAccum
+  override def getProducer(accum : Handler[Proto]) = new ProduceProds(accum)
+  override def getHandler(store : Int) = new SumAccum(store)
+}
+
+mixed.scala:140: error: type mismatch;
+found   : Handler[Four.Proto]
+required: Handler[ProdMsg]
+  override def getProducer(accum : Handler[Proto]) = new ProduceProds(accum)
+
+mixed.scala:53: error: illegal inheritance;
+class ArithmAccum inherits different type instances of trait Handler:
+Handler[ProdMsg] and Handler[SumMsg]
+class ArithmAccum (var store: Int) extends SumHandler with MulHandler
+

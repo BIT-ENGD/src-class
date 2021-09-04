@@ -1,0 +1,67 @@
+INSERT INTO dbo.Rollup ([FileURL], [FileId])
+
+SELECT 
+ logs.RequestedFile As [URL],
+ FileId = dbo.fn_GetFileIdFromURL(l.RequestedFile, l.CleanFileName)
+
+FROM
+ dbo.Logs l (readuncommitted) 
+
+WHERE    
+
+NOT EXISTS (
+    SELECT
+     FileURL
+    FROM
+     dbo.Rollup
+    WHERE
+     FileUrl = RequestedFile
+)
+
+CREATE FUNCTION [dbo].[fn_GetFileIdFromURL] 
+(       
+    @URL nvarchar(500),
+    @CleanFileName nvarchar(255)
+)
+RETURNS uniqueidentifier
+AS
+BEGIN
+
+     DECLARE @id uniqueidentifier
+
+     if (exists(select FileURL from dbo.[Rollup] where [FileUrl] = @URL))
+     begin
+        -- This URL has been seen before in dbo.Rollup.
+            -- Retrieve the FileId from the dbo.Rollup table.
+        set @id = (select top 1 FileId from dbo.[Rollup] where [FileUrl] = @URL)        
+     end
+     else
+     begin
+        -- This is a new URL. Hunt for a matching URL in our list of files,
+            -- and return a FileId if a match is found.
+        Set @id = (
+
+            SELECT TOP 1
+            f.FileId
+
+            FROM
+            dbo.[Files] f
+
+            INNER JOIN
+            dbo.[Servers] s on s.[ServerId] = f.[ServerId]
+
+            INNER JOIN
+            dbo.[URLs] u on 
+                   u.[ServerId] = f.[ServerId]
+
+            WHERE
+                Left(u.[PrependURLProtocol],4) = left(@URL, 4)
+            AND @CleanFileName = f.FileName  
+     )
+
+     end
+
+     return @id
+
+END
+

@@ -1,0 +1,68 @@
+static void rx_complete(struct urb *req)
+{
+struct net_device *dev = req->context;
+struct usbpn_dev *pnd = netdev_priv(dev);
+struct page *page = virt_to_page(req->transfer_buffer);
+struct sk_buff *skb;
+unsigned long flags;
+int status = req->status;
+
+switch (status) {
+case 0:
+spin_lock_irqsave(&pnd->rx_lock, flags);
+skb = pnd->rx_skb;
+if (!skb) {
+skb = pnd->rx_skb = netdev_alloc_skb(dev, 12);
+if (likely(skb)) {
+/* Can't use pskb_pull() on page in IRQ */
+memcpy(skb_put(skb, 1), page_address(page), 1);
+skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
+page, 1, req->actual_length);
+page = NULL;
+}
+} else {
+skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
+page, 0, req->actual_length);
+page = NULL;
+}
+if (req->actual_length < PAGE_SIZE)
+pnd->rx_skb = NULL; /* Last fragment */
+else
+skb = NULL;
+spin_unlock_irqrestore(&pnd->rx_lock, flags);
+if (skb) {
+skb->protocol = htons(ETH_P_PHONET);
+skb_reset_mac_header(skb);
+__skb_pull(skb, 1);
+skb->dev = dev;
+dev->stats.rx_packets++;
+dev->stats.rx_bytes += skb->len;
+
+netif_rx(skb);
+}
+goto resubmit;
+
+case -ENOENT:
+case -ECONNRESET:
+case -ESHUTDOWN:
+req = NULL;
+break;
+
+case -EOVERFLOW:
+dev->stats.rx_over_errors++;
+dev_dbg(&dev->dev, "RX overflow\n");
+break;
+
+case -EILSEQ:
+dev->stats.rx_crc_errors++;
+break;
+}
+
+dev->stats.rx_errors++;
+resubmit:
+if (page)
+netdev_free_page(dev, page);
+if (req)
+rx_submit(pnd, req, GFP_ATOMIC);
+}
+

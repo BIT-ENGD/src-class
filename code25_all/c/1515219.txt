@@ -1,0 +1,101 @@
+#define FUSE_USE_VERSION 26
+
+#include <fuse/fuse.h>
+#include <string.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+char hello_data[200] = {'h', 'e', 'l', 'l', 'o', '\n'};
+int hello_size = 6;
+
+int homsifs_getattr(const char* path, struct stat* stbuf)
+{
+    memset(stbuf, 0, sizeof(struct stat));
+
+    if (strcmp(path, "/") == 0)
+        stbuf->st_mode = S_IFDIR | 0666;
+    else if (strcmp(path, "/hello") == 0)
+    {
+        stbuf->st_mode = S_IFREG | 0666;
+        stbuf->st_size = hello_size;
+    }
+    else
+        return -ENOENT;
+
+    return 0;
+}
+
+int homsifs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
+off_t offset, struct fuse_file_info* fi)
+{
+    if (strcmp(path, "/") != 0)
+        return -ENOENT;
+
+    filler(buf, ".", NULL, 0);
+    filler(buf, "..", NULL, 0);
+    filler(buf, "hello", NULL, 0);
+
+    return 0;
+}
+
+int homsifs_open(const char* path, struct fuse_file_info* fi)
+{
+    if (strcmp(path, "/hello") != 0)
+        return -ENOENT;
+
+    return 0;
+}
+
+int homsifs_read(const char* path, char* buf, size_t size, off_t offset,
+struct fuse_file_info* fi)
+{
+    int offset_size = hello_size - offset;
+
+    if (size > offset_size)
+        size = offset_size;
+
+    memcpy(buf, hello_data + offset, size);
+
+    return size;
+}
+
+int homsifs_truncate(const char* path, off_t size)
+{
+    if (size > 200)
+        return -ENOMEM;
+
+    if (hello_size < size)
+        memset(hello_data + size, 0, size - hello_size);
+
+    hello_size = size;
+
+    return 0;
+}
+
+int homsifs_write(const char* path, const char* buf, size_t size, off_t offset,
+struct fuse_file_info* fi)
+{
+    if (strcmp(path, "/hello") != 0)
+        return -ENOENT;
+
+    memcpy(hello_data + offset, buf, size);
+
+    return size;
+}
+
+struct fuse_operations homsifs_operations =
+{
+    .getattr = homsifs_getattr,
+    .readdir = homsifs_readdir,
+    .open = homsifs_open,
+    .read = homsifs_read,
+    .truncate = homsifs_truncate,
+    .write = homsifs_write
+};
+
+int main(int argc, char** argv)
+{
+    return fuse_main(argc, argv, &homsifs_operations, NULL);
+}
+

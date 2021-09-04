@@ -1,0 +1,412 @@
+def create_texture(surface):
+surface.texture = glGenTextures(1)
+glMatrixMode(GL_MODELVIEW)
+glLoadIdentity() #Loads model matrix
+glBindTexture(GL_TEXTURE_2D, surface.texture) #Binds the current 2D texture to the texture to be drawn
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR) #Required to be set for maping the pixel data
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR) #Similar as above
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, surface.surface_size[0], surface.surface_size[1], 0, GL_RGBA,GL_UNSIGNED_BYTE, surface.data) #Put surface pixel data into texture
+if surface.data == None:
+    setup_framebuffer(surface)
+    c = [float(sc)/255.0 for sc in surface.colour] #Divide colours by 255 because OpenGL uses 0-1
+    if surface.background_alpha != None:
+        c[3] = float(surface.background_alpha)/255.0
+    glClearColor(*c)
+    glClear(GL_COLOR_BUFFER_BIT)
+    end_framebuffer()
+Surface.texture_ready.append(surface)
+
+
+   def setup_framebuffer(surface):
+    #Create texture if not done already
+    if surface.texture == None:
+        create_texture(surface)
+    #Render child to parent
+    if surface.frame_buffer == None:
+        surface.frame_buffer =  glGenFramebuffersEXT(1)
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, surface.frame_buffer)
+    glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, surface.texture, 0)
+    glPushAttrib(GL_VIEWPORT_BIT)
+    glViewport(0,0,surface._scale[0],surface._scale[1])
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity() #Load the projection matrix
+    gluOrtho2D(0,surface._scale[0],0,surface._scale[1])
+def end_framebuffer():
+    glPopAttrib()
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0)
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity() #Load the projection matrix
+    gluOrtho2D(0,1280,720,0) #Set an orthorgraphic view
+    def draw_texture(texture,offset,size,a,rounded,sides,angle,point):
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity() #Loads model matrix
+    glColor4f(1,1,1,float(a)/255.0)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    if rounded == 0:
+        if angle == 0:
+            glBegin(GL_QUADS)
+            glTexCoord2f(0.0, 0.0)
+            glVertex2i(*offset) #Top Left
+            glTexCoord2f(0.0, 1.0)
+            glVertex2i(offset[0],offset[1] + size[1]) #Bottom Left
+            glTexCoord2f(1.0, 1.0)
+            glVertex2i(offset[0] + size[0],offset[1] + size[1]) #Bottom, Right
+            glTexCoord2f(1.0, 0.0)
+            glVertex2i(offset[0] + size[0],offset[1]) #Top, Right
+            glEnd()
+        else:
+            glBegin(GL_QUADS)
+            glTexCoord2f(0.0, 0.0)
+            glVertex2f(*rotate_coordinate(offset,point,angle)) #Top Left
+            glTexCoord2f(0.0, 1.0)
+            glVertex2f(*rotate_coordinate((offset[0],offset[1] + size[1]),point,angle)) #Bottom Left
+            glTexCoord2f(1.0, 1.0)
+            glVertex2f(*rotate_coordinate((offset[0] + size[0],offset[1] + size[1]),point,angle)) #Bottom, Right
+            glTexCoord2f(1.0, 0.0)
+            glVertex2f(*rotate_coordinate((offset[0] + size[0],offset[1]),point,angle)) #Top, Right
+            glEnd()
+    else:
+        global arc_factors
+        arc = [[o*rounded for o in c] for c in arc_factors]
+        glBegin(GL_POLYGON)
+        if sides % 2:
+            for c in arc:
+                coordinates = (offset[0] + rounded - c[0],offset[1] + rounded - c[1])
+                glTexCoord2f((coordinates[0]-offset[0])/size[0],(coordinates[1]-offset[1])/size[1])
+                glVertex2f(*coordinates)
+        else:
+            glTexCoord2f(0.0, 0.0)
+            glVertex2f(*rotate_coordinate(offset,point,angle)) #Top Left
+        if sides % 4 > 1:
+            for c in arc[::-1]:
+                coordinates = (offset[0] + size[0] - rounded + c[0],offset[1] + rounded - c[1])
+                glTexCoord2f((coordinates[0]-offset[0])/size[0],(coordinates[1]-offset[1])/size[1])
+                glVertex2f(*coordinates)
+        else:
+            glTexCoord2f(1.0, 0.0)
+            glVertex2f(*rotate_coordinate((offset[0] + size[0],offset[1]),point,angle)) #Top, Right
+        if sides % 8 > 3:
+            for c in arc:
+                coordinates = (offset[0] + size[0] - rounded + c[0],offset[1] + size[1] - rounded + c[1])
+                glTexCoord2f((coordinates[0]-offset[0])/size[0],(coordinates[1]-offset[1])/size[1])
+                glVertex2f(*coordinates)
+        else:
+            glTexCoord2f(1.0, 1.0)
+            glVertex2f(*rotate_coordinate((offset[0] + size[0],offset[1] + size[1]),point,angle)) #Bottom, Right
+        if sides > 7:
+            for c in arc[::-1]:
+                coordinates = (offset[0] + rounded - c[0],offset[1] + size[1] - rounded + c[1])
+                glTexCoord2f((coordinates[0]-offset[0])/size[0],(coordinates[1]-offset[1])/size[1])
+                glVertex2f(*coordinates)
+        else:
+            glTexCoord2f(0.0, 1.0)
+            glVertex2f(*rotate_coordinate((offset[0],offset[1] + size[1]),point,angle)) #Bottom Left
+        glEnd()
+def texture_to_texture(target,surface,offset,rounded,rotation,point):
+    #Create texture if not done already
+    if surface.texture == None:
+        create_texture(surface)
+    #Render child to parent
+    setup_framebuffer(target)
+    draw_texture(surface.texture,offset,surface._scale,surface.colour[3],rounded,surface.rounded_sides,rotation,point)
+    end_framebuffer()
+def texture_to_screen(surface,offset,rotation,point):
+    if surface.texture == None:
+        create_texture(surface)
+    draw_texture(surface.texture,offset,surface._scale,surface.colour[3],surface.rounded,surface.rounded_sides,rotation,point)
+    class Surface():
+    texture_ready = []
+    def __init__(self,size,extra = None):
+        self._offset = (0,0)
+        self.children = []
+        self.blitted = False
+        self.last_offset = [0,0]
+        self.surface_size = list(size)
+        self.colour = [0,0,0,255]
+        self.data = None
+        self.rounded = 0
+        self.parent = None
+        self.parent_offset = (0,0)
+        self.texture = None
+        self.frame_buffer = None
+        self._scale = size
+        self.background_alpha = None
+        self.rounded_sides = 0
+    def blit(self,surface,offset,rotation = 0,point = (0,0)):
+        texture_to_texture(self,surface,offset,surface.rounded,rotation,point)
+        if surface not in self.children:
+            self.children.append(surface)
+        if surface.parent_offset != offset or not surface.blitted:
+            surface.parent_offset = offset
+            surface._offset = [offset[0] + self._offset[0],offset[1] + self._offset[1]]
+            surface.recursive_offset_change() #Add to the children's offsets
+            surface.blitted = True
+    def set_background_alpha(self,alpha):
+        self.background_alpha = float(alpha)/255.0
+    def recursive_offset_change(self):
+        for child in self.children:
+            child._offset = (self._offset[0] + child.parent_offset[0],self._offset[1] + child.parent_offset[1])
+            child.recursive_offset_change()
+    def get_offset(self):
+        return self._offset
+    def fill(self,colour):
+        colour = list(colour)
+        if len(colour) < 4:
+            colour.append(255)
+        self.children = []
+        self.textures = []
+        self.colour = colour
+        if self.texture != None:
+            glDeleteTextures([self.texture])
+            self.data = None
+            create_texture(self)
+    def get_size(self):
+        return self.surface_size
+    def get_width(self):
+        return self.surface_size[0]
+    def get_height(self):
+        return self.surface_size[1]
+    def round_corners(self,r,sides = 15):
+        self.rounded = r
+        self.rounded_sides = sides
+    def get_rect(self):
+        return Rect(self._offset,self.surface_size)
+    def scale(self,scale):
+        self._scale = scale
+        return self
+    def __del__(self):
+        if self.texture != None:
+            glDeleteTextures([self.texture])
+        if self.frame_buffer != None:
+            glDeleteFramebuffersEXT(1, [int(self.frame_buffer)])
+class Game(Surface):
+    game_size = None
+    first_screen = None
+    screen = None
+    fs = False #Fullscreen false to start
+    clock = None
+    resize = True
+    game_gap = None
+    game_scaled = (0,0)
+    title = None
+    fps = -1
+    enter_fullscreen = False
+    exit_fullscreen = False
+    scale_to_screen = False
+    iconify = False
+    on_focus_fullscreen = False
+    f_key = False
+    fade = 0
+    p_key = False
+    music_stop = False
+    unfade = False
+    event_after_fade = -1
+    loaded = False
+    fade = 255
+    unfade = True
+    homedir = os.path.expanduser("~")
+    fade_screen = False
+    keys = []
+    events = []
+    sections = []
+    back_key = False
+    transfer_args = ()
+    mouse_pos = (0,0)
+    def __init__(self,title,game_size,on_exit = sys.exit):
+        self.keys = [False] * 323
+        self.events = []
+        pygame.font.init()
+        pygame.mixer.init()
+        self.title = title
+        self.game_size = game_size
+        self.first_screen = (1280,720) #Take 120 pixels from the height because the menu bar, window bar and dock takes space
+        glutInit(sys.argv)
+        glutInitWindowPosition(0,0)
+        glutInitWindowSize(*game_size)
+        glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA)
+        glutGameModeString("1280x720:32@60") #720 HD
+        glutCreateWindow(title)
+        glutSetIconTitle(title)
+        self.callbacks()
+        self.game_gap = (0,0)
+        self.on_exit = on_exit
+        self.mod_key = 1024 if sys.platform == "darwin" else 64
+        Surface.__init__(self,game_size)
+        self.screen_change = True
+        self.frames = [time.time()]
+        self.fps = 60
+        self.last_time = 0
+        self.fade_surface = Surface([1280,720])
+    def callbacks(self):
+        glutReshapeFunc(self.reshaped)
+        glutKeyboardFunc(self.keydown)
+        glutKeyboardUpFunc(self.keyup)
+        glutSpecialFunc(self.specialdown)
+        glutSpecialUpFunc(self.specialup)
+        glutDisplayFunc(self.game_loop)
+        glutIdleFunc(self.game_loop)
+        glutMouseFunc(self.mouse_func)
+        glutPassiveMotionFunc(self.mouse_move)
+        glutMotionFunc(self.mouse_move)
+        glViewport(0,0,self.first_screen[0],self.first_screen[1]) #Creates the viewport which is mapped to the window
+        glEnable(GL_BLEND) #Enable alpha blending
+        glEnable(GL_TEXTURE_2D) #Enable 2D Textures
+        glEnable(GL_POLYGON_SMOOTH) #Enable antialiased polygons
+        glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity() #Load the projection matrix
+        gluOrtho2D(0,1280,720,0) #Set an orthorgraphic view
+    def add_section(self,section_object):
+        self.sections.append(section_object)
+    def mouse_func(self,button, state, x, y):
+        self.events.append((state,button,x,y))
+    def mouse_move(self,x,y):
+        self.events.append((MOUSEMOTION,x - self.mouse_pos[0], y - self.mouse_pos[1]))
+        self.mouse_pos = (x,y)
+    def keydown(self,char,x,y):
+        #300 miliusecond delay, 50 milisecond repeat
+        self.change_keys(char,True)
+    def keyup(self,char,x,y):
+        self.change_keys(char,False)
+    def change_keys(self,char,bool):
+        char = ord(char)
+        #Switch backspace and delete
+        if char == 8:
+            char = 127
+        elif char == 127:
+            char = 8
+        self.keys[char] = bool
+    def specialdown(self,char,x,y):
+        if char == GLUT_KEY_UP:
+            self.keys[K_UP] = True
+        if char == GLUT_KEY_DOWN:
+            self.keys[K_DOWN] = True
+        if char == GLUT_KEY_LEFT:
+            self.keys[K_LEFT] = True
+        if char == GLUT_KEY_RIGHT:
+            self.keys[K_RIGHT] = True
+    def specialup(self,char,x,y):
+        if char == GLUT_KEY_UP:
+            self.keys[K_UP] = False
+        if char == GLUT_KEY_DOWN:
+            self.keys[K_DOWN] = False
+        if char == GLUT_KEY_LEFT:
+            self.keys[K_LEFT] = False
+        if char == GLUT_KEY_RIGHT:
+            self.keys[K_RIGHT] = False
+    def reshaped(self,w,h):
+        #Scale game to screen resolution, keeping aspect ratio
+        self.screen_change = True
+        self.game_scaled = get_resolution((w,h),self.game_size)
+        glutReshapeWindow(*self.game_scaled)
+        glViewport(0,0,self.game_scaled[0],self.game_scaled[1])
+        glutPositionWindow((1280- w)/2,(720 - h)/2)
+    def game_loop(self):
+        self.section.loop()
+        if self.unfade:
+            if self.fade == 255:
+                play_music(self.section.music)
+            if self.fade > 0:
+                self.fade -= 5
+            else:
+                self.music_stop = False
+                self.unfade = False
+        if self.fade_screen and not self.unfade: #Fade out
+            if self.fade == 0:
+                sound("/sounds/menu3/fade.ogg").play()
+                self.music_stop = True
+                pygame.mixer.music.fadeout(850)
+            if self.fade < 255:
+                self.fade += 5
+            else:
+                self.fade_screen = False
+                self.unfade = True
+        if self.fade_screen == False:
+            if self.event_after_fade != -1:
+                self.section = self.sections[self.event_after_fade]
+                self.section.transfer(*self.transfer_args)
+                self.transfer_args = ()
+                self.event_after_fade = -1
+        self.fade_surface.fill((0,0,0,self.fade))
+        self.blit(self.fade_surface,(0,0))
+        for event in self.events:
+            if event[1] == MUSICEND and self.music_stop == False:
+                play_music(self.section.music)
+        self.events = [] #Remove events
+        global draw_texture_time
+        #Updates screen properly
+        for event in self.events:
+            if event.type == QUIT:
+                self.on_exit()
+        if True:
+            if self.keys[K_f]:
+                if self.f_key == False:
+                    self.f_key = True
+                    if self.fs == False:
+                        self.enter_fullscreen = True
+                    else:
+                        self.exit_fullscreen = True
+            else:
+                self.f_key = False
+        if self.on_focus_fullscreen and pygame.display.get_active():
+            self.on_focus_fullscreen = False
+            self.enter_fullscreen = True
+        pixel_data = []
+        if self.enter_fullscreen or self.exit_fullscreen:
+            for surface in Surface.texture_ready:
+                if surface.texture != None:
+                    glBindTexture(GL_TEXTURE_2D, surface.texture)
+                    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,surface.data)
+                    surface.texture = None
+                if surface.frame_buffer != None:
+                    pixel_data.append((surface,None))
+                    glReadPixels(0,0,surface.surface_size[0],surface.surface_size[1],GL_BGRA,GL_UNSIGNED_BYTE,pixel_data[-1][1])
+            Surface.texture_ready = []
+        if self.enter_fullscreen:
+            glutEnterGameMode()
+            self.callbacks()
+            self.fs = True
+            self.enter_fullscreen = False
+        elif self.exit_fullscreen:
+            glutSetCursor(GLUT_CURSOR_INHERIT)
+            self.fs = False
+            glutLeaveGameMode()
+            self.callbacks()
+            self.exit_fullscreen = False
+            if self.iconify:
+                self.on_focus_fullscreen = True
+        if self.enter_fullscreen or self.exit_fullscreen:
+            for surface, data in pixel_data:
+                surface.frame_buffer =  glGenFramebuffersEXT(1)
+                setup_framebuffer(surface)
+                glDrawPixels(surface.surface_size[0],surface.surface_size[1],GL_RGBA,GL_UNSIGNED_BYTE,data)
+                end_framebuffer()
+        if self.iconify:
+            pygame.display.iconify() #Minimise
+            self.iconify = False
+        glFlush()
+        glutSwapBuffers() #Flip buffer
+        glClear(GL_COLOR_BUFFER_BIT)
+        self.frames.append(time.time())
+        time_d = (self.frames[-1] - self.frames[-2])
+        if time_d < 0.01667:
+            time.sleep(0.01667 - time_d)
+            self.frames[-1] = time.time()
+        self.fps = len(self.frames)/(self.frames[-1] - self.frames[0])
+        if self.fps > 60:
+            self.fps = 60
+        self.frames = [frame for frame in self.frames if (self.frames[-1] - frame) < 1]
+        glutSetWindowTitle(self.title + " - " + str(int(self.fps)) + "fps")
+    def blit(self,surface,offset,rotation = 0,point = (0,0)):
+        if surface.get_offset() != offset or not surface.blitted:
+            surface._offset = offset
+            surface.recursive_offset_change() #Add to the children's offsets
+        surface.blitted = True
+        texture_to_screen(surface,offset,rotation,point)
+    def transfer_section(self,section,args=()):
+        self.transfer_args = args
+        self.event_after_fade = section
+        self.fade_screen = True
+

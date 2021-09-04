@@ -1,0 +1,154 @@
+No instance for (Hashable NT.EndPointAddress)
+  arising from a use of `hashable-1.2.0.10:Data.Hashable.Class.$gdmhashWithSalt'
+Possible fix:
+  add an instance declaration for (Hashable NT.EndPointAddress)
+In the expression:
+  (hashable-1.2.0.10:Data.Hashable.Class.$gdmhashWithSalt)
+In an equation for `hashWithSalt':
+    hashWithSalt
+      = (hashable-1.2.0.10:Data.Hashable.Class.$gdmhashWithSalt)
+In the instance declaration for `Hashable NodeId'
+
+{-# LANGUAGE DeriveGeneric #-}
+
+-- | Types used throughout the Cloud Haskell framework
+--
+-- We collect all types used internally in a single module because
+-- many of these data types are mutually recursive and cannot be split across
+-- modules.
+module Control.Distributed.Process.Internal.Types
+  ( -- * Node and process identifiers
+    NodeId(..)
+  , LocalProcessId(..)
+  , ProcessId(..)
+  , Identifier(..)
+  , nodeOf
+  , firstNonReservedProcessId
+  , nullProcessId
+    -- * Local nodes and processes
+  , LocalNode(..)
+  , Tracer(..)
+  , LocalNodeState(..)
+  , LocalProcess(..)
+  , LocalProcessState(..)
+  , Process(..)
+  , runLocalProcess
+  , ImplicitReconnect(..)
+    -- * Typed channels
+  , LocalSendPortId
+  , SendPortId(..)
+  , TypedChannel(..)
+  , SendPort(..)
+  , ReceivePort(..)
+    -- * Messages
+  , Message(..)
+  , isEncoded
+  , createMessage
+  , createUnencodedMessage
+  , unsafeCreateUnencodedMessage
+  , messageToPayload
+  , payloadToMessage
+    -- * Node controller user-visible data types
+  , MonitorRef(..)
+  , ProcessMonitorNotification(..)
+  , NodeMonitorNotification(..)
+  , PortMonitorNotification(..)
+  , ProcessExitException(..)
+  , ProcessLinkException(..)
+  , NodeLinkException(..)
+  , PortLinkException(..)
+  , ProcessRegistrationException(..)
+  , DiedReason(..)
+  , DidUnmonitor(..)
+  , DidUnlinkProcess(..)
+  , DidUnlinkNode(..)
+  , DidUnlinkPort(..)
+  , SpawnRef(..)
+  , DidSpawn(..)
+  , WhereIsReply(..)
+  , RegisterReply(..)
+  , ProcessInfo(..)
+  , ProcessInfoNone(..)
+    -- * Node controller internal data types
+  , NCMsg(..)
+  , ProcessSignal(..)
+    -- * Accessors
+  , localProcesses
+  , localPidCounter
+  , localPidUnique
+  , localConnections
+  , localProcessWithId
+  , localConnectionBetween
+  , monitorCounter
+  , spawnCounter
+  , channelCounter
+  , typedChannels
+  , typedChannelWithId
+    -- * Utilities
+  , forever'
+  ) where
+
+import System.Mem.Weak (Weak)
+import Data.Map (Map)
+import Data.Int (Int32)
+import Data.Typeable (Typeable, typeOf)
+import Data.Binary (Binary(put, get), putWord8, getWord8, encode)
+import qualified Data.ByteString as BSS (ByteString, concat, copy)
+import qualified Data.ByteString.Lazy as BSL
+  ( ByteString
+  , toChunks
+  , splitAt
+  , fromChunks
+  , length
+  )
+import qualified Data.ByteString.Lazy.Internal as BSL (ByteString(..))
+import Data.Accessor (Accessor, accessor)
+import Control.Category ((>>>))
+import Control.DeepSeq (NFData(..))
+import Control.Exception (Exception)
+import Control.Concurrent (ThreadId)
+import Control.Concurrent.Chan (Chan)
+import Control.Concurrent.STM (STM)
+import qualified Network.Transport as NT (EndPoint, EndPointAddress, Connection)
+import Control.Applicative (Applicative, Alternative, (<$>), (<*>))
+import Control.Monad.Reader (MonadReader(..), ReaderT, runReaderT)
+import Control.Monad.IO.Class (MonadIO)
+import Control.Distributed.Process.Serializable
+  ( Fingerprint
+  , Serializable
+  , fingerprint
+  , encodeFingerprint
+  , sizeOfFingerprint
+  , decodeFingerprint
+  , showFingerprint
+  )
+import Control.Distributed.Process.Internal.CQueue (CQueue)
+import Control.Distributed.Process.Internal.StrictMVar (StrictMVar)
+import Control.Distributed.Process.Internal.WeakTQueue (TQueue)
+import Control.Distributed.Static (RemoteTable, Closure)
+import qualified Control.Distributed.Process.Internal.StrictContainerAccessors as DAC (mapMaybe)
+
+import Data.Hashable
+import GHC.Generics
+
+--------------------------------------------------------------------------------
+-- Node and process identifiers                                               --
+--------------------------------------------------------------------------------
+
+-- | Node identifier
+newtype NodeId = NodeId { nodeAddress :: NT.EndPointAddress }
+  deriving (Eq, Ord, Typeable, Generic)
+instance Binary NodeId where
+instance NFData NodeId
+instance Hashable NodeId where
+instance Show NodeId where
+  show (NodeId addr) = "nid://" ++ show addr
+
+-- | A local process ID consists of a seed which distinguishes processes from
+-- different instances of the same local node and a counter
+data LocalProcessId = LocalProcessId
+  { lpidUnique  :: {-# UNPACK #-} !Int32
+  , lpidCounter :: {-# UNPACK #-} !Int32
+  }
+  deriving (Eq, Ord, Typeable, Generic, Show)
+

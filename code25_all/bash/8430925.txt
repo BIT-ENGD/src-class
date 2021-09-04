@@ -1,0 +1,78 @@
+REPOS="$1"
+TXN="$2"
+
+SVNLOOK=/usr/bin/svnlook
+ICONV=/usr/bin/iconv
+
+# The file endings to ignore when checking for UTF-8:
+IGNORED_ENDINGS=( png jar )
+
+# Prepairing to set the IFS (Internal Field Separator) so "for CHANGE in ..." will iterate
+# over lines instead of words
+OIFS="${IFS}"
+NIFS=$'\n'
+
+# Make sure that all files to be committed are encoded in UTF-8
+IFS="${NIFS}"
+
+for CHANGE in $($SVNLOOK changed -t "$TXN" "$REPOS"); do
+    IFS="${OIFS}"
+    # Skip change if first character is "D" (we dont care about checking deleted files)
+    if [ "${CHANGE:0:1}" == "D" ]; then
+        continue
+    fi
+
+    # Skip change if it is a directory (directories don't have encoding)
+    if [ "${CHANGE:(-1)}" == "/" ]; then
+        continue
+    fi
+
+    # Extract file repository path (remove first 4 characters)
+    FILEPATH=${CHANGE:4:(${#CHANGE}-4)}
+
+    # Ignore files that starts with "." like ".classpath"
+    IFS="//" # Change seperator to "/" so we can find the file in the file path
+    for SPLIT in $FILEPATH
+    do
+        FILE=$SPLIT
+    done
+    if [ "${FILE:0:1}" == "." ]; then
+        continue
+    fi
+    IFS="${OIFS}" # Reset Internal Field Seperator
+
+    # Ignore files that are not supposed to be checked, like images. (list defined in IGNORED_ENDINGS field above)
+    IFS="." # Change seperator to "." so we can find the file ending
+    for SPLIT in $FILE
+    do
+        ENDING=$SPLIT
+    done
+    IFS="${OIFS}" # Reset Internal Field Seperator
+    IGNORE="0"
+    for IGNORED_ENDING in ${IGNORED_ENDINGS[@]}
+    do
+        if [ `echo $IGNORED_ENDING | tr [:upper:] [:lower:]` == `echo $ENDING | tr [:upper:] [:lower:]` ] # case insensitive compare of strings
+        then
+            IGNORE="1"
+        fi
+    done
+    if [ "$IGNORE" == "1" ]; then
+        continue
+    fi
+
+    # Read changed file and pipe it to iconv to parse it as UTF-8
+    $SVNLOOK cat -t "$TXN" "$REPOS" "$FILEPATH" | $ICONV -f UTF-8 -t UTF-16 -o /dev/null
+
+    # If iconv exited with a non-zero value (error) then return error text and reject commit
+    if [ "${PIPESTATUS[1]}" != "0" ]; then
+        echo "Only UTF-8 files can be committed (violated in $FILEPATH)" 1>&2
+        exit 1
+    fi
+    IFS="${NIFS}"
+done
+
+IFS="${OIFS}"
+
+# All checks passed, so allow the commit.
+exit 0
+

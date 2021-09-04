@@ -1,0 +1,362 @@
+let bezierControlPoints = [
+    Vector(-10.0, -10.0),
+    Vector(0.0, -10.0),
+    Vector(0.0, 10.0),
+    Vector(10.0, 10.0)
+]
+
+let splineControlPoints = [
+    Vector(-2.0, -1.0),
+    Vector(-1.0, 1.0),
+    Vector(-0.25, 1.0),
+    Vector(0.25, -1.0),
+    Vector(1.0, -1.0),
+    Vector(2.0, 1.0)
+]
+
+class Bezier
+{
+    var c0:Vector
+    var c1:Vector
+    var c2:Vector
+    var c3:Vector
+
+    init(ic0 _ic0:Vector, ic1 _ic1:Vector, ic2 _ic2:Vector, ic3 _ic3:Vector) {
+        c0 = _ic0
+        c1 = _ic1
+        c2 = _ic2
+        c3 = _ic3
+    }
+
+    // Calculate curve length using Gauss-Legendre quadrature
+    func curveLength()->Double {
+        let gl = GaussLegendre()
+        gl.order = 3    // Good enough for a quadratic polynomial
+        let xprime = gl.integrate(a:0.0, b:1.0, closure:{ (t:Double)->Double in return self.dx(atTime:t) })
+        let yprime = gl.integrate(a:0.0, b:1.0, closure:{ (t:Double)->Double in return self.dy(atTime:t) })
+
+        return sqrt(xprime*xprime + yprime*yprime)
+    }
+
+    // I could vectorize this, but correctness > efficiency
+
+    // The derivative of the x-component
+    func dx(atTime t:Double)->Double {
+        let tc = (1.0-t)
+        let r0 = (3.0 * tc*tc) * (c1.x - c0.x)
+        let r1 = (6.0 * tc*t) * (c2.x - c1.x)
+        let r2 = (3.0 * t*t) * (c3.x - c2.x)
+        return r0 + r1 + r2
+    }
+
+    // The derivative of the y-component
+    func dy(atTime t:Double)->Double {
+        let tc = (1.0-t)
+        let r0 = (3.0 * tc*tc) * (c1.y - c0.y)
+        let r1 = (6.0 * tc*t) * (c2.y - c1.y)
+        let r2 = (3.0 * t*t) * (c3.y - c2.y)
+        return r0 + r1 + r2
+    }
+}
+
+class BSpline
+{
+    var spanLengths:[Double]! = nil
+    var totalLength:Double = 0.0
+    var cp:[Vector]
+    var knots:[Double]! = nil
+    var o:Int = 4
+
+    init(controlPoints:[Vector]) {
+        cp = controlPoints
+        calcKnots()
+    }
+
+    // Method to return length of the curve using Gauss-Legendre numerical integration
+    func cacheSpanLengths() {
+        spanLengths = [Double]()
+
+        totalLength = 0.0
+
+        let gl = GaussLegendre()
+        gl.order = o-1  // The derivative should be quadratic, so o-2 would suffice?
+
+        // Am I doing this right? Piece-wise integration?
+        for i in o-1 ..< knots.count-o {
+            let t0 = knots[i]
+            let t1 = knots[i+1]
+            let xprime = gl.integrate(a:t0, b:t1, closure:self.dx)
+            let yprime = gl.integrate(a:t0, b:t1, closure:self.dy)
+            let spanLength = sqrt(xprime*xprime + yprime*yprime)
+            spanLengths.append(spanLength)
+            totalLength += spanLength
+        }
+    }
+
+    // The b-spline basis function
+    func basis(i:Int, _ k:Int, _ x:Double)->Double {
+        var r:Double = 0.0
+        switch k {
+            case 0:
+                if (knots[i] <= x) && (x <= knots[i+1]) {
+                    r = 1.0
+                } else {
+                    r = 0.0
+                }
+            default:
+                var n0 = x - knots[i]
+                var d0 = knots[i+k]-knots[i]
+                var b0 = basis(i,k-1,x)
+
+                var n1 = knots[i+k+1] - x
+                var d1 = knots[i+k+1]-knots[i+1]
+                var b1 = basis(i+1,k-1,x)
+
+                var left = Double(0.0)
+                var right = Double(0.0)
+                if b0 != 0 && d0 != 0 { left = n0 * b0 / d0 }
+                if b1 != 0 && d1 != 0 { right = n1 * b1 / d1 }
+                r = left + right
+        }
+        return r
+    }
+
+    // Method to calculate and store the knot vector
+    func calcKnots() {
+
+        // The number of knots in the knot vector = number of control points + order (i.e. degree + 1)
+        let knotCount = cp.count + o
+
+        knots = [Double]()
+
+        // For an open b-spline where the ends are incident on the first and last control points,
+        // the first o knots are the same and the last o knots are the same, where o is the order
+        // of the curve.
+        var k = 0
+        for i in 0 ..< o {
+            knots.append(0.0)
+        }
+        for i in o ..< cp.count {
+            k++
+            knots.append(Double(k))
+        }
+        k++
+        for i in cp.count ..< knotCount {
+            knots.append(Double(k))
+        }
+    }
+
+    // I could vectorize this, but correctness > efficiency
+
+    // Derivative of the x-component
+    func dx(t:Double)->Double {
+        var p = Double(0.0)
+
+        let n = o
+        for i in 0 ..< cp.count-1 {
+            let u0 = knots[i + n + 1]
+            let u1 = knots[i + 1]
+            let fn = Double(n) / (u0 - u1)
+            let thePoint = (cp[i+1].x - cp[i].x) * fn
+            let b = basis(i+1, n-1, Double(t))
+            p += thePoint * b
+        }
+
+        return Double(p)
+    }
+
+    // Derivative of the y-component
+    func dy(t:Double)->Double {
+        var p = Double(0.0)
+
+        let n = o
+        for i in 0 ..< cp.count-1 {
+            let u0 = knots[i + n + 1]
+            let u1 = knots[i + 1]
+            let fn = Double(n) / (u0 - u1)
+            let thePoint = (cp[i+1].y - cp[i].y) * fn
+            let b = basis(i+1, n-1, Double(t))
+            p += thePoint * b
+        }
+
+        return Double(p)
+    }
+}
+
+class GaussLegendre
+{
+    var order:Int = 5
+
+    init() {
+    }
+
+    // Numerical integration of arbitrary function
+    func integrate(a _a:Double, b _b:Double, closure f:(Double)->Double)->Double {
+        var result = 0.0
+        let wgts = gl_weights[order-2]
+        let absc = gl_abscissae[order-2]
+        for i in 0..<order {
+            let a0 = absc[i]
+            let w0 = wgts[i]
+            result += w0 * f(0.5 * (_b + _a + a0 * (_b - _a)))
+        }
+        return 0.5 * (_b - _a) * result
+    }
+}
+
+let bezierControlPoints = [
+    Vector(-10.0, -10.0),
+    Vector(0.0, -10.0),
+    Vector(0.0, 10.0),
+    Vector(10.0, 10.0)
+]
+
+let splineControlPoints = [
+    Vector(-2.0, -1.0),
+    Vector(-1.0, 1.0),
+    Vector(-0.25, 1.0),
+    Vector(0.25, -1.0),
+    Vector(1.0, -1.0),
+    Vector(2.0, 1.0)
+]
+
+var bezier = Bezier(controlPoints:bezierControlPoints)
+println("Bezier curve length: \(bezier.curveLength())\n")
+
+var spline:BSpline = BSpline(controlPoints:splineControlPoints)
+spline.cacheSpanLengths()
+println("B-Spline curve length: \(spline.totalLength)\n")
+
+// INCORRECT
+func curveLength()->Double {
+    let gl = GaussLegendre()
+    gl.order = 3    // Good enough for a quadratic polynomial
+    let xprime = gl.integrate(a:0.0, b:1.0, closure:{ (t:Double)->Double in return self.dx(atTime:t) })
+    let yprime = gl.integrate(a:0.0, b:1.0, closure:{ (t:Double)->Double in return self.dy(atTime:t) })
+
+    return sqrt(xprime*xprime + yprime*yprime)
+}
+
+// CORRECT
+func curveLength()->Double {
+    let gl = GaussLegendre()
+    gl.order = 32
+    return = gl.integrate(a:0.0, b:1.0, closure:{ (t:Double)->Double in
+        let x = self.dx(atTime:t)
+        let y = self.dy(atTime:t)
+        return sqrt(x*x + y*y)
+    })
+}
+
+// INCORRECT
+func cacheSpanLengths() {
+    spanLengths = [Double]()
+
+    totalLength = 0.0
+
+    let gl = GaussLegendre()
+    gl.order = o-1  // The derivative should be quadratic, so o-2 would suffice?
+
+    // Am I doing this right? Piece-wise integration?
+    for i in o-1 ..< knots.count-o {
+        let t0 = knots[i]
+        let t1 = knots[i+1]
+        let xprime = gl.integrate(a:t0, b:t1, closure:self.dx)
+        let yprime = gl.integrate(a:t0, b:t1, closure:self.dy)
+        let spanLength = sqrt(xprime*xprime + yprime*yprime)
+        spanLengths.append(spanLength)
+        totalLength += spanLength
+    }
+}
+
+// CORRECT
+func cacheSpanLengths() {
+    spanLengths = [Double]()
+
+    totalLength = 0.0
+
+    let gl = GaussLegendre()
+    gl.order = 32
+
+    // Am I doing this right? Piece-wise integration?
+    for i in o-1 ..< knots.count-o {
+        let t0 = knots[i]
+        let t1 = knots[i+1]
+        let spanLength = gl.integrate(a:t0, b:t1, closure:{ (t:Double)->Double in
+            let x = self.dx(atTime:t)
+            let y = self.dy(atTime:t)
+            return sqrt(x*x + y*y)
+        })
+        spanLengths.append(spanLength)
+        totalLength += spanLength
+    }
+}
+
+    // Derivative of the x-component
+    func dx(t:Double)->Double {
+        var p = Double(0.0)
+
+        let n = o // INCORRECT (should be one less)
+        for i in 0 ..< cp.count-1 {
+            let u0 = knots[i + n + 1]
+            let u1 = knots[i + 1]
+            let fn = Double(n) / (u0 - u1)
+            let thePoint = (cp[i+1].x - cp[i].x) * fn
+            let b = basis(i+1, n-1, Double(t))
+            p += thePoint * b
+        }
+
+        return Double(p)
+    }
+
+    // Derivative of the y-component
+    func dy(t:Double)->Double {
+        var p = Double(0.0)
+
+        let n = o // INCORRECT (should be one less_
+        for i in 0 ..< cp.count-1 {
+            let u0 = knots[i + n + 1]
+            let u1 = knots[i + 1]
+            let fn = Double(n) / (u0 - u1)
+            let thePoint = (cp[i+1].y - cp[i].y) * fn
+            let b = basis(i+1, n-1, Double(t))
+            p += thePoint * b
+        }
+
+        return Double(p)
+    }
+
+    // Derivative of the x-component
+    func dx(t:Double)->Double {
+        var p = Double(0.0)
+
+        let n = o-1 // CORRECT
+        for i in 0 ..< cp.count-1 {
+            let u0 = knots[i + n + 1]
+            let u1 = knots[i + 1]
+            let fn = Double(n) / (u0 - u1)
+            let thePoint = (cp[i+1].x - cp[i].x) * fn
+            let b = basis(i+1, n-1, Double(t))
+            p += thePoint * b
+        }
+
+        return Double(p)
+    }
+
+    // Derivative of the y-component
+    func dy(t:Double)->Double {
+        var p = Double(0.0)
+
+        let n = o-1 // CORRECT
+        for i in 0 ..< cp.count-1 {
+            let u0 = knots[i + n + 1]
+            let u1 = knots[i + 1]
+            let fn = Double(n) / (u0 - u1)
+            let thePoint = (cp[i+1].y - cp[i].y) * fn
+            let b = basis(i+1, n-1, Double(t))
+            p += thePoint * b
+        }
+
+        return Double(p)
+    }
+

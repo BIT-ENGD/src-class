@@ -1,0 +1,107 @@
+#!/bin/bash
+
+if [[ -z $2 ]]; then
+    MAX_NPROC=4 # default
+else
+    MAX_NPROC=$2
+fi
+
+if [[ -z $1 ]]; then
+    echo "File with URLs is missing"
+    exit
+fi;
+
+NUM=0
+QUEUE=""
+
+DATA=""
+URL=""
+
+declare -a URL_ARRAY
+declare -a TIME_ARRAY
+ERROR_LOG=""
+
+function queue {
+    QUEUE="$QUEUE $1"
+    NUM=$(($NUM+1))
+}
+
+function regeneratequeue {
+    OLDREQUEUE=$QUEUE
+
+    echo "OLDREQUEUE:$OLDREQUEUE"
+
+
+    QUEUE=""
+    NUM=0
+    for PID in $OLDREQUEUE
+    do
+        process_count=`ps ax | awk '{print $1 }' | grep -c "^${PID}$"`
+
+        if [ $process_count -eq 1 ] ; then
+            QUEUE="$QUEUE $PID"
+            NUM=$(($NUM+1))
+        fi
+    done
+
+}
+
+function checkqueue {
+    OLDCHQUEUE=$QUEUE
+    for PID in $OLDCHQUEUE
+    do
+
+        process_count=`ps ax | awk '{print $1 }' | grep -c "^${PID}$"`
+
+        if [ $process_count -eq 0 ] ; then
+            wait $PID
+            my_status=$?
+            if [[ $my_status -ne 0 ]]
+            then
+                echo "`date` $my_status ${URL_ARRAY[$PID]}" >> $ERROR_LOG
+            fi
+
+            current_time=`date +%s`
+            old_time=${TIME_ARRAY[$PID]}
+            time_difference=$(expr $current_time - $old_time)
+
+            echo "`date` ${URL_ARRAY[$PID]} END ($time_difference seconds)" >> $REVERSE_LOG
+
+            #unset TIME_ARRAY[$PID]
+            #unset URL_ARRAY[$PID] 
+
+            regeneratequeue # at least one PID has finished
+            break
+        fi
+    done
+}
+
+REVERSE_LOG="$1.rvrs"
+ERROR_LOG="$1.error"
+
+echo "Cache STARTED at `date`" > $REVERSE_LOG
+echo "" > ERROR_LOG
+
+while read line; do
+
+    # create the command to be run
+    DATA="username=user@server.com&password=password"
+    URL=$line
+    CMD=$(curl --data "${DATA}" -s -o /dev/null --url "${URL}")
+
+    echo "Command: ${CMD}"    
+    # Run the command
+    $CMD &
+    # Get PID for process
+    PID=$!
+    queue $PID;
+    URL_ARRAY[$PID]=$URL;
+    TIME_ARRAY[$PID]=`date +%s`
+    while [ $NUM -ge $MAX_NPROC ]; do
+         checkqueue
+         sleep 0.4
+     done
+done < $1
+echo "Cache FINISHED at `date`" >> $REVERSE_LOG
+exit
+

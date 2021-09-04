@@ -1,0 +1,52 @@
+bytea
+run conn "INSERT INTO documents VALUES (?)" [toSql $ rawData mydoc]
+
+invalid byte sequence for encoding \"UTF8\": 0xcf72
+
+db=> \d+ documents
+                          Table "public.documents"
+     Column      |            Type             | Modifiers | Storage  | Description 
+-----------------+-----------------------------+-----------+----------+-------------
+ id              | character varying(16)       | not null  | extended | 
+ importtime      | timestamp without time zone | not null  | plain    | 
+ filename        | character varying(255)      | not null  | extended | 
+ data            | bytea                       | not null  | extended | 
+ recordcount     | integer                     | not null  | plain    | 
+ parsesuccessful | boolean                     | not null  | plain    | 
+Indexes:
+    "documents_pkey" PRIMARY KEY, btree (id)
+
+module DBMTest where
+
+import qualified Data.Time.Clock as Clock
+import Database.HDBC.PostgreSQL
+import Database.HDBC
+import Data.ByteString.Internal
+import Data.ByteString hiding (map)
+import Data.Char
+import Data.Word8
+import Numeric
+
+exampleData = pack ([0..65536] :: [Word8]) :: ByteString
+
+safeEncode :: ByteString -> ByteString
+safeEncode x = pack (convert' =<< unpack x)
+    where
+    convert' :: Word8 -> [Word8]
+    convert' 92 = [92, 92]
+    convert' x | x >= 32 && x < 128 = [x]
+    convert' x = 92:map c2w (showIntAtBase 8 intToDigit x "")
+
+runTest = do
+    conn <- connectPostgreSQL "dbname=db"
+    t <- Clock.getCurrentTime
+    withTransaction conn
+        (\conn -> run conn
+            "INSERT INTO documents (id, importTime, filename, data, recordCount, parseSuccessful) VALUES (?, ?, ?, ?, ?, ?)"
+            [toSql (15 :: Int),
+             toSql t,
+             toSql ("Demonstration data" :: String),
+             toSql $ safeEncode exampleData,
+             toSql (15 :: Int),
+             toSql (True :: Bool)])
+

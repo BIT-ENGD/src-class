@@ -1,0 +1,210 @@
+class RoomController(object):
+    """Controls which room is currently active (eg Title Screen)"""
+
+    def __init__(self, screen, ev_manager):
+        self.room = None
+        self.screen = screen
+        self.ev_manager = ev_manager
+        self.ev_manager.register_listener(self)
+        self.room = self.set_room(config.room)
+
+    def set_room(self, room_const):
+        #Unregister old room from ev_manager
+        if self.room:
+            self.room.ev_manager.unregister_listener(self.room)
+            self.room = None
+        #Set new room based on const
+        if room_const == config.TITLE_SCREEN:
+            return rooms.TitleScreen(self.screen, self.ev_manager)
+        elif room_const == config.GAME_MODE_ROOM:
+            return rooms.GameModeRoom(self.screen, self.ev_manager)        
+        elif room_const == config.GAME_ROOM:
+            return rooms.GameRoom(self.screen, self.ev_manager)
+        elif room_const == config.HIGH_SCORES_ROOM:
+            return rooms.HighScoresRoom(self.screen, self.ev_manager)
+
+    def notify(self, event):
+        if isinstance(event, ChangeRoomRequest):
+            if event.game_mode:
+                config.game_mode = event.game_mode            
+            self.room = self.set_room(event.new_room)
+
+#Run game 
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode(config.screen_size)
+
+    ev_manager = EventManager()
+    spinner = CPUSpinnerController(ev_manager)
+    room_controller = RoomController(screen, ev_manager)    
+    pygame_event_controller = PyGameEventController(ev_manager)
+
+    spinner.run()
+
+class EventManager:
+
+    #This object is responsible for coordinating most communication
+    #between the Model, View, and Controller.
+    def __init__(self):
+        from weakref import WeakKeyDictionary
+        self.last_listeners = {}
+        self.listeners = WeakKeyDictionary()
+        self.eventQueue= []
+        self.gui_app = None
+
+    #----------------------------------------------------------------------
+    def register_listener(self, listener):
+        self.listeners[listener] = 1
+
+    #----------------------------------------------------------------------
+    def unregister_listener(self, listener):
+        if listener in self.listeners:
+            del self.listeners[listener]
+
+    #----------------------------------------------------------------------
+    def clear(self):
+        del self.listeners[:]
+
+    #----------------------------------------------------------------------
+    def post(self, event):
+#        if  isinstance(event, MouseButtonLeftEvent):
+#            debug(event.name)
+        #NOTE: copying the list like this before iterating over it, EVERY tick, is highly inefficient,
+        #but currently has to be done because of how new listeners are added to the queue while it is running
+        #(eg when popping cards from a deck). Should be changed. See: http://dr0id.homepage.bluewin.ch/pygame_tutorial08.html
+        #and search for "Watch the iteration"
+
+        print 'Number of listeners: ' + str(len(self.listeners))
+
+        for listener in list(self.listeners):                               
+            #NOTE: If the weakref has died, it will be 
+            #automatically removed, so we don't have 
+            #to worry about it.
+            listener.notify(event)
+
+    def notify(self, event):
+        pass
+
+#------------------------------------------------------------------------------
+class PyGameEventController:
+    """..."""
+    def __init__(self, ev_manager):
+        self.ev_manager = ev_manager
+        self.ev_manager.register_listener(self) 
+        self.input_freeze = False
+
+    #----------------------------------------------------------------------
+    def notify(self, incoming_event):
+
+        if isinstance(incoming_event, UserInputFreeze):
+            self.input_freeze = True
+
+        elif isinstance(incoming_event, UserInputUnFreeze):
+            self.input_freeze = False        
+
+        elif isinstance(incoming_event, TickEvent) or isinstance(incoming_event, BoardCreationTick):
+
+            #Share some time with other processes, so we don't hog the cpu
+            pygame.time.wait(5)
+
+            #Handle Pygame Events
+            for event in pygame.event.get():
+                #If this event manager has an associated PGU GUI app, notify it of the event
+                if self.ev_manager.gui_app:
+                    self.ev_manager.gui_app.event(event)
+                #Standard event handling for everything else
+                ev = None
+                if event.type == QUIT:
+                    ev = QuitEvent()
+                elif event.type == pygame.MOUSEBUTTONDOWN and not self.input_freeze:
+                    if event.button == 1:    #Button 1
+                        pos = pygame.mouse.get_pos()
+                        ev = MouseButtonLeftEvent(pos)
+                elif event.type == pygame.MOUSEBUTTONDOWN and not self.input_freeze:
+                    if event.button == 2:    #Button 2
+                        pos = pygame.mouse.get_pos()
+                        ev = MouseButtonRightEvent(pos)   
+                elif event.type == pygame.MOUSEBUTTONUP and not self.input_freeze:
+                    if event.button == 2:    #Button 2 Release
+                        pos = pygame.mouse.get_pos()
+                        ev = MouseButtonRightReleaseEvent(pos)                                              
+                elif event.type == pygame.MOUSEMOTION:
+                        pos = pygame.mouse.get_pos()
+                        ev = MouseMoveEvent(pos)
+
+                #Post event to event manager
+                if ev:
+                    self.ev_manager.post(ev)        
+
+#        elif isinstance(event, BoardCreationTick):
+#            #Share some time with other processes, so we don't hog the cpu
+#            pygame.time.wait(5)               
+#                           
+#            #If this event manager has an associated PGU GUI app, notify it of the event
+#            if self.ev_manager.gui_app:
+#                self.ev_manager.gui_app.event(event)
+
+#------------------------------------------------------------------------------            
+class CPUSpinnerController:
+
+    def __init__(self, ev_manager):
+        self.ev_manager = ev_manager
+        self.ev_manager.register_listener(self)
+        self.clock = pygame.time.Clock()
+        self.cumu_time = 0
+
+        self.keep_going = True
+
+
+    #----------------------------------------------------------------------
+    def run(self):
+        if not self.keep_going:
+            raise Exception('dead spinner')        
+        while self.keep_going: 
+            time_passed = self.clock.tick()
+            fps = self.clock.get_fps()
+            self.cumu_time += time_passed
+            self.ev_manager.post(TickEvent(time_passed, fps))
+
+            if self.cumu_time >= 1000:
+                self.cumu_time = 0
+                self.ev_manager.post(SecondEvent(fps=fps))
+
+        pygame.quit()
+
+
+    #----------------------------------------------------------------------
+    def notify(self, event):
+        if isinstance(event, QuitEvent):
+            #this will stop the while loop from running
+            self.keep_going = False       
+
+class Timer(object):
+
+    def __init__(self, ev_manager, time_left):
+        self.ev_manager = ev_manager
+        self.ev_manager.register_listener(self)
+        self.time_left = time_left
+        self.paused = False
+
+    def __repr__(self):
+        return str(self.time_left)
+
+    def pause(self):
+        self.paused = True
+
+    def unpause(self):
+        self.paused = False
+
+    def notify(self, event):
+        #Pause Event
+        if isinstance(event, Pause):   
+            self.pause() 
+        #Unpause Event
+        elif isinstance(event, Unpause):   
+            self.unpause()                
+        #Second Event
+        elif isinstance(event, SecondEvent):   
+            if not self.paused: 
+                self.time_left -= 1   
+

@@ -1,0 +1,68 @@
+ -- Simulation for the Casino War
+
+import System.Random
+import Data.Map
+
+-------------------------------------------------------------------------------
+-- stolen from the internet
+
+fisherYatesStep :: RandomGen g => (Map Int a, g) -> (Int, a) -> (Map Int a, g)
+fisherYatesStep (m, gen) (i, x) = ((insert j x . insert i (m ! j)) m, gen')
+    where
+        (j, gen') = randomR (0, i) gen
+
+fisherYates :: RandomGen g => g -> [a] -> ([a], g)
+fisherYates gen [] = ([], gen)
+fisherYates gen l = toElems $ Prelude.foldl
+        fisherYatesStep (initial (head l) gen) (numerate (tail l))
+    where
+        toElems (x, y) = (elems x, y)
+        numerate = zip [1..]
+        initial x gen = (singleton 0 x, gen)
+
+-------------------------------------------------------------------------------
+
+data State = Deal | Tie deriving Show
+
+-- state: game state
+-- # cards to deal
+-- # cards to burn
+-- cards on the table
+-- indices for tied players
+-- # players
+-- players winning
+-- dealer's winning
+type GameState = (State, Int, Int, [Int], [Int], Int, [Int], Int)
+
+gameRound :: GameState -> Int -> GameState
+gameRound (Deal, toDeal, toBurn, inPlay, tied, numPlayers, pWins, dWins) card
+    | toDeal > 0 =
+        -- not enough card, deal a card
+        (Deal, toDeal - 1, 0, card:inPlay, tied, numPlayers, pWins, dWins)
+    | toDeal == 0 =
+        -- enough cards in play now
+        -- here should detemine whether or not there is any ties on the table,
+        -- and go to the tie state
+        let
+            dealerCard = head inPlay
+            p = zipWith (+) pWins $ (tail inPlay) >>=
+                (\x -> if x < dealerCard then return (-1) else return 1)
+            d = if dealerCard == (maximum inPlay) then dWins + 1 else dWins - 1
+        in
+            (Deal, numPlayers + 1, 0, [], tied, numPlayers, p, d)
+gameRound (Tie, toDeal, toBurn, inPlay, tied, numPlayers, pWins, dWins) card
+    -- i have no idea how to write the logic for the tie state AKA the "war" state
+    | otherwise = (Tie, toDeal, toBurn, inPlay, tied, numPlayers, pWins, dWins)
+
+-------------------------------------------------------------------------------
+
+main = do
+    rand <- newStdGen
+    -- create the shuffled deck
+    (deck, _) <- return $ fisherYates rand $ [2 .. 14] >>= (replicate 6)
+    -- fold the state updating function over the deck
+    putStrLn $ show $ Prelude.foldl gameRound
+        (Deal, 7, 0, [], [], 6, [0 ..], 0) deck
+
+-------------------------------------------------------------------------------
+

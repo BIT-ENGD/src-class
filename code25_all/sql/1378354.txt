@@ -1,0 +1,102 @@
+     DECLARE CursorArticulo CURSOR FOR
+        SELECT HstAt.IdArticulo, SUM(HstAt.Cantidad) As SumaCantidad, 
+            HstAt.Precio 
+        FROM HstArticulosTickets hstAT INNER JOIN HstTickets HstT 
+             ON hstAT.IdTicket=hstT.IdTicket
+        WHERE hstT.NumUsuarioEmisor=@UsuarioAct
+                  AND HstT.NumZona=@ZonaAct
+              AND DATEDIFF(day,@par_Fecha,HstT.FechaHoraTicket)=0
+    GROUP BY IdArticulo, Precio
+    ORDER BY IdArticulo
+
+DELETE FROM dbo.TmpDetalleHojaDeCajaDiaria
+DELETE FROM dbo.TmpMaestraHojaDeCajaDiaria
+
+INSERT INTO TmpMaestraHojaDeCajaDiaria 
+    (NumUsuario, ZonaAsignada, TipoUsuario, NumPDA, ImporteUsuarioZona)
+SELECT
+    hstZA.NumUsuario, hstZA.NumZonaAsignada, 
+       (SELECT TipoUsuario FROM Usuarios U WHERE U.NumUsuario=hstZA.NumUsuario) AS TipoUsuario,
+       (SELECT NumPDA FROM Usuarios U WHERE U.NumUsuario=hstZA.NumUsuario) AS NumPDA,
+       (SELECT SUM(hstT.ImporteTotal) FROM HstTickets hstT 
+            WHERE hstT.NumUsuarioEmisor=hstZA.NumUsuario
+            AND hstT.NumZona=hstZA.NumZonaAsignada
+            AND DATEDIFF(day,hstZA.Fecha,HstT.FechaHoraTicket)=0) AS ImporteUsuarioZona
+FROM hstZonasAsignadas hstZA
+WHERE DATEDIFF(day,hstZA.Fecha,@par_Fecha)=0
+ORDER BY NumUsuario
+
+
+DECLARE @UsuarioAct NCHAR(4)
+DECLARE @ZonaAct SMALLINT
+DECLARE @IdUnicoAct INTEGER
+DECLARE @IdArticulo INTEGER
+DECLARE @NombreArticulo NCHAR(50)
+DECLARE @PrecioUd MONEY
+DECLARE @SumaCantidad INTEGER
+
+DECLARE CursorMaestra CURSOR FOR
+     SELECT NumUsuario, ZonaAsignada, IdUnico FROM TmpMaestraHojaDeCajaDiaria
+     ORDER BY NumUsuario
+
+OPEN CursorMaestra
+
+PRINT 'CURSOR ABIERTO'
+
+-- Vamos a por el primero
+FETCH NEXT FROM CursorMaestra INTO @ZonaAct, @UsuarioAct, @IdUnicoAct
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+
+     PRINT @ZonaAct
+     PRINT @UsuarioAct
+
+     DECLARE CursorArticulo CURSOR FOR
+        (SELECT HstAt.IdArticulo, SUM(HstAt.Cantidad) As SumaCantidad, HstAt.Precio 
+        FROM HstArticulosTickets hstAT INNER JOIN HstTickets HstT 
+             ON hstAT.IdTicket=hstT.IdTicket
+        WHERE hstT.NumUsuarioEmisor=@UsuarioAct
+                              AND HstT.NumZona=@ZonaAct
+                              AND DATEDIFF(day,@par_Fecha,HstT.FechaHoraTicket)=0
+        GROUP BY IdArticulo, Precio)
+
+     OPEN CursorArticulo
+     PRINT '   CURSOR ABIERTO'
+
+     -- Vamos a por el primero
+     FETCH NEXT FROM CursorArticulo INTO @IdArticulo, @SumaCantidad, @PrecioUd
+
+     PRINT @@FETCH_STATUS
+     WHILE @@FETCH_STATUS = 0
+     BEGIN
+
+         SELECT @NombreArticulo = NombreArticulo FROM Articulos
+             WHERE IdArticulo = @IdArticulo
+
+         PRINT @NombreArticulo
+
+         INSERT INTO TmpDetalleHojaDeCajaDiaria
+             (NumUsuario, ZonaAsignada, IdArticulo, NombreArticulo, PrecioUD, CantidadZonaUsuario, IdUnicoMaestra)
+         VALUES
+             (@UsuarioAct, @ZonaAct, @IdArticulo, @NombreArticulo, @PrecioUd, @SumaCantidad, @IdUnicoAct)
+
+         FETCH NEXT FROM CursorArticulo INTO @IdArticulo, @SumaCantidad, @PrecioUd
+
+
+
+     END
+
+     CLOSE CursorArticulo
+     DEALLOCATE CursorArticulo
+
+     PRINT '   CURSOR CERRADO'
+
+     FETCH NEXT FROM CursorMaestra INTO @ZonaAct, @UsuarioAct, @IdUnicoAct
+END
+
+CLOSE CursorMaestra
+DEALLOCATE CursorMaestra
+
+PRINT 'CURSOR CERRADO'
+

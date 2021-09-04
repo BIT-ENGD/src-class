@@ -1,0 +1,84 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Net::SNMP;
+package SnmpTable;
+
+my ($session, $error);
+
+sub new {
+  my ($classe, $hostname, $oid, $community) = @_;
+  my $this = {
+    "hostname"      => $hostname,
+    "oid"           => $oid,
+    "community" => $community
+  };
+  bless($this, $classe);
+  return $this;
+}
+
+sub connexion {
+    my ($this) = @_;
+    #print "Connexion SNMP...\n";
+    ($session, $error) = Net::SNMP->session(
+        -hostname  => $this->{hostname},
+        -community => $this->{community},
+        -version   => "1",
+        -timeout   => 3,
+    );
+    request_error_connexion() if (!defined($session));
+    #print "Connexion établie\n";
+}
+
+sub request_error_connexion {   
+    my ($this) = @_;
+    print "Erreur : connexion SNMP impossible vers $this->{hostname}\n";
+    print "Erreur : $error\n";
+    if ($error =~ /The argument "-community" is unknown/)
+        {
+                # protocol SNMP version 3 non pris en charge
+                exit 3;  # code retour final = 3*256 = 768
+        }
+    else
+    {
+        exit 1; # code retour final = 1*256 = 256
+    }
+}
+
+sub request_error {
+        my ($this) = @_;
+        #print "Erreur : pas de réponse SNMP depuis l'hôte $this->{hostname} avec l'oid $this->{oid}\n";
+        printf "Erreur : %s\n",$session->error;
+        if ($session->error =~ /No response from remote host/)
+        {
+                #host ok, mais community surement erronée ou host refuse le connexion
+                $session->close;
+                exit 2; # code retour final = 2*256 = 512
+        }
+        else
+        {
+                #table introuvable
+                $session->close;
+                exit 4; # code retour final = 4*256 = 1024
+        }
+}
+
+sub requete {
+    my ($this) = @_;
+    my $result = $session->get_table( -baseoid => $this->{oid} );
+    request_error() if (!defined($result));
+    my %tab = ();
+
+    foreach my $i (Net::SNMP::oid_lex_sort(keys %{$result})) {
+        my $index = $i;
+        $index =~ s/$this->{oid}.//;
+        $tab{ $index } = $result->{$i};  
+        #print $index."--".$result->{$i}."\n";
+    }
+
+    $session->close();
+    return %tab;
+}
+
+1;
+

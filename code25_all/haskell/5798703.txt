@@ -1,0 +1,50 @@
+Int
+Int
+Bool
+Token
+(Int -> Int -> Int)
+(Int -> Int -> Bool)
+(Bool -> Bool -> Bool)
+type Precedence = Int
+data Associativity = AssocL | AssocR
+data Token = Operand Int | Operator String (Int -> Int -> Int) Associativity Precedence | ParenL | ParenR
+
+instance Eq Token where
+  Operator s1 _ _ _ == Operator s2 _ _ _  = s1 == s2
+  Operand  x1       == Operand  x2        = x1 == x2
+  ParenL            == ParenL             = True
+  ParenR            == ParenR             = True
+  _                 == _                  = False
+
+evalMath :: String -> Int
+evalMath = rpn . shuntingYard . tokenize
+
+tokenize :: String -> [Token]
+tokenize = map token . words
+  where token s@"+" = Operator s (+) AssocL 2
+        token s@"-" = Operator s (-) AssocL 2
+        token s@"*" = Operator s (*) AssocL 3
+        token s@"/" = Operator s div AssocL 3
+        token s@"^" = Operator s (^) AssocR 4
+        token "("   = ParenL
+        token ")"   = ParenR
+        token x     = Operand $ read x
+
+shuntingYard :: [Token] -> [Token]
+shuntingYard = finish . foldl shunt ([], [])
+  where finish (tokens, ops) = (reverse tokens) ++ ops
+        shunt (tokens, ops) token@(Operand _)        = (token:tokens, ops)
+        shunt (tokens, ops) token@(Operator _ _ _ _) = ((reverse higher) ++ tokens, token:lower)
+          where (higher, lower) = span (higherPrecedence token) ops
+                higherPrecedence (Operator _ _ AssocL prec1) (Operator _ _ _ prec2) = prec1 <= prec2
+                higherPrecedence (Operator _ _ AssocR prec1) (Operator _ _ _ prec2) = prec1 < prec2
+                higherPrecedence (Operator _ _ _ _)          ParenL                 = False
+        shunt (tokens, ops) ParenL = (tokens, ParenL:ops)
+        shunt (tokens, ops) ParenR = ((reverse afterParen) ++ tokens, tail beforeParen)
+          where (afterParen, beforeParen) = break (== ParenL) ops
+
+rpn :: [Token] -> Int
+rpn = head . foldl rpn' []
+  where rpn' (x:y:ys) (Operator _ f _ _) = (f x y):ys
+        rpn' xs (Operand x) = x:xs
+

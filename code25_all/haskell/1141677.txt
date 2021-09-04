@@ -1,0 +1,39 @@
+module Main where
+
+import Control.Exception (throw)
+
+import Database.HDBC
+import Database.HDBC.Sqlite3 -- just for this example, I use MySQL in production
+
+main = do
+    exec "CREATE TABLE IF NOT EXISTS users (name VARCHAR(80) NOT NULL)" []
+
+    exec "INSERT INTO users VALUES ('John')" []
+    exec "INSERT INTO users VALUES ('Rick')" []
+
+    rows <- select "SELECT name FROM users" []
+
+    let toS x = (fromSql x)::String
+    let names = map (toS . head) rows
+
+    print names
+
+exec :: String -> [SqlValue] -> IO Integer
+exec query params = withDb $ \c -> run c query params
+
+select :: String -> [SqlValue] -> IO [[SqlValue]]
+select query params = withDb $ \c -> quickQuery' c query params
+
+withDb :: (Connection -> IO a) -> IO a
+withDb f = do
+    conn <- handleSqlError $ connectSqlite3 "users.db"
+    catchSql
+        (do r <- f conn
+            commit conn
+            disconnect conn
+            return r)
+        (\e@(SqlError _ _ m) -> do
+            rollback conn
+            disconnect conn
+            throw e)
+

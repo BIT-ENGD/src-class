@@ -1,0 +1,363 @@
+/** Reads values from tagname between start_time and end_time which are strings in the format 
+ of 01/01/1970-12:00, a null string is treated as 01/01/1970, values are stored in
+ "tagname".csv */
+int ReadValues(char * tagname, char * start_time, char * end_time, char * working_directory, char * new_tag_name)
+{
+ long lRet;
+ int  number_of_samples;
+ int     loop;
+ IHU_DATA_SAMPLE  * pSamples=NULL;
+ IHU_TIMESTAMP  StartTime;
+ IHU_TIMESTAMP  EndTime;
+ FILE *stream;
+ char outputFileName[200];
+ char szQuality[100];
+ char    newTempTagName[100];
+ int  Year;
+ int  Month;
+ int  Day;
+ int  Hour;
+ int  Minute;
+ int  Second;
+ long Subsecond;
+ int date[10];
+
+    //if we want to change the tagname do it now
+ if(new_tag_name != 0){
+       strncpy(newTempTagName, new_tag_name, 100);
+    } else {
+       strncpy(newTempTagName, tagname, 100);  
+    } 
+
+ // if the tagname contains a character that is invalid for a filename then we have to make a name
+ if ( (strstr(newTempTagName, "/")) || (strstr(newTempTagName, "\\")) || (strstr(newTempTagName, ":")))
+ {
+
+  sprintf(outputFileName, "MadeUpTag%d", MadeUpTagCount++);
+ }
+ else
+ {
+
+        //If a working directory was passed in use it
+        if(!working_directory){           
+            strncpy(outputFileName, newTempTagName,199);   
+            } else {
+      strcpy(outputFileName, working_directory); //Copy the working directory to the filename
+      // Append a / on the end of the working directory if it doesn't already have one
+         if(outputFileName[strlen(outputFileName)-1] == '\"'){                   
+                outputFileName[strlen(outputFileName)-1] = 0;
+            } 
+            if(outputFileName[strlen(outputFileName)-1] != '\\'){         
+                strncat(outputFileName, "\\", 199);                                
+            }
+            strncat(outputFileName, newTempTagName, 199);   //Copy the tagname to the end of the working directory
+        }
+
+ }
+
+ //Add the csv file extension
+ strcat(outputFileName, ".csv");
+ #ifdef DEBUG
+ printf("Output filename: %s\n", outputFileName);
+ #endif
+
+ stream = fopen(outputFileName, "w");
+ if( stream == NULL ) {
+  printf("The file %s can not be opened\n", outputFileName );
+ } else {
+
+  //If start_time == 0 we want to start at 1970
+  if(start_time == 0){
+   // we want all the data so use an old start time
+   struct tm local;
+   local.tm_year = date[2] - 1900;
+   local.tm_mon = date[1] - 1;
+   local.tm_mday = date[0];
+   local.tm_hour = date[3];
+   local.tm_min = date[4];
+   local.tm_sec = 0;
+            time_t utc_seconds = mktime(&local);
+   StartTime.Seconds = (long)utc_seconds;
+            StartTime.Subseconds = 0; 
+
+  } else {
+            //we have been supplied a start time
+   #ifdef DEBUG
+            printf("Start Time: ");
+   #endif
+            lRet = convert_date(start_time, &StartTime);
+   #ifdef DEBUG
+
+   printf("Seconds %ld \n", StartTime.Seconds);
+   #endif
+  }
+
+  //if end_time == 0 we want to go all the way until now.
+  if(end_time == 0){
+   // end time of 0 means now
+   memset(&EndTime, 0, sizeof(EndTime));
+  } else {
+            //we have been supplied an end time
+   #ifdef DEBUG
+            printf("End Time: ");
+   #endif
+            lRet = convert_date(end_time, &EndTime);
+   #ifdef DEBUG
+            printf("Seconds %ld \n", EndTime.Seconds);
+   #endif
+  }
+
+  // API will determine actual samples that are in that time range
+  number_of_samples=0;
+
+  // API will allocate the memory
+  pSamples = NULL;
+     //timeTaken();
+  lRet = ihuReadRawDataByTime
+  (
+   serverhandle,  // the handle returned from the connect
+   tagname,   // the single tagname to retrieve 
+   &StartTime,   // start time for query
+   &EndTime,   // end time for query
+   &number_of_samples, // will be set by API
+   &pSamples   // will be allocated and populated in the user API
+  );
+
+        char temp[100];
+        char Header[100];
+        char lengthOfHeader = 0;
+        char SampleAndTag[100];
+        int  lengthOfSampleAndTag = 0;
+        char ActualSample[100];
+        int  lengthOfActualSample = 0;
+        char NumberOfSamples[100];
+        int  lengthOfNumberOfSamples = 0;
+  int  oldQualityStatus = 99999;
+
+  if (lRet == ihuSTATUS_OK)
+  { 
+
+      // successful read
+            lengthOfHeader = snprintf(Header, 100, "[Data]\nTagname,TimeStamp,Value,DataQuality\n");
+            if(lengthOfHeader < 0){
+                printf("ERROR WRITING TO BUFFER!\n");                                 
+            } else {
+                if(fwrite(Header, 1, lengthOfHeader, stream) < lengthOfHeader){
+                        printf("ERROR WRITING TO FILE!\n");
+                }
+            }
+
+   for (loop = 0;loop < number_of_samples;loop++)
+   {
+                struct tm * local;
+                local = localtime(&pSamples[loop].TimeStamp.Seconds);
+                Month = local->tm_mon + 1;
+                Day = local->tm_mday;
+                Year = local->tm_year + 1900;
+                Hour = local->tm_hour;
+                Minute = local->tm_min;
+                Second = local->tm_sec;
+                Subsecond = pSamples[loop].TimeStamp.Subseconds;
+
+                //lengthOfSampleAndTag = snprintf(SampleAndTag, 100, "Sample %d, %s",loop, newTempTagName);
+                lengthOfSampleAndTag = snprintf(SampleAndTag, 100, "%s", newTempTagName);
+                if(lengthOfSampleAndTag < 0){
+                   printf("ERROR WRITING TO BUFFER!\n");                                 
+                } else {
+                    if(fwrite(SampleAndTag, 1,lengthOfSampleAndTag, stream) < lengthOfSampleAndTag){
+                        printf("ERROR WRITING TO FILE!\n");
+                    }
+                }
+
+                //Doing the formatting ourselves manually per character saves about 20% of cpu time
+                //on large databases this can save hours
+                temp[0] = ',';
+    temp[1] = ' ';
+    temp[2] = Month/10 + 0x30; //Tens
+    temp[3] = Month%10 + 0x30; //units
+    temp[4] = '/';
+    temp[5] = Day/10 + 0x30;
+    temp[6] = Day%10 + 0x30;
+    temp[7] = '/';
+    temp[8] = Year/1000 + 0x30;
+    temp[9] = '0';
+    temp[10] = (Year%100)/10 + 0x30;
+    temp[11] = (Year%100)%10 + 0x30;
+    temp[12] = ' ';
+    temp[13] = Hour/10 + 0x30; //Tens
+    temp[14] = Hour%10 + 0x30; //units
+    temp[15] = ':';
+    temp[16] = Minute/10 + 0x30;
+    temp[17] = Minute%10 + 0x30;
+    temp[18] = ':';
+    temp[19] = Second/10 + 0x30;
+    temp[20] = Second%10 + 0x30;
+    temp[21] = '.';
+    temp[22] = '0';
+    temp[23] = '0';
+    temp[24] = '0';
+    temp[25] = ',';
+    temp[26] = ' ';
+    temp[27] = 0;  //Null termination
+
+                //This is to save copying the string if it is the same
+                if(oldQualityStatus != pSamples[loop].Quality.QualityStatus){
+                    oldQualityStatus = pSamples[loop].Quality.QualityStatus;
+        switch(pSamples[loop].Quality.QualityStatus)
+        {
+         case ihuOPCBad:
+          strncpy(szQuality,"Bad",99);
+          break;
+         case ihuOPCUncertain:
+          strncpy(szQuality,"Uncertain",99);
+          break;
+         case ihuOPCNA:
+          strncpy(szQuality,"NotAvailable",99);
+          break;
+         case ihuOPCGood:
+          strncpy(szQuality,"Good",99);
+          break;
+         default:
+          strncpy(szQuality,"Really unknown",99);
+          break;
+        }
+                }
+
+    if ( pSamples[loop].ValueDataType == ihuFloat )
+    {
+                    //lengthOfActualSample = snprintf(ActualSample, 100,"%s%8.7f, %s, Type:Float\n",temp,pSamples[loop].Value.Float,szQuality);
+                    lengthOfActualSample = snprintf(ActualSample, 100,"%s%8.7f, %s\n",temp,pSamples[loop].Value.Float,szQuality);
+                    if(lengthOfActualSample < 0){
+                         printf("ERROR WRITING TO BUFFER!\n");  
+                    } else {
+                        if(fwrite(ActualSample, 1, lengthOfActualSample, stream) < lengthOfActualSample){
+                            printf("ERROR WRITING TO FILE!\n");
+                        }
+                    }
+    }
+    else if ( pSamples[loop].ValueDataType == ihuDoubleFloat )
+    {
+                    //lengthOfActualSample = snprintf(ActualSample, 100,"%s%8.15f, %s, Type: DoubleFloat\n ",temp,pSamples[loop].Value.DoubleFloat,szQuality);
+                    lengthOfActualSample = snprintf(ActualSample, 100,"%s%8.15f, %s\n ",temp,pSamples[loop].Value.DoubleFloat,szQuality);
+                    if(lengthOfActualSample < 0){
+                         printf("ERROR WRITING TO BUFFER!\n");   
+                    } else {
+                        if(fwrite(ActualSample, 1,lengthOfActualSample, stream) < lengthOfActualSample){
+                            printf("ERROR WRITING TO FILE!\n");
+                        }
+                    }
+
+    }
+    else if ( pSamples[loop].ValueDataType == ihuShort )
+    {
+                    //lengthOfActualSample = snprintf(ActualSample, 100,"%s%d, %s, Type:Short\n",temp,pSamples[loop].Value.Short,szQuality);
+                    lengthOfActualSample = snprintf(ActualSample, 100,"%s%d, %s\n",temp,pSamples[loop].Value.Short,szQuality);
+                    if(lengthOfActualSample <0){
+                         printf("ERROR WRITING TO BUFFER!\n"); 
+                    } else {
+                        if(fwrite(ActualSample, 1, lengthOfActualSample, stream) < lengthOfActualSample){
+                            printf("ERROR WRITING TO FILE!\n");
+                        }
+                    }
+    }
+    else if ( pSamples[loop].ValueDataType == ihuInteger )
+    {
+                    //lengthOfActualSample = snprintf(ActualSample, 100,"%s%d, %s, Type:Integer\n",temp, pSamples[loop].Value.Integer, szQuality);
+                    lengthOfActualSample = snprintf(ActualSample, 100,"%s%d, %s\n",temp, pSamples[loop].Value.Integer, szQuality);
+                    if(lengthOfActualSample < 0){
+                         printf("ERROR WRITING TO BUFFER!\n");  
+                    } else {
+                        if(fwrite(ActualSample, 1, lengthOfActualSample, stream) < lengthOfActualSample){
+                            printf("ERROR WRITING TO FILE! \n");
+                        }
+                    }
+
+    }
+    else if ( pSamples[loop].ValueDataType == ihuString )
+    {
+     //lengthOfActualSample = snprintf(ActualSample, 100,"%s%s, %s, Type:String\n",temp,pSamples[loop].Value.String,szQuality);
+                    lengthOfActualSample = snprintf(ActualSample, 100,"%s%s, %s\n",temp,pSamples[loop].Value.String,szQuality);
+                    if(lengthOfActualSample < 0){
+                        printf("ERROR WRITING TO BUFFER!\n"); 
+                    } else {
+                        if(fwrite(ActualSample, 1, lengthOfActualSample, stream) < lengthOfActualSample){
+                            printf("ERROR WRITING TO FILE! \n");
+                        }
+                    }
+    }     
+   }
+  }
+  lengthOfNumberOfSamples = snprintf(NumberOfSamples, 100,"Number of samples: %d\n",number_of_samples);
+  if(lengthOfNumberOfSamples < 0){
+            printf("ERROR WRITING TO BUFFER!\n"); 
+        } else {
+            if(fwrite(NumberOfSamples, 1, lengthOfNumberOfSamples, stream) < lengthOfNumberOfSamples){
+                printf("ERROR WRITING TO FILE!\n");
+            }
+        }
+
+      //timeDifference = GetTickCount() - timeDifference;
+     //fprintf(stream, "Time taken: %d\n", timeDifference);
+  // success or not you should free this
+  FreeSamples(pSamples, number_of_samples);
+  ihuFreePtr (pSamples);
+  pSamples = NULL;
+        timeTaken();
+  fclose(stream);
+ }
+
+
+ return 0;
+}
+
+   stream = fopen(outputFileName, "w");
+
+   for(...){
+     ... lots of conditions
+     if ( pSamples[loop].ValueDataType == ihuFloat )
+     {
+          lengthOfActualSample = snprintf(ActualSample, 100,"%s%8.7f, %s\n",temp,pSamples[loop].Value.Float,szQuality);
+          if(lengthOfActualSample < 0){
+               printf("ERROR WRITING TO BUFFER!\n");  
+          } else {
+               if(fwrite(ActualSample, 1, lengthOfActualSample, stream) < lengthOfActualSample){
+                    printf("ERROR WRITING TO FILE!\n");
+               }
+          }
+      }
+    }
+
+    fclose(stream);
+
+Sample 81035, debug, 09/13/2010 11:10:55.000, 0.8900000, Good, Type:Float
+Sample 81036, debug, 09/13/2010 11:11:00.000, 0.9500000, Good, Type:Float
+Number of samples: 81037
+**:56:15.000, 0.2800000, Good, Type:Float
+Sample 80164, debug, 07/22/2010 15:56:20.000, 0.3400000, Good, Type:Float
+Sample 80165, debug, 07/22/2010 15:56:30.000, 0.4100000, Good, Type:Float
+... lots more samples
+Sample 80322, debug, 08/01/2010 00:04:35.000, 0.5800000, Good, Type:Float
+Sample 80323, debug, 08/01/2010 00:04:45.000, 0.6700000, Good, Type:Float
+Sample 80324**
+file ends here halfway through sample 80324
+
+Sample 81035, debug, 09/13/2010 11:10:55.000, 0.8900000, Good, Type:Float
+Sample 81036, debug, 09/13/2010 11:11:00.000, 0.9500000, Good, Type:Float
+Number of samples: 81037
+
+run1, 02/01/2010 08:50:50.000, 0.6000000, Good
+run1, 02/01/2010 08:51:00.000, 0.6900000, Good
+run1, 02/01/2010 08:51:10.000, 0.7600000, Good   #Sample505
+Number of samples: 505
+NULNULNULNULNULNULNULNULNULNULNULNULNULNULNULNULNULNULNULNUL (0 in a hex editor)
+
+run2, 03/31/2010 15:25:30.000, 0.8200000, Good
+Number of samples: 1742
+/22/2010 09:39:35.000, 0.5400000, Good
+run2, 01/22/2010 09:39:45.000, 0.6400000, Good
+run2, 01/22/2010 09:39:50.000, 0.6900000, Good
+
+run5, 12/31/2009 16:03:15.000, 0.6600000, Good
+run5, 12/31/2009 16:03:25.000, 0.7600000, Good
+Number of samples: 76660
+

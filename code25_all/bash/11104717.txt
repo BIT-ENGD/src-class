@@ -1,0 +1,84 @@
+$ read -t 2 < <(stat -t /www/logs/foo/*); echo $?
+1
+
+list_of_mounts=$(grep nfs /etc/fstab | grep -v ^# | awk '{print $2'} | xargs)
+exitstatus $LINENO
+
+for X in $list_of_mounts; do
+    AM_I_EXCLUDED=`echo " $* " | grep " $X " -q; echo $?`
+    if [ "$AM_I_EXCLUDED" -eq "0" ]; then
+    echo "" >> /dev/null
+    #check to see if mount is mounted according to /proc/mounts
+    elif [ ! `grep --quiet "$X " /proc/mounts; echo $?` -eq 0 ]; then
+        #mount is not mounted at all, add to list to remount
+        remount_list=`echo $remount_list $X`;
+    #now make sure its not stale
+    elif [ ! "`read -t 2  < <(stat -t $X/*) ; echo $?`" -eq "0" ]; then
+        stalemount_list=`echo $stalemount_list $X`
+    fi
+
+/usr/lib64/nagios/plugins/check_nfs_mounts.sh: command substitution: line 46: syntax error near unexpected token `<'
+/usr/lib64/nagios/plugins/check_nfs_mounts.sh: command substitution: line 46: `read -t 2  < <( '
+/usr/lib64/nagios/plugins/check_nfs_mounts.sh: command substitution: line 46: syntax error near unexpected token `)'
+/usr/lib64/nagios/plugins/check_nfs_mounts.sh: command substitution: line 46: ` ) ; echo $?'
+/usr/lib64/nagios/plugins/check_nfs_mounts.sh: line 46: [: stat -t /www/logs/foo/*: integer expression expected
+
+#!/bin/bash
+
+usage() {
+    echo "
+    Usage:
+    check_nfs_mounts.sh
+    It just works.
+    Optional: include an argument to exclude that mount point
+"
+}
+ok() {
+        echo "OK - $*"; exit 0
+        exit
+}
+warning() {
+        echo "WARNING - $*"; exit 1
+        exit
+}
+critical() {
+        echo "CRITICAL - $*"; exit 2
+        exit
+}
+unknown() {
+        echo "UNKNOWN - $*"; exit 3
+        exit
+}
+exitstatus() {
+        if [ ! "$?" -eq "0" ] ;
+        then unknown "Plugin failure - exit code not OK - error line $*"
+        fi
+}
+# Get Mounts
+list_of_mounts=$(grep nfs /etc/fstab | grep -v ^# | awk '{print $2'} | xargs)
+exitstatus $LINENO
+
+for X in $list_of_mounts; do
+    AM_I_EXCLUDED=`echo " $* " | grep " $X " -q; echo $?`
+    if [ "$AM_I_EXCLUDED" -eq "0" ]; then
+    echo "" >> /dev/null
+    #check to see if mount is mounted according to /proc/mounts
+    elif [ ! `grep --quiet "$X " /proc/mounts; echo $?` -eq 0 ]; then
+        #mount is not mounted at all, add to list to remount
+        remount_list=`echo $remount_list $X`;
+    #now make sure its not stale
+    elif [ ! "`read -t 2  <<< $(stat -t $X/*) ; echo $?`" -eq "0" ]; then
+        stalemount_list=`echo $stalemount_list $X`
+    fi
+done
+#Make sure result is a number
+if [ -n "$remount_list" ] && [ -n "$stalemount_list" ];  then
+    critical "Not mounted: $remount_list , Stale mounts: $stalemount_list"
+elif [ -n "$remount_list" ] && [ -z "$stalemount_list"]; then
+    critical "Not mounted: $remount_list"
+elif [ -n "$stalemount_list" ] && [ -n "$remount_list" ]; then
+    critical "Stale mount: $stalemount_list"
+elif [ -z "$stalemount_list" ] && [ -z "$remount_list" ]; then
+    ok "All mounts mounted"
+fi
+

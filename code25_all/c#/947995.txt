@@ -1,0 +1,108 @@
+public class CsvBatchPrinter : BaseBatchPrinter
+{
+    public CsvBatchPrinter() : base(".csv")
+    {
+        RemoveDiatrics = false;
+    }
+
+    protected override void PrintDocuments(System.Collections.Generic.List<XmlDocument> documents, string xsltFileName, string directory, string tempImageDirectory)
+    {
+        base.PrintDocuments(documents, xsltFileName, directory, tempImageDirectory);
+
+        foreach (var file in new DirectoryInfo(tempImageDirectory).GetFiles())
+        {
+            var destination = directory + file.Name;
+            if (!File.Exists(destination))
+                file.CopyTo(destination);
+        }
+    }
+
+    protected override void PrintDocument(XmlDocument document, string xsltFileName, string directory, string tempImageDirectory)
+    {
+        StringUtils.EscapeQuotesInXmlNode(document);
+        if (RemoveDiatrics)
+        {
+            var docXml = StringUtils.RemoveDiatrics(document.OuterXml);
+            document = new XmlDocument();
+            document.LoadXml(docXml);
+        }
+
+        using (var writer = new StreamWriter(string.Format("{0}{1}{2}", directory, "batch", FileExtension), true, Encoding.ASCII))
+        {
+            Transform(document, xsltFileName, writer);
+        }
+    }
+
+    public bool RemoveDiatrics { get; set; }
+}
+
+The process cannot access the file 'batch.csv' because it is being used by another process.
+lock(this)
+{
+    using (var writer = new StreamWriter(string.Format("{0}{1}{2}", directory, "batch", FileExtension), true, Encoding.ASCII))
+    {
+        Transform(document, xsltFileName, writer);
+    }
+}
+
+at System.IO.__Error.WinIOError(Int32 errorCode, String maybeFullPath)
+at System.IO.FileStream.Init(String path, FileMode mode, FileAccess access, Int32 rights, Boolean useRights, FileShare share, Int32 bufferSize, FileOptions options, SECURITY_ATTRIBUTES secAttrs, String msgPath, Boolean bFromProxy)
+at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+at System.IO.StreamWriter.CreateFile(String path, Boolean append)
+at System.IO.StreamWriter..ctor(String path, Boolean append, Encoding encoding, Int32 bufferSize)
+at System.IO.StreamWriter..ctor(String path, Boolean append, Encoding encoding)
+at Receipts.Facade.Utilities.BatchPrinters.CsvBatchPrinter.PrintDocument(XmlDocument document, String xsltFileName, String directory, String tempImageDirectory) in CsvBatchPrinter.cs:line 37
+at Receipts.Facade.Utilities.BatchPrinters.BaseBatchPrinter.PrintDocuments(List`1 documents, String xsltFileName, String directory, String tempImageDirectory) in BaseBatchPrinter.cs:line 30
+at Receipts.Facade.Utilities.BatchPrinters.CsvBatchPrinter.PrintDocuments(List`1 documents, String xsltFileName, String directory, String tempImageDirectory) in CsvBatchPrinter.cs:line 17
+at Receipts.Facade.Utilities.BatchPrinters.BaseBatchPrinter.Print(List`1 documents, String xsltFileName, String destinationDirectory, String tempImageDirectory) in BaseBatchPrinter.cs:line 23
+at Receipts.Facade.Modules.FinanceDocuments.FinanceDocumentActuator`2.printXmlFiles(List`1 xmlDocuments, String tempImagesDirectory) in FinanceDocumentActuator.cs:line 137
+
+public abstract class BaseBatchPrinter : IBatchPrinter
+{
+    private static readonly ILog Log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+    protected readonly string FileExtension;
+
+    protected BaseBatchPrinter(string fileExtension)
+    {
+        FileExtension = fileExtension;
+    }
+
+    public void Print(List<XmlDocument> documents, string xsltFileName, string destinationDirectory, string tempImageDirectory)
+    {
+        Log.InfoFormat("Printing to directory: {0}", destinationDirectory);
+        PrintDocuments(documents, xsltFileName, destinationDirectory, tempImageDirectory);
+    }
+
+    protected virtual void PrintDocuments(List<XmlDocument> documents, string xsltFileName, string directory, string tempImageDirectory)
+    {
+        foreach (var document in documents)
+        {
+            PrintDocument(document, xsltFileName, directory, tempImageDirectory);
+        }
+    }
+
+    /// <summary>
+    /// Needs to Call Transform(XmlDocument document, string xsltFileName, string directory)
+    /// </summary>
+    protected abstract void PrintDocument(XmlDocument document, string xsltFileName, string directory, string tempImageDirectory);
+
+    protected void Transform(XmlDocument document, string xsltFileName, StreamWriter writer)
+    {
+        //TODO: look into XslCompiledTransform to replace the XslTransform
+        var xslTransform = new XslTransform();
+        xslTransform.Load(xsltFileName);
+        xslTransform.Transform(createNavigator(document), null, writer);
+    }
+
+    protected string CreateFileName(string directory, XmlDocument doc)
+    {
+        var conId = createNavigator(doc).SelectSingleNode(Config.SELECT_CONSTITUENT_ID_XPATH).Value;
+        return string.Format(@"{0}{1}{2}", directory, conId, FileExtension.IndexOf('.') > -1 ? FileExtension : "." + FileExtension);
+    }
+
+    protected XPathNavigator createNavigator(XmlDocument document)
+    {
+        return document.DocumentElement == null ? document.CreateNavigator() : document.DocumentElement.CreateNavigator();
+    }
+}
+

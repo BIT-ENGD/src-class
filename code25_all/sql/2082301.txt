@@ -1,0 +1,41 @@
+-- PART 1: Temporary table
+IF EXISTS(SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'TempALMDB')   
+DROP TABLE TempALMDB
+
+Select TOP 500 Alarmgroup, AlarmON, AlarmOff INTO TempALMDB FROM QV_Alarms   
+WHERE Alarmgroup = 'A1_1_Alarms' 
+ORDER BY Alarmgroup, AlarmON  
+
+--PART 2: Time difference calculation 
+SELECT X.Alarmgroup, X.Coming, X.Going, Datediff(minute, X.Coming, X.Going)  
+AS minutes FROM (
+  SELECT  G2.Alarmgroup, Min(G2.Start1) AS Coming, Max(G2.Going1)   
+  AS Going FROM (
+     SELECT  G1.Alarmgroup, Min(G1.Start2) AS Start1, Max(G1.Going2)   
+     AS Going1 FROM (
+         SELECT T1.Alarmgroup, Min(T1.AlarmON) AS Start2, Max(T1.AlarmOff) 
+         AS Going2 FROM TempALMDB AS T1 INNER JOIN  TempALMDB AS T2 
+         ON (T1.Alarmgroup = T2.Alarmgroup AND T1.AlarmON < T2.AlarmOff 
+         AND T1.AlarmOff > T2.AlarmON AND NOT (T1.AlarmON = T2.AlarmON 
+         AND T1.AlarmOff = T2.AlarmOff) )
+         GROUP BY  T1.Alarmgroup,  
+         CASE WHEN T1.AlarmON BETWEEN T2.AlarmON AND T2.AlarmOff 
+       THEN T2.AlarmON ELSE T1.AlarmON END,
+         CASE WHEN T1.AlarmOff BETWEEN T2.AlarmON AND T2.AlarmOff 
+       THEN T2.AlarmOff ELSE T1.AlarmOff END
+     ) AS G1
+     GROUP BY G1.Alarmgroup, G1.Going2) AS G2
+     GROUP BY G2.Alarmgroup, G2.Start1
+
+UNION ALL
+
+SELECT U1.Alarmgroup, U1.AlarmON, U1.AlarmOff
+FROM TempALMDB AS U1 LEFT JOIN TempALMDB AS U2 
+ON (U1.Alarmgroup = U2.Alarmgroup AND U1.AlarmON < U2.AlarmOff 
+AND U1.AlarmOff > U2.AlarmON 
+AND NOT (U1.AlarmON = U2.AlarmON AND U1.AlarmOff = U2.AlarmOff))
+WHERE U2.Alarmgroup IS NULL 
+) AS X
+WHERE X.Alarmgroup = 'A1_1_Alarms' 
+ORDER BY  X.Alarmgroup, X.Coming, X.Going
+

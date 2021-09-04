@@ -1,0 +1,148 @@
+import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
+import java.io.File
+import scala.util.Random
+
+object ImageTest {
+  def main(args: Array[String]): Unit = {
+    val image = generate(1024, 1024, 1)
+    ImageIO.write(image, "png", new File("heightmap.png"))
+  }
+
+  def generate(width: Int, height: Int, octaves: Int) = {
+    val map = new BufferedImage(width, height, BufferedImage.TYPE_USHORT_GRAY)
+    val pi2 = Math.PI * 2
+
+    for ( x <- 0 until width;
+          y <- 0 until height) {
+      var total = 0.0
+
+      for (oct <- 1 to octaves) {
+        val scale = (1 - 1/Math.pow(2, oct))
+        val s = x / width.toDouble
+        val t = y / height.toDouble
+        val dx = 1-scale
+        val dy = 1-scale
+
+        val nx = scale + Math.cos(s*pi2) * dx
+        val ny = scale + Math.cos(t*pi2) * dy
+        val nz = scale + Math.sin(s*pi2) * dx
+        val nw = scale + Math.sin(t*pi2) * dy
+
+        total += (((noise(nx,ny,nz,nw)+1)/2)) * Math.pow(0.5, oct)
+      }
+
+      map.setRGB(x,y, (total * 0xffffff).toInt)
+    }
+
+    map
+  }
+
+  // Simplex 4D noise generator
+  // returns -1.0 <-> 1.0
+  def noise(x: Double, y: Double, z: Double, w: Double) = {
+    // Skew the (x,y,z,w) space to determine which cell of 24 simplices we're in
+    val s = (x + y + z + w) * F4; // Factor for 4D skewing
+    val i = Math.floor(x+s).toInt
+    val j = Math.floor(y+s).toInt
+    val k = Math.floor(z+s).toInt
+    val l = Math.floor(w+s).toInt
+    val t = (i+j+k+l) * G4 // Factor for 4D unskewing
+
+    val xBase = x - (i-t) // Unskew the cell space and set the x, y, z, w
+    val yBase = y - (j-t) //distances from the cell origin
+    val zBase = z - (k-t)
+    val wBase = w - (l-t)
+
+    // For the 4D case, the simplex is a 4D shape I won't even try to describe.
+    // To find out which of the 24 possible simplices we're in, we need to
+    // determine the magnitude ordering of x0, y0, z0 and w0.
+    // Six pair-wise comparisons are performed between each possible pair
+    // of the four coordinates, and the results are used to rank the numbers.
+    var rankx = 0
+    var ranky = 0
+    var rankz = 0
+    var rankw = 0
+    if(xBase > yBase) rankx+=1 else ranky+=1
+    if(xBase > zBase) rankx+=1 else rankz+=1
+    if(xBase > wBase) rankx+=1 else rankw+=1
+    if(yBase > zBase) ranky+=1 else rankz+=1
+    if(yBase > wBase) ranky+=1 else rankw+=1
+    if(zBase > wBase) rankz+=1 else rankw+=1
+    // simplex[c] is a 4-vector with the numbers 0, 1, 2 and 3 in some order.
+    // Many values of c will never occur, since e.g. x>y>z>w makes x<z, y<w and x<w
+    // impossible. Only the 24 indices which have non-zero entries make any sense.
+    // We use a thresholding to set the coordinates in turn from the largest magnitude.
+    // Rank 3 denotes the largest coordinate.
+    val i1 = if (rankx >= 3) 1 else 0
+    val j1 = if (ranky >= 3) 1 else 0
+    val k1 = if (rankz >= 3) 1 else 0
+    val l1 = if (rankw >= 3) 1 else 0
+    // Rank 2 denotes the second largest coordinate.
+    val i2 = if (rankx >= 2) 1 else 0
+    val j2 = if (ranky >= 2) 1 else 0
+    val k2 = if (rankz >= 2) 1 else 0
+    val l2 = if (rankw >= 2) 1 else 0
+    // Rank 1 denotes the second smallest coordinate.
+    val i3 = if (rankx >= 1) 1 else 0
+    val j3 = if (ranky >= 1) 1 else 0
+    val k3 = if (rankz >= 1) 1 else 0
+    val l3 = if (rankw >= 1) 1 else 0
+    // The fifth corner has all coordinate offsets = 1, so no need to compute that.
+
+    val xList = Array(xBase, xBase-i1+G4, xBase-i2+2*G4, xBase-i3+3*G4, xBase-1+4*G4)
+    val yList = Array(yBase, yBase-j1+G4, yBase-j2+2*G4, yBase-j3+3*G4, yBase-1+4*G4)
+    val zList = Array(zBase, zBase-k1+G4, zBase-k2+2*G4, zBase-k3+3*G4, zBase-1+4*G4)
+    val wList = Array(wBase, wBase-l1+G4, wBase-l2+2*G4, wBase-l3+3*G4, wBase-1+4*G4)
+    // Work out the hashed gradient indices of the five simplex corners
+    val ii = if (i < 0) 256 + (i % 255) else i % 255
+    val jj = if (j < 0) 256 + (j % 255) else j % 255
+    val kk = if (k < 0) 256 + (k % 255) else k % 255
+    val ll = if (l < 0) 256 + (l % 255) else l % 255
+    val gradIndices = Array(
+      perm(ii+perm(jj+perm(kk+perm(ll)))) % 32,
+      perm(ii+i1+perm(jj+j1+perm(kk+k1+perm(ll+l1)))) % 32,
+      perm(ii+i2+perm(jj+j2+perm(kk+k2+perm(ll+l2)))) % 32,
+      perm(ii+i3+perm(jj+j3+perm(kk+k3+perm(ll+l3)))) % 32,
+      perm(ii+1+perm(jj+1+perm(kk+1+perm(ll+1)))) % 32)
+    // Calculate the contribution from the five corners
+    var total = 0.0
+    for (dim <- 0 until 5) {
+      val (x,y,z,w) = (xList(dim), yList(dim), zList(dim), wList(dim))
+      var t = 0.5 - x*x - y*y - z*z - w*w
+      total += {
+        if (t < 0) 0.0
+        else {
+          t *= t
+          val g = grad4(gradIndices(dim))
+          t * t * ((g.x*x)+(g.y*y)+(g.z*z)+(g.w*w))
+        }
+      }
+    }
+
+    // Sum up and scale the result to cover the range [-1,1]
+    27.0 * total
+  }
+
+  case class Grad(x: Double, y: Double, z: Double, w: Double = 0.0)
+  private lazy val grad4 = Array(
+    Grad(0,1,1,1), Grad(0,1,1,-1), Grad(0,1,-1,1), Grad(0,1,-1,-1),
+    Grad(0,-1,1,1),Grad(0,-1,1,-1),Grad(0,-1,-1,1),Grad(0,-1,-1,-1),
+    Grad(1,0,1,1), Grad(1,0,1,-1), Grad(1,0,-1,1), Grad(1,0,-1,-1),
+    Grad(-1,0,1,1),Grad(-1,0,1,-1),Grad(-1,0,-1,1),Grad(-1,0,-1,-1),
+    Grad(1,1,0,1), Grad(1,1,0,-1), Grad(1,-1,0,1), Grad(1,-1,0,-1),
+    Grad(-1,1,0,1),Grad(-1,1,0,-1),Grad(-1,-1,0,1),Grad(-1,-1,0,-1),
+    Grad(1,1,1,0), Grad(1,1,-1,0), Grad(1,-1,1,0), Grad(1,-1,-1,0),
+    Grad(-1,1,1,0),Grad(-1,1,-1,0),Grad(-1,-1,1,0),Grad(-1,-1,-1,0))
+
+  private lazy val perm = new Array[Short](512)
+  for(i <- 0 until perm.length)
+    perm(i) = Random.nextInt(256).toShort
+
+  private lazy val F4 = (Math.sqrt(5.0) - 1.0) / 4.0
+  private lazy val G4 = (5.0 - Math.sqrt(5.0)) / 20.0
+}
+
+total
+total
+(total * 0xffffff).toInt

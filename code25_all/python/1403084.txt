@@ -1,0 +1,78 @@
+RSSFeeds = schema.Table('feeds', metadata,
+    schema.Column('id', types.Integer, 
+        schema.Sequence('feeds_seq_id', optional=True), primary_key=True),
+    schema.Column('url', types.VARCHAR(1000), default=u''),
+)
+
+RSSEntries = schema.Table('entries', metadata,
+    schema.Column('id', types.Integer, 
+        schema.Sequence('entries_seq_id', optional=True), primary_key=True),
+    schema.Column('feed_id', types.Integer, schema.ForeignKey('feeds.id')),
+    schema.Column('short_url', types.VARCHAR(1000), default=u''),
+    schema.Column('content', types.Text(), nullable=False),
+    schema.Column('hashtags', types.Unicode(255)),
+)
+
+tag_table = schema.Table('tag', metadata,
+    schema.Column('id', types.Integer,
+       schema.Sequence('tag_seq_id', optional=True), primary_key=True),
+    schema.Column('tagname', types.Unicode(20), nullable=False, unique=True)
+)
+
+entrytag_table = schema.Table('entrytag', metadata,
+    schema.Column('id', types.Integer,
+        schema.Sequence('entrytag_seq_id', optional=True), primary_key=True),
+    schema.Column('entryid', types.Integer, schema.ForeignKey('entries.id')),
+    schema.Column('tagid', types.Integer, schema.ForeignKey('tag.id')),
+)
+
+engine = create_engine('sqlite:///test.sqlite', echo=True)
+conn = engine.connect()
+.........
+conn.execute('INSERT INTO entries (feed_id, short_url, content, hashtags) VALUES 
+    (?,?,?,?)', (id, tinyurl, content, hashtags))
+
+Traceback (most recent call last):
+  File "RSS_sqlalchemy.py", line 242, in <module>
+    store_feed_items(id, entries)
+  File "RSS_sqlalchemy.py", line 196, in store_feed_items
+    [{'feedid': entry_id, 'tagid': tag_ids[tag]} for tag in hashtags2])
+NameError: global name 'entry_id' is not defined
+
+Traceback (most recent call last):
+  File "RSS_sqlalchemy.py", line 242, in <module>
+    store_feed_items(id, entries)
+  File "RSS_sqlalchemy.py", line 196, in store_feed_items
+    [{'feedid': entries.id, 'tagid': tag_ids[tag]} for tag in hashtags2])
+AttributeError: 'list' object has no attribute 'id'
+
+feeds = conn.execute('SELECT id, url FROM feeds').fetchall()
+
+def store_feed_items(id, items):
+    """ Takes a feed_id and a list of items and stored them in the DB """
+    for entry in items:
+        conn.execute('SELECT id from entries WHERE short_url=?', (entry.link,))
+        s = unicode(entry.summary) 
+        test = s.split()
+        tinyurl2 = [i for i in test if i.startswith('http://')]
+        hashtags2 = [i for i in s.split() if i.startswith('#')]
+        content2 = ' '.join(i for i in s.split() if i not in tinyurl2+hashtags2)
+        content = unicode(content2)
+        tinyurl = unicode(tinyurl2)
+        hashtags = unicode (hashtags2)
+        date = strftime("%Y-%m-%d %H:%M:%S",entry.updated_parsed)
+
+        conn.execute(RSSEntries.insert(), {'feed_id': id, 'short_url': tinyurl,
+            'content': content, 'hashtags': hashtags, 'date': date})    
+
+        tags = tag_table
+        tag_id_query = select([tags.c.tagname, tags.c.id], tags.c.tagname.in_(hashtags))
+        tag_ids = dict(conn.execute(tag_id_query).fetchall())
+        for tag in hashtags:
+            if tag not in tag_ids:
+                result = conn.execute(tags.insert(), {'tagname': tag})
+                tag_ids[tag] = result.last_inserted_ids()[0]
+
+        conn.execute(entrytag_table.insert(),
+            [{'feedid': id, 'tagid': tag_ids[tag]} for tag in hashtags2])
+

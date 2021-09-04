@@ -1,0 +1,157 @@
+Imports System
+Imports System.IO
+Imports System.Security.Cryptography
+Imports System.Text
+
+
+Public Class ASyncFileHashAlgorithm
+Protected hashAlgorithm As HashAlgorithm
+Protected m_hash As Byte()
+Protected cancel As Boolean = False
+Protected m_bufferSize As Integer = 4096
+Public Delegate Sub FileHashingProgressHandler(ByVal sender As Object, _
+                                     ByVal e As FileHashingProgressArgs)
+Public Event FileHashingProgress As FileHashingProgressHandler
+
+Public Sub New(ByVal hashAlgorithm As HashAlgorithm)
+    Me.hashAlgorithm = hashAlgorithm
+End Sub
+
+Public Function ComputeHash(ByVal stream As Stream) As Byte()
+    cancel = False
+    m_hash = Nothing
+    Dim _bufferSize As Integer = m_bufferSize
+    ' this makes it impossible to change the buffer size while computing  
+    Dim readAheadBuffer As Byte(), buffer As Byte()
+    Dim readAheadBytesRead As Integer, bytesRead As Integer
+    Dim size As Long, totalBytesRead As Long = 0
+
+    size = stream.Length
+    readAheadBuffer = New Byte(_bufferSize - 1) {}
+    readAheadBytesRead = stream.Read(readAheadBuffer, 0, _
+                                     readAheadBuffer.Length)
+
+    totalBytesRead += readAheadBytesRead
+
+    Do
+        bytesRead = readAheadBytesRead
+        buffer = readAheadBuffer
+
+        readAheadBuffer = New Byte(_bufferSize - 1) {}
+        readAheadBytesRead = stream.Read(readAheadBuffer, 0, _
+                                         readAheadBuffer.Length)
+
+        totalBytesRead += readAheadBytesRead
+
+        If readAheadBytesRead = 0 Then
+            hashAlgorithm.TransformFinalBlock(buffer, 0, bytesRead)
+        Else
+            hashAlgorithm.TransformBlock(buffer, 0, bytesRead, buffer, 0)
+        End If
+
+        RaiseEvent FileHashingProgress(Me, New _
+                             FileHashingProgressArgs(totalBytesRead, size))
+    Loop While readAheadBytesRead <> 0 AndAlso Not cancel
+
+    If cancel Then
+        Return InlineAssignHelper(m_hash, Nothing)
+    End If
+
+    Return InlineAssignHelper(m_hash, hashAlgorithm.Hash)
+End Function
+
+Public Property BufferSize() As Integer
+    Get
+        Return m_bufferSize
+    End Get
+    Set(ByVal value As Integer)
+        m_bufferSize = value
+    End Set
+End Property
+
+Public ReadOnly Property Hash() As Byte()
+    Get
+        Return m_hash
+    End Get
+End Property
+
+'Public Sub Cancel()
+'    cancel = True
+'End Sub
+
+Public Overrides Function ToString() As String
+    Dim hex As String = ""
+    For Each b As Byte In Hash
+        hex += b.ToString("x2")
+    Next
+
+    Return hex
+End Function
+Private Shared Function InlineAssignHelper(Of T)(ByRef target As T, _
+                                                 ByVal value As T) As T
+    target = value
+    Return value
+End Function
+End Class
+
+
+Public Class FileHashingProgressArgs
+Inherits EventArgs
+Public Property TotalBytesRead() As Long
+    Get
+        Return m_TotalBytesRead
+    End Get
+    Set(ByVal value As Long)
+        m_TotalBytesRead = Value
+    End Set
+End Property
+Private m_TotalBytesRead As Long
+Public Property Size() As Long
+    Get
+        Return m_Size
+    End Get
+    Set(ByVal value As Long)
+        m_Size = Value
+    End Set
+End Property
+Private m_Size As Long
+
+Public Sub New(ByVal totalBytesRead__1 As Long, ByVal size__2 As Long)
+    TotalBytesRead = totalBytesRead__1
+    Size = size__2
+End Sub
+End Class
+
+Shared hasher As New ASyncFileHashAlgorithm(SHA1.Create())
+
+Private Function Test(Byval (strFilePathAndName, as String)
+
+
+Dim stream As IO.Stream = DirectCast(File.Open(strFilePathAndName, _
+                                               FileMode.Open), Stream)
+
+        AddHandler hasher.FileHashingProgress, _
+                   AddressOf OnFileHashingProgress
+
+        Dim t = New Thread(AddressOf hasher.ComputeHash)
+        t.Start(stream)
+        While t.IsAlive
+            Application.DoEvents()
+        End While
+
+
+        'LblMD5.Text = hasher.ToString???
+        LblSHA1.Text = hasher.ToString
+
+        stream.Dispose()
+
+End Sub
+
+Public Sub OnFileHashingProgress(ByVal sender As Object, _
+                                 ByVal e As FileHashingProgressArgs)
+
+    SetControlPropertyValue(uxChildForm.ProgressBar, "Position", _
+                            CInt(e.TotalBytesRead / e.Size * 100))
+
+End Sub
+

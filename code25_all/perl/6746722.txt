@@ -1,0 +1,326 @@
+Login.pm
+sub logout : Runmode {
+    my $self = shift;
+    if ($self->authen->username) {
+    $self->authen->logout;
+    $self->session->delete; # Delete current session
+    }
+
+    # get state of can_login file
+    my $file = "lock-can_login.txt";
+    open my $fh, '+<', $file or die "can't open $file in update mode: $!\n";
+    flock($fh, LOCK_EX) or die "couldn't get lock: $!\n";
+
+    # 1 means a new user can login
+    my $can_login = <$fh>;
+    chomp $can_login;
+
+    # allow others to login now
+    $can_login = !$can_login;
+
+    # write
+    seek $fh, 0, 0;
+    print $fh "$can_login\n";
+    truncate($fh, tell($fh));
+    close $fh;
+
+    return $self->redirect($self->query->url);
+}
+
+sub one_user {
+    my $self = shift;
+
+    # get state of can_login file
+    my $file = "lock-can_login.txt";
+    open my $fh, '+<', $file or die "can't open $file in update mode: $!\n";
+    flock($fh, LOCK_EX) or die "couldn't get lock: $!\n";
+
+    # 1 means a new user can login
+    my $can_login = <$fh>;
+    chomp $can_login;
+
+    if ($self->authen->is_authenticated && $can_login) {
+    # prevent others from logging in
+    $can_login = !$can_login;
+    } else {
+    $self->authen->logout;
+    #and redirect them to a page saying "there can be only one!"
+    }
+
+    # write
+    seek $fh, 0, 0;
+    print $fh "$can_login\n";
+    truncate($fh, tell($fh));
+    close $fh;
+}
+
+package MyLib::Login;
+
+use strict;
+
+#use lib '/usr/lib/perl5/vendor_perl/5.8.8/';
+
+use base 'CGI::Application';
+
+# shorter URLs
+# extract the desired run mode from the PATH_INFO environment variable.
+use CGI::Application::Plugin::AutoRunmode;
+
+# wrapper for DBI
+#use CGI::Application::Plugin::DBH(qw/dbh_config dbh/);
+
+# a wrapper around CGI::Session.
+# maintain state from one page view to the next (provides persistent data).
+use CGI::Application::Plugin::Session;
+
+# logging in and out.
+# Authentication allows to identify individual users.
+use CGI::Application::Plugin::Authentication;
+
+# external redirects in CGI::Application
+use CGI::Application::Plugin::Redirect;
+
+# read parameters from config file
+use CGI::Application::Plugin::ConfigAuto(qw/cfg/);
+
+# encrypt passphrases
+use Digest::MD5 qw(md5_hex);
+
+# authenticate against NIS/LDAP server
+use Authen::Simple::LDAP;
+
+
+sub setup {
+    my $self = shift;
+
+    $self->mode_param(
+    path_info => 1,         # tell CGI::Application to parse the PATH_INFO environment variable
+    param     => 'rm',
+    );
+}
+
+# most of the initialization is done here
+sub cgiapp_init {
+    my $self = shift;
+
+    # read config file and store name-value pairs in %CFG
+    my %CFG = $self->cfg;
+
+    # where to look for templete files
+    $self->tmpl_path(['./templates']);
+
+    # save session data in mysql
+    $self->session_config(
+    # store sessions in /tmp as files
+    CGI_SESSION_OPTIONS => [ "driver:File", $self->query, {Directory=>'/tmp'} ],
+
+    DEFAULT_EXPIRY => '+10m',   # default expiration time for sessions
+    );
+
+    # configure authentication parameters
+    $self->authen->config(
+    DRIVER => [ 'Authen::Simple::LDAP',
+            host   => 'ldaps://nms.imm.dtu.dk/dc=ldap,dc=imm,dc=dtu,dc=dk',
+            basedn => 'OU=people,DC=ldap,DC=imm,DC=dtu,DC=dk',
+    ],
+
+    STORE                => 'Session',          # save login state inside a session
+                                                    # If a user is not logged in, but tries to access a
+                                                    # protected page, the Authentication plugin will
+                                                    # automatically redirect the user to the login page.
+                                                    # Once the user enters a valid username and
+                                                    # passsword, they get redirected back to the
+                                                    # protected page they originally requested.
+    LOGOUT_RUNMODE       => 'logout',           # method to use for logging out when session expires
+
+# uncomment the next 3 lines to enable custom build login prompt
+#   LOGIN_RUNMODE        => 'login',
+#   POST_LOGIN_RUNMODE   => 'okay',             # run mode that gets called after a user successfully logs in
+                                                    # figures out which run mode (page) the user really wanted to
+                                                    # see, then redirects the browser to that page using http
+                                                    # (not https).
+
+#   RENDER_LOGIN         => \&my_login_form,    # generate a login form. Authentication plugin comes with a default 
+    );
+
+    # define runmodes (pages) that require successful login:
+    # The Login.pm module doesn't define any content - all of the actual web pages are in Simple.pm.
+    # 'mustlogin' page is a place-holder. It's a dummy page that forces you to login, but immediately redirects
+    # you back to the default start page (usually the index page).
+    $self->authen->protected_runmodes('mustlogin');
+}
+
+
+# define mustlogin runmode
+sub mustlogin : Runmode {
+    my $self = shift;
+    my $url = $self->query->url;
+    return $self->redirect($url);
+}
+
+
+# switch from https to http. It assumes that the target run mode is stored in a cgi parameter named
+# 'destination', but if for some reason this is not the case, it will default back to the index page.
+sub okay : Runmode {
+    my $self = shift;
+
+    my $url = $self->query->url;
+#  my $user = $self->authen->username;
+    my $dest = $self->query->param('destination') || 'index';
+
+    if ($url =~ /^https/) {
+    $url =~ s/^https/http/;
+    }
+
+    return $self->redirect("$url/$dest");
+}
+
+# displays the login form
+# But first, it checks to make sure you're not already logged in, and second, it makes sure you're connecting with https. If you try to access the login page with http, it will automatically redirect you using https.
+sub login : Runmode {
+    my $self = shift;
+    my $url = $self->query->url;
+
+    my $user = $self->authen->username;
+    # is user logged in?
+    if ($user) {
+    my $message = "User $user is already logged in!";
+    my $template = $self->load_tmpl('default.html');
+    $template->param(MESSAGE => $message);
+    $template->param(MYURL => $url);
+    return $template->output;
+    } else {
+    my $url = $self->query->self_url;
+    unless ($url =~ /^https/) {
+            $url =~ s/^http/https/;
+        return $self->redirect($url);
+    }
+    return $self->my_login_form;
+    }
+}
+
+# generate custom login. See templates/login_form.html
+sub my_login_form {
+    my $self = shift;
+    my $template = $self->load_tmpl('login_form.html');
+
+    (undef, my $info) = split(/\//, $ENV{'PATH_INFO'});
+    my $url = $self->query->url;
+
+    # 'destination' contains the URL of the page to go to once the user has successfully logged in
+
+    # try to get a value for 'destination' from the CGI query object (in case it was passed as a hidden variable)
+    my $destination = $self->query->param('destination');
+
+    # If failed to get from CGI query object, try get destination from PATH_INFO environment variable
+    # in case it's being passed as part of the URL
+    unless ($destination) {
+    if ($info) {
+        $destination = $info;
+    } else {
+        # default to index page
+        $destination = "index";
+    }
+    }
+
+    my $error = $self->authen->login_attempts;
+
+    # insert values into the template parameters
+    $template->param(MYURL => $url);
+    $template->param(ERROR => $error);
+    $template->param(DESTINATION => $destination);
+
+    # generate final html
+    return $template->output;
+}
+# logout method
+sub logout : Runmode {
+    my $self = shift;
+    if ($self->authen->username) {
+    $self->authen->logout;
+    $self->session->delete; # Delete current session
+    }
+    return $self->redirect($self->query->url);
+}
+
+# error runmode / page
+sub myerror : ErrorRunmode {
+    my $self = shift;
+    my $error = shift;
+    my $template = $self->load_tmpl("default.html");
+    $template->param(NAME => 'ERROR');
+    $template->param(MESSAGE => $error);
+    $template->param(MYURL => $self->query->url);
+    return $template->output;
+}
+
+# called if non-existant runmode/page is accessed. Gives a nicer error message, when typing a wrong url
+sub AUTOLOAD : Runmode {
+    my $self = shift;
+    my $rm = shift;
+    my $template = $self->load_tmpl("default.html");
+    $template->param(NAME => 'AUTOLOAD');
+    $template->param(MESSAGE => "<p>Error: could not find run mode \'$rm\'<br>\n");
+    $template->param(MYURL => $self->query->url);
+    return $template->output;
+}
+
+1;
+
+$self->authen->username
+undef
+mustLogin
+  open F, ">/tmp/debug";
+  print F Dumper $self->authen->username;
+  close F;
+
+$self->cfg('SESSIONS_DIR')
+$self->authen->username
+undef
+mustLogin
+sub teardown {
+  my $self = shift;
+
+  $self->param('found_a_user', 0);
+
+  CGI::Session->find(
+      "driver:File;serializer:yaml",
+      sub { my_subroutine($self, @_)},
+      {Directory => $self->cfg('SESSIONS_DIR'), UMask => 0600,},
+      );
+
+  open F, ">/tmp/debug";
+  print F Dumper $self->authen->username;
+  close F;
+
+  # get state of can_login file
+  open my $fh, '+<', 'can_login.yaml';
+  flock($fh, LOCK_EX) or die "couldn't get lock: $!\n";
+  my $c = YAML::Syck::LoadFile($fh);
+
+  if ( $self->param('found_a_user') ) {
+      # found a logged in user with an unexpired session
+      $c->{can_login} = 0;
+  } else {
+      # did NOT find any logged in users
+      $c->{can_login} = 1;
+  }
+
+  # write
+  my $yaml = YAML::Syck::Dump($c);
+  $YAML::Syck::ImplicitUnicode = 1;
+  seek $fh,0, SEEK_SET;   # seek back to the beginning of file
+  print $fh $yaml . "---\n";
+  close $fh;
+}
+
+sub my_subroutine {
+  my $self = shift;
+  my ($session) = @_;  # I don't actually need this for anything here
+
+  if ($self->authen->username) {
+    $self->param('found_a_user', 1);
+  }
+
+}
+

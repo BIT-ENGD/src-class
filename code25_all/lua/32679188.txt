@@ -1,0 +1,65 @@
+ngx_lua
+post_action
+worker_processes  1;
+error_log logs/error.log;
+daemon  off;
+
+events {
+  worker_connections  1024;
+}
+
+http {
+  server {
+    listen 8080;
+
+    location / {
+      proxy_read_timeout  30s;
+      proxy_pass  http://localhost:8081;
+      proxy_set_header  Host  $http_host;
+      proxy_http_version  1.1;
+      proxy_set_header  Upgrade $http_upgrade;
+      proxy_set_header  Connection  "upgrade";
+      proxy_set_header  X-Forwaded-For $proxy_add_x_forwarded_for;
+      proxy_set_header  X-Real-IP $remote_addr;
+
+      post_action @post_action;
+    }
+
+    location /test {
+      content_by_lua_file capture.lua;
+    }
+
+    location @post_action {
+      internal;
+      content_by_lua_file capture.lua;
+    }
+  }
+}
+
+local json = require "cjson"
+local redis = require "resty.redis"
+local red = redis:new()
+
+red:set_timeout(1000)
+
+local ok, err = red:connect("127.0.0.1", 6379)
+
+if not ok then
+    ngx.say("failed to connect: ", err)
+    return
+end
+
+local data = {}
+
+ngx.req.read_body()
+
+local data = json.encode(ngx.req.get_post_args())
+
+local ok, err = red:rpush("post_data", data)
+
+if not ok then
+    ngx.say("failed to push request data: ", err)
+    return
+end
+
+requesty body in temp file not supported

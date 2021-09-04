@@ -1,0 +1,62 @@
+class TimeOutException
+{};
+
+template <typename T>
+class MultiThreadedBuffer
+{
+public:
+    MultiThreadedBuffer()
+    {
+        InitializeCriticalSection(&m_csBuffer);
+        m_evtDataAvail = CreateEvent(NULL, TRUE, FALSE, NULL);
+    }
+    ~MultiThreadedBuffer()
+    {
+        CloseHandle(m_evtDataAvail);
+        DeleteCriticalSection(&m_csBuffer);
+    }
+    void LockBuffer()
+    {
+        EnterCriticalSection(&m_csBuffer);
+    }
+    void UnlockBuffer()
+    {
+        LeaveCriticalSection(&m_csBuffer);
+    }
+    void Add(T val)
+    {
+        LockBuffer();
+        m_buffer.push_back(val);
+        SetEvent(m_evtDataAvail);
+        UnlockBuffer();
+    }
+    T Get(DWORD timeout)
+    {
+        T val;
+        if (WaitForSingleObject(m_evtDataAvail, timeout) == WAIT_OBJECT_0) {
+            LockBuffer();
+
+            if (!m_buffer.empty()) {
+                val = m_buffer.front();
+                m_buffer.pop_front();
+            }
+
+            if (m_buffer.empty()) {
+                ResetEvent(m_evtDataAvail);
+            }
+
+            UnlockBuffer();
+        } else {
+            throw TimeOutException();
+        }
+        return val;
+    }
+    bool IsDataAvail()
+    {
+        return (WaitForSingleObject(m_evtDataAvail, 0) == WAIT_OBJECT_0);
+    }
+    std::list<T> m_buffer;
+    CRITICAL_SECTION m_csBuffer;
+    HANDLE m_evtDataAvail;
+};
+

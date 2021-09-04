@@ -1,0 +1,107 @@
+ssh_to_aos_expsh
+ssh_to_aos_config
+ssh_to_aos_expsh
+_ssh_connect
+ssh_to_aos_expsh
+ssh_to_aos_config
+_ssh_connect
+ssh_to_aos_expsh
+ssh_to_aos_expsh
+ssh_toaos_config
+#!/usr/bin/env python
+
+import os
+import traceback
+
+import pexpect
+
+class SSHTool():
+
+    def __init__(self):
+        self.aos_user = 'some_user'
+        self.aos_passwd = 'some_passwd'
+        self.aos_init_prompt = 'accelerator>'
+        self.aos_enable_prompt = 'accelerator#'
+        self.aos_lnxsh_prompt = 'ACC#'
+        self.linux_passwd = 'linux_passwd'
+        self.root_prompt = ''
+
+    def _timeout_error(self, child):
+        print 'SSH could not login.  Timeout error.'
+        print child.before, child.after
+        return None
+
+    def _password_error(self, child):
+        print 'SSH could not login.  Password error.'
+        print child.before, child.after
+        return None
+
+    def _ssh_connect(self, user, address, passwd):
+        self.root_prompt = "root@%s's password: " % address
+        ssh_newkey = "Are you sure you want to continue connecting"
+        child = pexpect.spawn('ssh -l %s %s' % (user, address))
+        i = child.expect([pexpect.TIMEOUT, \
+                            ssh_newkey, \
+                            'Password: ', \
+                            self.root_prompt])
+        if i == 0: # Timeout
+            return self._timeout_error(child)
+        elif i == 1: # SSH does not have the public key. Just accept it.
+            child.sendline ('yes')
+            i = child.expect([pexpect.TIMEOUT, \
+                            'Password: ', \
+                            self.root_prompt])
+            if i == 0: # Timeout
+                return self._timeout_error(child)
+            else:
+                child.sendline(passwd)
+                return child
+        elif i == 2 or i == 3:
+            child.sendline(passwd)
+            return child
+        else:
+            return self._password_error(child)
+
+    def ssh_to_aos_expsh(self, ip_address, command = ''):
+        child = self._ssh_connect(self.aos_user, \
+                                    ip_address, \
+                                    self.aos_passwd)
+        i = child.expect([pexpect.TIMEOUT, \
+                            self.aos_init_prompt])
+        if i == 0:
+            return self._timeout_error(child)
+        child.sendline('enable')
+        i = child.expect([pexpect.TIMEOUT, \
+                            self.aos_enable_prompt])
+        if i == 0:
+            return self._timeout_error(child)
+        if command:
+            child.sendline(command)
+            i = child.expect([pexpect.TIMEOUT, \
+                                self.aos_enable_prompt])
+            if i == 0:
+                return self._timeout_error(child)
+            else:
+                return child.before
+        else:
+            return child
+
+    def ssh_to_aos_config(self, ip_address, command):
+        child = self.ssh_to_aos_expsh(ip_address)
+        i = child.expect([pexpect.TIMEOUT, \
+                            self.aos_enable_prompt])
+        if i == 0:
+            return self._timeout_error(child)
+        child.sendline('config')
+        i = child.expect([pexpect.TIMEOUT, \
+                            self.aos_config_prompt])
+        if i == 0:
+            return self._timeout_error(child)
+        child.sendline(command)
+        i = child.expect([pexpect.TIMEOUT, \
+                            self.aos_config_prompt])
+        if i == 0:
+            return self._timeout_error(child)
+        else:
+            return child.before
+

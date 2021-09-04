@@ -1,0 +1,253 @@
+<bean id="dataSource" class="org.apache.commons.dbcp.BasicDataSource">
+  <property name="driverClassName" value="com.mysql.jdbc.Driver" />
+  <property name="url" value="jdbc:mysql://127.0.0.1:3306/MyDb" />
+  <property name="username" value="angua" />
+  <property name="password" value="vonU" />
+  <property name="initialSize" value="2" />
+  <property name="maxActive" value="5" />
+</bean>
+
+<bean id="sessionFactory" class="org.springframework.orm.hibernate3.annotation.AnnotationSessionFactoryBean">
+  <property name="dataSource" ref="dataSource"/>
+  <property name="annotatedClasses">
+    <list>
+      <value>tld.mydomain.sample.entities.User</value>
+      <value>tld.mydomain.sample.entities.Role</value>
+    </list>
+  </property>
+  <property name="hibernateProperties">
+    <props>
+      <prop key="hibernate.dialect">org.hibernate.dialect.MySQLDialect</prop>
+      <prop key="hibernate.show_sql">false</prop>
+    </props>
+  </property>
+</bean>
+
+<bean id="transactionManager" class="org.springframework.orm.hibernate3.HibernateTransactionManager">
+  <property name="sessionFactory" ref="sessionFactory"/>
+</bean>
+
+<bean class="org.springframework.dao.annotation.PersistenceExceptionTranslationPostProcessor"/>
+
+<bean name="openSessionInViewInterceptor" class="org.springframework.orm.hibernate3.support.OpenSessionInViewInterceptor">
+  <property name="sessionFactory" ref="sessionFactory"/>
+  <property name="flushMode" value="0" />
+</bean> 
+
+<bean id="txProxyTemplate" class="org.springframework.transaction.interceptor.TransactionProxyFactoryBean" abstract="true">
+  <property name="transactionManager" ref="transactionManager"/>
+  <property name="transactionAttributes">
+    <props>
+      <prop key="create*">PROPAGATION_REQUIRED</prop>
+      <prop key="update*">PROPAGATION_REQUIRED</prop>
+      <prop key="delete*">PROPAGATION_REQUIRED</prop>
+      <prop key="*">PROPAGATION_SUPPORTS,readOnly</prop>
+    </props>
+  </property>
+</bean>
+
+<bean id="userService" parent="txProxyTemplate">
+  <property name="target">
+    <bean class="tld.mydomain.business.UserServiceImpl"/>
+  </property>
+  <property name="proxyInterfaces" value="tld.mydomain.business.UserService"/>
+</bean>
+
+<context:component-scan base-package="tld.mydomain"/>  
+
+<bean class="org.springframework.web.servlet.mvc.annotation.DefaultAnnotationHandlerMapping">
+  <property name="interceptors">
+    <list>
+      <ref bean="openSessionInViewInterceptor" />
+    </list>
+  </property>
+</bean>
+
+<bean class="org.springframework.web.servlet.view.InternalResourceViewResolver" p:prefix="" p:suffix=".jsp"/>
+
+<bean name="jsonView" class="org.springframework.web.servlet.view.json.JsonView">
+  <property name="encoding" value="ISO-8859-1"/>
+  <property name="contentType" value="application/json"/>
+</bean>
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.ModelAndView;
+import org.springframework.web.servlet.view.json.JsonView;
+
+import tld.mydomain.sample.business.UserService;
+
+@Controller
+@RequestMapping("/exp/*")
+public class ExperimentsController {
+
+ @Autowired
+ private UserService userService;
+
+ @Autowired
+ private JsonView jsonView;
+
+ @RequestMapping(value="/long", method = RequestMethod.GET)
+ public ModelAndView lang() {
+  ModelAndView mav = new ModelAndView(jsonView);
+  userService.longQuery("UserA");
+  userService.longQuery("UserB");
+  return mav;
+ }
+}
+
+public class UserServiceImpl extends AbstractCRUDServiceImpl<User, String> {
+
+@SuppressWarnings("unchecked")
+@Override
+public List<User> longQuery(String username) {
+  String like = "0" + username + "-%";
+  return DAO.getSession().createCriteria(User.class).setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY).addOrder(Order.asc("name"))
+          .createCriteria("interests").add(Restrictions.like("userPrefixedId", like))
+          .createCriteria("community").add(Restrictions.like("userPrefixedAuthorId", like))
+          .createCriteria("member").add(Restrictions.like("userPrefixedGroupId", like))
+          .add(Restrictions.isNotEmpty("skills"))
+          .list();
+  }
+}
+
+public abstract class AbstractCRUDServiceImpl<Entity extends PublishableEntity, PkID extends Serializable> implements CRUDService<Entity, PkID> {
+
+    protected GenericCRUDDAO<Entity, PkID> DAO = new GenericCRUDDAO<Entity, PkID>(dataType());
+
+    @Override
+    public void create(Entity entity) {
+        DAO.create(entity);
+    }
+
+    @Override
+    public void delete(Entity entity) {
+        DAO.create(entity);
+    }
+
+    @Override
+    public Entity read(PkID entityPk) {
+        return DAO.read(entityPk);
+    }
+
+    @Override
+    public void update(Entity entity) {
+        DAO.update(entity);
+    }
+
+    private Class<PkID> pkType = null;
+    @SuppressWarnings("unchecked")
+    public Class<PkID> pkType() {
+        if(pkType != null)
+            return pkType;
+
+        // Backup solution in case datatype hasn't been set
+        Type type = getClass().getGenericSuperclass();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType paramType = (ParameterizedType) type;
+            pkType = (Class<PkID>) paramType.getActualTypeArguments()[1];
+        } else if (type instanceof Class) {
+            pkType = (Class<PkID>) type;
+        }
+
+        return pkType;
+    }
+
+    private Class<Entity> dataType = null;
+    @SuppressWarnings("unchecked")
+    private Class<Entity> dataType() {
+        if(dataType != null)
+            return dataType;
+
+        // Backup solution in case datatype hasn't been set
+        Type type = getClass().getGenericSuperclass();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType paramType = (ParameterizedType) type;
+            dataType = (Class<Entity>) paramType.getActualTypeArguments()[0];
+        } else if (type instanceof Class) {
+            dataType = (Class<Entity>) type;
+        }
+
+        return dataType;
+    }
+}
+
+public class GenericCRUDDAO<EntityType extends PublishableEntity, PkID extends Serializable> implements CRUDDAO<EntityType, PkID> {
+
+    public GenericCRUDDAO() {}
+
+    public GenericCRUDDAO(Class<EntityType> datatype) {
+        this.setDataType(datatype);
+    }
+
+    private static SessionFactory sessionFactory = null;
+    public void setSessionFactory(SessionFactory sf) {
+        System.err.println("Setting SessionFactory for class " + this.getClass().getName());
+        sessionFactory = sf;
+    }
+
+    private Session session = null;
+
+    public Session getSession() {
+
+        if(session != null) {
+            if(session.isOpen())
+                return session;
+        }
+
+        if(sessionFactory == null)
+            Util.logError("sessionFactory is null");
+        session = ((SessionFactory) sessionFactory).getCurrentSession();
+        return session;
+    }
+
+    public void create(EntityType entity)
+    {
+        getSession().save(entity);
+    }
+
+    @SuppressWarnings("unchecked")
+    public EntityType read(PkID id)
+    {
+        return (EntityType) getSession().get(dataType(), id);
+    }
+
+    public void update(EntityType entity)
+    {
+        getSession().update(entity);
+    }
+
+    public void delete(EntityType entity) {
+        getSession().delete(entity);
+    }
+
+    public void delete(PkID id)
+    {
+        EntityType entity = read(id);
+        getSession().delete(entity);
+    }
+
+    private Class<EntityType> dataType = null;
+    @SuppressWarnings("unchecked")
+    private Class<EntityType> dataType() {
+        if(dataType != null)
+            return dataType;
+
+        // Backup solution in case datatype hasn't been set
+        Type type = getClass().getGenericSuperclass();
+        if (type instanceof ParameterizedType) {
+            ParameterizedType paramType = (ParameterizedType) type;
+            dataType = (Class<EntityType>) paramType.getActualTypeArguments()[0];
+        } else if (type instanceof Class) {
+            dataType = (Class<EntityType>) type;
+        }
+
+        return dataType;
+    }
+
+    public void setDataType(Class<EntityType> datatype) {
+        this.dataType = datatype;
+    }
+}
+

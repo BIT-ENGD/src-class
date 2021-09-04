@@ -1,0 +1,86 @@
+"No instance for (PersistBackend IO)
+makeOutputStream
+(Maybe a -> IO ()) -> IO (OutputStream a)
+insertWords
+m ()
+IO ()
+Words_read2.hs:30:36:
+    No instance for (PersistBackend IO)
+      arising from a use of `insertWord'
+    Possible fix: add an instance declaration for (PersistBackend IO)
+    In the first argument of `Streams.makeOutputStream', namely
+      `insertWord'
+    In a stmt of a 'do' block:
+      os <- Streams.makeOutputStream insertWord
+    In the expression:
+      do { is <- Streams.handleToInputStream h >>= Streams.words;
+           os <- Streams.makeOutputStream insertWord;
+           Streams.connect is os }
+
+{-# LANGUAGE GADTs, TypeFamilies, TemplateHaskell, QuasiQuotes, FlexibleInstances, FlexibleContexts, StandaloneDeriving #-}
+
+import qualified Data.ByteString as B
+import           Data.Maybe
+import           Control.Monad.IO.Class (MonadIO, liftIO)
+import           Database.Groundhog.Core 
+import           Database.Groundhog.TH
+import           Database.Groundhog.Sqlite
+import           System.IO
+import           System.IO.Streams.File
+import qualified System.IO.Streams as Streams
+
+data Words = Words {word :: String} deriving (Eq, Show)
+
+mkPersist defaultCodegenConfig [groundhog|
+definitions:
+  - entity: Words
+|]
+
+insertWord :: (MonadIO m, PersistBackend m) => Maybe B.ByteString -> m ()
+insertWord wo = case wo of
+        Just ww ->  insert_ $ Words ((show . B.unpack) ww)
+        Nothing -> return ()
+
+main = do
+  withSqliteConn "words2.sqlite" $ runDbConn $ do
+     runMigration defaultMigrationLogger $ migrate (undefined :: Words)
+     liftIO $ withFile "web2" ReadMode $ \h -> do  -- a link to /usr/share/dict/web2 - a  list of words one per line 
+        is <- Streams.handleToInputStream h >>= Streams.words 
+        os <- Streams.makeOutputStream insertWord
+        Streams.connect is os
+
+runDbConn
+{-# LANGUAGE GADTs, TypeFamilies, TemplateHaskell, QuasiQuotes, FlexibleInstances, FlexibleContexts, StandaloneDeriving #-}
+
+import qualified Data.ByteString as B
+import           Data.Maybe
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import           Control.Monad.IO.Class -- (MonadIO, liftIO)
+import           Control.Monad.Trans.Control
+import           Database.Groundhog.Core 
+import           Database.Groundhog.TH
+import           Database.Groundhog.Sqlite
+import           System.IO
+import           System.IO.Streams.File
+import qualified System.IO.Streams as Streams
+
+data Words = Words {word :: T.Text} deriving (Eq, Show)
+
+mkPersist defaultCodegenConfig [groundhog|
+definitions:
+  - entity: Words
+|]
+
+main = do
+  gh <- do withSqlitePool "words5.sqlite" 5 $ \pconn -> return pconn 
+  runDbConn (runMigration defaultMigrationLogger $ migrate (undefined :: Words)) gh
+  withFile "web3" ReadMode $ \h -> do  -- 500 words from /usr/share/dict/web2 - a list of words one per line 
+    is <- Streams.handleToInputStream h >>= Streams.words 
+    os <- Streams.makeOutputStream (iw2db gh)
+    Streams.connect is os
+
+iw2db :: (MonadIO m, MonadBaseControl IO m, ConnectionManager cm Sqlite) => cm -> Maybe B.ByteString -> m()
+iw2db gh (Just x) = runDbConn (insert_ $ Words (T.decodeUtf8 x)) gh
+iw2db gh Nothing  = return ()
+

@@ -1,0 +1,29 @@
+GROUP BY
+SELECT [Desc],
+    [Series],
+    [Manufacturer],
+    [Distributer],
+    MAX(LastOrdr) AS LastOrdr,
+    [Minimum],
+    SUM(Qty) AS Qty
+FROM (SELECT [pptype].[Desc],
+            COALESCE(cStock.Serial,' ') AS Serial,
+            COALESCE([misccode].Descript,' ') AS Series,
+            COALESCE((SELECT vendors.vn_Name FROM [dbo].vendors WHERE vendors.Vn_id = [pptype].Mfg),' ') AS Manufacturer,
+            COALESCE((SELECT vendors.vn_Name FROM [dbo].vendors WHERE vendors.Vn_id = [pptype].Distrib),' ') AS Distributer,
+            [ppType].Minimum,
+            COALESCE(cQty.Qty,0) AS Qty,
+            COALESCE(cStock.Recvd,0) AS LastOrdr,
+            [pptype].Trkser
+        FROM (SELECT [Typeid], [Serial], [Series], MAX([Recvd]) AS Recvd FROM [dbo].[ppstock] WHERE [Invoice] != 'SETUP' GROUP BY [Typeid], [Serial], [Series]) cStock
+            LEFT OUTER JOIN [dbo].[pptype] ON
+                cStock.[Typeid] = [pptype].Typeid
+            LEFT OUTER JOIN (SELECT [Typeid], [Serial], SUM([Qty]) AS Qty FROM [dbo].[pplocatn] GROUP BY [Typeid], [Serial]) cQty ON 
+                cStock.[Typeid] = cQty.[Typeid] AND cStock.Serial = CASE
+                    WHEN [dbo].EMPTY(cStock.Serial) = 1 THEN 'Do not match.' ELSE cQty.[Serial] END
+            LEFT OUTER JOIN [dbo].[misccode] ON
+                cStock.[Series] = [misccode].[Code] AND [misccode].[type] = 'SERIES'
+    WHERE [dbo].EMPTY([pptype].Inactive) = 1 and
+        (COALESCE(cQty.Qty,0) < [pptype].Minimum)) cData
+GROUP BY [Desc],[Series],[Manufacturer],[Distributer],[Minimum]
+

@@ -1,0 +1,142 @@
+#ifndef MESSAGER
+#define MESSAGER
+
+#include <string>
+
+class Messager{
+    private:
+        int sendSocket;
+        int listenSocket;
+
+    public:
+        void init(void);
+        bool connect(std::string ip, std::string port);
+        bool bind(std::string port);
+        void listen(void);
+        void send(std::string message);
+        std::string receive(void);
+};
+#endif
+
+#include "Messager.h"
+#include <winsock2.h>
+#include <sys/types.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+
+void Messager::init(void){
+    WSADATA wsaData;
+
+    WSAStartup(MAKEWORD(1,1), &wsaData);
+}
+
+bool Messager::connect(std::string ip, std::string port){
+    struct addrinfo hints;
+    struct addrinfo *res;
+    bool success = false;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    getaddrinfo(ip.c_str(), port.c_str(), &hints, &res);
+
+    sendSocket = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+
+    success = ::connect(sendSocket, res->ai_addr, res->ai_addrlen) != -1;
+
+    freeaddrinfo(res);
+
+    return success;
+}
+
+bool Messager::bind(std::string port){
+    struct addrinfo hints, *res;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    getaddrinfo(NULL, port.c_str(), &hints, &res);
+
+    listenSocket = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+
+    if(listenSocket == INVALID_SOCKET){
+        return false;
+    }
+
+    if(::bind(listenSocket, res->ai_addr, res->ai_addrlen) == -1){
+        return false;
+    }
+
+    return true;
+}
+
+void Messager::listen(void){
+    ::listen(listenSocket, 10);
+}
+
+int Messager::send(std::string message){
+    const std::string terminator = "\r\n";
+    std::string realMessage;
+    int size = 0;
+    int totalSent = 0;
+
+    realMessage = message;
+    realMessage += terminator;
+
+    size = realMessage.size();
+
+    totalSent = ::send(sendSocket, realMessage.c_str(), size, 0);
+
+    if(totalSent == 0 || totalSent == -1){
+        return 0; // There must be an error, 0 means it is an error
+    }
+
+    // This statement keeps adding the results of ::send to totalSent until it's the size of the full message
+    for(totalSent = 0; totalSent < size; totalSent += ::send(sendSocket, realMessage.c_str(), size, 0));
+
+    return totalSent;
+}
+
+// This function has been updated a lot thanks to @Luke
+std::string Messager::receive(void){
+    const int bufferSize = 256;
+    const std::string terminator = "\r\n";
+    char buffer[bufferSize];
+    int i = 0;
+    int received = 0;
+    std::string tempString;
+    size_t term = 0;
+
+    for(i = 0; i < bufferSize; i++){
+        buffer[i] = 0;
+    }
+
+    received = ::recv(listenSocket, buffer, bufferSize, 0);
+    tempString = buffer;
+    term = tempString.find(terminator);
+
+    if(term != -1){ // Already have line
+        line = tempString;
+    }
+
+    while(received != -1 && received != 0){ // While it is receiving information...
+        // Flush the buffer
+        for(i = 0; i < bufferSize; i++){
+            buffer[i] = 0;
+        }
+
+        ::recv(listenSocket, buffer, bufferSize, 0);
+        tempString += buffer;
+        term = tempString.find(terminator);
+
+        if(term != -1){ // Found terminator!
+            return tempString;
+        }
+    }
+
+    throw 0; // Didn't receive any information.  Throw an error
+}
+

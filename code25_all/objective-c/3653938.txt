@@ -1,0 +1,97 @@
+#import <CoreFoundation/CoreFoundation.h>
+#import <CoreServices/CoreServices.h>
+#import <Foundation/Foundation.h>
+
+void myCallBack (CFReadStreamRef stream, CFStreamEventType eventType, void *clientCallBackInfo){
+  NSLog(@"Something happened");
+  BOOL *done = ((BOOL *)clientCallBackInfo);
+  *done = TRUE;
+}
+
+int main(int argc, char *argv[]){
+  NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+  CFStringRef bodyString = CFSTR(""); // Usually used for POST data
+
+  CFStringRef url = CFSTR("http://www.apple.com");
+  CFURLRef myURL = CFURLCreateWithString(kCFAllocatorDefault, url, NULL);
+
+  CFStringRef requestMethod = CFSTR("GET");
+  CFHTTPMessageRef myRequest = CFHTTPMessageCreateRequest(kCFAllocatorDefault, 
+                              requestMethod, 
+                              myURL,
+                              kCFHTTPVersion1_1);
+
+
+  if (myRequest){
+    NSLog(@"Request created: %@ %@", CFHTTPMessageCopyRequestMethod(myRequest), 
+      CFURLGetString(CFHTTPMessageCopyRequestURL(myRequest)));
+  }
+
+  CFDataRef bodyData = CFStringCreateExternalRepresentation(kCFAllocatorDefault, bodyString, kCFStringEncodingASCII, 0);
+  CFHTTPMessageSetBody(myRequest, bodyData);
+  NSLog(@"HTTPMessage body set");
+
+  CFDataRef mySerializedRequest = CFHTTPMessageCopySerializedMessage(myRequest);
+  NSLog(@"Serialized string generated");
+  CFStringRef mySerializedString = CFStringCreateFromExternalRepresentation(kCFAllocatorDefault,
+                                        mySerializedRequest,
+                                        kCFStringEncodingASCII);
+  NSLog(@"Serialized request: %@", mySerializedString);
+
+  CFReadStreamRef myReadStream = CFReadStreamCreateForHTTPRequest(kCFAllocatorDefault, myRequest);
+  BOOL done = FALSE;
+  CFReadStreamOpen(myReadStream);
+
+  CFOptionFlags registeredEvents = kCFStreamEventHasBytesAvailable | kCFStreamEventErrorOccurred | kCFStreamEventEndEncountered;
+  NSLog(@"Setting read stream client");
+  if (CFReadStreamSetClient(myReadStream, registeredEvents, myCallBack, (void *)&done)){
+      CFReadStreamScheduleWithRunLoop(myReadStream, CFRunLoopGetCurrent(),
+                      kCFRunLoopCommonModes);
+
+      while (!done){
+    NSLog(@"Wait");
+    [[NSRunLoop currentRunLoop] run];
+      }
+
+
+    }else{
+      NSLog(@"Error setting readstream client");
+    }  
+
+  CFRelease(myRequest);
+  CFRelease(myURL);
+  CFRelease(url);
+  CFRelease(mySerializedRequest);
+  myRequest = NULL;
+  mySerializedRequest = NULL;
+
+  [pool drain];
+}
+
+Reading symbols for shared libraries .+++++...................... done
+2010-09-06 21:36:34.470 a.out[27973:a0f] Request created: GET http://www.apple.com
+2010-09-06 21:36:34.473 a.out[27973:a0f] HTTPMessage body set
+2010-09-06 21:36:34.474 a.out[27973:a0f] Serialized string generated
+2010-09-06 21:36:34.474 a.out[27973:a0f] Serialized request: GET / HTTP/1.1
+
+2010-09-06 21:36:34.478 a.out[27973:a0f] Setting read stream client
+2010-09-06 21:36:34.479 a.out[27973:a0f] Wait
+
+Program received signal EXC_BAD_ACCESS, Could not access memory.
+Reason: 13 at address: 0x0000000000000000
+0x00007fff83b7b83d in _signalEventSync ()
+(gdb) bt
+#0  0x00007fff83b7b83d in _signalEventSync ()
+#1  0x00007fff83b7b7f4 in _cfstream_solo_signalEventSync ()
+#2  0x00007fff83b7b734 in _CFStreamSignalEvent ()
+#3  0x00007fff8391c3a1 in HTTPReadStream::streamEvent ()
+#4  0x00007fff83b7b883 in _signalEventSync ()
+#5  0x00007fff83b7c5d9 in _cfstream_shared_signalEventSync ()
+#6  0x00007fff83b1be91 in __CFRunLoopDoSources0 ()
+#7  0x00007fff83b1a089 in __CFRunLoopRun ()
+#8  0x00007fff83b1984f in CFRunLoopRunSpecific ()
+#9  0x00007fff8300fa18 in -[NSRunLoop(NSRunLoop) runMode:beforeDate:] ()
+#10 0x00007fff8300f8f7 in -[NSRunLoop(NSRunLoop) run] ()
+#11 0x0000000100000c94 in main (argc=1, argv=0x7fff5fbff5b8) at test.m:56
+

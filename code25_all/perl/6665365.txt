@@ -1,0 +1,229 @@
+$sp = new SRVPicker('_foo._bar.mydomain.com', 30);
+
+class SRVPicker {
+    private $records = array();
+
+    public function SRVPicker($host, $expireseconds = 30) {
+        $this->records = $this->GetSRVRecords($host, $expireseconds);
+    }
+
+    private function GetSRVRecords($host, $expireseconds) {
+        return MCache::GetCached(sprintf('srvrecord.%s', strtolower($host)), new MCachedFunction(array($this,'RetrieveSRVRecords'), array($host)), $expireseconds);
+    }
+
+    public function RetrieveSRVRecords($host) {
+        $result = array();
+        $records = dns_get_record($host, DNS_SRV);
+        foreach ($records as $r) {
+            $rec = new SRVRecord($r);
+            $result[$rec->priority][] = $rec;
+        }
+
+        ksort($result); //Sort by priority
+        return array_values($result);   //Return sorted array but strip array key (not needed anymore)
+    }
+}
+
+class MCache {
+    public static function GetCached($cachekey, $cachedfunction, $expireseconds = -1) {
+        if (!($cachedfunction instanceof MCachedFunction))
+            throw new Exception('cachedfunction parameter is not of type CachedFunction');
+
+        //Can we resort to the cache?
+        if (_USEMEMCACHED && ($expireseconds>=0)) {
+            $memcache = self::GetMemCache();
+            $cacheitem = $memcache->get(self::GetKey($cachekey));
+            if ($cacheitem===false) {   //Cache miss
+                //Go to backend
+                $result = call_user_func_array($cachedfunction->callback, $cachedfunction->params);
+                $memcache->set(self::GetKey($cachekey), $result, MEMCACHE_COMPRESSED, $expireseconds);      //Store in cache
+            } else {    //Cache hit
+                $result = $cacheitem;
+            }
+            $memcache->close();
+            return $result;
+        } else {
+            //Bypass cache altogether
+            return call_user_func_array($cachedfunction->callback, $cachedfunction->params);
+        }
+    }
+
+    private static function GetMemCache() {
+        $memcache = new Memcache();
+        $memcache->connect(_MEMCACHEDHOST, _MEMCACHEDPORT);
+        return $memcache;
+    }
+
+    private static function GetKey($cachekey) {
+        return _MEMCACHEDPREFIX . $cachekey;
+    }
+}
+
+class MCachedFunction {
+    public $callback;
+    public $params;
+
+    public function MCachedFunction($callback, $params = array()) {
+        $this->callback = $callback;
+        $this->params = $params;
+    }
+}
+
+use strict;
+use warnings;
+
+use SRVPicker;
+use Data::Dumper::Concise;
+
+my $picker = SRVPicker->new('_foo._bar.mydomain.com');
+
+use strict;
+use warnings;
+
+package SRVPicker;
+
+use Net::DNS;
+use Cache::Memcached::Fast;
+use Data::Dumper::Concise;
+
+use constant _DEFAULTEXPIRESECONDS => 30;
+use constant _DEFAULTNAMESPACE => 'pbxos';
+
+sub new {
+    my $class = shift;
+    my ($host, $expireseconds, $memcachedservers) = @_;
+
+    my $self = bless({
+        _pointer => 0,
+        _records => []
+    }, $class);
+
+    $self->{_records} = $self->GetSRVRecords(
+        $host,
+        $expireseconds || _DEFAULTEXPIRESECONDS,
+        $memcachedservers || [ { address => 'localhost:11211' } ]
+    );
+
+    print "*********\n", Dumper($self->{_records}), "==========\n";
+
+    return $self;
+}
+
+sub Reset {
+    my $self = shift;
+    $self->{_pointer} = 0;
+}
+
+sub GetSRVRecords {
+    my $self = shift;
+
+    my ($host, $expireseconds, $servers) = @_;
+
+    if ($servers) {
+        my $memd = new Cache::Memcached::Fast({
+          servers => $servers,
+          namespace => _DEFAULTNAMESPACE,
+          connect_timeout => 0.2,
+          io_timeout => 0.5,
+          close_on_error => 1,
+          max_failures => 3,
+          failure_timeout => 2,
+          ketama_points => 150,
+          nowait => 1,
+          hash_namespace => 1,
+          utf8 => ($^V ge v5.8.1 ? 1 : 0)
+        });
+        my $key = 'srvrecord.' . $host;
+
+        my @result = $memd->get($key);
+print "*** FROM CACHE:", Dumper(@result), "\n";
+
+        if (!@result) {
+            @result = $self->RetrieveSRVRecords($host);
+            if (@result) {
+                $memd->set($key, \@result, $expireseconds);
+            }
+        }
+        $memd->disconnect_all();
+
+        return @result;
+    } else {
+        return $self->RetrieveSRVRecords($host);
+    }
+}
+
+sub RetrieveSRVRecords {
+    my $self = shift;
+
+    my ($host) = @_;
+    my $res = Net::DNS::Resolver->new;
+    my $query = $res->query($host, "SRV");
+    my @result;
+    if ($query) {
+        foreach my $rr (grep { $_->type eq 'SRV' } $query->answer) {
+            push @result, {
+                target => $rr->target,
+                port => $rr->port,
+                priority => $rr->priority,
+                weight => $rr->weight,
+                ttl => $rr->ttl
+            };
+        }
+    }
+
+    return @result;
+}
+
+1;  # so the require or use succeeds
+
+$# perl test.pl 
+*** FROM CACHE:
+*********
+5
+==========
+
+$# perl test.pl 
+*** FROM CACHE:[
+  {
+    port => 8732,
+    priority => 10,
+    target => "pbxsrvtst.mydomain.com",
+    ttl => 300,
+    weight => 50
+  },
+  {
+    port => 8732,
+    priority => 10,
+    target => "pbxsrvtst.mydomain.com",
+    ttl => 300,
+    weight => 40
+  },
+  {
+    port => 8732,
+    priority => 10,
+    target => "pbxsrvtst.mydomain.com",
+    ttl => 300,
+    weight => 10
+  },
+  {
+    port => 8732,
+    priority => 0,
+    target => "pbxsrvtst.mydomain.com",
+    ttl => 300,
+    weight => 10
+  },
+  {
+    port => 8732,
+    priority => 20,
+    target => "pbxsrvtst.mydomain.com",
+    ttl => 300,
+    weight => 10
+  }
+]
+
+*********
+1
+==========
+
+print "*********\n", Dumper($self->{_records}), "==========\n";
+

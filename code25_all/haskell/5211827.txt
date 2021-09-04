@@ -1,0 +1,76 @@
+import Control.Concurrent (forkIO)
+import Control.Concurrent.Chan   -- .Strict
+import Control.Concurrent.MVar
+import Control.Exception (finally, evaluate)
+import Control.Monad (forM_)
+import Control.Parallel.Strategies (using, rdeepseq)
+
+main = (>>=) newChan $ (>>=) (newMVar []) . run
+
+run :: Chan (Maybe String) -> MVar [MVar ()] -> IO ()
+run logCh statVars = do
+  logV <- spawn1 readWriteLoop
+  say "START"
+  forM_ [18,17..10] $ spawn . busyWork
+  await
+  writeChan logCh Nothing -- poison the logger
+  takeMVar logV
+  putStrLn "DONE"
+  where
+    say mesg = force mesg >>= writeChan logCh . Just
+
+    force s = mapM evaluate s  -- works
+--    force s = return $ s `using` rdeepseq  -- no difference
+--    force s = return s -- no-op; try this with strict channel
+
+    busyWork = say . show . sum . filter odd . enumFromTo 2 . embiggen
+    embiggen i = i*i*i*i*i
+
+    readWriteLoop = readChan logCh >>= writeReadLoop
+    writeReadLoop Nothing = return ()
+    writeReadLoop (Just mesg) = putStrLn mesg >> readWriteLoop
+
+    spawn1 action = do
+      v <- newEmptyMVar
+      forkIO $ action `finally` putMVar v ()
+      return v
+
+    spawn action = do
+      v <- spawn1 action
+      modifyMVar statVars $ \vs -> return (v:vs, ())
+
+    await = do
+      vs <- modifyMVar statVars $ \vs -> return ([], vs)
+      mapM_ takeMVar vs
+
+-- results in order spawned (longest-running first = broken)
+START
+892616806655
+503999185040
+274877906943
+144162977343
+72313663743
+34464808608
+15479341055
+6484436675
+2499999999
+DONE
+
+rdeepseq
+Control.Exception.evaluate :: a -> IO a
+force
+Control.Exception.evaluate
+-- results in order finished (shortest-running first = correct)
+START
+2499999999
+6484436675
+15479341055
+34464808608
+72313663743
+144162977343
+274877906943
+503999185040
+892616806655
+DONE
+
+rdeepseq

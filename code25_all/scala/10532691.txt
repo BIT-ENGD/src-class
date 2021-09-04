@@ -1,0 +1,83 @@
+import scala.actors._
+
+abstract class Message
+case class DataMsg(id: String, value: String) extends Message
+case class Done() extends Message
+
+class DataSender(id: String, next: Actor) extends Actor {
+
+    def act() {
+        loop {
+            react {
+                case DataMsg(_, msg) => next ! DataMsg(id, msg)
+                case Done() => {
+                    println(id+" -> done")
+                    exit()
+                }
+            }
+        }
+    }
+}
+
+class Concat(next: Actor, ids: Seq[String]) extends Actor {
+    private val data = scala.collection.mutable.LinkedHashMap.empty[String, String]
+
+    def act() {
+        loop {
+            react {
+                case DataMsg(id, msg) => {
+                    if (ids contains id) {
+                        data(id) = msg
+                        if (ids.size == data.keys.size) {
+                            next ! DataMsg("", data.values.mkString)
+                            data.clear
+                        }
+                    }
+                }
+                case Done() => {
+                    println("Concat -> done")
+                    exit()
+                }
+            }
+        }
+    }
+}
+
+class PrintData extends Actor {
+    def act() {
+        loop {
+            react {
+                case DataMsg(_, msg) => {
+                    println("Data: " + msg)
+                }
+                case Done() => {
+                    println("PrintData -> done")
+                    exit()
+                }
+            }
+        }
+    }
+}
+
+val printData = new PrintData
+val concat = new Concat(printData, Seq("f1", "f2", "f3"))
+val f1 = new DataSender("f1", concat)
+val f2 = new DataSender("f2", concat)
+val f3 = new DataSender("f3", concat)
+
+printData.start
+concat.start
+f1.start
+f2.start
+f3.start
+
+f1 ! DataMsg("", "Hello")
+f2 ! DataMsg("", " ")
+f3 ! DataMsg("", "Wordl!")
+Thread.sleep(1000)
+f1 ! Done()
+f2 ! Done()
+f3 ! Done()
+concat ! Done()
+printData ! Done()
+

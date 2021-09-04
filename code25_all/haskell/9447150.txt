@@ -1,0 +1,148 @@
+\state -> do
+    counter <- readIORef state
+    writeIORef state ((counter + 1)`mod`3)
+    postRedisplay Nothing
+
+\state -> let
+cube w = do 
+    renderPrimitive Quads $ do
+        vertex $ Vertex3 w w w
+        vertex $ Vertex3 w w (-w)
+        vertex $ Vertex3 w (-w) (-w)
+        vertex $ Vertex3 w (-w) w
+        vertex $ Vertex3 w w w
+        vertex $ Vertex3 w w (-w)
+        vertex $ Vertex3 (-w) w (-w)
+        vertex $ Vertex3 (-w) w w
+        vertex $ Vertex3 w w w
+        vertex $ Vertex3 w (-w) w
+        vertex $ Vertex3 (-w) (-w) w
+        vertex $ Vertex3 (-w) w w
+        vertex $ Vertex3 (-w) w w
+        vertex $ Vertex3 (-w) w (-w)
+        vertex $ Vertex3 (-w) (-w) (-w)
+        vertex $ Vertex3 (-w) (-w) w
+        vertex $ Vertex3 w (-w) w
+        vertex $ Vertex3 w (-w) (-w)
+        vertex $ Vertex3 (-w) (-w) (-w)
+        vertex $ Vertex3 (-w) (-w) w
+        vertex $ Vertex3 w w (-w)
+        vertex $ Vertex3 w (-w) (-w)
+        vertex $ Vertex3 (-w) (-w) (-w)
+        vertex $ Vertex3 (-w) w (-w)
+
+points :: Integer -> [(GLfloat,GLfloat,GLfloat)]
+points n' = let n = fromIntegral n' in map (\k -> let t = 2*pi*k/n in (sin(t),cos(t),0.0))  [1..n]
+
+in do
+    clear [ ColorBuffer ]
+    counter <- readIORef state
+    mapM_ (\(x,y,z) -> preservingMatrix $ do
+           color $ Color3 ((x+1.0)/2.0) ((y+1.0)/2.0) ((z+1.0)/2.0)
+           translate $ Vector3 x y z
+           cube (0.3::GLfloat)
+           ) $ points (9 + counter)
+    flush
+
+module Main where
+
+import Control.Monad
+import Data.Typeable as Typeable
+
+import System.IO
+
+import Data.IORef
+
+import Graphics.Rendering.OpenGL
+import Graphics.UI.GLUT
+
+import Language.Haskell.Interpreter
+
+main :: IO ()
+main = do
+    (_, _) <- getArgsAndInitialize
+    createWindow "Hello World"
+
+    action <- newIORef $ do
+    clear [ ColorBuffer ]
+    flush
+
+    let imports = ["Prelude", "Data.IORef", "Graphics.Rendering.OpenGL", "Graphics.UI.GLUT"]
+    let modules = ["State"]
+
+    runFile (undefined :: IORef Integer -> IO ()) "Display.hs" imports $ \displayCode ->
+    runFile (undefined :: IORef Integer -> IO ()) "Idle.hs" imports $ \idleCode -> do
+
+    state <- newIORef 12
+
+    displayCallback $= display displayCode state
+    idleCallback $= Just (idle displayCode idleCode state)
+
+    mainLoop
+
+display displayCode state = do
+    f <- execute displayCode
+    f state
+
+idle displayCode idleCode state = do
+    update displayCode
+    update idleCode
+
+    f <- execute idleCode
+    f state
+
+instance Eq GhcError where
+    GhcError s == GhcError t = s == t
+
+instance Eq InterpreterError where
+    UnknownError s == UnknownError t = s == t
+    WontCompile s == WontCompile t = s == t
+    NotAllowed s == NotAllowed t = s == t
+    GhcException s == GhcException t = s == t
+
+data V a = V {
+    update :: IO (),
+    execute :: IO a
+ }
+
+runFile :: Typeable a => a -> String -> [String] -> (V a -> IO ()) -> IO ()
+runFile theType file imports f = do
+    currentError <- newIORef Nothing
+    currentAction <- newIORef Nothing
+
+    let v = V {
+        update = do
+            fileContents <- readFile file
+
+            result <- runInterpreter $ do
+                setImports imports
+                interpret fileContents theType
+
+                oldError <- readIORef currentError
+
+                case result of
+                Right newAction -> do
+                    when (oldError /= Nothing) $ do
+                        writeIORef currentError Nothing
+                        putStrLn (file ++ " Ok!")
+
+                        writeIORef currentAction (Just newAction)
+
+                        Left newError -> do
+
+                            when ((Just newError) /= oldError) $ do
+                                writeIORef currentError (Just newError)
+                                print newError
+                                , execute = do
+                                    action <- readIORef currentAction
+                                    case action of
+                                    Nothing -> do
+                                        err <- readIORef currentError
+                                        return (error (show err))
+                                        Just act -> return act
+                                        }
+
+    update v 
+
+    f v
+

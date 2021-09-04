@@ -1,0 +1,97 @@
+require 'ffi'
+
+# http://msdn.microsoft.com/en-us/library/aa383751(VS.85).aspx
+# DWORD appears to be an :int (32 bits that is, so :int should work well)
+# HWND appears to be a :pointer see this thread for why you should not actually read from the value it points to. You may as well just use a :long or :ulong.
+# LPDWORD is a pointer (the P standing for pointer)
+# LPARAM appears to be a long (hence the L)
+# WPARAM appears to be a long (i.e. 64 bits on 64bit OS).
+# BOOL is an :int
+
+module WinMM
+  extend FFI::Library
+
+  ffi_lib 'winmm'
+  ffi_convention :stdcall
+
+  CALLBACK_FUNCTION = 0x30000
+
+  # void CALLBACK MidiInProc(
+  #   HMIDIIN hMidiIn,
+  #   UINT wMsg,
+  #   DWORD_PTR dwInstance,
+  #   DWORD_PTR dwParam1,
+  #   DWORD_PTR dwParam2
+  # );
+  callback :midiInProc, [:ulong, :uint, :int, :pointer, :pointer], :void
+  MidiInProcCallback = Proc.new do |hmidiin, wmsg, dwintance, dwparam1, dwparam2|
+    p [hmidiin, wmsg, dwintance, dwparam1, dwparam2]
+  end
+  # MidiInProcCallback = FFI::Function.new(:void, [:ulong, :uint, :int, :int, :int]) do |hmidiin, wmsg, dwintance, dwparam1, dwparam2|
+  #   puts hmidiin, wmsg, dwintance, dwparam1, dwparam2  
+  # end
+
+  # MMRESULT midiInOpen(
+  #   LPHMIDIIN lphMidiIn,
+  #   UINT uDeviceID,
+  #   DWORD_PTR dwCallback,
+  #   DWORD_PTR dwCallbackInstance,
+  #   DWORD dwFlags
+  # )
+  attach_function :midiInOpen, [ :pointer, :uint, :midiInProc, :int, :int ], :int
+
+  # MMRESULT midiInClose(
+  #   HMIDIIN hMidiIn
+  # );
+  attach_function :midiInClose, [ :ulong ], :int
+
+  # MMRESULT midiInStart(
+  #     HMIDIIN hMidiIn
+  # );
+  attach_function :midiInStart, [ :ulong ], :int
+
+  # MMRESULT midiInStop(
+  #     HMIDIIN hMidiIn
+  # );
+  attach_function :midiInStop, [ :ulong ], :int
+
+  # MMRESULT midiInReset(
+  #     HMIDIIN hMidiIn
+  # );
+  attach_function :midiInReset, [ :ulong ], :int
+
+  # UINT midiInGetNumDevs(void);
+  attach_function :midiInGetNumDevs, [], :uint
+
+  # UINT midiOutGetNumDevs(void);
+  attach_function :midiOutGetNumDevs, [], :uint
+
+  # MMRESULT midiInGetDevCaps(
+  #   UINT_PTR uDeviceID,
+  #   LPMIDIINCAPS lpMidiInCaps,
+  #   UINT cbMidiInCaps
+  # );
+  # attach_function :midiInGetDevCaps, [:uint, :pointer, :uint], :uint
+end
+
+#===---------------------------------------------------------------------------
+
+require 'pp'
+
+
+
+trap("INT") { exit }
+
+device_ptr = FFI::MemoryPointer.new(:ulong)
+
+WinMM.midiInOpen(device_ptr, 0, WinMM::MidiInProcCallback, 0, WinMM::CALLBACK_FUNCTION)
+
+device_handle = device_ptr.read_long
+
+WinMM.midiInStart(device_handle)
+
+at_exit do
+  WinMM.midiInStop(device_handle)
+  WinMM.midiInClose(device_handle)
+end
+

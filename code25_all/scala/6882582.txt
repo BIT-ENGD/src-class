@@ -1,0 +1,78 @@
+sealed trait ServerMessage
+
+case class Message(msg: String) extends ServerMessage
+
+case object Quit extends ServerMessage
+
+sealed trait ClientMessage
+
+case class Incoming(conn: Connection, msg: String) extends ClientMessage
+
+case class Remove(conn: Connection) extends ClientMessage
+
+object Server extends App with Actor with Settings {
+  Console.println(greeting)
+  Console.println("Server starting up...")
+
+  val socket = new ServerSocket(defaultPort);
+  var connections: Set[Connection] = Set.empty
+
+  start
+
+  actor {
+    loop {
+      val s = socket.accept
+      val c = Connection(s)
+      Console.println("New Connection from " + s.getInetAddress)
+      c ! Message(greeting)
+      connections += c
+    }
+  }
+
+  def act = loop {
+    receive {
+      // For some reason, this only works once
+      case Incoming(conn, msg) => {
+        Console.println(conn.socket.getInetAddress.toString + " said: " + msg)
+        connections.foreach(_ ! Message(msg))
+      }
+      case Remove(conn) => connections -= conn; conn ! Quit
+    }
+  }
+}
+
+case class Connection(socket: Socket) extends Actor {
+  val in = new BufferedReader(new InputStreamReader(socket.getInputStream))
+  val out = new PrintWriter(socket.getOutputStream)
+
+  start
+
+  actor {
+    var s: String = in.readLine
+    while (s != null) {
+      // This output works
+      scala.Console.println(s)
+      if (s == "quit") Server ! Remove(this)
+      else Server ! Incoming(this, s)
+      s = in.readLine
+    }
+  }
+
+  def act = {
+    var done = false
+    while (!done) {
+      receive {
+        // This seems to work all the time (I can send several messages)
+        case Message(str) => out.println(str); out.flush
+        case Quit => done = true
+      }
+    }
+    in.close
+    out.close
+    socket.close
+  }
+}
+
+telnet
+receive
+react

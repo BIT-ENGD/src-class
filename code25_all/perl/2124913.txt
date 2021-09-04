@@ -1,0 +1,36 @@
+#file:MyApache2/LogPerUser.pm
+#---------------------------
+package MyApache2::LogPerUser;
+
+use strict;
+use warnings;
+
+use Apache2::RequestRec ();
+use Apache2::Connection ();
+
+use Fcntl qw(:flock);
+use File::Spec::Functions qw(catfile);
+
+use Apache2::Const -compile => qw(OK DECLINED);
+
+sub handler {
+  my $r = shift;
+
+  my ($username) = $r->uri =~ m|^/~([^/]+)|;
+  return Apache2::Const::DECLINED unless defined $username;
+
+  my $entry = sprintf qq(%s [%s] "%s" %d %d\n),
+      $r->connection->remote_ip, scalar(localtime),
+      $r->uri, $r->status, $r->bytes_sent;
+
+  my $log_path = catfile Apache2::ServerUtil::server_root,
+      "logs", "$username.log";
+  open my $fh, ">>$log_path" or die "can't open $log_path: $!";
+  flock $fh, LOCK_EX;
+  print $fh $entry;
+  close $fh;
+
+  return Apache2::Const::OK;
+}
+1;
+

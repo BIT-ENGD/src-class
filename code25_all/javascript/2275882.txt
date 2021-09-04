@@ -1,0 +1,65 @@
+Components.utils.import('resource://gre/modules/XPCOMUtils.jsm');
+
+const Cc = Components.classes;
+const Ci = Components.interfaces;
+
+const ObserverService = Cc['@mozilla.org/observer-service;1'].getService(Ci.nsIObserverService);
+
+function MyStartupService() {};
+
+MyStartupService.prototype = {
+  observe : function(aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case 'xpcom-startup':
+        this.SetPreference("my.extension.is_running", "false");
+        break;
+      case 'app-startup':
+        this.SetPreference("my.extension.is_running", "false");
+        ObserverService.addObserver(this, 'final-ui-startup', false);
+        break;
+      case 'final-ui-startup':
+
+        //make sure is_running is set to false
+        this.SetPreference("my.extension.is_running", "false");
+
+        ObserverService.removeObserver(this, 'final-ui-startup');
+        const WindowWatcher = Cc['@mozilla.org/embedcomp/window-watcher;1'].getService(Ci.nsIWindowWatcher);
+        WindowWatcher.registerNotification(this);
+        break;
+      case 'domwindowopened':
+        this.initWindow(aSubject);
+        break;
+    }
+  },
+  SetPreference : function(Token, Value) {
+    var prefs = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefService);
+    var str = Components.classes["@mozilla.org/supports-string;1"].createInstance(Components.interfaces.nsISupportsString);
+    str.data = Value;
+    prefs.setComplexValue(Token, Components.interfaces.nsISupportsString, str);
+
+    //save preferences
+    var prefService = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefService);
+    prefService.savePrefFile(null);  
+  },
+  initWindow : function(aWindow) {
+    if (aWindow != '[object ChromeWindow]') return;
+    aWindow.addEventListener('load', function() {
+      aWindow.removeEventListener('load', arguments.callee, false);
+      aWindow.document.title = 'domwindowopened!';
+      // for browser windows
+      var root = aWindow.document.documentElement;
+      root.setAttribute('title', aWindow.document.title);
+      root.setAttribute('titlemodifier', aWindow.document.title);
+    }, false);
+  },
+  classDescription : 'My Startup Service',
+  contractID : '@mystartupservice.com/startup;1',
+  classID : Components.ID('{770825e7-b39c-4654-94bc-008e5d6d57b7}'),
+  QueryInterface : XPCOMUtils.generateQI([Ci.nsIObserver]),
+  _xpcom_categories : [{ category : 'app-startup', service : true }]
+};
+
+function NSGetModule(aCompMgr, aFileSpec) {
+  return XPCOMUtils.generateModule([MyStartupService]);
+}
+

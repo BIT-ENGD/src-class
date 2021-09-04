@@ -1,0 +1,117 @@
+    con.ConnectionString = "user id=sa;password=sa1;database=wil_test;server=wil"
+    con.Open()
+
+    '----------- Report of Current Date ----------
+
+    Qry = "SELECT DISTINCT Course_Name,Course_ID FROM Courses WHERE (Course_ID IN  (SELECT Course_Id FROM Student_Courses_Pref WHERE student_Id IN (SELECT student_Id FROM Student_Info  WHERE Inserted_date = '" + Now.Date + "' and Branch_Code = '" + BName + "') and Branch_code = '" + BName + "')) and Branch_Code = '" + BName + "' and Active = 'Y' order by Course_Id"
+
+    com.CommandText = Qry
+    com.Connection = con
+    dr = com.ExecuteReader
+
+    str = "<p align='center'><font face='Verdana' size='+1'> <b><u> Daily Enquiry Report</u></b></font></p>"
+    str = str + "<table align='Left' style='FONT-WEIGHT: bold; FONT-SIZE: x-small; COLOR: Navy; FONT-FAMILY: Verdana'><tr><td>Counseling Date</td><td> :</td><td>" + Now.DayOfWeek.ToString() + "," + Now.Day.ToString() + " " + MonthName(Now.Month).ToString() + "-" + Now.Year.ToString() + "</td></tr>"
+    str = str + "<tr><td>Branch Name</td><td> :</td><td>" + BrancName + "</td></tr></table>"
+    str = str + "<table bgcolor=#6699cc align='Right'> <tr style='FONT-WEIGHT: bold; FONT-SIZE: x-small; FONT-FAMILY: Verdana'> <td bgcolor='#ffffff'width='10%'> </td><td align='center'> In Person </td><td width='50'></td><td bgcolor='#c2ffc8' width='10%'> </td> <td align='center'> By Phone </td></tr></table>"
+    str = str + "<br><br><br> <table align='center' style='FONT-FAMILY: Verdana' bgcolor='#336699'>"
+    str = str + "<tr style='FONT-WEIGHT: bold; FONT-SIZE: x-small; FONT-FAMILY: Verdana' bgColor='#b9ceee'><td> Counselor </td>"
+
+    While dr.Read
+        str = str + "<td colspan='2' align='Center' width='30%' >" + dr(0).ToString() + "</td>"
+        ReDim Preserve Course_Names(i)
+        Course_Names(i) = dr(1)
+        i = i + 1
+    End While
+
+    str = str + "<td align='center'> Counselor Total </td></tr>"
+    dr.Close()
+
+    Qry = ""
+    Qry = "SELECT Employee_Name,Employee_Id FROM Employees WHERE (Employee_ID IN (SELECT DISTINCT Counselor_ID  FROM Student_Info  WHERE (Inserted_Date = '" + Now.Date + "')) AND (Branch_Code = '" + BName + "') and active = 'Y')"
+    com.CommandText = Qry
+    dr = com.ExecuteReader
+    Dim k As Integer
+    k = 0
+    Qry = ""
+    If dr.HasRows Then
+        While dr.Read
+            ReDim Preserve Employee_Names(k)
+            ReDim Preserve Employee_Ids(k)
+            Employee_Names(k) = dr(0)
+            Employee_Ids(k) = dr(1)
+            k = k + 1
+        End While
+        dr.Close()
+    End If
+
+    Dim j As Integer
+    Dim x As Integer
+    Dim Emp_Id As Integer
+    Dim mail_sub As String = ""
+
+    For j = 0 To Employee_Ids.Length - 1 'Error comes here
+        Emp_Id = Employee_Ids(j)
+        str = str + "<tr style='FONT-WEIGHT: bold; FONT-SIZE: x-small; FONT-FAMILY: Verdana' bgColor='#b9ceee'> <td><font color='Navy'>" + Employee_Names(j) + "</td>"
+        For x = 0 To Course_Names.Length - 1
+
+            Qry = "SELECT COUNT(*) AS Expr1, Student_Info.Counselor_ID, Student_Info.Enquiry_By, Student_Courses_Pref.Course_ID "
+            Qry = Qry + "FROM Student_Info INNER JOIN Student_Courses_Pref ON Student_Info.Student_ID = Student_Courses_Pref.Student_ID "
+            Qry = Qry + "WHERE (Student_Info.Inserted_Date = '" + Now.Date + "')and Student_Info.Branch_Code = '" + BName + "' AND (Student_Info.Counselor_ID = '" + Employee_Ids(j).ToString() + "') And (Student_Courses_Pref.Course_ID = " + Course_Names(x) + ") and Student_Courses_Pref.Branch_code = '" + BName + "'"
+            Qry = Qry + "GROUP BY Student_Info.Enquiry_By, Student_Courses_Pref.Course_ID, Student_Info.Counselor_ID ORDER BY Student_Courses_Pref.Course_ID"
+
+            com.CommandText = Qry
+            dr = com.ExecuteReader
+            'dr.Read()
+
+            While dr.Read()
+                If dr.HasRows Then
+                    If dr(2).ToString() = "I" Then
+                        InCount = dr(0)
+                    ElseIf dr(2).ToString() = "P" Then
+                        PhoneCount = dr(0)
+                    End If
+                    If Emp_Id = Employee_Ids(j) Then
+                        Counselor_Count = Counselor_Count + dr(0)
+                    End If
+                    Total_Count = Total_Count + dr(0)
+                End If
+            End While
+
+            If InCount <= 0 And PhoneCount <= 0 Then
+                str = str + "<td bgcolor='#ffffff' align='Center' width='10%'></td><td bgcolor='#c2ffc8' color = '#9932cc' width='10%' align='Center'></td>"
+            ElseIf InCount > 0 And PhoneCount <= 0 Then
+                str = str + "<td bgcolor='#ffffff' align='Center' width='10%'>" + InCount.ToString() + "</td><td bgcolor='#c2ffc8' color = '#9932cc' width='10%' align='Center'></td>"
+            ElseIf InCount <= 0 And PhoneCount > 0 Then
+                str = str + "<td bgcolor='#ffffff' align='Center' width='10%'></td><td bgcolor='#c2ffc8' color = '#9932cc' width='10%' align='Center'>" + PhoneCount.ToString() + "</td>"
+            ElseIf InCount > 0 And PhoneCount > 0 Then
+                str = str + "<td bgcolor='#ffffff' align='Center' width='10%'>" + InCount.ToString() + "</td><td bgcolor='#c2ffc8' color = '#9932cc' width='10%' align='Center'>" + PhoneCount.ToString() + "</td>"
+            End If
+
+            dr.Close()
+            InCount = 0
+            PhoneCount = 0
+        Next
+        str = str + "<td align='Right'>" + Counselor_Count.ToString() + "</td></tr>"
+        Counselor_Count = 0
+    Next
+    Qry = ""
+    dr.Close()
+
+    '---------- To Display Course wise Totals  ---------
+
+    str = str + "<tr style='FONT-WEIGHT: bold; FONT-SIZE: x-small; FONT-FAMILY: Verdana' ><td bgcolor=#6699cc></td>"
+    For x = 0 To Course_Names.Length - 1
+        Qry = "SELECT COUNT(*) AS Expr1 FROM Student_Courses_Pref WHERE (Student_ID IN (SELECT student_Id FROM student_Info WHERE (Inserted_Date = '" + Now.Date + "') and Student_Info.Branch_code = '" + BName + "')) AND (Course_ID = " + Course_Names(x) + ") And Branch_Code = '" + BName + "'"
+        com.CommandText = Qry
+        dr = com.ExecuteReader
+        dr.Read()
+        str = str + "<td colspan ='2' align='Center' bgcolor='#6699cc'><font color='#ffffff'>" + dr(0).ToString() + "</font></td>"
+        dr.Close()
+    Next
+
+    str = str + "<td bgcolor=#6699cc align='Right'> <font color='Yellow'>" + Total_Count.ToString() + "</td></tr></table><center>"
+    i = j = k = x = 0
+    Qry = ""
+    mail_sub = UCase(BName) + "  DayWise Enq (" + Total_Count.ToString() + "/"
+    Dim Course_Names1() As String
+

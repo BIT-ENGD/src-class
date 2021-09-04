@@ -1,0 +1,63 @@
+obj = object:new()
+-- 
+-- Some time later
+obj:delete()  -- Removes the self reference
+obj = nil     -- Ready for collection
+
+typedef struct {
+    int self; // Reference to the object
+    int callback; // Reference to a Lua function
+    // Other members and function references removed
+} Object;
+
+// Called from Lua to create a new object
+static int object_new( lua_State *L ) {
+    Object *obj = lua_newuserdata( L, sizeof( Object ) );
+
+    // Create the 'self' reference, userdata is on the stack top
+    obj->self = luaL_ref( L, LUA_REGISTRYINDEX );
+
+    // Put the userdata back on the stack before returning
+    lua_rawgeti( L, LUA_REGISTRYINDEX, obj->self );
+
+    // The object pointer is also stored outside of Lua for processing in C
+
+    return 1;
+}
+
+// Called by Lua to delete an object
+static int object_delete( lua_State *L ) {
+    Object *obj = lua_touserdata( L, 1 );
+
+    // Remove the objects self reference
+    luaL_unref( L, LUA_REGISTRYINDEX, obj->self );
+
+    return 0;
+}
+
+// Called from Lua to set a callback function
+static int object_set_callback( lua_State *L ) {
+    Object *obj = lua_touserdata( L, 1 );
+
+    // Unref an existing callbacks
+    if ( obj->callback != 0 ) {
+        luaL_unref( L, LUA_REGISTRYINDEX, obj->callback );
+        obj->callback = 0;
+    }
+
+    // Set the new callback - function is on top of the stack
+    obj->callback = luaL_ref( L, LUA_REGISTRYINDEX );
+}
+
+// Called from C to call a Lua function for the obj
+static void do_callback( Object *obj ) {
+    // Push the Lua function onto the stack
+    lua_rawgeti( L, LUA_REGISTRYINDEX, obj->callback );
+
+    // Push the userdata onto the stack
+    lua_rawgeti( L, LUA_REGISTRYINDEX, obj->self );
+
+    // Call the function
+    lua_call( L, 1, 0 );
+}
+

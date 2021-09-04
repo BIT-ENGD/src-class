@@ -1,0 +1,197 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+void do_child(int data_pipe[]) {
+    int c;
+    int rc;
+    close(data_pipe[1]);
+
+    dup2(data_pipe[0], 0); /* This string provides the desired interface of the program */
+
+    char* cmd[] = { "bash", (char *)0 };
+    execvp("bash", cmd);
+
+    while ((rc = read(data_pipe[0], &c, 1)) > 0) 
+    {
+        putchar(c);
+    }
+    exit(0);
+}
+
+void do_parent(int data_pipe[])
+{
+    int c;
+    int rc;
+    FILE *in;
+
+    close(data_pipe[0]);
+
+    while (1)
+    {
+        in = fopen("input.txt", "r");
+        while ((c = fgetc(in)) > 0) 
+        {
+            rc = write(data_pipe[1], &c, 1);
+            if (rc == -1) 
+            {
+                perror("Parent: write");
+                close(data_pipe[1]);
+                exit(1);
+            }
+        }
+        fclose(in);
+    }
+    close(data_pipe[1]);
+    exit(0);
+}
+
+int main(int argc, char* argv[])
+{
+    int data_pipe[2];
+    int pid;
+    int rc;
+
+    umask(0);
+    mknod("input.txt", S_IFIFO|0666, 0);
+
+    rc = pipe(data_pipe);
+    if (rc == -1) 
+    {
+        perror("pipe");
+        exit(1);
+    }
+    pid = fork();
+    switch (pid) 
+    {
+    case -1:
+        perror("fork");
+        exit(1);
+    case 0:
+        do_child(data_pipe);
+    default:
+        do_parent(data_pipe);
+    }
+    return 0;
+}
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+/* Original version got from http://www.iakovlev.org */
+
+int parent_to_child[2];
+int child_to_parent[2];
+
+void do_parent()
+{
+    int c;
+    char ch;
+    int rc;
+    FILE *in;
+
+    close(child_to_parent[1]); /* we don't need to write to this pipe.  */
+    close(parent_to_child[0]); /* we don't need to read from this pipe. */
+
+    while (1)
+    {
+        in = fopen("input.txt", "r");
+        while ((c = fgetc(in)) > 0) {
+            ch = (char)c;
+            /* write to child */
+            rc = write(parent_to_child[1], &ch, 1);
+            if (rc == -1) {
+                perror("child: write");
+                close(child_to_parent[0]);
+                close(parent_to_child[1]);
+                exit(1);
+            }
+            /* read back from child */
+            rc = read(child_to_parent[0], &ch, 1);
+            c = (int)ch;
+            if (rc <= 0) {
+                perror("parent: read");
+                close(child_to_parent[0]);
+                close(parent_to_child[1]);
+                exit(1);
+            }
+            putchar(c);
+        }
+        fclose(in);
+    }
+    close(child_to_parent[0]);
+    close(parent_to_child[1]);
+    exit(0);
+}
+
+void do_child()
+{
+    int c;
+    char ch;
+    int rc;
+
+    close(parent_to_child[1]); /* we don't need to write to this pipe.  */
+    close(child_to_parent[0]); /* we don't need to read from this pipe. */
+
+    //dup2(parent_to_child[0], STDIN_FILENO);
+    //dup2(child_to_parent[1], STDOUT_FILENO);
+
+    /* Some dup2() routines must be added here 
+    to get this working as the first program above */
+
+    char* cmd[] = { "bash", (char *)0 };
+    execvp("bash", cmd);
+
+    while (read(parent_to_child[0], &ch, 1) > 0) {
+        c = (int)ch;
+        ch = (char)c;
+        putchar(ch);
+        rc = write(child_to_parent[1], &ch, 1);
+        if (rc == -1) {
+            perror("child: write");
+            close(parent_to_child[0]);
+            close(child_to_parent[1]);
+            exit(1);
+        }
+    }
+    close(parent_to_child[0]);
+    close(child_to_parent[1]);
+    exit(0);
+}
+
+int main(int argc, char* argv[])
+{
+    int pid;
+    int rc;
+
+    umask(0);
+    mknod("input.txt", S_IFIFO|0666, 0);    
+
+    rc = pipe(parent_to_child);
+    if (rc == -1) {
+        perror("main: pipe parent_to_child");
+        exit(1);
+    }
+
+    rc = pipe(child_to_parent);
+    if (rc == -1) {
+        perror("main: pipe child_to_parent");
+        exit(1);
+    }
+
+    pid = fork();
+    switch (pid) {
+    case -1:
+        perror("main: fork");
+        exit(1);
+    case 0:
+        do_child();
+    default:
+        do_parent();
+    }
+    return 0;
+}
+

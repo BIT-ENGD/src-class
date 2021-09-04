@@ -1,0 +1,165 @@
+#ifndef __my_READWRITE_LOCK_Header__
+#define __my_READWRITE_LOCK_Header__
+
+#include <windows.h>
+
+//Simple RW lock implementation is shown below. 
+
+#define RW_READERS_MAX 10
+#define RW_MAX_SEMAPHORE_COUNT 10
+#define RW_MUTEX_NAME       L"mymutex"
+#define RW_SEMAPHORE_NAME   L"mysemaphore"
+class CThreadRwLock
+{
+public:
+    CThreadRwLock()
+    {
+        InitializeCriticalSection(&m_cs);
+        m_hSem = CreateSemaphore(0, RW_READERS_MAX, RW_READERS_MAX, 0);     
+    }
+
+    ~CThreadRwLock()
+    {
+        DeleteCriticalSection(&m_cs);
+        CloseHandle(m_hSem);
+    }
+
+    void AcquireReaderLock()
+    {
+        EnterCriticalSection(&m_cs);
+        WaitForSingleObject(m_hSem, INFINITE);
+        LeaveCriticalSection(&m_cs);
+    }
+
+    void AcquireWriterLock()
+    {
+        EnterCriticalSection(&m_cs);
+        for(int i = 0; i < RW_READERS_MAX; i++)
+        {
+            WaitForSingleObject(m_hSem, INFINITE);          
+        }
+        LeaveCriticalSection(&m_cs);
+    }
+
+    void ReleaseReaderLock()
+    {
+        ReleaseSemaphore(m_hSem, 1, 0);
+    }
+
+
+    void ReleaseWriterLock()
+    {
+        ReleaseSemaphore(m_hSem, RW_READERS_MAX, 0);
+    }
+
+private:
+    CRITICAL_SECTION    m_cs;
+    HANDLE              m_hSem;
+};
+
+
+
+
+class CProcessRwLock
+{
+public:
+    CProcessRwLock()
+    {
+        m_h = CreateMutex(NULL, FALSE, RW_MUTEX_NAME);
+        m_hSem = CreateSemaphore(NULL, RW_MAX_SEMAPHORE_COUNT, RW_MAX_SEMAPHORE_COUNT, RW_SEMAPHORE_NAME);
+    }
+
+    ~CProcessRwLock()
+    {
+        CloseHandle(m_h);
+    }
+
+    void AcquireReaderLock()
+    {
+        WaitForSingleObject(m_h, INFINITE);
+        ReleaseMutex(m_h);
+    }
+
+    void AcquireWriterLock()
+    {
+        WaitForSingleObject(m_h, INFINITE);
+        for(int i = 0; i < RW_READERS_MAX; i++)
+        {
+            WaitForSingleObject(m_hSem, INFINITE);          
+        }
+        ReleaseMutex(m_h);
+    }
+
+    void ReleaseReaderLock()
+    {
+        ReleaseSemaphore(m_hSem, 1, 0);
+    }
+
+
+    void ReleaseWriterLock()
+    {
+        ReleaseSemaphore(m_hSem, RW_READERS_MAX, 0);
+    }
+
+private:
+    HANDLE              m_h, m_hSem;
+};
+
+
+class AutoThreadRwLock
+{
+public:
+    AutoThreadRwLock(const bool readlock = true):m_readlock(readlock)
+    {
+        if (readlock)
+            m_lock.AcquireReaderLock();
+        else
+            m_lock.AcquireWriterLock();
+    }
+
+    ~AutoThreadRwLock()
+    {
+        if (m_readlock)
+            m_lock.ReleaseReaderLock();
+        else
+            m_lock.ReleaseWriterLock();
+    }
+
+private:
+    AutoThreadRwLock(const AutoThreadRwLock&);
+    AutoThreadRwLock& operator= (const AutoThreadRwLock& );
+
+    CThreadRwLock m_lock ;
+    bool m_readlock ;
+};
+
+
+class AutoProcessRwLock
+{
+public:
+    AutoProcessRwLock(const bool readlock = true): m_readlock(readlock)
+    {
+        if (readlock)
+            m_lock.AcquireReaderLock();
+        else
+            m_lock.AcquireWriterLock();
+    }
+
+    ~AutoProcessRwLock()
+    {
+        if (m_readlock)
+            m_lock.ReleaseReaderLock();
+        else
+            m_lock.ReleaseWriterLock();
+    }
+
+private:
+    AutoProcessRwLock(const AutoProcessRwLock&);
+    AutoProcessRwLock& operator= (const AutoProcessRwLock&);
+
+    CProcessRwLock m_lock ;
+    bool m_readlock ;
+};
+
+#endif //__my_READWRITE_LOCK_Header__
+

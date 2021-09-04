@@ -1,0 +1,113 @@
+if (!(h = ipq_create_handle(0, PF_INET))) {
+    //error 
+    return;
+};
+
+if ((ipq_set_mode(h, IPQ_COPY_PACKET, BUFSIZE)) < 0) {
+    // error 
+    return;
+};
+
+
+struct iphdr* ip_pack;
+ipq_packet_msg_t* eth_pack;
+
+__u32 ip_auth_server = inet_addr("192.168.177.1");
+unsigned char buf[68000];
+
+if ((ipq_read(h, buf, BUFSIZE, 0)) < 0) {
+
+    //error
+    return;
+
+}
+
+
+switch (ipq_message_type(buf)) {
+    case NLMSG_ERROR:
+        //error
+        break;
+
+    case IPQM_PACKET:
+    {
+
+        eth_pack = ipq_get_packet(buf);
+        ip_pack = (struct iphdr*) eth_pack->payload;
+        redirect_server_auth(ip_auth_server, ip_pack, eth_pack->packet_id, h, eth_pack->payload, eth_pack->data_len);
+
+    }
+
+
+}
+
+u_int16_t ip_checksum(u_int32_t init, const u_int8_t* buf, size_t len) {
+    u_int32_t sum = init;
+    u_int16_t* shorts = (u_int16_t*) buf;
+
+    while (len > 1) {
+        sum += *shorts++;
+        len -= 2;
+    }
+
+    if (len == 1)
+        sum += *((u_int8_t*) shorts);
+
+    while (sum >> 16)
+        sum = (sum >> 16) + (sum & 0xFFFF);
+
+    return ~sum;
+}
+
+u_int16_t tcp_checksum(const struct iphdr* iph, const struct tcphdr* tcph,
+        size_t len) {
+    u_int32_t cksum = 0;
+
+    cksum += (iph->saddr >> 16) & 0x0000ffff;
+    cksum += iph->saddr & 0x0000ffff;
+    cksum += (iph->daddr >> 16) & 0x0000ffff;
+    cksum += iph->daddr & 0x0000ffff;
+    cksum += htons(iph->protocol & 0x00ff);
+    cksum += htons(len);
+    return ip_checksum(cksum, (unsigned char*) tcph, len);
+}
+
+void handle_packet(unsigned char* pkt, size_t len, __u32 dest_addr, int port_dest) {
+    struct iphdr* iph = (struct iphdr*) pkt;
+    struct tcphdr* tcph = (struct tcphdr*) (pkt + iph->ihl * 4);
+
+
+    iph->daddr = dest_addr;
+    //      syslog(LOG_DEBUG, "PORT");
+    //syslog(LOG_DEBUG, tcph->dest); //tcph->dest = htons(80);
+
+    iph->check = 0;
+    iph->check = ip_checksum(0, pkt, iph->ihl * 4);
+    tcph->check = 0;
+    tcph->check = tcp_checksum(iph, tcph, len - (iph->ihl * 4));
+
+}
+
+void redirect_server_auth(__u32* ip_srv, struct iphdr* ip_pack,
+        unsigned long packet_id, ipq_handle* handle,
+        unsigned char* buf, int size_buf) {
+
+    syslog(LOG_DEBUG, "RENAME IP AND SEND PACK ACCEPT %s", inet_ntoa(
+            *((struct in_addr*) & ip_pack->daddr)));
+
+
+    handle_packet(buf, size_buf, *ip_srv, 80);
+
+
+    syslog(LOG_DEBUG, "RENAME IP AND SEND PACK ACCEPT %s", inet_ntoa(
+
+            *((struct in_addr*) & ip_pack->daddr)));
+
+    int v = ipq_set_verdict(handle, packet_id, NF_ACCEPT, size_buf, buf);
+
+    if (v < 0) {
+        syslog(LOG_DEBUG, "problems");
+        syslog(LOG_DEBUG, ipq_errstr());
+    }
+
+}
+

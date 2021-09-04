@@ -1,0 +1,101 @@
+GHC
+Int
+cmp
+test
+{-# LANGUAGE BangPatterns #-}
+module Cmp
+( cmp,
+  test )
+where
+import Data.Vector.Unboxed as U hiding (mapM_)
+import Data.Word
+
+cmp :: (U.Unbox a, Eq a) => U.Vector a -> U.Vector a -> Int -> Int -> Int
+cmp a b !i !j = go a b 0 i j
+               where
+                 go v1 v2 !len !i !j| (i<n) && (j<m) && ((unsafeIndex v1 i) == (unsafeIndex v2 j)) = go v1 v2 (len+1) (i+1) (j+1)
+                                    | otherwise = len
+                   where
+                    n = U.length a
+                    m = U.length b
+{-# INLINABLE cmp #-}
+
+test ::  (U.Unbox a, Eq a) => U.Vector a -> U.Vector a -> U.Vector Int -> Int
+test a b i = U.sum $ U.map (\x -> cmp a b x x) i
+
+test
+cmp
+U.Vector a -> U.Vector a -> Int# -> Int# -> Int#
+
+ghc 7.6.1
+ghc -fforce-recomp -ddump-simpl -dsuppress-uniques -dsuppress-idinfo -dsuppress-module-prefixes -O2 -fllvm
+test
+-- cmp function doesn't have any helper functions with unboxed Int
+--
+cmp
+  :: forall a.
+     (Unbox a, Eq a) =>
+     Vector a -> Vector a -> Int -> Int -> Int
+...
+
+-- This is the function that is called by test - it does keep the result
+-- unboxed, but calls boxed cmp, and unboxes the result of cmp (I# y)
+--
+$wa
+  :: forall a.
+     (Unbox a, Eq a) =>
+     Vector a -> Vector a -> Vector Int -> Int#
+$wa =
+  \ (@ a)
+    (w :: Unbox a)
+    (w1 :: Eq a)
+    (w2 :: Vector a)
+    (w3 :: Vector a)
+    (w4 :: Vector Int) ->
+    case w4
+         `cast` (<TFCo:R:VectorInt> ; <NTCo:R:VectorInt>
+                 :: Vector Int ~# Vector Int)
+    of _ { Vector ipv ipv1 ipv2 ->
+    letrec {
+      $s$wfoldlM'_loop :: Int# -> Int# -> Int#
+      $s$wfoldlM'_loop =
+        \ (sc :: Int#) (sc1 :: Int#) ->
+          case >=# sc1 ipv1 of _ {
+            False ->
+              case indexIntArray# ipv2 (+# ipv sc1) of wild { __DEFAULT ->
+              let {
+                x :: Int
+                x = I# wild } in
+              --
+              -- Calls cmp and unboxes the Int result as I# y
+              --
+              case cmp @ a w w1 w2 w3 x x of _ { I# y ->
+              $s$wfoldlM'_loop (+# sc y) (+# sc1 1)
+              }
+              };
+            True -> sc
+          }; } in
+    $s$wfoldlM'_loop 0 0
+}
+
+-- helper function called by test - it calls $wa which calls boxed cmp
+--
+test1
+  :: forall a.
+     (Unbox a, Eq a) =>
+     Vector a -> Vector a -> Vector Int -> Id Int
+test1 =
+  \ (@ a)
+    (w :: Unbox a)
+    (w1 :: Eq a)
+    (w2 :: Vector a)
+    (w3 :: Vector a)
+    (w4 :: Vector Int) ->
+    case $wa @ a w w1 w2 w3 w4 of ww { __DEFAULT ->
+    (I# ww) `cast` (Sym <(NTCo:Id <Int>)> :: Int ~# Id Int)
+    }
+
+cmp
+test
+cast
+test1

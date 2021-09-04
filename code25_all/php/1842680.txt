@@ -1,0 +1,68 @@
+    $this->serv_sock = socket_create(AF_INET, SOCK_STREAM, 0); 
+
+    socket_bind($this->serv_sock, $this->serv, $this->port) or die("Could not bind to address\n");
+
+    socket_listen($this->serv_sock);
+
+    while (1) {
+        echo "Waiting...\n";        
+        $client = socket_accept($this->serv_sock); 
+
+        $start_mtime = microtime(true);
+
+        echo "Accepted at ".$start_mtime.".\n";
+
+        $input = '';
+
+        $len = 0;
+
+        do {
+            //echo "Reading.\n";
+            $inp = socket_read($client, 1024);
+            $input .= $inp;
+
+            if (strpos($input, "\n\n") === false && strpos($input, "\r\n\r\n") === false)
+                continue;
+
+            if (!$len) {
+                if (!preg_match("/Content-Length: (\d+)/", $input, $matches)) {
+                    break;
+                }
+                $len = $matches[1];
+                if (!$len)
+                    break;
+                echo "We want $len bytes.\n";
+            }
+
+            if (strpos($input, "\n\n") !== false)
+                list($headers, $content) = explode("\n\n", $input);
+            else 
+                list($headers, $content) = explode("\r\n\r\n", $input);
+
+            if (strlen($content) >= $len)
+                break;
+        } while ($inp);
+
+        echo "Calling callback as ".microtime(true).".\n";
+
+        if (strpos($input, "\n\n") !== false)
+            list($headers, $content) = explode("\n\n", $input);
+        else 
+            list($headers, $content) = explode("\r\n\r\n", $input);
+
+        $output = $this->translate($callback, $headers, $content); // nothing slow here
+
+        $time_end = microtime(true);
+        echo "Sending output at ".$time_end." (total ".($time_end - $start_mtime).")\n\n";
+
+        $output = "HTTP/1.0 Ok\n".
+        "Content-Type: text/html; charset=utf-8\n".
+        "Content-Length: ".strlen($output)."\n".
+        "Connection: close\n\n".
+        $output;
+
+        socket_write($client, $output);
+
+        socket_close($client);
+    }
+

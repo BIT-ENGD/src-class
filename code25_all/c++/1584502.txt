@@ -1,0 +1,35 @@
+std::wstring dll(L"D:\\Path\\to\\my\\DLL.dll");
+LPTHREAD_START_ROUTINE pLoadLibraryW = 
+    (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryW");
+int bytesNeeded = WideCharToMultiByte(CP_UTF8, 0, dll.c_str(), dll.length(), 
+    NULL, 0, NULL, NULL);
+std::vector<byte> dllName(bytesNeeded);
+WideCharToMultiByte(CP_UTF8, 0, dll.c_str(), dll.length(), 
+    (LPSTR)&dllName[0], bytesNeeded, NULL, NULL);
+// Memory is a class written by me to simplify memory processes. 
+// Constructor takes desired permissions.
+Memory mem (pid, false, true, false, true, false, false, false, 
+    false, false, true, true, true, false);
+// Ensures deletion of the allocated range.
+// true / true / false = read and write access, no execute permissions
+std::tr1::shared_ptr<void> allocated = 
+    mem.AllocateBytes(dllName.size(), true, true, false);
+mem.WriteBytes((unsigned int)allocated.get(), dllName);
+mem.CreateThread(pLoadLibraryW, allocated.get());
+
+void Memory::CreateThread(LPTHREAD_START_ROUTINE address, LPVOID parameter) const {
+    std::tr1::shared_ptr<void> hThread(CreateRemoteThread(m_hProcess.get(), 
+        NULL, 0, address, parameter, 0, NULL), CloseHandle);
+    if (hThread.get() == NULL) {
+        throw std::runtime_error("Memory::CreateThread: CreateRemoteThread failed");
+    }
+    DWORD returned = WaitForSingleObject(hThread.get(), INFINITE);
+    if (returned != WAIT_OBJECT_0) {
+        throw std::runtime_error("Memory::CreateThread: The remote thread did not complete properly");
+    }
+}
+
+LPTHREAD_START_ROUTINE pLoadLibraryW =
+    (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryA");
+
+LoadLibraryW

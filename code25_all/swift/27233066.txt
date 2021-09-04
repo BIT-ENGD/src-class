@@ -1,0 +1,101 @@
+SCNSkinner
+EXC_BAD_ACCESS
+C3DSourceAccessorGetMutableValuePtrAtIndex
+SCNSkinner
+C3DSourceAccessorGetMutableValuePtrAtIndex
+C3DSkinPrepareMeshForGPUIfNeeded
+C3DSkinnerMakeCurrentMesh
+C3DSkinnerUpdateCurrentMesh
+__CFSetApplyFunction_block_invoke
+CFBasicHashApply
+CFSetApplyFunction
+C3DAppleEngineRenderScene
+...
+
+SCNSkinner
+SCNSkinner
+SCNSkinner
+SCNSkinner
+SCNSkinner
+// This is at the start of the app, just so you can see how the scene is set up.
+// I add the .dae contents into its own node in the scene. This seems to be the
+// standard way to put multiple .dae models into the same scene. This doesn't seem to
+// have any impact on the problem I'm having -- I've tried without this indirection
+// and the same problem exists.
+let scene = SCNScene()
+
+let modelNode = SCNNode()
+modelNode.name = "ModelNode"
+
+scene.rootNode.addChildNode(modelNode)
+
+let modelScene = SCNScene(named: "model.dae")
+
+if modelScene != nil {
+    if let childNodes = modelScene?.rootNode.childNodes {
+        for childNode in childNodes {
+            modelNode.addChildNode(childNode as SCNNode)
+        }
+    }
+}
+
+
+// This happens later in the app after a tap from the user.
+
+let modelNode = scnView.scene!.rootNode.childNodeWithName("ModelNode", recursively: true)
+
+let modelMesh = modelNode?.childNodeWithName("MeshName", recursively: true)
+
+let verts = modelMesh?.geometry!.geometrySourcesForSemantic(SCNGeometrySourceSemanticVertex)
+let normals = modelMesh?.geometry!.geometrySourcesForSemantic(SCNGeometrySourceSemanticNormal)
+let texcoords = modelMesh?.geometry!.geometrySourcesForSemantic(SCNGeometrySourceSemanticTexcoord)
+let boneWeights = modelMesh?.geometry!.geometrySourcesForSemantic(SCNGeometrySourceSemanticBoneWeights)
+let boneIndices = modelMesh?.geometry!.geometrySourcesForSemantic(SCNGeometrySourceSemanticBoneIndices)
+let geometry = modelMesh?.geometry!.geometryElementAtIndex(0)
+
+// Note: the vertex and normal data is shared.
+let vertsData = NSData(data: verts![0].data)
+let texcoordsData = NSData(data: texcoords![0].data)
+let boneWeightsData = NSData(data: boneWeights![0].data)
+let boneIndicesData = NSData(data: boneIndices![0].data)
+let geometryData = NSData(data: geometry!.data!)
+
+let newVerts = SCNGeometrySource(data: vertsData, semantic: SCNGeometrySourceSemanticVertex, vectorCount: verts![0].vectorCount, floatComponents: verts![0].floatComponents, componentsPerVector: verts![0].componentsPerVector, bytesPerComponent: verts![0].bytesPerComponent, dataOffset: verts![0].dataOffset, dataStride: verts![0].dataStride)
+
+let newNormals = SCNGeometrySource(data: vertsData, semantic: SCNGeometrySourceSemanticNormal, vectorCount: normals![0].vectorCount, floatComponents: normals![0].floatComponents, componentsPerVector: normals![0].componentsPerVector, bytesPerComponent: normals![0].bytesPerComponent, dataOffset: normals![0].dataOffset, dataStride: normals![0].dataStride)
+
+let newTexcoords = SCNGeometrySource(data: texcoordsData, semantic: SCNGeometrySourceSemanticTexcoord, vectorCount: texcoords![0].vectorCount, floatComponents: texcoords![0].floatComponents, componentsPerVector: texcoords![0].componentsPerVector, bytesPerComponent: texcoords![0].bytesPerComponent, dataOffset: texcoords![0].dataOffset, dataStride: texcoords![0].dataStride)
+
+let newBoneWeights = SCNGeometrySource(data: boneWeightsData, semantic: SCNGeometrySourceSemanticBoneWeights, vectorCount: boneWeights![0].vectorCount, floatComponents: boneWeights![0].floatComponents, componentsPerVector: boneWeights![0].componentsPerVector, bytesPerComponent: boneWeights![0].bytesPerComponent, dataOffset: boneWeights![0].dataOffset, dataStride: boneWeights![0].dataStride)
+
+let newBoneIndices = SCNGeometrySource(data: boneIndicesData, semantic: SCNGeometrySourceSemanticBoneIndices, vectorCount: boneIndices![0].vectorCount, floatComponents: boneIndices![0].floatComponents, componentsPerVector: boneIndices![0].componentsPerVector, bytesPerComponent: boneIndices![0].bytesPerComponent, dataOffset: boneIndices![0].dataOffset, dataStride: boneIndices![0].dataStride)
+
+let newGeometry = SCNGeometryElement(data: geometryData, primitiveType: geometry!.primitiveType, primitiveCount: geometry!.primitiveCount, bytesPerIndex: geometry!.bytesPerIndex)
+
+let newMeshGeometry = SCNGeometry(sources: [newVerts, newNormals, newTexcoords, newBoneWeights, newBoneIndices], elements: [newGeometry])
+
+newMeshGeometry.firstMaterial = modelMesh?.geometry!.firstMaterial
+
+let newModelMesh = SCNNode(geometry: newMeshGeometry)
+
+let bones = modelMesh?.skinner?.bones
+let boneInverseBindTransforms = modelMesh?.skinner?.boneInverseBindTransforms
+let skeleton = modelMesh!.skinner!.skeleton!
+let baseGeometryBindTransform = modelMesh!.skinner!.baseGeometryBindTransform
+
+newModelMesh.skinner = SCNSkinner(baseGeometry: newMeshGeometry, bones: bones, boneInverseBindTransforms: boneInverseBindTransforms, boneWeights: newBoneWeights, boneIndices: newBoneIndices)
+
+newModelMesh.skinner?.baseGeometryBindTransform = baseGeometryBindTransform
+
+// Before this assignment, newModelMesh.skinner?.skeleton is nil.
+newModelMesh.skinner?.skeleton = skeleton
+// After, it is still nil... however, skeleton itself is completely valid.
+
+modelMesh?.removeFromParentNode()
+
+newModelMesh.name = "MeshName"
+
+let meshParentNode = modelNode?.childNodeWithName("MeshParentNode", recursively: true)
+
+meshParentNode?.addChildNode(newModelMesh)
+

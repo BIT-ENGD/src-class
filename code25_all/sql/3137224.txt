@@ -1,0 +1,78 @@
+class Product < ActiveRecord::Base
+  has_many :buy_leads
+end
+
+class BuyLead < ActiveRecord::Base
+  belongs_to :product
+  has_one :order
+end
+
+class Order < ActiveRecord::Base
+  belongs_to :buy_lead
+  belongs_to :user, :foreign_key => :authorized_by
+  has_many :inputs
+end
+
+class Input < ActiveRecord::Base
+  belongs_to :order
+  has_many :outputs
+end
+
+class Output < ActiveRecord::Base
+  # Associations
+  belongs_to :input
+  belongs_to :user
+end
+
+class InventoryController < ApplicationController
+
+  def index
+    @inventory = Input.find_by_sql products_inventory_sql
+  end
+
+  def show
+    @inventory = Input.find_by_sql product_inventory_sql(params[:id])
+  end
+
+private
+
+  def inputs_sql
+    "SELECT b.*, p.*, i.order_id,
+            i.id AS input_id,
+            i.quantity AS quantity     
+     FROM inputs i
+          JOIN orders r ON r.id = i.order_id
+          JOIN buy_leads b ON b.id = r.buy_lead_id
+          JOIN products p ON p.id = b.product_id"
+  end
+
+  def outputs_sql
+    "SELECT b.*, p.*, i.order_id,
+            i.id AS input_id,
+            (o.quantity * -1) AS quantity
+     FROM outputs o
+          JOIN inputs i ON i.id = o.input_id
+          JOIN orders r ON r.id = i.order_id
+          JOIN buy_leads b ON b.id = r.buy_lead_id
+          JOIN products p ON p.id = b.product_id"
+  end
+
+  def products_inventory_sql
+    "SELECT *, SUM(quantity) AS remaining_qty
+     FROM (#{inputs_sql} UNION #{outputs_sql})
+     GROUP BY product_id"
+  end
+
+  def product_inventory_sql(id)
+    "SELECT *, SUM(quantity) AS remaining_qty
+     FROM (#{inputs_sql} UNION #{outputs_sql})
+     WHERE product_id = #{id}
+     GROUP BY order_id, input_id"
+  end
+
+end
+
+Product.inputs.by_product(id)
+Product.inventory.by_product(id)
+...
+

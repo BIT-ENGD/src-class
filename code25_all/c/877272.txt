@@ -1,0 +1,180 @@
+1 #include<asm/types.h>  
+2 #include<sys/socket.h>  
+3 #include<linux/netlink.h>  
+4 #include<linux/netfilter_ipv4/ip_queue.h>  
+5 #include<stdio.h>  
+6 #include<stdlib.h>  
+7 #include<netinet/in.h>  
+8 #include<arpa/inet.h>  
+9 #include<netdb.h>    
+10 #include<linux/ip.h>    
+11 #include<linux/icmp.h>  
+12 #include<string.h>  
+13 #include<unistd.h>  
+14   
+15 int nl_sock_fd = 0;  
+16 struct sockaddr_nl nl_addr;  
+17 int seq = 0;  
+18 struct ipq_mode_msg* modeMessage;  
+19 struct ipq_verdict_msg *ver_data = NULL;  
+20 struct nlmsghdr* netlinkHeader =NULL;  
+21 struct ipq_packet_msg* packet = NULL;  
+22 char buf1[128] ={0};  
+23 char buf[4096] = {0};  
+24 char buf2[8192] = {0};  
+25   
+26 int addrSize;  
+27 int len,i;  
+28   
+29   
+30 int main(int argc, char *argv[])  
+31 {  
+32 int iter= 0;  
+33 
+34 /******* create and set the values for netlink sockets*************/  
+35 if((nl_sock_fd = socket( AF_NETLINK, SOCK_RAW, NETLINK_FIREWALL))<0)  
+36 {  
+37 printf("socket creation failed!\n");  
+38 return ;  
+39 }  
+40 printf("socket fd =%d\n", nl_sock_fd);  
+41   
+42 // Set up the kernels address structure:  
+43 memset(&nl_addr, 0, sizeof( struct sockaddr_nl ) );    
+44 nl_addr.nl_family = AF_NETLINK;    
+45 nl_addr.nl_pid = 0; // The with address 0 in netlink /getpid();    
+46 nl_addr.nl_groups = 0; // we dont need any multicast groups  
+47 nl_addr.nl_pad = 0;  
+48 if(bind(nl_sock_fd, (struct sockaddr*)&nl_addr, sizeof(nl_addr))<0)  
+49 {  
+50 printf("bind failed");  
+51 }  
+52 /******************* set mode values ***************************/  
+53 memset(buf1, 0, 128 );  
+54 netlinkHeader = (struct nlmsghdr*)buf1;  
+55 netlinkHeader->nlmsg_len = NLMSG_LENGTH(sizeof(struct ipq_mode_msg));  
+56 //NLMSG_LENGTH size of the ancilliary data  
+57 netlinkHeader->nlmsg_type = IPQM_MODE; //IPQM Packet  
+58 netlinkHeader->nlmsg_flags = NLM_F_REQUEST; //request message   
+59 netlinkHeader->nlmsg_seq = seq++; //to allow response correlation  
+60 netlinkHeader->nlmsg_pid = getpid();  
+61   
+62 // modeMessage=(struct ipq_mode_msg*)NLMSG_DATA(netlinkHeader);  
+63 modeMessage=NLMSG_DATA(netlinkHeader);  
+64 //NLMSG_DATA returns a pointer to the ancilliary data which it contains  
+65 modeMessage->value = IPQ_COPY_PACKET; //copy metadata and range 0 is entire packet  
+66 modeMessage->range = 0; // copy the entire payload  
+67   
+68 if(sendto( nl_sock_fd, (void*)buf1, netlinkHeader->nlmsg_len, 0, (struct   sockaddr*)&nl_addr, s izeof(struct sockaddr_nl) ) < 0 )  
+69 {  
+70 printf("unable to set netlink mode ...\n");  
+71 exit(0);  
+72 }  
+73 printf("portion of data sent to netlink\n");  
+74 for(iter = 0; iter < 24; iter++ )  
+75 {  
+76 printf(" %x",(unsigned int)buf1[iter]);  
+77 if(!(iter%10) && iter !=0)  
+78 printf("\n");  
+79 }   
+80 printf("\n");  
+81   
+82 /*********** receiving msg ******************/  
+83 printf("socket is up and waiting for messages....\n");  
+84   
+85 while(1)  
+86 {  
+87 //struct nlmsghdr* netlinkHeader = buf1;  
+88   
+89 //netlinkHeader = buf1;  
+90 printf(" iam at recvfrom \n");  
+91 len = recvfrom(nl_sock_fd, buf2, NLMSG_LENGTH(sizeof(struct ipq_packet_msg)), 0,   (struct soc kaddr*)&nl_addr, &addrSize );  
+92 printf(" NLMSG_LENGTH = %d\n",NLMSG_LENGTH(sizeof(struct ipq_packet_msg)));  
+93 if( len < 0 )  
+94 {  
+95 printf("unable to recive packet from the kernel\n");  
+96 return 0;  
+97 }  
+98   
+99 netlinkHeader = ( struct nlmsghdr* ) buf2;  
+100   
+101 printf("message received with pid=%d \n", nl_addr.nl_pid);  
+102   
+103 if( netlinkHeader->nlmsg_type == NLMSG_ERROR )  
+104 {  
+105 struct nlmsgerr* pError = (struct nlmsgerr*)NLMSG_DATA( netlinkHeader );  
+106 if( pError->error != 0 ) // Error number 0 is an acknowledgement not an error.  
+107 {  
+108 printf("error occured while receiving the message from the kernel.\n");  
+109 printf("error code %d \n ", pError->error);  
+110 printf("\n****** %s ********\n",strerror( -1 * pError->error));       
+111 printf("msg->nlmsg_len %d\n", pError->msg.nlmsg_len);  
+112 printf("msg->nlmsg_type %x\n", pError->msg.nlmsg_type);  
+113 printf("msg->nlmsg_flags %x\n",pError->msg.nlmsg_flags);  
+114 printf("msg->nlmsg_seq: %d\n", pError->msg.nlmsg_seq);  
+115 printf("msg->nlmsg_pid: %d\n", pError->msg.nlmsg_pid);  
+116 return 0;  
+117 }  
+118 }  
+119 else  
+120 {  
+121   
+122 printf("Message from kernel:\n ");  
+123 printf("Packet ID: %d\n",packet->packet_id);  
+124 printf("Payload size:%d\n", packet->data_len);  
+125 for(i = 0; i < packet->data_len; ++i )  
+126 {  
+127 printf("%c ", packet->payload[ i ]);  
+128 }  
+129 printf("\n");  
+130   
+131 }  
+132 printf("\n dumping packets over \n");  
+133 netlinkHeader=(struct nlmsghdr *)buf1;  
+134 packet=NLMSG_DATA(netlinkHeader);  
+135 /*for the example just forward all packets*/  
+136 //netlinkHeader = (struct nlmsghdr*)buf2;  
+137 netlinkHeader->nlmsg_type=IPQM_VERDICT;  
+138 netlinkHeader->nlmsg_len=NLMSG_LENGTH(sizeof(struct ipq_verdict_msg));  
+139 netlinkHeader->nlmsg_flags=(NLM_F_REQUEST);/*this is a request, don’t ask for an answer*/  
+140 netlinkHeader->nlmsg_pid=getpid();  
+141 netlinkHeader->nlmsg_seq=seq++;/*arbitrary unique value to allow response correlation*/  
+142 ver_data=(struct ipq_verdict_msg *)NLMSG_DATA(netlinkHeader);  
+143   
+144 //ver_data->value=NF_ACCEPT;  
+145 //ver_data->value=NF_QUEUE;  
+146 ver_data->id=packet->packet_id;  
+147 if(sendto(nl_sock_fd,(void *)netlinkHeader,netlinkHeader->nlmsg_len,0,
+148 (struct sockaddr *)&nl_addr,sizeof(struct sockaddr_nl)) < 0)  
+149 {  
+150 perror("unable to send mode message");  
+151 exit(0);  
+152 }  
+153   
+154   
+155 }  
+156   
+157 return 0;  
+158 }  
+
+socket fd =3  
+portion of data sent to netlink  
+18 0 0 0 11 0 1 0 0 0 0  
+0 38 30 0 0 2 0 0 0 0  
+0 0 0  
+socket is up and waiting for messages....  
+iam at recvfrom   
+NLMSG_LENGTH = 88  
+message received with pid=0   
+error occured while receiving the message from the kernel.  
+error code -22  
+
+
+
+****** Invalid argument ********  
+msg->nlmsg_len 24  
+msg->nlmsg_type 11  
+msg->nlmsg_flags 1  
+msg->nlmsg_seq: 0  
+msg->nlmsg_pid: 12344  
+

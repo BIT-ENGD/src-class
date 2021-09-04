@@ -1,0 +1,137 @@
+Public Sub InvokeControl(Of T As Control)(ByVal Control As t, ByVal Action As Action(Of t))
+    If Control.InvokeRequired Then
+        Try
+            Control.Invoke(New Action(Of T, Action(Of T))(AddressOf InvokeControl), New Object() {Control, Action})
+        Catch ex As Exception
+        End Try
+    Else
+        Action(Control)
+    End If
+End Sub
+
+Public Function InvokeControl(Of T As Control)(ByVal Control As t, ByVal Action As Action(Of t)) As IAsyncResult
+    If Control.InvokeRequired Then
+        Try
+            Return Control.BeginInvoke(New Action(Of T, Action(Of T))(AddressOf InvokeControl), New Object() {Control, Action})
+        Catch ex As Exception
+            Return Nothing
+        End Try
+    Else
+        Action(Control)
+        Return Nothing
+    End If
+End Function
+
+InvokeControl(SomeTextBox, Sub(x) x.Text = "Some text")
+
+SomeTextBox {Text = (Text) threw an exception of type Microsoft.VisualStudio.Debugger.Runtime.CrossThreadMessagingException.}
+
+Private Sub MasterTimer_Elapsed(ByVal sender As Object, ByVal e As System.Timers.ElapsedEventArgs) Handles MasterTimer.Elapsed
+    MasterTimer.Enabled = False
+    If Not MasterTimer.Interval = My.Settings.TimingMasterTimerInterval Then
+        MasterTimer.Interval = My.Settings.TimingMasterTimerInterval
+        NewEventLogEntry("The master timer's interval has been changed to " & MasterTimer.Interval.ToString & " milliseconds.")
+    End If
+    InvokeControl(TimerPictureBox, Sub(x) x.Toggle(True))
+    ReadFromDevices()
+    UpdateIndicators()
+    'This block is not executing when the error is thrown
+    If Mode > RunMode.NotRunning Then
+        UpdateProcessTime()
+        UpdateRemainingTime()
+        UpdateStatusTime()
+    End If
+    'This block is not executing when the error is thrown
+    If Mode = RunMode.Running Then
+        CheckMillerCurrent()
+        CheckTolerances()
+    End If
+
+    MasterTimer.Enabled = True
+End Sub
+
+Private Sub ReadFromDevices()
+    For Each dev As Device In Devices
+        Try
+            If dev.GetType.Equals(GetType(Miller)) Then
+                Dim devAsMiller As Miller = CType(dev, Miller)
+                With devAsMiller
+                    If .PowerOn.Enabled Then .PowerOn.Read()
+                    If .CurrentRead.Enabled Then .CurrentRead.Read()
+                    If .VoltageRead.Enabled Then .VoltageRead.Read()
+                    If .Trigger.Enabled Then .Trigger.Read()
+                    If .Shutter.Enabled Then .Shutter.Read()
+                End With
+            ElseIf dev.GetType.Equals(GetType(SubstrateBiasVoltage)) Then
+                Dim devAsSubstrateBiasVoltage As SubstrateBiasVoltage = CType(dev, SubstrateBiasVoltage)
+                With devAsSubstrateBiasVoltage
+                    If .LambdaCurrentRead.Enabled Then .LambdaCurrentRead.Read()
+                    If .LambdaVoltageRead.Enabled Then .LambdaVoltageRead.Read()
+                    If .BiasResistor.Enabled Then .BiasResistor.Read()
+                    If .Pinnacle.Enabled Then .Pinnacle.Read()
+                End With
+            Else
+                If dev.Enabled Then dev.Read()
+            End If
+        Catch ex As Exception
+            NewEventLogEntry("An error occurred while trying to read from a device.", ex, EventLogItem.Types.Warning)
+        End Try
+    Next
+End Sub
+
+Private Sub UpdateIndicators()
+    Dim ObjLock As New Object
+    SyncLock ObjLock
+        With Devices
+            InvokeControl(EmergencyStopPictureBox, Sub(x As DigitalPictureBox) x.Toggle(Mode > RunMode.NotRunning))
+
+            InvokeControl(MillerCurrentIndicator, Sub(x) x.Text = .Miller1.CurrentRead.GetParsedValue.ToString)
+            InvokeControl(MillerVoltageIndicator, Sub(x) x.Text = .Miller1.VoltageRead.GetParsedValue.ToString)
+            With .SubstrateBiasVoltage
+                InvokeControl(LambdaVoltageIndicator, Sub(x) x.Text = .LambdaVoltageRead.GetParsedValue.ToString)
+                InvokeControl(LambdaCurrentIndicator, Sub(x) x.Text = .LambdaCurrentRead.GetParsedValue.ToString)
+                InvokeControl(PinnacleVoltageIndicator, Sub(x) x.Text = .Pinnacle.GetParsedValue.ToString)
+                InvokeControl(PinnacleCurrentIndicator, Sub(x) x.Text = .Pinnacle.ReadCurrent.ToString)
+            End With
+            InvokeControl(HeaterPowerIndicator, Sub(x) x.Text = .HeaterPower.GetParsedValue.ToString)
+            InvokeControl(ConvectronIndicator, Sub(x) x.Text = .Convectron.GetParsedValue.ToString)
+            If .Baratron.GetParsedValue > 200 Then
+                InvokeControl(BaratronIndicator, Sub(x) x.Text = "OFF")
+            Else
+                InvokeControl(BaratronIndicator, Sub(x) x.Text = .Baratron.GetParsedValue.ToString)
+            End If
+            If .Ion.GetParsedValue > 0.01 Then
+                InvokeControl(IonIndicator, Sub(x) x.Text = "OFF")
+            Else
+                InvokeControl(IonIndicator, Sub(x) x.Text = .Ion.GetParsedValue.ToString)
+            End If
+            InvokeControl(ArgonFlowRateIndicator, Sub(x) x.Text = .ArgonFlowRate.GetParsedValue.ToString)
+            InvokeControl(NitrogenFlowRateIndicator, Sub(x) x.Text = .NitrogenFlowRate.GetParsedValue.ToString)
+            InvokeControl(GateValvePositionIndicator, Sub(x) x.Text = .GateValvePosition.GetParsedValue.ToString)
+
+            InvokeControl(RoughingPumpPowerOnIndicator, Sub(x As PowerButton) x.IsOn = .RoughingPumpPowerOn.Value = Power.On)
+
+            ToggleImageList(.Miller1.CurrentRead.ImageList, .Miller1.CurrentRead.GetParsedValue > My.Settings.MinimumMillerCurrent)
+            ToggleImageList(.Miller1.Trigger.ImageList, .Miller1.Trigger.GetParsedValue = Power.On)
+            ToggleImageList(.HeaterPower.ImageList, .HeaterPower.Value > 0)
+            With .SubstrateBiasVoltage
+                ToggleImageList(.LambdaVoltageRead.ImageList, .LambdaVoltageRead.GetParsedValue > 0 And .BiasResistor.GetParsedValue = BiasResistor.Lambda)
+                ToggleImageList(.Pinnacle.ImageList, .Pinnacle.GetParsedValue > 10 And .BiasResistor.GetParsedValue = BiasResistor.Pinnacle)
+            End With
+            ToggleImageList(.ArgonValveOpen.ImageList, .ArgonValveOpen.Value = Valve.Open)
+            ToggleImageList(.NitrogenValveOpen.ImageList, .NitrogenValveOpen.Value = Valve.Open)
+            ToggleImageList(.RoughingPumpValveOpen.ImageList, .RoughingPumpValveOpen.Value = Valve.Open)
+            ToggleImageList(.SlowPumpDownValve.ImageList, .SlowPumpDownValve.Value = Valve.Open)
+            ToggleImageList(.RotationPowerOn.ImageList, .RotationPowerOn.Value = Power.On)
+            ToggleImageList(.WaterMonitor1.ImageList, .WaterMonitor1.Value = Power.On And .WaterMonitor2.Value = Power.On)
+            ToggleImageList(.GateValvePosition.ImageList, .GateValvePosition.SetValue > 0)
+        End With
+    End SyncLock
+End Sub
+
+Private Sub ToggleImageList(ByRef ImageList As ImageList, ByVal IsOn As Boolean)
+    For Each img As OnOffPictureBox In ImageList
+        SafeInvokeControl(img, Sub(x As OnOffPictureBox) x.Toggle(IsOn))
+    Next
+End Sub
+

@@ -1,0 +1,131 @@
+      <p class="MsoListParagraph" style="text-indent:-.25in;mso-list:l0 level1 lfo1"><span style="font-family:Symbol">
+          <span style="mso-list:Ignore">·<span style="font:7.0pt &quot;Times New Roman&quot;">        
+</span></span>
+        </span>It’s a media conglomerate, need to understand the parts<o:p/></p>
+      <p class="MsoListParagraph" style="text-indent:-.25in;mso-list:l0 level1 lfo1"><![if !supportLists]><span style="font-family:Symbol">
+          <span style="mso-list:Ignore">·<span style="font:7.0pt &quot;Times New Roman&quot;">        
+</span></span>
+        </span><![endif]>Largest TV broadcaster in Mexico<o:p/></p>
+      <p class="MsoListParagraph" style="margin-left:1.0in;text-indent:-.25in;mso-list:l0 level2 lfo1">
+<![if !supportLists]><span style="font-family:&quot;Courier New&quot;">
+          <span style="mso-list:Ignore">o<span style="font:7.0pt &quot;Times New Roman&quot;">  
+</span></span>
+        </span><![endif]>There’s 7 free air channels in Mexico and they have 4<o:p/></p>
+      <p class="MsoListParagraph" style="margin-left:1.0in;text-indent:-.25in;mso-list:l0 level2 lfo1">
+<![if !supportLists]><span style="font-family:&quot;Courier New&quot;">
+          <span style="mso-list:Ignore">o<span style="font:7.0pt &quot;Times New Roman&quot;">  
+</span></span>
+        </span><![endif]>70% of citizens watch their channels<o:p/></p>
+
+<p>
+<ul><li class="level1">
+<p>
+<ul><li class="level2">
+Control.Arrow.ArrowNavigatableTree
+getXPathTrees
+Text.XML.HXT.XPath.Arrows
+<p>
+{-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
+module Main where
+import Text.XML.HXT.Core
+import System.Environment
+import Data.List
+import Control.Arrow.ArrowNavigatableTree
+import Text.XML.HXT.XPath.Arrows
+import Data.Tree.NTree.TypeDefs
+import Data.Tree.NavigatableTree.Class
+
+isListPara = isElem >>> hasName "p"  >>> hasAttrValue "class" (== "MsoListParagraph")
+
+isListParaLevel n = isListPara >>> hasAttrValue "style" (("level"++(show n)) `isInfixOf`)
+
+-- Nests a flat list of <p> tags into parent <p> tags by "leveln" style infix
+
+fixLevel n = 
+    withoutNav (isListParaLevel n <+> (neg isListPara))
+    >>>
+    replaceChildren (
+      getChildren 
+      <+>
+      (listA 
+        (followingSiblingAxis >>> filterAxis isListPara) 
+        >>> 
+        arr (takeFollowingSibsAtLevel (n + 1)) 
+        >>> 
+        unlistA 
+        >>> fixLevel (n+1)
+      )
+    )
+  where takeFollowingSibsAtLevel n ys@(x:_) = takeWhile (isLevel n . toTree) ys
+        takeFollowingSibsAtLevel _ _  = []
+        isLevel n t@(NTree (XTag _ xs) _ )
+          | (not.null) 
+            [ x | 
+              x@(NTree (XAttr q) [NTree (XText s)_]) <- xs,
+              localPart q == "style",
+              ("mso-list:l0 level" ++ (show n ++) " lfo1") `isInfixOf` s
+            ] 
+            = True
+        isLevel _ _ = False
+
+-- this converts nested <p> tags into <ul><li>
+
+pToUL = isListPara 
+    >>> 
+    changeElemName (const $ mkName "ul") 
+    >>> 
+    removeAttr "style"  -- remove MSO styling
+    >>> 
+    replaceChildren (
+      (selem "li" [
+        (getChildren >>> (neg isListPara))
+        <+>
+        (getChildren >>> isListPara >>> pToUL)
+      ])
+    )
+
+main = do  
+  args <- getArgs
+  input <- case args of
+            [infile] -> readFile infile
+            otherwise -> getContents
+  res <- runX (readString [ 
+            withValidate no,withWarnings no ,withParseHTML yes
+            ,withInputEncoding utf8
+          ] input
+          >>>
+          {-
+          processTopDown (deep none `when` (hasText ("![endif]" `isInfixOf`)))
+          >>>
+          processTopDown (deep none `when` (hasText (" `isInfixOf`)))
+          >>>
+          -}
+
+          processTopDown 
+          ( 
+            (
+              deep isElem 
+              >>> addNav >>> getChildren 
+              >>> fixLevel 1 >>> remNav
+              >>> pToUL 
+            )  
+            `when` 
+            (hasAttrValue "class" ("WordSection" `isPrefixOf`))
+          )
+          >>>
+          processTopDown (deep none `when` (isElem >>> hasName "style"))
+          >>>
+          processTopDown  (deep none `when` (isAttr >>> hasQName (mkName "style")))
+          >>>
+          processTopDown (deep none `when` (isElem >>> hasAttrValue "style" (== "mso-list:Ignore")))
+          >>>
+          processTopDown (deep none `when` (isElem >>> hasAttrValue "style" (== "font-family:Symbol")))
+          >>>
+          writeDocument [
+                         -- withShowTree yes,
+                         withIndent yes
+                        ,withOutputEncoding usAscii
+                        ] "-"
+          )
+  return ()
+

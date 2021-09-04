@@ -1,0 +1,135 @@
+// c++ (main.cpp)
+#include <vector>
+#include <iostream>
+#include <boost/python.hpp>
+#include <boost/python/enum.hpp>
+#include <boost/python/def.hpp>
+#include <boost/python/module.hpp>
+
+using namespace std;
+using namespace boost;
+using namespace boost::python;
+
+class Base
+{
+public:
+    Base(void) {}
+virtual void f1(void) = 0;
+virtual void f2(void) = 0;
+};
+
+class Stack
+{
+public:
+Stack(void) {}
+void push(Base *e)
+{
+    stack.push_back(e);
+}
+void pushPython(boost::python::object &o)
+{
+    Base &e = extract<Base &>(o) BOOST_EXTRACT_WORKAROUND;
+    push(&e);
+}
+void test(void)
+{
+    for(std::vector<Base *>::iterator i = stack.begin(); i != stack.end(); i++)
+    {
+        (*i)->f1();
+        (*i)->f2();
+    }
+}
+private:
+std::vector<Base *> stack;
+};
+
+
+class DerivedCPP : public Base
+{
+public:
+DerivedCPP(void) {}
+virtual void f1(void)
+{
+    std::cout << "DerivedCPP f1()" << std::endl;
+}
+virtual void f2(void)
+{
+    std::cout << "DerivedCPP f2()" << std::endl;
+}
+};
+
+BOOST_PYTHON_MODULE(mytest)
+{
+boost::python::class_<Base,boost::noncopyable>("Base",boost::python::no_init)
+    .def( "f1", &Base::f1)
+    .def( "f2", &Base::f2)
+    ;
+
+boost::python::class_<DerivedCPP,bases<Base>>("DerivedCPP")
+    .def( "f1", &DerivedCPP::f1)
+    .def( "f2", &DerivedCPP::f2)
+    ;
+
+boost::python::class_<Stack>("Stack", boost::python::no_init)
+    .def( "push", &Stack::pushPython)
+    .def( "test", &Stack::test)
+    ;
+}
+
+int main(int argc, char** argv)
+{
+PyImport_AppendInittab("mytest", &initmytest);
+Py_Initialize();
+boost::python::object main_module(( handle<>( borrowed( PyImport_AddModule( "__main__" )))));
+boost::python::object main_namespace = main_module.attr("__dict__");
+boost::python::object mytest( (handle<>(PyImport_ImportModule("mytest"))) );
+main_namespace["mytest"] = mytest;
+Stack *STACK = new Stack();
+main_namespace["Stack"] = ptr(STACK);
+Base *e = new DerivedCPP();
+STACK->push(e);
+STACK->test();
+boost::python::object main = import("__main__");
+boost::python::object global(main.attr("__dict__"));
+boost::python::object result = exec_file("test.py", global, global);
+Py_Finalize();
+return 0;
+}
+
+
+# python (test.py)
+print 'test.py'
+print
+
+class DerivedPython(mytest.Base):
+def __init__(self):
+    print "DerivedPython __init__()"
+def f1(self):
+    print "DerivedPython f1()"
+def f2(self):
+    print "DerivedPython f2()"
+
+print 'DerivedPython()'
+p = DerivedPython()
+p.f1()
+p.f2()
+
+print 'mytest.DerivedCPP()'
+c = mytest.DerivedCPP()
+c.f1()
+c.f2()
+
+print 'Stack.push(c)'
+Stack.push(c)
+print 'OK'
+
+print "Stack.test()"
+Stack.test()
+
+print 'Stack.push(p)'
+Stack.push(p) # crash!
+print 'OK'
+
+print "Stack.test()"
+Stack.test()
+

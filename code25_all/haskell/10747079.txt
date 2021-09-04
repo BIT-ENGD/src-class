@@ -1,0 +1,47 @@
+{-# LANGUAGE QuasiQuotes #-}
+
+import Prelude hiding (map, zipWith)
+import System.Environment (getArgs)
+import Data.Word (Word8)
+import Data.Array.Repa
+import Data.Array.Repa.IO.DevIL
+import Data.Array.Repa.Stencil
+import Data.Array.Repa.Stencil.Dim2
+
+main = do
+  [s] <- getArgs
+  img <- runIL $ readImage s
+
+  let out = output x where RGB x = img
+  runIL . writeImage "out.bmp" . Grey =<< computeP out
+
+output img = map cast . blur . blur $ blur grey
+  where
+    grey              = traverse img to2D luminance
+    cast n            = floor n :: Word8
+    to2D (Z:.i:.j:._) = Z:.i:.j
+
+---------------------------------------------------------------
+
+luminance f (Z:.i:.j)   = 0.21*r + 0.71*g + 0.07*b :: Float
+  where
+    (r,g,b) = rgb (fromIntegral . f) i j
+
+blur = map (/ 9) . convolve kernel
+  where
+    kernel = [stencil2| 1 1 1
+                        1 1 1
+                        1 1 1 |]
+
+convolve = mapStencil2 BoundClamp
+
+rgb f i j = (r,g,b)
+  where
+    r = f $ Z:.i:.j:.0
+    g = f $ Z:.i:.j:.1
+    b = f $ Z:.i:.j:.2
+
+real    2m32.572s
+user    4m57.324s
+sys     0m1.870s
+

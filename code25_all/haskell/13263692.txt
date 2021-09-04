@@ -1,0 +1,176 @@
+unsafeInterleaveIO
+
+joinIO :: IO a -> (a -> IO b) -> IO b
+joinIO  a f = do !x  <- a
+                    !x'  <- f x
+                    return x'
+
+joinIO':: IO a -> (a -> IO b) -> IO b
+joinIO' a f = do !x  <- unsafeInterleaveIO a
+                    !x' <- unsafeInterleaveIO $ f x
+                    return x'
+
+
+data LIO a = LIO {runLIO :: IO a}
+
+instance Functor LIO where
+  fmap f (LIO a) = LIO (fmap f a)
+
+instance Monad LIO where
+  return x = LIO $ return x
+  a >>= f  = LIO $ lazily a >>= lazily . f
+    where
+      lazily = unsafeInterleaveIO . runLIO
+
+iterateLIO :: (a -> LIO a) -> a -> LIO [a]
+iterateLIO f x = do
+  x' <- f x
+  xs <- iterateLIO f x'  -- IO monad would diverge here
+  return $ x:xs
+
+limitLIO :: (a -> LIO a) -> a -> (a -> a -> Bool) -> LIO a
+limitLIO f a converged = do
+  xs <- iterateLIO f a
+  return . snd . head . filter (uncurry converged) $ zip xs (tail xs)
+
+root2 = runLIO $ limitLIO newtonLIO 1 converged
+  where
+    newtonLIO x = do () <- LIO $ print x
+                           LIO $ print "lazy io"
+                           return $ x - f x / f' x
+    f  x = x^2 -2
+    f' x = 2 * x
+    converged x x' = abs (x-x') < 1E-15
+
+unsafe*
+unsafeInterleaveIO
+iteratee
+unsafe
+unsafe*
+
+-- An evil example of a function whose result depends on a particular
+-- evaluation order without reference to unsafe* functions  or even
+-- the IO monad.
+
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE BangPatterns #-}
+import GHC.Prim
+
+f :: Int -> Int
+f x = let v = myVar 1
+          -- removing the strictness in the following changes the result
+          !x' = h v x
+      in g v x'
+
+g :: MutVar# RealWorld Int -> Int -> Int
+g v x = let !y = addMyVar v 1
+        in x * y
+
+h :: MutVar# RealWorld Int -> Int -> Int
+h v x = let !y = readMyVar v
+        in x + y
+
+myVar :: Int -> MutVar# (RealWorld) Int
+myVar x =
+    case newMutVar# x realWorld# of
+         (# _ , v #) -> v
+
+readMyVar :: MutVar# (RealWorld) Int -> Int
+readMyVar v =
+    case readMutVar# v realWorld# of
+         (# _ , x #) -> x
+
+addMyVar :: MutVar# (RealWorld) Int -> Int -> Int
+addMyVar v x =
+  case readMutVar# v realWorld# of
+    (# s , y #) ->
+      case writeMutVar# v (x+y) s of
+        s' -> x + y
+
+main =  print $ f 1
+
+
+--  Firstly, according to "libraries/base/GHC/IO.hs",
+{-
+The IO Monad is just an instance of the ST monad, where the state is
+the real world.  We use the exception mechanism (in GHC.Exception) to
+implement IO exceptions.
+...
+-}
+
+-- And indeed in "libraries/ghc-prim/GHC/Types.hs", We have
+newtype IO a = IO (State# RealWorld -> (# State# RealWorld, a #))
+
+-- And in "libraries/base/GHC/Base.lhs", we have the Monad instance for IO:
+data RealWorld
+instance  Functor IO where
+   fmap f x = x >>= (return . f)
+
+instance  Monad IO  where
+    m >> k    = m >>= \ _ -> k
+    return    = returnIO
+    (>>=)     = bindIO
+    fail s    = failIO s
+
+returnIO :: a -> IO a
+returnIO x = IO $ \ s -> (# s, x #)
+
+bindIO :: IO a -> (a -> IO b) -> IO b
+bindIO (IO m) k = IO $ \ s -> case m s of (# new_s, a #) -> unIO (k a) new_s
+
+unIO :: IO a -> (State# RealWorld -> (# State# RealWorld, a #))
+unIO (IO a) = a
+
+-- Many of the unsafe* functions are defined in "libraries/base/GHC/IO.hs":
+unsafePerformIO :: IO a -> a
+unsafePerformIO m = unsafeDupablePerformIO (noDuplicate >> m)
+
+unsafeDupablePerformIO  :: IO a -> a
+unsafeDupablePerformIO (IO m) = lazy (case m realWorld# of (# _, r #) -> r)
+
+unsafeInterleaveIO :: IO a -> IO a
+unsafeInterleaveIO m = unsafeDupableInterleaveIO (noDuplicate >> m)
+
+unsafeDupableInterleaveIO :: IO a -> IO a
+unsafeDupableInterleaveIO (IO m)
+  = IO ( \ s -> let
+                   r = case m s of (# _, res #) -> res
+                in
+                (# s, r #))
+
+noDuplicate :: IO ()
+noDuplicate = IO $ \s -> case noDuplicate# s of s' -> (# s', () #)
+
+-- The auto-generated file "libraries/ghc-prim/dist-install/build/autogen/GHC/Prim.hs"
+-- list types of all the primitive impure functions. For example,
+data MutVar# s a
+data State# s
+
+newMutVar# :: a -> State# s -> (# State# s,MutVar# s a #)
+-- The actual implementations are found in "rts/PrimOps.cmm".
+
+
+unsafeDupableInterleaveIO m >>= f
+==>  (let u = unsafeDupableInterleaveIO)
+u m >>= f
+==> (definition of (>>=) and ignore the constructor)
+\s -> case u m s of
+        (# s',a' #) -> f a' s'
+==> (definition of u and let snd# x = case x of (# _,r #) -> r)
+\s -> case (let r = snd# (m s)
+            in (# s,r #)
+           ) of
+       (# s',a' #) -> f a' s'
+==>
+\s -> let r = snd# (m s)
+      in
+        case (# s,  r  #) of
+             (# s', a' #) -> f a' s'
+==>
+\s -> f (snd# (m s)) s
+
+s
+RealWorld
+State# s
+RealWorld

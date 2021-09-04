@@ -1,0 +1,38 @@
+Source m ByteString
+lines
+Left
+Right
+leftover
+Nothing
+chunk :: (Monad m, Monoid a)
+      => (s -> i -> Either (a, s) (a, i))
+      -> s
+      -> Consumer i m (Maybe a)
+chunk f = loop []
+  where
+    loop xs s = await >>= maybe (emit xs) (go xs s)
+
+    go xs s i = case f s i of
+        Left (x, s')    -> loop (x : xs) s'
+        Right (x, l)    -> leftover l >> emit (x : xs)
+
+    emit [] = return Nothing
+    emit xs = return (Just . mconcat . L.reverse $ xs)
+-- Note: We could use `mappend` to combine the chunks directly. But this would
+-- often get us O(n^2) complexity (like for `ByteString`s) so we keep a list of
+-- the chunks and then use `mconcat`, which can be optimized by the `Monoid`.
+
+bytes :: (Monad m) => Int -> Consumer ByteString m (Maybe ByteString)
+bytes = chunk f
+  where
+    f n bs | n' > 0     = Left (bs, n')
+           | otherwise  = Right $ BS.splitAt n bs
+      where n' = n - BS.length bs
+
+line :: (Monad m) => Consumer ByteString m (Maybe ByteString)
+line = chunk f ()
+  where
+    f _ bs = maybe (Left (bs, ()))
+                   (\i -> Right $ BS.splitAt (i + 1) bs)
+                   (BS.findIndex (== '\n') bs)
+

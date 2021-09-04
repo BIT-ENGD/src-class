@@ -1,0 +1,252 @@
+Oledb.OledbConnection cn = new Oledb.OledbConnection(); 
+cn.ConnectionString = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=C:\Staff.mdb"; 
+Oledb.OledbCommand cmd = new Oledb.OledbCommand(cn); 
+cmd.CommandText = "INSERT INTO Customers (FirstName, LastName) VALUES (@FirstName, @LastName)"; 
+
+static public void performSynchronization(string table, string tableTwoLocation)
+{
+    OleDbCommand cmdCopyTables = new OleDbCommand("INSERT INTO" + table + "SELECT * FROM [MS Access;" + tableTwoLocation + ";].[" + table + "]"); // This query generates runtime error
+    cmdCopyTables.Connection = dataconnectionA;
+    dataconnectionA.Open();
+    cmdCopyTables.ExecuteNonQuery();
+    dataconnectionA.Close();
+}
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Data.OleDb;
+using System.Data;
+using System.IO;
+
+    namespace LCR_ShepherdStaffupdater_1._0
+    {
+        public class DatabaseHandling
+        {
+            static DataTable datatableB = new DataTable();
+            static DataTable datatableA = new DataTable();
+            public static DataSet datasetA = new DataSet();
+            public static DataSet datasetB = new DataSet();
+            static OleDbDataAdapter adapterA = new OleDbDataAdapter();
+            static OleDbDataAdapter adapterB = new OleDbDataAdapter();
+            static string connectionstringA = "Provider=Microsoft.Jet.OLEDB.4.0;" + "Data Source=" + Settings.getfilelocationA();
+            static string connectionstringB = "Provider=Microsoft.Jet.OLEDB.4.0;" + "Data Source=" + Settings.getfilelocationB();
+            static OleDbConnection dataconnectionB = new OleDbConnection(connectionstringB);
+            static OleDbConnection dataconnectionA = new OleDbConnection(connectionstringA);
+            static DataTable tableListA;
+            static DataTable tableListB;
+
+            static public void addTableA(string table, bool addtoDataSet)
+            {
+                dataconnectionA.Open();
+                datatableA = new DataTable(table);
+                try
+                {
+                    OleDbCommand commandselectA = new OleDbCommand("SELECT * FROM [" + table + "]", dataconnectionA);
+                    adapterA.SelectCommand = commandselectA;
+                    adapterA.Fill(datatableA);
+                }
+                catch
+                {
+                    Logging.updateLog("Error: Tried to get " + table + " from DataSetA. Table doesn't exist!");
+                }
+
+                if (addtoDataSet == true)
+                {
+                    datasetA.Tables.Add(datatableA);
+                    Logging.updateLog("Added DataTableA: " + datatableA.TableName.ToString() + " Successfully!");
+                }
+
+                dataconnectionA.Close();
+            }
+
+            static public void addTableB(string table, bool addtoDataSet)
+            {
+                dataconnectionB.Open();
+                datatableB = new DataTable(table);
+
+                try
+                {
+                    OleDbCommand commandselectB = new OleDbCommand("SELECT * FROM [" + table + "]", dataconnectionB);
+                    adapterB.SelectCommand = commandselectB;
+                    adapterB.Fill(datatableB);
+                }
+                catch
+                {
+                    Logging.updateLog("Error: Tried to get " + table + " from DataSetB. Table doesn't exist!");
+                }
+
+
+
+                if (addtoDataSet == true)
+                {
+                    datasetB.Tables.Add(datatableB);
+                    Logging.updateLog("Added DataTableB: " + datatableB.TableName.ToString() + " Successfully!");
+                }
+
+                dataconnectionB.Close();
+            }
+
+            static public string[] getTablesA(string connectionString)
+            {
+                dataconnectionA.Open();
+                tableListA = dataconnectionA.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new Object[] { null, null, null, "TABLE" });
+                string[] stringTableListA = new string[tableListA.Rows.Count];
+
+                for (int i = 0; i < tableListA.Rows.Count; i++)
+                {
+                    stringTableListA[i] = tableListA.Rows[i].ItemArray[2].ToString();
+                }
+                dataconnectionA.Close();
+                return stringTableListA;
+            }
+
+            static public string[] getTablesB(string connectionString)
+            {
+                dataconnectionB.Open();
+                tableListB = dataconnectionB.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new Object[] { null, null, null, "TABLE" });
+                string[] stringTableListB = new string[tableListB.Rows.Count];
+
+                for (int i = 0; i < tableListB.Rows.Count; i++)
+                {
+                    stringTableListB[i] = tableListB.Rows[i].ItemArray[2].ToString();
+                }
+                dataconnectionB.Close();
+                return stringTableListB;
+            }
+
+            static public void createDataSet()
+            {
+
+                string[] tempA = getTablesA(connectionstringA);
+                string[] tempB = getTablesB(connectionstringB);
+                int percentage = 0;
+                int maximum = (tempA.Length + tempB.Length);
+
+                Logging.updateNotice("Loading Tables...");
+                for (int i = 0; i < tempA.Length ; i++)
+                {
+                    if (!datasetA.Tables.Contains(tempA[i]))
+                    {
+                        addTableA(tempA[i], true);
+                        percentage++;
+                        Logging.loadStatus(percentage, maximum);
+                    }
+                    else
+                    {
+                        datasetA.Tables.Remove(tempA[i]);
+                        addTableA(tempA[i], true);
+                        percentage++;
+                        Logging.loadStatus(percentage, maximum);
+                    }
+                }
+
+                for (int i = 0; i < tempB.Length ; i++)
+                {
+                    if (!datasetB.Tables.Contains(tempB[i]))
+                    {
+                        addTableB(tempB[i], true);
+                        percentage++;
+                        Logging.loadStatus(percentage, maximum);
+                    }
+                    else
+                    {
+                        datasetB.Tables.Remove(tempB[i]);
+                        addTableB(tempB[i], true);
+                        percentage++;
+                        Logging.loadStatus(percentage, maximum);
+                    }
+                }
+
+
+            }
+
+            static public DataTable getDataTableA()
+            {
+                datatableA = datasetA.Tables[Settings.textA];
+
+                return datatableA;
+            }
+            static public DataTable getDataTableB()
+            {
+                datatableB = datasetB.Tables[Settings.textB];
+                return datatableB;
+            }
+
+            static public DataSet getDataSetA()
+            {
+                return datasetA;
+            }
+
+            static public DataSet getDataSetB()
+            {
+                return datasetB;
+            }
+
+            static public void InitiateCopyProcessA()
+            {
+                DataSet tablesA;
+                tablesA = DatabaseHandling.getDataSetA();
+
+                foreach (DataTable table in tablesA.Tables)
+                {
+                    CopyTable(table, connectionstringB);
+                }
+            }
+
+            public static void CopyTable(DataTable table, string connectionStringB)
+            {
+                var connectionB = new OleDbConnection(connectionStringB);
+                foreach (DataRow row in table.Rows)
+                {
+                    InsertRow(row, table.Columns, table.TableName, connectionB);
+                }
+            }
+
+            public static void InsertRow(DataRow row, DataColumnCollection columns, string table, OleDbConnection connection)
+            {
+                var columnNames = new List<string>();
+                var values = new List<string>();
+
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    columnNames.Add("[" + columns[i].ColumnName + "]");
+                    values.Add("'" + row[i].ToString().Replace("'", "''") + "'");
+                }
+
+                string sql = string.Format("INSERT INTO {0} ({1}) VALUES ({2})",
+                        table,
+                        string.Join(", ", columnNames.ToArray()),
+                        string.Join(", ", values.ToArray())
+                    );
+
+                ExecuteNonQuery(sql, connection);
+            }
+
+            public static void ExecuteNonQuery(string sql, OleDbConnection conn)
+            {
+                if (conn == null)
+                    throw new ArgumentNullException("conn");
+
+                ConnectionState prevState = ConnectionState.Closed;
+                var command = new OleDbCommand(sql, conn);
+                try
+                {
+                    prevState = conn.State;
+                    if (prevState != ConnectionState.Open)
+                        conn.Open();
+
+                    command.ExecuteNonQuery(); // !!! Runtime-Error: Data type mismatch in criteria expression. !!!
+                }
+                finally
+                {
+                    if (conn.State != ConnectionState.Closed
+                        && prevState != ConnectionState.Open)
+                        conn.Close();
+                }
+            }
+
+            }          
+        }
+

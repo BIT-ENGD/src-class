@@ -1,0 +1,65 @@
+# Examples:
+#   logman-parse --pipe=[/path/to/pipe] --mail=[mail address]
+#   logman-parse --pipe=/etc/pipes/critical --mail=root@domain.net
+#   logman-parse --pipe=/home/user/pipe --mail=john.doe@gmail.com
+
+use warnings;
+use strict;
+use Getopt::Long;
+use Mail::Sendmail;
+
+my $pipe;
+my $mailto;
+
+GetOptions( "pipe=s"   => \$pipe,
+            "mailto=s" => \$mailto
+          ) or die "Could not parse command line arguments";
+
+# Check to see if there are no arguments left over, the email address 
+# supplied is valid and the file given is in fact a pipe.
+my $email_regex = qr/\b[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+/;
+
+@ARGV == 0                or die "Too many arguments supplied";
+$mailto =~ $email_regex   or die "Invalid email supplied";
+-p $pipe                  or die "Pipe supplied does not exist";
+
+# Load current contents of pipe into array @pipe_lines
+open( my $pipe_handle, "<", $pipe) or die "Cannot open $pipe";
+my @pipe_lines = <$pipe_handle>;
+
+# Remove duplicate array entries by first adding them all to a hash,
+# then extracting the keys into another array named @uniques
+my @uniques = ();
+my %seen    = ();
+foreach my $line (@pipe_lines) {
+    if ( $seen{$line} ) {
+        $seen{$line}++;
+        next;
+    }
+    push(@uniques, $line);
+}
+
+# Formatting each value to $date, $hostname, $facility and $message. 
+# Then send the formatted text.
+for my $i (0 .. $#uniques) {
+
+    # Grab each component of the log entry
+    (my $timestamp, my $rest) = unpack('A16 A*', $uniques[$i]);
+    my @else = split(/ /, $rest, 3);
+    my $formatted_message  = "Time: " . $timestamp . "\n";
+    $formatted_message    .= "Hostname: " . $else[0] . "\n";
+    $formatted_message    .= "Subject: " . $else[1] . "\n";
+    $formatted_message    .= "Message: " . $else[2] . "\n";
+
+    print $formatted_message."\n";
+
+    # Send the message
+    my %mail = ( To      => $mailto,
+                 From    => 'logman@localhost.localdomain',
+                 Subject => 'LOGMAN: '.$else[0],
+                 Message => $formatted_message
+               );
+
+    sendmail(%mail) or die $Mail::Sendmail::error;
+}
+

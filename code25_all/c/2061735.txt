@@ -1,0 +1,87 @@
+#include <string>
+#include <sstream>
+#include <iostream>
+#include <assert.h>
+#include <windows.h>
+
+void check_call( bool result, char const * call );
+#define CHECK_CALL(call) check_call(call,#call);
+
+int
+main( int argc, char const * argv[] )
+    {
+    if( argc>1 )
+        {
+        assert( !strcmp(argv[1],"inf") );
+        for(;;)
+            {
+            }
+        }
+    int err=0;
+    for( int i=0; i!=200; ++i )
+        {
+        STARTUPINFO sinfo;
+        ZeroMemory(&sinfo,sizeof(STARTUPINFO));
+        sinfo.cb=sizeof(STARTUPINFO);
+        PROCESS_INFORMATION pe;
+        char cmd_line[32768];
+        strcat(strcpy(cmd_line,argv[0])," inf");
+        CHECK_CALL((CreateProcess(0,cmd_line,0,0,TRUE,0,0,0,&sinfo,&pe)!=0));
+        CHECK_CALL((CloseHandle(pe.hThread)!=0));
+        CHECK_CALL((TerminateProcess(pe.hProcess,42)!=0));
+        CHECK_CALL((WaitForSingleObject(pe.hProcess,INFINITE)==WAIT_OBJECT_0));
+        DWORD ec=0;
+        CHECK_CALL((GetExitCodeProcess(pe.hProcess,&ec)!=0));
+        CHECK_CALL((CloseHandle(pe.hProcess)!=0));
+        err += (ec!=42);
+        }
+    std::cout << err;
+    return 0;
+    }
+
+std::string
+get_last_error_str( DWORD err )
+    {
+    std::ostringstream s;
+    s << err;
+    LPVOID lpMsgBuf=0;
+    if( FormatMessageA(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER|FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS,
+            0,
+            err,
+            MAKELANGID(LANG_NEUTRAL,SUBLANG_DEFAULT),
+            (LPSTR)&lpMsgBuf,
+            0,
+            0) )
+        {
+        assert(lpMsgBuf!=0);
+        std::string msg;
+        try
+            {
+            std::string((LPCSTR)lpMsgBuf).swap(msg);
+            }
+        catch(
+        ... )
+            {
+            }
+        LocalFree(lpMsgBuf);
+        if( !msg.empty() && msg[msg.size()-1]=='\n' )
+            msg.resize(msg.size()-1);
+        if( !msg.empty() && msg[msg.size()-1]=='\r' )
+            msg.resize(msg.size()-1);
+        s << ", \"" << msg << '"';
+        }
+    return s.str();
+    }
+
+void
+check_call( bool result, char const * call )
+    {
+    assert(call && *call);
+    if( !result )
+        {
+        std::cerr << call << " failed.\nGetLastError:" << get_last_error_str(GetLastError()) << std::endl;
+        exit(2);
+        }
+    }
+

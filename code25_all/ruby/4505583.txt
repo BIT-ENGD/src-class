@@ -1,0 +1,88 @@
+create table objectOfSomeType (
+    OOSTid int primary key auto_increment,
+    OOSTatooID int,
+    OOSTname varchar(255) not null,
+    OOSTotherThing datetime,
+    OOSTenteredDate timestamp not null,
+    OOSTenteredBy varchar(32) not null,
+    OOSTmodifiedDate timestamp,
+    OOSTmodifiedBy varchar(32)
+    /* etc. */
+);
+
+create table another_type_of_object (
+    ATOOid int primary key auto_increment,
+    ATOOname varchar(255) not null
+    /* etc. */
+);
+
+ActiveRecord::Base
+class ActiveRecordJob < ActiveRecord::Base
+    class_inheritable_accessor :table_prefix
+
+    class << self
+        # this class needs no table
+        abstract_class = true
+
+        # function to setup the prefix
+        def set_table_prefix(prefix)
+            self.table_prefix = prefix
+            set_primary_key "#{prefix}id"
+        end
+
+        # override the standard column_names to return prefix-less names
+        def column_names
+            names = super
+            if pfx = self.table_prefix
+                # obviously not a Rubist...
+                names = names.map { |n| n.sub(%r|^#{pfx}|, "") }
+            end
+            names
+        end
+    end
+
+    # override method_missing to set up non-prefixed versions
+    # if the prefixed version is found, otherwise fall back to super
+    def method_missing(method, *args)
+        if pfx = self.table_prefix
+            prefixed = pfx + method
+            if respond_to?(prefixed)
+                self.class.send(:define_method, method.to_sym) do
+                    return send(prefixed, *args)
+                end
+                return send(method, *args)
+            end
+        end
+        super
+    end
+end
+
+class ObjectOfSomeType < ActiveRecordJob
+    set_table_name :objectOfSomeType
+    set_table_prefix :OOST
+    belongs_to :atoo, :class_name => 'AnotherTypeOfObject', :foreign_key => 'OOSTatooID'
+end
+
+class AnotherTypeOfObject < ActiveRecordJob
+    set_table_name :anotherTypeOfObject
+    set_table_prefix :ATOO
+end
+
+ObjectOfSomeType
+name
+otherProperty
+This works fine, no need for .OOSTname:
+<%= h @oost.name %>
+
+This works fine, accessing the prefixed name directly:
+<%= h @oost.atoo.ATOOname %>
+
+But this throws an exception, because the custom method_missing is not hit:
+<%= h @oost.atoo.name %>
+
+Surprisingly (to this Ruby noob), this does work.
+<%= h @oost.atoo.class.find(@oost.atoo.id).name %> <!-- this line marked -->
+
+After the above, working call, this also works:
+<%= h @oost.atoo.name %>
+

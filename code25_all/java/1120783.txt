@@ -1,0 +1,48 @@
+private Callable<List<Feature>> getXXXFeatures(final WiwsPortType port, 
+final String accessionCode) {
+    return new Callable<List<Feature>>() {
+        @Override
+        public List<Feature> call() throws Exception {
+            List<Feature> features = new ArrayList<Feature>();
+            //getXXXFeatures are methods of the WS Proxy
+            //that can take anywhere from second to never to return
+            for (RawFeature raw : port.getXXXFeatures(accessionCode)) {
+                Feature ft = convertFeature(raw);
+                features.add(ft);
+            }
+            if (Thread.currentThread().isInterrupted())
+                log.error("XXX was interrupted");
+            return features;
+        }
+    };
+}
+
+WiwsPortType port = new Wiws().getWiws();
+List<Future<List<Feature>>> ftList = new ArrayList<Future<List<Feature>>>();
+//Counting wrapper around CompletionService, 
+    //so I could implement ccs.hasRemaining()
+CountingCompletionService<List<Feature>> ccs = 
+        new CountingCompletionService<List<Feature>>(threadpool);
+ftList.add(ccs.submit(getXXXFeatures(port, accessionCode)));
+ftList.add(ccs.submit(getYYYFeatures(port accessionCode)));
+ftList.add(ccs.submit(getZZZFeatures(port, accessionCode)));
+
+List<Feature> allFeatures = new ArrayList<Feature>();
+while (ccs.hasRemaining()) {
+            //Low for testing, eventually a little more lenient
+    Future<List<Feature>> polled = ccs.poll(5, TimeUnit.SECONDS);
+    if (polled != null)
+        allFeatures.addAll(polled.get());
+    else {
+        //Still jobs remaining, but unresponsive: Cancel them all
+        int jobsCanceled = 0;
+        for (Future<List<Feature>> job : ftList)
+            if (job.cancel(true))
+                jobsCanceled++;
+        log.error("Canceled {} feature jobs because they took too long",
+                        jobsCanceled);
+        break;
+    }
+}
+
+if (Thread.currentThread().isInterrupted()) log.error("XXX was interrupted");

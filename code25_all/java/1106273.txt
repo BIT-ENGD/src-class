@@ -1,0 +1,176 @@
+private void run() throws IOException {
+
+    ServerSocketChannel ssc = ServerSocketChannel.open();
+
+    // Set it to non-blocking, so we can use select
+    ssc.configureBlocking( false );
+
+    // Get the Socket connected to this channel, and bind it
+    // to the listening port
+    this.serverSocket = ssc.socket();
+    InetSocketAddress isa = new InetSocketAddress( this.port );
+    serverSocket.bind( isa );
+
+    // Create a new Selector for selecting
+    this.masterSelector = Selector.open();
+
+    // Register the ServerSocketChannel, so we can
+    // listen for incoming connections
+    ssc.register( masterSelector, SelectionKey.OP_ACCEPT );
+
+    while (true) {
+        // See if we've had any activity -- either
+        // an incoming connection, or incoming data on an
+        // existing connection
+        int num = masterSelector.select();
+
+        // If we don't have any activity, loop around and wait
+        // again
+        if (num == 0) {
+            continue;
+        }
+
+        // Get the keys corresponding to the activity
+        // that has been detected, and process them
+        // one by one
+        Set keys = masterSelector.selectedKeys();
+        Iterator it = keys.iterator();
+        while (it.hasNext()) {
+            // Get a key representing one of bits of I/O
+            // activity
+            SelectionKey key = (SelectionKey)it.next();
+
+            // What kind of activity is it?
+            if ((key.readyOps() & SelectionKey.OP_ACCEPT) ==
+                SelectionKey.OP_ACCEPT) {
+
+                // Aceita a conexão
+                Socket s = serverSocket.accept();
+
+                System.out.println( "LOG: Conexao TCP aceita de " + s.getInetAddress() + ":" + s.getPort() );
+
+                // Make sure to make it non-blocking, so we can
+                // use a selector on it.
+                SocketChannel sc = s.getChannel();
+                sc.configureBlocking( false );
+
+                // Registra a conexao no seletor, apenas para leitura
+                sc.register( masterSelector, SelectionKey.OP_READ );
+
+            } else if ( key.isReadable() ) {
+                SocketChannel sc = null;
+
+                // It's incoming data on a connection, so
+                // process it
+                sc = (SocketChannel)key.channel();
+
+                // Verifica se a conexão corresponde a um cliente já existente
+
+                if((clientsMap.getClient(key)) != null){
+                    boolean closedConnection = !processIncomingClientData(key);
+                    if(closedConnection){
+                        int id = clientsMap.getClient(key);
+                        closeClient(id);
+                    }
+                } else {
+                    boolean clientAccepted = processIncomingDataFromNewClient(key);
+                    if(!clientAccepted){
+                        // Se o cliente não foi aceito, sua conexão é simplesmente fechada
+                        sc.socket().close();
+                        sc.close();
+                        key.cancel();
+                    }
+                }
+
+            }
+        }
+
+        // We remove the selected keys, because we've dealt
+        // with them.
+        keys.clear();
+    }
+}
+
+private boolean processIncomingDataFromNewClient(SelectionKey key){
+    SocketChannel sc = (SocketChannel) key.channel();
+    String connectionOrigin = sc.socket().getInetAddress() + ":" + sc.socket().getPort();
+
+    int id = 0; //id of the client
+
+    buf.clear();
+    int bytesRead = 0;
+    try {
+        bytesRead = sc.read(buf);
+        if(bytesRead<=0){
+            System.out.println("Conexão fechada pelo: " + connectionOrigin);
+            return false;
+        }
+        System.out.println("LOG: " + bytesRead + " bytes lidos de " + connectionOrigin);
+
+        String msg = new String(buf.array(),0,bytesRead);
+
+        // Do validations with the client sent me here
+        // gets the client id
+
+            }catch (Exception e) {
+                e.printStackTrace();
+                System.out.println("LOG: Oops. Cliente não conhece o protocolo. Fechando a conexão: " + connectionOrigin);
+                System.out.println("LOG: Primeiros 10 caracteres enviados pelo cliente: " + msg); 
+                return false;
+            }
+        }
+
+    } catch (IOException e) {
+        System.out.println("LOG: Erro ao ler dados da conexao: " + connectionOrigin);
+        System.out.println("LOG: "+ e.getLocalizedMessage());
+        System.out.println("LOG: Fechando a conexão...");
+
+        return false;
+    }
+
+    // If it gets to here, the protocol is ok and we can add the client
+    boolean inserted = clientsMap.addClient(key, id);
+    if(!inserted){
+        System.out.println("LOG: Não foi possível adicionar o cliente. Ou ele já está conectado ou já têm clientes demais. Id: " + id);
+        System.out.println("LOG: Fechando a conexão: " + connectionOrigin);
+        return false;
+    }
+    System.out.println("LOG: Novo cliente conectado! Enviando mesnsagem de confirmação. Id: " + id + " Conexao: " + connectionOrigin);
+
+    /* Here is the error */
+    sendMessage(id, "Servidor pet: connection accepted");
+
+    System.out.println("LOG: Novo cliente conectado! Id: " + id + " Conexao: " + connectionOrigin);
+    return true;
+}
+
+private void sendMessage(int destId, String msg) {
+    Charset charset = Charset.forName("ISO-8859-1");
+    CharBuffer charBuffer = CharBuffer.wrap(msg, 0, msg.length());
+    ByteBuffer bf = charset.encode(charBuffer);
+
+    //bf.flip();
+
+    int bytesSent = 0;
+    SelectionKey key = clientsMap.getClient(destId);
+
+    SocketChannel sc = (SocketChannel) key.channel();
+
+    try {
+        /
+        int total_bytes_sent = 0;
+        while(total_bytes_sent < msg.length()){
+            bytesSent = sc.write(bf);
+            total_bytes_sent += bytesSent;
+
+        }
+
+        System.out.println("LOG: Bytes enviados para o cliente " + destId + ": "+ total_bytes_sent + " Tamanho da mensagem: " + msg.length());
+    } catch (IOException e) {
+        System.out.println("LOG: Erro ao mandar mensagem para: " + destId);
+        System.out.println("LOG: " + e.getLocalizedMessage());
+    }
+}
+
+LOG: Bytes sent to the client: 28 Size of the message: 28
+

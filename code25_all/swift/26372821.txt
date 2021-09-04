@@ -1,0 +1,60 @@
+dispatch_source_t
+telnet 127.0.0.1 6666
+accept()
+class MyServer {
+func startServing(#port: UInt16 = 6666) {
+
+    // Create a listeningSocket on TCP/IPv4.
+    println("\nStarting TCP server.\nCreating a listening Socket.")
+    let listeningSocket = socket(AF_INET, SOCK_STREAM, 0 /*IPPROTO_TCP*/)
+    if listeningSocket == -1 {
+        println("Failed!")
+        return
+    }
+
+    // Prepare an socket address.
+    var no_sig_pipe: Int32 = 1
+    setsockopt(listeningSocket, SOL_SOCKET, SO_NOSIGPIPE, &no_sig_pipe, socklen_t(sizeof(Int32)))
+
+    // Working around Swift's strict initialization policies
+    var addr = sockaddr_in( sin_len: __uint8_t(sizeof(sockaddr_in))
+                          , sin_family: sa_family_t(AF_INET)
+                          , sin_port: CFSwapInt16HostToBig(port)
+                          , sin_addr: in_addr(s_addr: inet_addr("0.0.0.0"))
+                          , sin_zero: (0, 0, 0, 0, 0, 0, 0, 0) )
+    var sock_addr = sockaddr( sa_len: 0
+                            , sa_family: 0
+                            , sa_data: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) )
+    memcpy(&sock_addr, &addr, UInt(sizeof(sockaddr_in)))
+
+    // bind() the socket to the address.
+    println("Binding socket to \(port).")
+    if bind(listeningSocket, &sock_addr, socklen_t(sizeof(sockaddr_in))) == POSIXSocketError {
+        println("Failed!")
+        close(listeningSocket)
+        return
+    }
+
+    // If we still have a working socket at this point...
+    if listeningSocket >= 0 {
+        println("Creating GCD Source.")
+        connectionSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, UInt(listeningSocket), 0, dispatch_get_global_queue(0,0) /*serverQueue*/)
+
+        if connectionSource == .None {
+            println("Failed!")
+            close(listeningSocket)
+            return
+        }
+
+        let myself = self
+        dispatch_source_set_event_handler( connectionSource, {
+            // ***  This NEVER gets called!! ***
+            dispatch_async(dispatch_get_main_queue(), { println("GCD Src fired.") })
+            println("GCD Source triggered.")
+            myself.acceptConnections(listeningSocket)
+        })
+        dispatch_resume(connectionSource)
+    }
+} // end func
+} // end class
+

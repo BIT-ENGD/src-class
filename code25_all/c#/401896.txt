@@ -1,0 +1,168 @@
+using System;
+using System.Xml;
+
+namespace devcoach.FrameworkExtensions
+{
+    /// <summary>
+    /// Extension methods for the type 
+    /// <see cref="System.Xml.XmlDocument"/>.
+    /// </summary>
+    public static class XmlDocumentExtensions
+    {
+        /// <summary>
+        /// Merges the specified instance.
+        /// </summary>
+        /// <param name="instance">The instance.</param>
+        /// <param name="mergeDoc">The merge doc.</param>
+        public static void Merge(
+            this XmlDocument instance,
+            XmlDocument mergeDoc)
+        {
+            var mergeRoot = mergeDoc.DocumentElement;
+            var sourceRoot = instance.DocumentElement;
+            if (sourceRoot == null) return;
+            instance.Merge(sourceRoot, mergeRoot, false);
+        }
+
+        /// <summary>
+        /// Merges the specified instance.
+        /// </summary>
+        /// <param name="instance">The instance.</param>
+        /// <param name="mergeDoc">The merge doc.</param>
+        /// <param name="isNetConfigFile">if set to <c>true</c> if documents 
+        /// are .net config files.</param>
+        public static void Merge(
+            this XmlDocument instance,
+            XmlDocument mergeDoc,
+            bool isNetConfigFile)
+        {
+            var mergeRoot = mergeDoc.DocumentElement;
+            var sourceRoot = instance.DocumentElement;
+            if (sourceRoot == null) return;
+            instance.Merge(sourceRoot, mergeRoot, true);
+        }
+
+        /// <summary>
+        /// Merges the specified source doc.
+        /// </summary>
+        /// <param name="sourceDoc">The source doc.</param>
+        /// <param name="sourceRoot">The source root.</param>
+        /// <param name="mergeRoot">The merge root.</param>
+        public static void Merge(
+            this XmlDocument sourceDoc,
+            XmlNode sourceRoot,
+            XmlNode mergeRoot)
+        {
+            sourceDoc.Merge(
+                sourceRoot,
+                mergeRoot,
+                false);
+        }
+
+        /// <summary>
+        /// Merges the specified source doc.
+        /// </summary>
+        /// <param name="sourceDoc">The source doc.</param>
+        /// <param name="sourceRoot">The source root.</param>
+        /// <param name="mergeRoot">The merge root.</param>
+        /// <param name="isNetConfigFile">if set to <c>true</c> if documents 
+        /// are .net config files.</param>
+        public static void Merge(
+            this XmlDocument sourceDoc,
+            XmlNode sourceRoot,
+            XmlNode mergeRoot,
+            bool isNetConfigFile)
+        {
+            #region Check parameters and if needed throw ArgumentNullException
+            if (sourceDoc == null)
+            {
+                throw new ArgumentNullException("sourceDoc");
+            }
+            if (sourceRoot == null)
+            {
+                throw new ArgumentNullException("sourceRoot");
+            }
+            if (mergeRoot == null)
+            {
+                throw new ArgumentNullException("mergeRoot");
+            }
+            #endregion
+
+            if (!string.IsNullOrEmpty(mergeRoot.InnerText))
+            {
+                sourceRoot.InnerText = mergeRoot.InnerText;
+            }
+            if (!string.IsNullOrEmpty(mergeRoot.Value))
+            {
+                sourceRoot.Value = mergeRoot.Value;
+            }
+
+            #region Copy attributes...
+            var mergeRootAttributes = mergeRoot.Attributes;
+            if (mergeRootAttributes != null)
+            {
+                var mergeRootAttributesCount = mergeRootAttributes.Count;
+
+                for (var k = 0; k < mergeRootAttributesCount; k++)
+                {
+                    var mergeAttribute = mergeRootAttributes[k];
+                    var mergeAttributeName = mergeAttribute.LocalName;
+
+                    var sourceAttribute =
+                        sourceRoot.Attributes[mergeAttributeName]
+                        ?? sourceRoot.Attributes.Append(
+                             sourceDoc.CreateAttribute(
+                                 mergeAttribute.Prefix,
+                                 mergeAttribute.LocalName,
+                                 mergeAttribute.NamespaceURI));
+
+                    sourceAttribute.Value = mergeAttribute.Value;
+                }
+            }
+            #endregion
+
+            // loop child nodes...
+            var mergeRootNodesCount = mergeRoot.ChildNodes.Count;
+            for (var i = 0; i < mergeRootNodesCount; i++)
+            {
+                XmlNode foundNode = null;
+                var mergeNode = mergeRoot.ChildNodes[i];
+                var mergeNodeName = mergeNode.LocalName;
+                var sourceRootNodeCount = sourceRoot.ChildNodes.Count;
+
+                #region Find node in source...
+                for (var j = 0; j < sourceRootNodeCount; j++)
+                {
+                    var sourceNode = sourceRoot.ChildNodes[j];
+                    var sourceNodeName = sourceNode.LocalName;
+
+                    if ((isNetConfigFile &&
+                            mergeNodeName == "section" ||
+                            mergeNodeName == "sectionGroup"
+                        ) ||
+                        sourceNodeName != mergeNodeName) continue;
+
+                    foundNode = sourceNode;
+                    break;
+                }
+                #endregion
+
+                #region create a new node...
+                if (foundNode == null)
+                {
+                    foundNode =
+                        sourceRoot.AppendChild(
+                         sourceDoc.CreateNode(
+                            mergeNode.NodeType,
+                            mergeNode.Prefix,
+                            mergeNode.LocalName,
+                            mergeNode.NamespaceURI));
+                }
+                #endregion
+
+                sourceDoc.Merge(foundNode, mergeNode);
+            }
+        }
+    }
+}
+

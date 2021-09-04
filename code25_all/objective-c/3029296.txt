@@ -1,0 +1,140 @@
+CIImage * myResult = [transform valueForKey:@"outputImage"]; 
+NSImage *outputImage;
+NSCIImageRep *ir = [NSCIImageRep alloc];
+ir = [NSCIImageRep imageRepWithCIImage:myResult];
+outputImage = [[[NSImage alloc] initWithSize:
+                              NSMakeSize(inputImage.size.width, inputImage.size.height)]
+                             autorelease];
+                    [outputImage addRepresentation:ir];
+[outputImageView setImage: outputImage];
+NSBitmapImageRep *outputBitmap = [[NSBitmapImageRep alloc] initWithCIImage: myResult];
+
+for (row = 0; row < heightInPixels; row++)
+  for (column = 0; column < widthInPixels; column++) {
+    if (row == 1340) {  //just check this one row, that I know what to expect
+        NSLog(@"Row 1340 column %d pixel redByte of pixel is %d",column,thisPixel->redByte);
+    }
+}
+
+2010-06-13 10:39:07.765 ImageTransform[5582:a0f] Row 1340 column 1664 pixel redByte of pixel is 0
+2010-06-13 10:39:07.765 ImageTransform[5582:a0f] Row 1340 column 1665 pixel redByte of pixel is 0
+2010-06-13 10:39:07.766 ImageTransform[5582:a0f] Row 1340 column 1666 pixel redByte of pixel is 0
+
+// prior code retrieves JPG image from disk and loads into NSImage
+CIImage * inputCIimage = [[CIImage alloc] initWithBitmapImageRep:inputBitmap];
+if (inputCIimage == nil) {
+  NSLog(@"Bailing out.  Could not create CI Image");
+  return;
+}
+NSLog (@"CI Image created.  working on transforms...");
+
+// rotate imageIn by degreesToRotate, using an AffineTransform      
+CIFilter *transform = [CIFilter filterWithName:@"CIAffineTransform"];
+[transform setDefaults];
+[transform setValue:inputCIimage forKey:@"inputImage"];
+NSAffineTransform *affineTransform = [NSAffineTransform transform];
+[affineTransform transformPoint: NSMakePoint(inputImage.size.width/2, inputImage.size.height / 2)]; 
+//inputImage.size.width /2.0,inputImage.size.height /2.0)];
+[affineTransform rotateByDegrees:3.75];
+[transform setValue:affineTransform forKey:@"inputTransform"];
+CIImage * myResult2 = [transform valueForKey:@"outputImage"]; 
+
+CIFilter *lineOverlay = [CIFilter filterWithName:@"CILineOverlay"];
+[lineOverlay setDefaults];
+[lineOverlay setValue: inputCIimage forKey:@"inputImage"];
+// start off with default values, then tweak the ones needed to achieve desired results
+[lineOverlay setValue: [NSNumber numberWithFloat: .07] forKey:@"inputNRNoiseLevel"]; //.07 (0-1)
+[lineOverlay setValue: [NSNumber numberWithFloat: .71] forKey:@"inputNRSharpness"]; //.71 (0-2)
+[lineOverlay setValue: [NSNumber numberWithFloat: 1] forKey:@"inputEdgeIntensity"]; //1 (0-200)
+[lineOverlay setValue: [NSNumber numberWithFloat: .1] forKey:@"inputThreshold"]; //.1 (0-1)
+[lineOverlay setValue: [NSNumber numberWithFloat: 50] forKey:@"inputContrast"]; //50 (.25-200)
+CIImage *myResult2 = [lineOverlay valueForKey:@"outputImage"];  //apply the filter to the CIImage object and return it
+
+if (myResult2 == Nil)
+    NSLog(@"Transformations failed");
+else {
+NSLog(@"Finished transformations successfully ... now render final image");
+// make an NSImage from the CIImage (to display it, during initial development)
+NSImage *outputImage;
+NSCIImageRep *ir = [NSCIImageRep alloc];
+// show the tranformed output on screen...
+ir = [NSCIImageRep imageRepWithCIImage:myResult2];
+outputImage = [[[NSImage alloc] initWithSize:
+              NSMakeSize(inputImage.size.width, inputImage.size.height)]
+             autorelease];
+[outputImage addRepresentation:ir];
+[outputImageView setImage: outputImage];  //rotatedImage
+
+// this is the next line after the [outputImageView ...] shown above
+[self findLeftEdge :myResult2];
+
+- (void) findLeftEdge :(CIImage*)imageInCI {
+    // find the left edge of the input image, assuming it will be the first non-white pixel
+    // because we have already applied the Threshold filter
+
+    NSBitmapImageRep *outputBitmap = [[NSBitmapImageRep alloc] initWithCIImage: imageInCI];
+    if (outputBitmap == nil)
+        NSLog(@"unable to create outputBitmap");
+    else 
+        NSLog(@"ouputBitmap image rep created -- samples per pixel = %d", [outputBitmap samplesPerPixel]);
+
+    RGBAPixel 
+        *thisPixel, 
+        *bitmapPixels = (RGBAPixel *)[outputBitmap bitmapData];  
+
+    int 
+    row, 
+    column,
+    widthInPixels = [outputBitmap pixelsWide], 
+    heightInPixels = [outputBitmap pixelsHigh];
+
+    //RGBAPixel *leftEdge [heightInPixels];
+    struct { 
+        int pixelNumber;
+        unsigned char pixelValue;
+    } leftEdge[heightInPixels];
+
+    // Is this necessary, or does objective-c always intialize it to zero, for me?
+    for (row = 0; row < heightInPixels; row++) {
+        leftEdge[row].pixelNumber = 0;
+        leftEdge[row].pixelValue = 0;
+    }
+
+    for (row = 0; row < heightInPixels; row++)
+        for (column = 0; column < widthInPixels; column++)  {
+            thisPixel = (&bitmapPixels[((widthInPixels * row) + column)]);
+
+            //red is as good as any channel, for this test (assume threshold filter already applied)
+            //this should "save" the column number of the first non-white pixel encountered
+            if (leftEdge[row].pixelValue < thisPixel->redByte) {
+                leftEdge[row].pixelValue = thisPixel->redByte;  
+                leftEdge[row].pixelNumber = column;
+            }
+            // For debugging, display contents of each pixel
+            //NSLog(@"Row %d column %d pixel redByte of pixel is %@",row,column,thisPixel->redByte);
+            // For debugging, display contents of each pixel on one row
+            //if (row == 1340) {
+            //  NSLog(@"Row 1340 column %d pixel redByte of pixel is %@",column,thisPixel->redByte);
+            //}
+
+        }
+
+    // For debugging, display the left edge that we discovered
+    for (row = 0; row < heightInPixels; row++) {
+        NSLog(@"Left edge on row %d was at pixel #%d", row, leftEdge[row].pixelNumber);
+    }
+
+    [outputBitmap release];  
+}
+
+- (CIImage*) applyCropToCI:(CIImage*) imageIn {
+rectToCrop { 
+    // crop the rectangle specified from the input image
+    CIFilter *crop = [CIFilter filterWithName:@"CICrop"];
+    [crop setDefaults];  
+    [crop setValue:imageIn forKey:@"inputImage"];
+//  [crop setValue:rectToCrop forKey:@"inputRectangle"];  //vector defaults to 0,0,300,300
+    //CIImage * myResult = [transform valueForKey:@"outputImage"]; //this is the way it was "in-line", before putting this code into a method
+    return [crop valueForKey:@"outputImage"];   //does this need to be retained?
+}
+

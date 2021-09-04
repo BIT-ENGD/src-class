@@ -1,0 +1,64 @@
+func downloadFile(key : NSString, completion : Bool -> Void)
+{
+    var downloadRequest = AWSS3TransferManagerDownloadRequest()
+    downloadRequest.bucket = S3BucketName
+    downloadRequest.key = key
+    var documentsPath = NSSearchPathForDirectoriesInDomains(.DocumentDirectory, .UserDomainMask, true)[0] as NSString
+    //println(documentsPath)
+
+    // build local folders
+    var pathComponents : Array<String> = key.componentsSeparatedByString("/") as Array<String>
+    for folder in pathComponents[0...pathComponents.count - 2]
+    {
+        documentsPath = documentsPath.stringByAppendingPathComponent(folder)
+        var isDir : ObjCBool = false
+        if NSFileManager.defaultManager().fileExistsAtPath(documentsPath, isDirectory: &isDir) == false
+        {
+            var error : NSError?
+            NSFileManager.defaultManager().createDirectoryAtPath(documentsPath, withIntermediateDirectories: false, attributes: nil, error:&error)
+            if error == nil
+            {
+                println("created folder " + documentsPath)
+            }
+            else
+            {
+                println("error creating folder " + documentsPath)
+            }
+        }
+    }
+
+    downloadRequest.downloadingFileURL = NSURL(fileURLWithPath: documentsPath.stringByAppendingPathComponent(pathComponents.last!))
+    downloadRequest.downloadProgress = { (bytesWritten, totalBytesWritten, totalBytesExpectedToWrite) -> Void in
+        dispatch_async(dispatch_get_main_queue(), {
+
+            self.totalDownloaded = self.totalDownloaded! + bytesWritten
+            var progress = CGFloat(self.totalDownloaded!)/CGFloat(self.totalToDownload!)
+
+            self.progressView?.setProgress(progress, animated: true)//, self.totalDownloaded!/1000, total!/1000)
+            self.progressLabel?.text = String(format: "Downloaded %lld KB", self.totalDownloaded!/1000)//, self.totalToDownload!/1000)
+
+            //println(String(format: "Progress %llu of %llu", self.totalDownloaded!, self.totalToDownload!))
+            //println(String(format: "Progress cgfloat %d", progress))
+        })
+
+    }
+    var transferManager = AWSS3TransferManager.defaultS3TransferManager()
+    var download = transferManager.download(downloadRequest) as BFTask
+
+    download.continueWithBlock { (task) -> AnyObject! in
+        if (task.error != nil)
+        {
+            println(task.error)
+            completion(false)
+        }
+        else
+        {
+            println("success")
+            completion(true)
+        }
+
+        return nil;
+
+    }
+}
+

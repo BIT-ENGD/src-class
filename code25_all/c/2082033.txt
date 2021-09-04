@@ -1,0 +1,324 @@
+const MAXLEN = 1024;
+
+/*
+ * Type for storing path
+ */
+typedef string filename<MAXLEN>;
+
+/*
+ * Structure for sending request. Expects the path of the file
+ * and the byte number at which to start reading the file from
+ */
+struct request {
+    filename name;
+    int start;
+};
+
+/*
+ * Type that represents the structute for request
+ */
+typedef struct request request;
+
+/*
+ * Type for storing a chunk of the file that is being
+ * sent from the server to the client in the current
+ * remote procedure call
+ */
+typedef string filechunk<MAXLEN>;
+
+/*
+ * Response sent by the server to the client as a response
+ * to remote procedure call, containing the filechunk for
+ * the current call and number of bytes actually read
+ */
+struct chunkreceive {
+    filechunk data;
+    int bytes;
+};
+
+/*
+ * Type that represents the structure for file's chunks
+ * to be received from the server
+ */
+typedef struct chunkreceive chunkreceive;
+
+/*
+ * File data sent by the server from client to store
+ * it on the server along with the filename and the
+ * number of bytes in the data
+ */
+struct chunksend {
+    filename name;
+    filechunk data;
+    int bytes;
+};
+
+/*
+ * Type that represents the structure for file's chunks
+ * to be sent to the server 
+ */
+typedef struct chunksend chunksend;
+
+/*
+ * union for returning from remote procedure call, returns
+ * the proper chunkdata response if everything worked fine
+ * or will return the error number if an error occured
+ */
+union readfile_res switch (int errno) {
+    case 0:
+        chunkreceive chunk;
+    default:
+        void;
+};
+
+/*
+ * Remote procedure defined in the Interface Definition Language
+ * of SUN RPC, contains PROGRAM and VERSION name definitions and
+ * the remote procedure signature
+ */
+program FTPPROG {
+    version FTPVER {
+        readfile_res retrieve_file(request *) = 1;
+        int send_file(chunksend *) = 2;
+    } = 1;
+} = 0x20000011;
+
+#include <rpc/rpc.h>
+#include <stdio.h>
+#include "ftp.h"
+
+extern __thread int errno;
+
+readfile_res* retrieve_file_1_svc(request *req, struct svc_req *rqstp)
+{
+    FILE *file;
+    char data[1024];
+    int bytes;
+    static readfile_res res;
+
+    file = fopen(req->name, "rb");
+    if (file == NULL) {
+        res.errno = errno;
+        return (&res);
+    }
+
+    fseek (file, req->start, SEEK_SET);
+    bytes = fread(data, 1, 1024, file);
+
+    res.readfile_res_u.chunk.data = data;
+    res.readfile_res_u.chunk.bytes = bytes;
+
+    /*
+     * Return the result
+     */
+    res.errno = 0;
+    fclose(file);
+    return (&res);
+}
+
+int* send_file_1_svc(chunksend *rec, struct svc_req *rqstp)
+{
+    FILE *file;
+    int write_bytes;
+    static int result;
+
+    file = fopen(rec->name, "a");
+    if (file == NULL) {
+        result = errno;
+        return &result;
+    }
+
+    write_bytes = fwrite(rec->data, 1, rec->bytes, file);
+    fclose(file);
+
+    result = 0;
+    return &result;
+}
+
+#include <rpc/rpc.h>
+#include <stdio.h>
+#include <string.h>
+#include "ftp.h"
+
+extern __thread int errno;
+
+int get_file(char *host, char *name)
+{
+    CLIENT *clnt;
+    int total_bytes = 0, write_bytes;
+    readfile_res *result;
+    request req;
+    FILE *file;
+
+    req.name = name;
+    req.start = 0;
+
+    /*
+     * Create client handle used for calling FTPPROG on
+     * the server designated on the command line. Use
+     * the tcp protocol when contacting the server.
+     */
+    clnt = clnt_create(host, FTPPROG, FTPVER, "tcp");
+    if (clnt == NULL) {
+        /*
+         * Couldn't establish connection with server.
+         * Print error message and stop.
+         */
+         clnt_pcreateerror(host);
+         exit(1);
+    }
+
+    file = fopen(name, "wb");
+
+    /*
+     * Call the remote procedure readdir on the server
+     */
+    while (1) {
+        req.start = total_bytes;
+        result = retrieve_file_1(&req, clnt);
+        if (result == NULL) {
+            /*
+             * An RPC error occurred while calling the server.
+             * Print error message and stop.
+             */
+            clnt_perror(clnt, host);
+            exit(1);
+        }
+
+        /*
+         * Okay, we successfully called the remote procedure.
+         */
+        if (result->errno != 0) {
+            /*
+             * A remote system error occurred.
+             * Print error message and stop.
+             */
+            errno = result->errno;
+            perror(name);
+            exit(1);
+        }
+
+        /*
+         * Successfully got a chunk of the file.
+         * Write into our local file.
+         */
+        write_bytes = fwrite(result->readfile_res_u.chunk.data, 1, result->readfile_res_u.chunk.bytes, file);
+        total_bytes += result->readfile_res_u.chunk.bytes;
+        if (result->readfile_res_u.chunk.bytes < MAXLEN) 
+            break;
+    }
+
+    fclose(file);
+
+    return 0;
+}
+
+int put_file(char *host, char *name)
+{
+    CLIENT *clnt;
+    char data[1024];
+    int total_bytes = 0, read_bytes;
+    int *result;
+    chunksend chunk;
+    FILE *file;
+
+    /*
+     * Create client handle used for calling FTPPROG on
+     * the server designated on the command line. Use
+     * the tcp protocol when contacting the server.
+     */
+    clnt = clnt_create(host, FTPPROG, FTPVER, "tcp");
+    if (clnt == NULL) {
+        /*
+         * Couldn't establish connection with server.
+         * Print error message and stop.
+         */
+         clnt_pcreateerror(host);
+         exit(1);
+    }
+
+    file = fopen(name, "r");
+
+    chunk.name = name;
+
+    /*
+     * Call the remote procedure readdir on the server
+     */
+    while (1) {
+        read_bytes = fread(data, 1, MAXLEN, file);
+        total_bytes += read_bytes;
+
+        chunk.data = data;
+        chunk.bytes = read_bytes;
+        result = send_file_1(&chunk, clnt);
+
+        if (result == NULL) {
+            /*
+             * An RPC error occurred while calling the server.
+             * Print error message and stop.
+             */
+            clnt_perror(clnt, host);
+            exit(1);
+        }
+
+        /*
+         * Okay, we successfully called the remote procedure.
+         */
+        if (*result != 0) {
+            /*
+             * A remote system error occurred.
+             * Print error message and stop.
+             */
+            errno = *result;
+            perror(name);
+            exit(1);
+        }
+
+        /*
+         * Successfully got a chunk of the file.
+         * Write into our local file.
+         */
+        if (read_bytes < MAXLEN) 
+            break;
+    }
+
+    fclose(file);
+
+    return 0;
+}
+
+int read_command(char *host)
+{
+    char command[MAXLEN], filepath[MAXLEN];
+
+    printf("> ");
+    fflush(stdin);
+    scanf("%s %s", command, filepath);
+
+    if (strcmp(command, "get") == 0) {
+        return get_file(host, filepath);
+    } else if(strcmp(command, "put") == 0){
+        return put_file(host, filepath);
+    } else if(strcmp(command, "exit") == 0){
+        exit(0);
+    } else {
+        return -1;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+   int result;
+
+   if (argc != 2) {
+        fprintf(stderr, "usage: %s host\n", argv[0]);
+        exit(1);
+   }
+
+   while(TRUE) {
+       result = read_command(argv[1]);
+   }
+
+   return 0;
+}
+

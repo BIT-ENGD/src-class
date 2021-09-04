@@ -1,0 +1,50 @@
+import scalaz._, Scalaz._
+import Free._, effect._
+
+val fromOneIO: () => IO[Int] = {
+  var i = 0; () => { i += 1; IO(i) }
+} 
+val fromOne: () => Int = {
+  var i = 0; () => { i += 1; i }
+}
+
+def rec(i: Int): Int = {
+  if (i == 0) {
+    fromOne()
+  } else {
+    rec(i - 1) + fromOne()
+  }
+}
+def rec1(i: Int): Trampoline[Int] = {
+  if (i == 0) {
+    Return(fromOne())
+  } else {
+    suspend {
+      for {
+        a <- rec1(i - 1)
+        b <- Return(fromOne()): Trampoline[Int]
+      } yield a + b
+    }
+  }
+}
+def recio(i: Int): Trampoline[IO[Int]] = {
+  if (i == 0) {
+    Return(fromOneIO())
+  } else {
+    suspend {
+      for {
+        ioa <- recio(i - 1)
+        iob <- Return(fromOneIO()): Trampoline[IO[Int]]
+      } yield {
+        for (a <- ioa; b <- iob) yield a + b
+      }
+    }
+  }
+}
+
+rec(100) // overflows for arg 10000
+rec1(10000).run // works
+recio(10000).run.unsafePerformIO() //overflows
+
+TrampolineT
+unsafePerformIO

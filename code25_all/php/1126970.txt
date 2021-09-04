@@ -1,0 +1,366 @@
+<?php
+
+/**
+ * A class to generate html tags
+ * @author Glen Solsberry
+ */
+class HTML {
+
+    private $isOpen;
+    /**
+     * holds all information about tags
+     * @var $tags array
+     */
+    private $tags;
+    private $current_tag = 0;
+
+    private $depth = 0;
+    private $output = "";
+
+    private $separator = " ";
+    private $pretty_print = true;
+
+    /**
+     * Set the pretty_print status
+     * @author Glen Solsberry
+     */
+    public function setPretty($new_value) {
+        $this->pretty_print = (bool)$new_value;
+    }
+
+    /**
+     * Set the "separator" (the string that will be printed before tags on a new line)
+     * @author Glen Solsberry
+     */
+    public function setSeparator($new_value) {
+        $this->separator = $new_value;
+    }
+
+    /**
+     * add a tag to the "DOM"
+     * @author Glen Solsberry
+     */
+    public function tag($tag) {
+        $this->updateChildrenAndParent();
+
+        $this->tags[$this->current_tag]['tag'] = $tag;
+        $this->tags[$this->current_tag]['open'] = true;
+
+        return $this;
+    }
+
+    /**
+     * set an attribute on the current tag
+     * @author Glen Solsberry
+     */
+    public function attr($key, $value) {
+        $this->tags[$this->current_tag]['attrs'][$key] = $value;
+
+        return $this;
+    }
+
+    /**
+     * close the current tag, if it's open.  if the tag is already closed, we work back up the chain to determine which tag needs to be closed.
+     * @author Glen Solsberry
+     */
+    public function close() {
+        if ($this->isOpen($this->current_tag)) {
+            $this->tags[$this->current_tag]['open'] = false;
+        } else {
+            // work backwards till we find the first open tag, and close it
+            for($previous_id = $this->current_tag - 1; $previous_id >= 0; $previous_id--) {
+                if ($this->isOpen($previous_id)) {
+                    $this->tags[$previous_id]['open'] = false;
+                    break;
+                }
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * Create a text node
+     * @author Glen Solsberry
+     */
+    public function text($text) {
+        $this->updateChildrenAndParent();
+
+        $this->tags[$this->current_tag]['text'] = $text;
+        $this->tags[$this->current_tag]['open'] = false;
+
+        return $this;
+    }
+
+    /**
+     * Updates children and parent information, so that all tags link properly.
+     * Duplicates will be handled later.
+     * @author Glen Solsberry
+     */
+    private function updateChildrenAndParent() {
+        // if the current tag is still open, then this needs to be a child of it
+        if ($this->isOpen($this->current_tag)) {
+            $this->tags[$this->current_tag]['children'][] = count($this->tags);
+        }
+        $this->current_tag = count($this->tags);
+        // default value for this tags parent
+        $this->tags[$this->current_tag]['parent'] = $this->current_tag - 1;
+
+        for($parent_id = $this->current_tag - 1; $parent_id >= 0; $parent_id--) {
+            // is the parent still open?
+            if ($this->isOpen($parent_id)) {
+                $this->tags[$this->current_tag]['parent'] = $parent_id;
+                $this->tags[$parent_id]['children'][] = $this->current_tag;
+                break;
+            }
+        }
+    }
+
+    /**
+     * Determines whether the passed tag_id is open
+     * @author Glen Solsberry
+     */
+    private function isOpen($tag_id) {
+        return (bool)$this->tags[$tag_id]['open'];
+    }
+
+    /**
+     * Determines whether the passed tag_id is closed
+     * @author Glen Solsberry
+     */
+    private function isClosed($tag_id) {
+        return (bool)!$this->tags[$tag_id]['open'];
+    }
+
+    /**
+     * Generates a single tag's html represenation.  Called recursively if there are children
+     * @author Glen Solsberry
+     */
+    private function generateTag($tag_id) {
+        $current_tag = $this->tags[$tag_id];
+
+        if (isset($current_tag['tag'])) {
+            $this->output .= "<" . $current_tag['tag'];
+            if (isset($current_tag['attrs'])) {
+                ksort($current_tag['attrs']);
+                foreach($current_tag['attrs'] as $key => $value) {
+                    $this->output .= " " . $key . "=\"" . htmlspecialchars($value) . "\"";
+                }
+            }
+            $this->output .= $this->pretty_print(">");
+
+            if (isset($current_tag['children']) && count($current_tag['children']) > 0) {
+                $children = array_unique($current_tag['children']);
+                foreach($children as $position => $child_id) {
+                    $this->depth++;
+                    $this->generateTag($child_id);
+                    $this->depth--;
+                }
+                $this->output .= $this->pretty_print("</" . $current_tag['tag'] . ">");
+            } else {
+                $this->output .= $this->pretty_print("</" . $current_tag['tag'] . ">");
+                $this->depth--;
+            }
+        } else if (isset($current_tag['text'])) {
+            $this->output .= $current_tag['text'];
+        }
+    }
+
+    /**
+     * Pretty prints the output.  Uses newlines and line starters.
+     * @author Glen Solsberry
+     */
+    private function pretty_print($string) {
+        $output = "";
+        if ($this->pretty_print == true && $this->depth > 0) {
+            $output .= str_repeat($this->separator, $this->depth);
+        }
+        $output .= $string;
+        if ($this->pretty_print == true) {
+            $output .= "\n";
+        }
+        return $output;
+    }
+
+    function __toString() {
+        $this->generateTag(0);
+        return $this->output;
+    }
+
+}
+
+?>
+
+<?php
+require_once 'PHPUnit/Framework.php';
+require_once 'PHPUnit/Extensions/OutputTestCase.php';
+require_once '../html.class.inc';
+
+class HTMLTest extends PHPUnit_Extensions_OutputTestCase
+{
+    public function testOutputLooksCorrect1() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+        $html->close();
+
+        $this->expectOutputString('<html></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect2() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head></head></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect3() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("rel", "stylesheet")->attr("href", "testOutputLooksCorrect.css")->attr("type", "text/css")->close();
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link></head></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect4() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("href", "testOutputLooksCorrect.css")->attr("rel", "stylesheet")->attr("type", "text/css")->close();
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link></head></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect5() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("type", "text/css")->attr("href", "testOutputLooksCorrect.css")->attr("rel", "stylesheet")->close();
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link></head></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect10() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("rel", "stylesheet")->attr("href", "testOutputLooksCorrect.css")->attr("type", "text/css")->close();
+            $html->close();
+            $html->tag("body");
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link></head><body></body></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect11() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("rel", "stylesheet")->attr("href", "testOutputLooksCorrect.css")->attr("type", "text/css")->close();
+            $html->close();
+            $html->tag("body");
+                $html->text("This is a testOutputLooksCorrect.");
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link></head><body>This is a testOutputLooksCorrect.</body></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect12() {
+        $html = $this->sharedFixture;
+
+        $html->text("This is a testOutputLooksCorrect.");
+
+        $this->expectOutputString('This is a testOutputLooksCorrect.');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect13() {
+        $html = $this->sharedFixture;
+
+        $html->tag("head")->close();
+
+        $this->expectOutputString('<head></head>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect14() {
+        $html = $this->sharedFixture;
+
+        $html->tag("head")->tag("title")->text("This is the title")->close()->close();
+
+        $this->expectOutputString('<head><title>This is the title</title></head>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect15() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("rel", "stylesheet")->attr("href", "testOutputLooksCorrect.css")->attr("type", "text/css")->close();
+                $html->tag("meta")->attr("http-equiv", "Content-Type")->attr("content", "text/html; charset=utf-8")->close();
+            $html->close();
+            $html->tag("body");
+                $html->text("This is a testOutputLooksCorrect.");
+            $html->close();
+        $html->close();
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link><meta content="text/html; charset=utf-8" http-equiv="Content-Type"></meta></head><body>This is a testOutputLooksCorrect.</body></html>');
+        print $html;
+    }
+
+    public function testOutputLooksCorrect16() {
+        $html = $this->sharedFixture;
+
+        $html->tag("html");
+            $html->tag("head");
+                $html->tag("link")->attr("rel", "stylesheet")->attr("href", "testOutputLooksCorrect.css")->attr("type", "text/css")->close();
+                $html->tag("meta")->attr("http-equiv", "Content-Type")->attr("content", "text/html; charset=utf-8")->close();
+                $html->tag("script")->attr("type", "javascript")->attr("src", "blah.js")->close();
+            $html->close();
+            $html->tag("body");
+                $html->text("This is a testOutputLooksCorrect.");
+            $html->close();
+        $html->close();
+
+        $this->expectOutputString('<html><head><link href="testOutputLooksCorrect.css" rel="stylesheet" type="text/css"></link><meta content="text/html; charset=utf-8" http-equiv="Content-Type"></meta><script src="blah.js" type="javascript"></script></head><body>This is a testOutputLooksCorrect.</body></html>');
+        print $html;
+    }
+
+    protected function setUp() {
+        $html = new HTML;
+        $html->setPretty(0);
+        $this->sharedFixture = $html;
+    }
+
+    protected function tearDown() {
+        $this->sharedFixture = NULL;
+    }
+}
+?>
+
+updateChildrenAndParent

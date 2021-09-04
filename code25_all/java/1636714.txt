@@ -1,0 +1,219 @@
+package com.tel.snmp;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.io.IOException;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+public class ThreadPooledServer implements Runnable{
+
+
+    protected int          serverPort   = 4444;//hk
+    protected ServerSocket serverSocket = null;
+    protected boolean      isStopped    = false;
+    protected Thread       runningThread= null;
+    public BlockingQueue q = new ArrayBlockingQueue(20);
+    public static int clientconnection = 0;
+
+
+    ThreadPoolExecutor threadpool = new ThreadPoolExecutor(4,10,20,TimeUnit.SECONDS,q);
+
+    public ThreadPooledServer(int port){
+         this.serverPort = port; // wrk2
+           }
+
+    public void run()
+    {
+        synchronized(this)
+        {
+            this.runningThread = Thread.currentThread();
+        }
+        openServerSocket();
+        while(! isStopped()){
+            Socket clientSocket = null;
+            try 
+            {
+                 //System.out.println("the value of client connection BEFORE  is"+clientconnection);
+
+                clientSocket = this.serverSocket.accept();
+                clientconnection++;
+                System.out.println("the value of client connection is"+clientconnection);
+            } catch (IOException e)
+            {
+                if(isStopped()) 
+                {
+                    System.out.println("Server Stopped.") ;
+                    return;
+                }
+                throw new RuntimeException(
+                    "Error accepting client connection", e);
+            }
+          this.threadpool.execute(new WorkerRunnable(clientSocket,"Thread pooled server")); 
+
+        }
+        System.out.println("Server Stopped.") ;
+    }
+
+
+    private synchronized boolean isStopped() {
+        return this.isStopped;
+    }
+
+    public synchronized void stop(){
+        this.isStopped = true;
+        try {
+            this.serverSocket.close();
+        } catch (IOException e) {
+            throw new RuntimeException("Error closing server", e);
+        }
+    }
+
+    private void openServerSocket() {
+        try {
+            this.serverSocket = new ServerSocket(this.serverPort); //wrkr2
+                     } 
+        catch (IOException e) {
+            throw new RuntimeException("Cannot open port serverPort"+serverPort, e);
+        }
+    }
+}
+-----------------------------Worker Runnable class-----------------------------
+/*
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
+package com.tel.snmp;
+
+/**
+ *
+ * @author harikrishnadv
+ */
+import com.tel.common.ProtocolSelector;
+import java.io.*;
+import java.net.*;
+
+
+/*public class WorkerRunnable implements Runnable{
+
+    protected Socket clientSocket = null;
+    protected String serverText   = null;
+
+    public WorkerRunnable(Socket clientSocket, String serverText) {
+        this.clientSocket = clientSocket;
+        this.serverText   = serverText;
+    }
+
+    public void run() {
+        try {
+            InputStream input  = clientSocket.getInputStream();
+            OutputStream output = clientSocket.getOutputStream();
+            long time = System.currentTimeMillis();
+            output.write(("HTTP/1.1 200 OK\n\nWorkerRunnable: " +
+                    this.serverText + " - " +
+                    time +
+                    "").getBytes());
+            output.close();
+            input.close();
+            System.out.println("Request processed: " + time);
+        } catch (IOException e) {
+            //report exception somewhere.
+            e.printStackTrace();
+        }
+    }
+}
+*/
+public class WorkerRunnable  implements Runnable
+{
+    FileInputStream fis;
+ FileOutputStream fos;
+ BufferedInputStream bis;
+ BufferedOutputStream bos;
+        String filename="clientfile";
+        String fname=null;
+ //Socket soc;
+        int flag=0;
+ int ch;
+        //static int count=0;// new
+    protected Socket clientSocket = null;
+    protected String serverText   = null;
+
+    public WorkerRunnable(Socket clientSocket, String serverText) {
+        this.clientSocket = clientSocket;
+        this.serverText   = serverText;
+
+    }
+
+   public synchronized  void  run() {
+  try {
+   receiveFile();
+                       /*try{
+                             this.wait();
+                        }
+                       catch(InterruptedException i)
+                       {
+
+                       }*/
+                     if(flag==1)
+                        {  
+                         System.out.println("**********************************************************************************************************************************");
+                         sendFile();                        
+                        }
+                      closeAll();
+  } catch (IOException e) {
+   // TODO Auto-generated catch block
+   e.printStackTrace();
+  }
+ }
+
+        /** Method to send the response file to the client */
+ public void sendFile() throws IOException {
+  // SENDING A FILE
+                //String sendfile=EMS.fileprocessname+EMS.clientcount+".xml";
+                String sendfile=EM.fileprocessname;//+EM.clientcount;
+                System.out.println("filename that has been sending to client is"+sendfile);
+                bos = new BufferedOutputStream(clientSocket.getOutputStream());  
+                //fis = new FileInputStream("C://outputs.xml");
+                fis = new FileInputStream(sendfile);
+  while ((ch = fis.read()) != -1) {
+   bos.write(ch);
+   bos.flush();
+  }
+  bos.write(-1);
+  bos.flush();
+
+  System.out.println("File Sent to :: " + clientSocket);
+  fis.close();               
+ }
+
+ /** Method to receive input file from client */
+        public void receiveFile() throws IOException {
+  // RECEIVING A FILE
+                 fname="C://"+filename+ThreadPooledServer.clientconnection+".xml";
+  bis = new BufferedInputStream(clientSocket.getInputStream());  
+                //fos = new FileOutputStream("C://client.xml");
+                fos = new FileOutputStream(fname);
+  while ((ch = bis.read()) != 255) {
+   fos.write(ch);
+   fos.flush();
+  }
+  System.out.println("File Received from :: " +clientSocket);
+  fos.close();
+
+                if(flag==0){
+                    ProtocolSelector m=new ProtocolSelector();                
+                    //m.xmldecider("C://client.xml");
+
+                    m.xmldecider(fname);
+                    flag=1;                                
+                }
+ }
+
+ public void closeAll() throws IOException {
+  bis.close();
+  bos.close();
+ }
+}
+

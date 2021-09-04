@@ -1,0 +1,68 @@
+Partial Public MustInherit Class TestBase
+
+    Private _scope As Transactions.TransactionScope
+
+    <DebuggerStepThrough()> _
+    <TestInitialize()> _
+    Public Sub Setup()
+
+            //'Start the Distribution Transaction Coordinator, if it's not already running.
+            Using dtcService As New System.ServiceProcess.ServiceController("Distributed Transaction Coordinator", My.Computer.Name)
+                    If dtcService.Status = ServiceProcess.ServiceControllerStatus.Stopped Then
+                            dtcService.Start()
+                    End If
+            End Using
+
+            _scope = New TransactionScope(TransactionScopeOption.RequiresNew, New TimeSpan(0))
+    End Sub
+
+    <DebuggerStepThrough()> _
+    <TestCleanup()>
+    Public Sub Teardown()
+        If _scope IsNot Nothing Then
+            _scope.Dispose()
+        End If
+    End Sub
+
+    <System.Diagnostics.DebuggerStepThrough()> _
+    Public Shared Function ExecSql(ByVal sql As String) As System.Data.DataTable
+
+        Dim connStr = GlobalSettings.GetConnectionString()
+        Using conn As New System.Data.SqlClient.SqlConnection(connStr)
+            conn.Open()
+
+            Dim cmd As New System.Data.SqlClient.SqlCommand(sql.ToString, conn)
+            Dim adapter As System.Data.SqlClient.SqlDataAdapter = New System.Data.SqlClient.SqlDataAdapter(cmd)
+            Dim dt As System.Data.DataTable = New System.Data.DataTable
+            adapter.Fill(dt)
+
+            Return dt
+
+            If conn.State <> System.Data.ConnectionState.Closed Then
+                conn.Close()
+            End If
+            conn.Dispose()
+        End Using
+    End Function
+End Class
+
+Partial Public Class CampaignEmailSendLimitServiceTests
+    Inherits TestBase
+
+    Private _service = ServiceManager.Current.MyService
+
+    <TestMethod()> _
+    Public Sub MyTest()
+        //' Set the pre-test condition.
+        ExecSql("update base.dbo.tblTableA set someDate = '2010-06-28' where id = 56937 ")
+
+        //' Run the service
+        _service.Process()
+
+       //' Verify the expected result
+       Dim dt = ExecSql("select deliveryDate from tblTableB ")
+       Assert.AreEqual(False, dt.Rows(0).IsNull("deliveryDate"))
+
+    End Sub
+End Class
+

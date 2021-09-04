@@ -1,0 +1,73 @@
+sendmsg
+readv() failed (104: Connection reset by peer) while reading upstream
+
+import sys
+import socket
+sock = socket.socket(socket.AF_UNIX)
+sock.connect(sys.argv[1])
+while 1:
+    data = sock.recv(1024)
+    if not data: break
+    print data
+
+#include <time.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+const char response[] =
+    "HTTP/1.0 200 OK\r\n"
+    "Content-Type: text/plain\r\n"
+    "Content-Length: 4\r\n"
+    "\r\n"
+    "test";
+
+int main(int argc, char** argv)
+{
+    struct msghdr msg;
+    msg.msg_name = 0;
+    msg.msg_namelen = 0;
+    struct iovec iov;
+    char c;
+    iov.iov_base = &c;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    char control[CMSG_SPACE(sizeof(int))];
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    struct cmsghdr* cmsg_ptr = CMSG_FIRSTHDR(&msg);
+    int pair[2];
+    socketpair(AF_UNIX, SOCK_STREAM, 0, pair);
+    if (fork()) {
+        close(pair[1]);
+        cmsg_ptr->cmsg_level = SOL_SOCKET;
+        cmsg_ptr->cmsg_type = SCM_RIGHTS;
+        cmsg_ptr->cmsg_len = CMSG_LEN(sizeof(int));
+        int listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        unlink(argv[1]);
+        struct sockaddr_un address;
+        address.sun_family = AF_UNIX;
+        strncpy(address.sun_path, argv[1], sizeof(address.sun_path) - 1);
+        bind(listen_fd, (struct sockaddr*)(&address), SUN_LEN(&address));
+        chmod(argv[1], 0666);
+        listen(listen_fd, SOMAXCONN);
+        for (;;) {
+            int conn_fd = accept(listen_fd, 0, 0);
+            *(int*)(CMSG_DATA(cmsg_ptr)) = conn_fd;
+            sendmsg(pair[0], &msg, 0);
+/*             sleep(1); */
+            close(conn_fd);
+        }
+    } else {
+        close(pair[0]);
+        for (;;) {
+            recvmsg(pair[1], &msg, 0);
+            int conn_fd = *(int*)(CMSG_DATA(cmsg_ptr));
+            write(conn_fd, response, sizeof(response));
+/*             shutdown(conn_fd, SHUT_WR); */
+            close(conn_fd);
+        }
+    }
+    return 0;
+}
+

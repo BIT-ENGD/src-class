@@ -1,0 +1,72 @@
+on_data: data = gis@v04ree:~>
+got gis@v04ree:~>
+
+require 'net/ssh'
+require 'net/sftp'
+
+class Connection
+  def connect
+host = 'host'
+user = 'user'
+
+#1. Login
+Net::SSH.start(host, user) do |ssh|
+  puts ssh.exec!("whoami")
+  #2. su
+  begin
+    puts(su(ssh, "otherUser", "otherPwd"))
+  rescue Exception => e
+    puts e
+  end
+  #3. work
+  puts "logged in as " << ssh.exec!("whoami")
+  ssh.close
+end
+end
+
+def su(ssh, user, pwd)
+ channel = ssh.open_channel do |ch|
+  channel.request_pty do |ch, success|
+    raise "Could not obtain pty (i.e. an interactive ssh session)" if !success
+  end
+
+  command = "su - #{user}\n"
+  puts "command = #{command}"
+  channel.exec command do |ch, success|
+    raise "could not execute command" unless success
+
+    # "on_data" is called when the process writes something to stdout
+    ch.on_data do |c, data|
+      puts "on_data: data = "+data
+      if data == "Password: "
+        puts "Password request"
+        channel.send_data "#{pwd}\n"
+      end
+      if data == "gis@v04ree:~> "
+        #logged in as gis
+        puts "got gis@v04ree:~>"
+        #and now? What's next?
+        #channel.eof! # <-doesn't work
+
+        ch.exec "ls" do |ch, success| #<- doesn't work either: success is false
+          unless success
+            puts "alas! the command could not be invoked!"
+          end
+        end
+      end
+    end
+    #wouldn't be called
+    ch.on_extended_data do |c, type, data|
+      puts "on_extended_data: data = #{data}"
+    end
+  end #end su - gis
+
+  #which statement
+  ssh.loop
+  #channel.wait
+end
+end
+end #class end
+
+Connection.new.connect
+

@@ -1,0 +1,86 @@
+InstallUtil.exe myservice.exe
+
+Restoring event log to previous state for source DebtorInvoiceMailingService.
+An exception occurred during the Rollback phase of the System.Diagnostics.EventLogInstaller installer.
+System.Security.SecurityException: The source was not found, but some or all event logs could not be searched.  Inaccessible logs: Security.
+An exception occurred during the Rollback phase of the installation. This exception will be ignored and the rollback will continue. However, the machine might not fully
+
+Imports System.ServiceProcess
+Imports System.Timers
+
+Public Class DebtorInvoiceMailingService
+    Inherits ServiceBase
+    Private _timer As Timer
+    Private _lastRun As DateTime = DateTime.Now
+    Private _notificationsManager As Notifications
+
+    Public Sub New()
+        Me.ServiceName = "DebtorInvoiceMailingService"
+    End Sub
+
+    'When service starts
+    Protected Overrides Sub OnStart(ByVal args() As String)
+        MyBase.OnStart(args)
+        'This object will do what im looking for (monitore a folder)
+        Me._notificationsManager = New Notifications
+        Me._timer = New Timer
+        'Service will be executed every 24 hours
+        Me._timer.Interval = 1000 * 60 * 60 * 24
+        Me._timer.Enabled = True
+        'Service will execute timer_Elapsed()
+        AddHandler Me._timer.Elapsed, AddressOf timer_Elapsed
+    End Sub
+
+    'When service stops
+    Protected Overrides Sub OnStop()
+        MyBase.OnStop()
+        Me._timer.Dispose()
+    End Sub
+
+    'Function executed every 24 hours
+    Private Sub timer_Elapsed(ByVal sender As Object, ByVal e As ElapsedEventArgs)
+        If (Me._lastRun.Date > DateTime.Now.Date) Then
+            Me._timer.Stop()
+            'You have to stop your timer because if the task that you 
+            'are about to perform takes longer than the timer.interval
+            'the task will be executed multiple times
+            Me._notificationsManager.execute() 'this function will send an email
+            Me._lastRun = DateTime.Now
+            Me._timer.Start()
+        End If
+    End Sub
+
+    Shared Sub Main()
+        ServiceBase.Run(New DebtorInvoiceMailingService)
+    End Sub
+End Class
+
+Imports System
+Imports System.ServiceProcess
+Imports System.ComponentModel
+Imports System.Configuration.Install
+
+<RunInstallerAttribute(True)> _
+Public Class ProjectInstaller
+    Inherits System.Configuration.Install.Installer
+    Public WithEvents ServiceProcessInstaller1 As ServiceProcessInstaller
+    Public WithEvents ServiceInstaller1 As ServiceInstaller
+
+    Public Sub New()
+        MyBase.New()
+        Me.ServiceProcessInstaller1 = New ServiceProcessInstaller()
+        Me.ServiceInstaller1 = New ServiceInstaller()
+        'ServiceProcessInstaller1
+        Me.ServiceProcessInstaller1.Account = System.ServiceProcess.ServiceAccount.LocalSystem
+        Me.ServiceProcessInstaller1.Password = Nothing
+        Me.ServiceProcessInstaller1.Username = Nothing
+        'ServiceInstaller1
+        Me.ServiceInstaller1.Description = "Auto mailing invoices to debtors every 24 hours."
+        Me.ServiceInstaller1.DisplayName = "DebtorInvoiceMailingService"
+        Me.ServiceInstaller1.ServiceName = "DebtorInvoiceMailingService"
+        Me.ServiceInstaller1.StartType = ServiceStartMode.Manual
+        'ProjectInstaller
+        Me.Installers.Add(Me.ServiceProcessInstaller1)
+        Me.Installers.Add(Me.ServiceInstaller1)
+    End Sub
+

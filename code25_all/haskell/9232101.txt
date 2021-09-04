@@ -1,0 +1,102 @@
+"the quick brown fox jumps over the lazy dog".
+
+data InterestingWord = Quick | The | Fox deriving Show
+data Snippet = Word InterestingWord | Rest String deriving Show
+
+[Word The,
+ Rest " ", Word Quick,
+ Rest " brown ", Word Fox,
+ Rest " jumped over ", Word The,
+ Rest " lazy dog"]
+
+import Text.Parsec
+import Data.Maybe
+import Data.Ord    
+import Data.List
+
+data InterestingWord = Quick | The | Fox deriving Show
+data Snippet = Word InterestingWord | Rest String deriving Show
+
+testCase = "the quick brown fox jumped over the lazy dog"
+-- Expected output:
+-- [Word The,
+--  Rest " ", Word Quick,
+--  Rest " brown ", Word Fox,
+--  Rest " jumped over ", Word The,
+--  Rest " lazy dog"]
+
+toString Quick = "quick"
+toString The = "the"
+toString Fox = "fox"
+
+-- First attempt
+
+-- Return characters upto the intended word along
+-- with the word itself
+upto word = do
+  pre <- manyTill anyChar $ lookAhead $ string (toString word)
+  word' <- try $ string (toString word)
+  return [Rest pre, Word word]
+
+-- Parsers for the interesting words
+parsers = [upto Quick,
+           upto The, 
+           upto Fox]
+
+-- Try each parser and return its results with the 
+-- rest of the input.
+-- An incorrect result is produced because "choice"
+-- picks the first successful parse result.
+wordParser = do
+  snippets <- many $ try $ choice parsers
+  leftOver <- many anyChar
+  return $ concat $ snippets ++ [[Rest leftOver]]
+
+-- [Rest "the ",Word Quick,Rest " brown fox jumped over the lazy dog"]        
+test1 = parseTest wordParser testCase
+
+-- Correct
+
+-- In addition to the characters leading upto the 
+-- word and the word, the position is also returned
+upto' word = do
+  result <- upto word
+  pos <- getPosition
+  return (pos, result)
+
+-- The new parsers         
+parsers' = [upto' Quick,
+            upto' The, 
+            upto' Fox]
+
+-- Try each of the given parsers and 
+-- possibly returning the results and
+-- the parser but don't consume
+-- input.
+tryAll = mapM (\p -> do
+                 r <- optionMaybe $ try (lookAhead p)
+                 case r of
+                   Just result -> return $ Just (p, result)
+                   Nothing -> return $ Nothing
+              )
+
+-- Pick the parser that has consumed the least.             
+firstSuccess ps = do
+  successes <- tryAll ps >>= return . catMaybes
+  if not (null successes) then
+      return $ Just (fst $ head (sortBy (comparing (\(_,(pos,_)) -> pos)) successes))
+  else return $ Nothing
+
+-- Return the parse results for the parser that 
+-- has consumed the least
+wordParser' = do
+  parser <- firstSuccess parsers'
+  case parser of
+    Just p -> do
+      (_,snippet) <- p
+      return snippet
+    Nothing -> parserZero
+
+-- Returns the right result
+test2 = parseTest (many wordParser' >>= return . concat) testCase
+

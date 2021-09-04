@@ -1,0 +1,59 @@
+Program received signal:  “EXC_BAD_ACCESS”.
+
+[self performSelectorInBackground:@selector(importAllData) withObject:nil];
+
+    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+
+    // load manufactuers from DB
+    NSFetchRequest *crequest    = [[NSFetchRequest alloc] init];
+    NSEntityDescription *manufacturer = [NSEntityDescription entityForName:@"Manufacturer" inManagedObjectContext:managedObjectContext];
+    [crequest setEntity:manufacturer];
+    NSError *cerror=nil;;
+    NSArray *manufacturers = [[managedObjectContext executeFetchRequest:crequest error:&cerror]mutableCopy];
+    [crequest release];
+
+for (int m=0; m < [manufacturers count]; m++) { 
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:kClientListURL, [[manufacturers objectAtIndex:m]ManufacturerID]]];
+
+            ASIHTTPRequest *request = [ASIHTTPRequest requestWithURL:url];
+            [request setNumberOfTimesToRetryOnTimeout:2];
+            [request startSynchronous];
+            NSError *error = [request error];
+            if (!error) {
+
+                NSString *responseString = [request responseString];
+                NSArray *items = [responseString JSONValue];
+
+                NSNumberFormatter *f = [[NSNumberFormatter alloc] init];
+                NSNumberFormatter *dec  = [[NSNumberFormatter alloc]init];
+                [dec setNumberStyle:NSNumberFormatterDecimalStyle];
+
+                for (int i = 0; i < [items count]; i++) 
+                {
+
+                    Client *entity = (Client*) [NSEntityDescription insertNewObjectForEntityForName:@"Client" inManagedObjectContext:managedObjectContext];
+                    [entity setCompanyName:[[items objectAtIndex:i] objectForKey:@"CompanyName"]];
+                    // set a bunch of other properties
+                    [entity setManufacturer:[manufacturers objectAtIndex:m]];
+
+                    statusMessage = [NSString stringWithFormat:@"importing client: %@", entity.CompanyName];
+                    [self performSelectorOnMainThread:@selector(setStatus) withObject:nil waitUntilDone:YES];
+                }
+
+                [f release];
+                [dec release];
+
+            } else {
+                NSLog(@"%@",[NSString stringWithFormat:@"JSON parsing failed: %@", [error localizedDescription]]);
+            }
+
+            NSError *entityerror;
+            if (![managedObjectContext save:&entityerror]) {
+                //  //Handle the error.
+                NSLog(@"\n\n\n Error saving clients: %@ \n\n\n\n",entityerror);
+            }
+    }
+    //More data importing code
+
+    [pool release];
+

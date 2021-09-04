@@ -1,0 +1,56 @@
+def instances_of_sql(ttype_id) #raw sql
+  ttype_id = get(ttype_id).try(:id)
+  ti   = get('tmdm:type-instance')
+  inst = get('tmdm:instance')
+  type = get('tmdm:type')
+
+  self.class.send :sanitize_sql, [%{
+    SELECT t.*
+    FROM associations a
+    JOIN roles type    ON type.association_id = a.id AND type.ttype_id = ?
+    JOIN roles inst    ON inst.association_id = a.id AND inst.ttype_id = ?
+    JOIN topics t      ON t.id = inst.topic_id
+    WHERE a.topic_map_id IN (?)
+    AND a.ttype_id    = ?
+    AND type.topic_id = ?
+  }, type.id, inst.id, self.ids, ti.id, ttype_id]
+end
+
+def instances_of_sql(ttype_id) #sequel
+  ttype_id = get(ttype_id).try(:id)
+  ti = get('tmdm:type-instance')
+  ir = get('tmdm:instance')
+  tr = get('tmdm:type')
+
+  DB.from(:associations.as(:a)).
+    join(:roles.as(:tr), :tr__association_id => :a__id, :tr__ttype_id => tr[:id]).
+    join(:roles.as(:ir), :ir__association_id => :a__id, :ir__ttype_id => ir[:id]).
+    join(:topics.as(:t), :t__id => :ir__topic_id).
+    where(:a__topic_map_id => self.ids).
+    where(:a__ttype_id => ti[:id]).
+    where(:tr__topic_id => ttype_id).
+    select(:t.*).sql
+end
+
+def instances_of_sql(ttype_id) #arel
+  ttype_id = get(ttype_id).try(:id)
+  ti   = get('tmdm:type-instance')
+  inst = get('tmdm:instance')
+  type = get('tmdm:type')
+
+  #tables
+  t    = Topic.arel_table
+  a    = Association.arel_table
+  tr   = Role.arel_table
+  ir   = tr.alias
+
+  a.
+    join(tr).on(tr[:association_id].eq(a[:id]),tr[:ttype_id].eq(type[:id])).
+    join(ir).on(ir[:association_id].eq(a[:id]),ir[:ttype_id].eq(inst[:id])).
+    join(t).on(t[:id].eq(ir[:topic_id])).
+    where(a[:topic_map_id].in(self.ids)).
+    where(a[:ttype_id].eq(ti[:id])).
+    where(tr[:topic_id].eq(ttype_id)).
+    project('topics.*').to_sql
+end
+

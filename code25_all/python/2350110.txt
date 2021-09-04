@@ -1,0 +1,149 @@
+#!/usr/bin/python
+
+import timeit
+import numpy
+import ctypes
+import random
+
+USE_RANDOM=True
+USE_STATIC_BUFFER=True
+
+STATIC_BUFFER = numpy.empty(4096*20, dtype=numpy.float32)
+
+def render(i):
+    # pretend these are different each time
+    if USE_RANDOM:
+        tex_left, tex_right, tex_top, tex_bottom = random.random(), random.random(), random.random(), random.random()
+        left, right, top, bottom = random.random(), random.random(), random.random(), random.random()
+    else:
+        tex_left, tex_right, tex_top, tex_bottom = 0.0, 1.0, 1.0, 0.0
+        left, right, top, bottom = -1.0, 1.0, 1.0, -1.0
+
+    ibuffer = (
+        tex_left, tex_bottom,   left, bottom, 0.0,  # Lower left corner
+        tex_right, tex_bottom,  right, bottom, 0.0, # Lower right corner
+        tex_right, tex_top,     right, top, 0.0,    # Upper right corner
+        tex_left, tex_top,      left, top, 0.0,     # upper left
+    )
+
+    return ibuffer
+
+
+
+# create python list.. convert to numpy array at end
+def create_array_1():
+    ibuffer = []
+    for x in xrange(4096):
+        data = render(x)
+        ibuffer += data
+
+    ibuffer = numpy.array(ibuffer, dtype=numpy.float32)
+    return ibuffer
+
+# numpy.array, placing individually by index
+def create_array_2():
+    if USE_STATIC_BUFFER:
+        ibuffer = STATIC_BUFFER
+    else:
+        ibuffer = numpy.empty(4096*20, dtype=numpy.float32)
+    index = 0
+    for x in xrange(4096):
+        data = render(x)
+        for v in data:
+            ibuffer[index] = v
+            index += 1
+    return ibuffer
+
+# using slicing
+def create_array_3():
+    if USE_STATIC_BUFFER:
+        ibuffer = STATIC_BUFFER
+    else:
+        ibuffer = numpy.empty(4096*20, dtype=numpy.float32)
+    index = 0
+    for x in xrange(4096):
+        data = render(x)
+        ibuffer[index:index+20] = data
+        index += 20
+    return ibuffer
+
+# using numpy.concat on a list of ibuffers
+def create_array_4():
+    ibuffer_concat = []
+    for x in xrange(4096):
+        data = render(x)
+        # converting makes a diff!
+        data = numpy.array(data, dtype=numpy.float32)
+        ibuffer_concat.append(data)
+    return numpy.concatenate(ibuffer_concat)
+
+# using numpy array.put
+def create_array_5():
+    if USE_STATIC_BUFFER:
+        ibuffer = STATIC_BUFFER
+    else:
+        ibuffer = numpy.empty(4096*20, dtype=numpy.float32)
+    index = 0
+    for x in xrange(4096):
+        data = render(x)
+        ibuffer.put( xrange(index, index+20), data)
+        index += 20
+    return ibuffer
+
+# using ctype array
+CTYPES_ARRAY = ctypes.c_float*(4096*20)
+def create_array_6():
+    ibuffer = []
+    for x in xrange(4096):
+        data = render(x)
+        ibuffer += data
+    ibuffer = CTYPES_ARRAY(*ibuffer)
+    return ibuffer
+
+def equals(a, b):
+
+    for i,v in enumerate(a):
+        if b[i] != v:
+            return False
+    return True
+
+
+
+if __name__ == "__main__":
+    number = 100
+
+    # if random, don't try and compare arrays
+    if not USE_RANDOM and not USE_STATIC_BUFFER:
+        a =  create_array_1()
+        assert equals( a, create_array_2() )
+        assert equals( a, create_array_3() )
+        assert equals( a, create_array_4() )
+        assert equals( a, create_array_5() )
+        assert equals( a, create_array_6() )
+
+    t = timeit.Timer( "testing2.create_array_1()", "import testing2" )
+    print 'from list:', t.timeit(number)/number*1000.0, 'ms'
+
+    t = timeit.Timer( "testing2.create_array_2()", "import testing2" )
+    print 'array: indexed:', t.timeit(number)/number*1000.0, 'ms'
+
+    t = timeit.Timer( "testing2.create_array_3()", "import testing2" )
+    print 'array: slicing:', t.timeit(number)/number*1000.0, 'ms'
+
+    t = timeit.Timer( "testing2.create_array_4()", "import testing2" )
+    print 'array: concat:', t.timeit(number)/number*1000.0, 'ms'
+
+    t = timeit.Timer( "testing2.create_array_5()", "import testing2" )
+    print 'array: put:', t.timeit(number)/number*1000.0, 'ms'
+
+    t = timeit.Timer( "testing2.create_array_6()", "import testing2" )
+    print 'ctypes float array:', t.timeit(number)/number*1000.0, 'ms'
+
+$ python testing2.py
+from list: 15.0486779213 ms
+array: indexed: 24.8184704781 ms
+array: slicing: 50.2214789391 ms
+array: concat: 44.1691994667 ms
+array: put: 73.5879898071 ms
+ctypes float array: 20.6674289703 ms
+

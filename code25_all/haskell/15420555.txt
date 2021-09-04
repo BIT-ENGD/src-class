@@ -1,0 +1,62 @@
+Ambiguous type variable `e0' in the constraint:
+  (Exception e0) arising from a use of `forkFinally'
+Probable fix: add a type signature that fixes these type variable(s)
+In a stmt of a 'do' block:
+  t <- forkFinally (echoHandler a) (exitPool p)
+In the expression:
+  do { a <- accept s;
+       t <- forkFinally (echoHandler a) (exitPool p);
+       atomically
+       $ do { p' <- readTVar p;
+              writeTVar p (t : p') };
+       repeatAccept s p }
+In an equation for `repeatAccept':
+    repeatAccept s p
+      = do { a <- accept s;
+             t <- forkFinally (echoHandler a) (exitPool p);
+             atomically
+             $ do { p' <- readTVar p;
+                    .... };
+             .... } Failed, modules loaded: none.
+
+type ConnectionHandler = (Handle, HostName, PortNumber) -> IO ()
+type Pool = TVar [ThreadId]
+
+runConn = do
+  s <- withSocketsDo (listenOn (PortNumber 1234))
+  p <- atomically (newTVar ([]::[ThreadId]))
+  t <- forkIO (repeatAccept s p)
+  repeatUntilExit stdin stdout putChar ""
+  p' <- atomically (readTVar p)
+  mapM killThread (t:p')
+
+repeatAccept s p = do
+  a <- accept s
+  t <- forkFinally (echoHandler a) (exitPool p) -- Error here, forkIO instead compiles fine.. (and I guess actually should work just fine too?)
+  atomically $ do
+    p' <- readTVar p
+    writeTVar p (t:p')
+  repeatAccept s p
+
+exitPool :: Pool -> a -> IO ()
+exitPool pool = \_ -> do
+  tid <- myThreadId
+  atomically $ do
+    pool' <- readTVar pool
+    writeTVar pool $ filter (/=tid) pool'
+    return ()
+
+echoHandler :: ConnectionHandler
+echoHandler a@(hdl,_,_) = repeatUntilExit hdl hdl echoToHandleAndStdout ""
+  where echoToHandleAndStdout x = hPutChar hdl x >> putChar x
+
+repeatUntilExit :: Handle -> Handle -> (Char -> IO ()) -> [Char] -> IO ()
+repeatUntilExit hIn hOut f "exit\n" = hPutStrLn hOut "bye\n"
+repeatUntilExit hIn hOut f x = hGetChar hIn >>= \c -> f c >> repeatUntilExit hIn hOut f (appendToLastFive c)
+  where appendToLastFive a = (reverse . (:)a . take 4 . reverse) x
+
+forkFinally :: Exception e => IO a -> (Either e a -> IO ()) -> IO ThreadId
+forkFinally action and_then =
+  mask $ \restore ->
+    forkIO $ try (restore action) >>= and_then
+

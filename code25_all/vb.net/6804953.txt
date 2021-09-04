@@ -1,0 +1,133 @@
+Imports System.Net
+Imports System.Threading
+Imports System.IO
+Imports System.Threading.Tasks
+
+Module Module2
+
+Dim closeEvent As New ManualResetEvent(False)
+Dim sw As System.Diagnostics.Stopwatch
+
+' first domain is invalid
+Dim urls() As String = {
+    "http://www.jbihgcgfxfdxdwewloevedfhvcdfb.com", 
+    "http://www.hanselman.com/blog/",
+    "http://www.stackoverflow.com/questions/",
+    "http://www.finderscope.net",
+    "http://msdn.microsoft.com/en-us/library/az24scfc.aspx",
+    "http://www.developerfusion.com/tools/convert/csharp-to-vb/"
+}
+
+Sub Test1()
+    sw = System.Diagnostics.Stopwatch.StartNew
+    Dim action As Action(Of Object) = Sub(url As String)
+                                          Dim wReq As WebRequest = WebRequest.Create(url)
+                                          RunWebStreamAsync(wReq, closeEvent)
+                                          Console.WriteLine("done in {0} ms : {1}", sw.ElapsedMilliseconds, Left(url, 50))
+                                      End Sub
+    Try
+        '' Cosntruct a started task
+        Dim t(5) As task
+        For i As Integer = 0 to 5
+            t(i) = New Task(action, urls(i)) 
+        Next
+        For Each tsk In t
+            tsk.Start()
+        Next
+        closeEvent.Set()
+        Task.WaitAll(t)
+    Catch ex As Exception
+        Console.WriteLine(ex.Message)
+    End Try
+    Console.WriteLine("total in {0} ms", sw.ElapsedMilliseconds)
+End Sub
+
+Dim WaitCount As Integer = 6
+Sub Test2()
+    sw = System.Diagnostics.Stopwatch.StartNew
+    For i As Integer = 0 to 5
+        StartThread(urls(i))
+    Next
+    closeEvent.Set()
+    Do While WaitCount > 0
+        Thread.Sleep(1000)
+    Loop
+    Console.WriteLine("total in {0} ms", sw.ElapsedMilliseconds)
+End Sub
+
+Private Sub StartThread(ByVal url As String)
+    Dim trd As Thread = New Thread(AddressOf ThreadTask)
+    trd.IsBackground = True
+    trd.Start(url)
+End Sub
+
+Private Sub ThreadTask(ByVal arg As Object)
+    Dim url As String = arg
+    Try
+        Dim wReq As WebRequest = WebRequest.Create(url)
+        RunWebStreamAsync(wReq, closeEvent)
+    Catch 
+    End Try
+    Console.WriteLine("done in {0} ms : {1}", sw.ElapsedMilliseconds, Left(url, 50))
+    Interlocked.Decrement(WaitCount)
+End Sub
+
+Public Sub RunWebStreamAsync(ByVal wr As WebRequest, ByVal CloseTask As ManualResetEvent)
+    Dim hwra As New MyWebRequest
+    hwra.LoadAsync(wr)
+    Do While hwra.AsyncOperationInProgress
+        If CloseTask.WaitOne(1000) = True Then
+            If hwra.CancellationPending = False Then
+                hwra.CancellationPending = True
+                wr.Abort()
+            End If
+        Else
+            Thread.Sleep(100)
+        End If
+    Loop
+End Sub
+
+Class MyWebRequest
+    Public Property CancellationPending As Boolean
+    Public Property AsyncOperationInProgress As Boolean
+
+    Public Sub LoadAsync(ByVal req As WebRequest)
+        AsyncOperationInProgress = True
+        ' Invoke BeginGetResponse on a threadpool thread, as it has
+        ' unpredictable latency
+        Dim bgrd = (New WaitCallback(AddressOf Me.BeginGetResponseDelegate))
+        bgrd.BeginInvoke(req, Nothing, Nothing)
+    End Sub
+
+    ' Solely for calling BeginGetResponse itself asynchronously. 
+    Private Sub BeginGetResponseDelegate(ByVal arg As Object)
+        If CancellationPending Then
+            PostCompleted(Nothing, True)
+        Else
+            Dim req As WebRequest = DirectCast(arg, WebRequest)
+            req.BeginGetResponse(New AsyncCallback(AddressOf GetResponseCallback), req)
+        End If
+    End Sub
+
+    Private Sub PostCompleted(ByVal p1 As Object, ByVal p2 As Boolean)
+        AsyncOperationInProgress = False
+        ' do something
+    End Sub
+
+    Private Sub GetResponseCallback(ByVal result As IAsyncResult)
+        If CancellationPending Then
+            PostCompleted(Nothing, True)
+        Else
+            Try
+                ' Continue on with asynchronous reading.
+                PostCompleted(Nothing, True)
+            Catch ex As Exception
+                ' Since this is on a non-UI thread, we catch any exceptions and
+                ' pass them back as data to the UI-thread. 
+                PostCompleted(ex, False)
+            End Try
+        End If
+    End Sub
+End Class
+End Module
+

@@ -1,0 +1,70 @@
+public void ThreadProc() {
+    string uriPrefix = ConfigurationManager.AppSettings["ListenerPrefix"];
+    HttpListener listener = new HttpListener();
+    listener.Prefixes.Add(uriPrefix);
+    listener.AuthenticationSchemes = AuthenticationSchemes.Basic;
+
+    listener.Start();
+
+    Console.WriteLine("Start listening on " + uriPrefix);
+    Console.WriteLine("Press Control-C to stop listener...");
+
+    while (listening) {
+        IAsyncResult result = listener.BeginGetContext(new AsyncCallback(ListenerCallback), listener);
+        result.AsyncWaitHandle.WaitOne();
+    }
+}
+
+public static void ListenerCallback(IAsyncResult result) {
+    HttpListener listener = (HttpListener)result.AsyncState;
+    HttpListenerContext context = listener.EndGetContext(result);
+    WebDavEngine engine = new WebDavEngine(context.User);
+
+    context.Response.SendChunked = false;
+    FileLogger.Level = LogLevel.Debug;
+
+    engine.IgnoreExceptions = false;
+
+    if (UserAutorized(context)) {
+        try {
+            engine.Run(context, listener.Prefixes);
+            engine.CommitTransaction();
+        } catch {
+            engine.RollBackTransaction();
+        } finally {
+            engine.CloseConnection();
+        }
+    } else
+        context.Response.StatusCode = 401;
+
+    if (context.Response.StatusCode == 401)
+        ShowLoginDialog(context, context.Response);
+
+    try {
+        context.Response.Close();
+    } catch {
+        // client closed connection before the content was sent
+    }
+}
+
+private static bool UserAutorized(HttpListenerContext context) {
+    HttpListenerBasicIdentity identity = (HttpListenerBasicIdentity)context.User.Identity;
+
+    if (!identity.IsAuthenticated) {
+        string username = identity.Name;
+
+        // workaround for Windows Vista Basic authentication. User name may be submitted in the following format: Machine\User.
+        int ind = username.LastIndexOf('\\');
+        if (ind > 0)
+            username = username.Remove(0, ind + 1);
+
+
+        Console.WriteLine("Trying Authentication since identity is NOT authenticated");
+
+        return false;
+    } else {
+        Console.WriteLine("identity.IsAuthenticated: " + identity.IsAuthenticated.ToString());
+        return identity.IsAuthenticated;
+    }            
+}
+

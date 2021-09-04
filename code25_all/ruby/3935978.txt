@@ -1,0 +1,85 @@
+ define_index do
+     indexes :name, :sortable => true
+     indexes brand
+
+     has :id, kosher_id, gluten_free_id, lactose_free_id
+     has stores(:id),        :as => 'store_ids'
+     has locations(:id),     :as => 'location_ids'
+     has categories(:id),    :as => 'category_ids'
+     has kosher(:passover),  :as => 'kosher_passover'
+   end
+
+  def self.for_locations_by_query(query, options = {})
+     query, categories = @@coder.decode(query).gsub(/(\b\w+\b)/, "+\\0"), @@coder.decode(options.delete(:categories))
+     origin, page = @@coder.decode(options.delete(:origin)), @@coder.decode(options.delete(:page))
+     per_page, sort_order = @@coder.decode(options.delete(:per_page)), @@coder.decode(options.delete(:sort_order))
+     distance, classifications = @@coder.decode(options.delete(:distance)), @@coder.decode(options.delete(:classifications))
+
+     with                        = {}
+     with[:store_ids]            = Location.all(:origin => origin, :within => distance).collect(&:store_id).uniq unless origin.blank? or distance.blank?
+     with[:category_ids]         = categories.split(',') unless categories.blank?
+
+     without                     = {}
+     without[:kosher_id]         = 0 if classifications.split(',').include? 'kosher'
+     without[:gluten_free_id]    = 0 if classifications.split(',').include? 'gluten_free'
+     without[:lactose_free_id]   = 0 if classifications.split(',').include? 'lactose_free'
+     without[:kosher_passover]   = 0 if classifications.split(',').include? 'kosher_passover'
+
+     products  = Product.search(query, :with => with, :without => without, :per_page => 20, :page => 1)
+     stores    = products.collect { |p| p.stores }.flatten.uniq
+     locations = stores.collect { |s| s.locations.find(:all, :origin => origin, :within => distance) }.flatten.uniq
+     locations.sort_by_distance_from(origin)
+     locations.each { |l| l.dist = l.distance }
+
+     locations = locations.paginate(:page => page, :per_page => per_page)
+
+     return { :total_entries => locations.total_entries, :size => locations.size, :locations => locations }
+    end
+
+source product_core_0
+{
+  type = mysql
+  sql_host = [FILTERED]
+  sql_user = [FILTERED]
+  sql_pass = [FILTERED]
+  sql_db = [FILTERED]
+  sql_sock = /var/run/mysqld/mysqld.sock
+  sql_query_pre = SET NAMES utf8
+  sql_query_pre = SET TIME_ZONE = '+0:00'
+  sql_query = SELECT SQL_NO_CACHE `products`.`id` * 3 + 1 AS `id` , `products`.`name` AS `name`, `products`.`brand` AS `brand`, `products`.`id` AS `sphinx_internal_id`, 485965105 AS `class_crc`, 0 AS `sphinx_deleted`, IFNULL(`products`.`name`, '') AS `name_sort`, `products`.`id` AS `id`, `products`.`kosher_id` AS `kosher_id`, `products`.`gluten_free_id` AS `gluten_free_id`, `products`.`lactose_free_id` AS `lactose_free_id`, GROUP_CONCAT(DISTINCT IFNULL(`stores`.`id`, '0') SEPARATOR ',') AS `store_ids`, GROUP_CONCAT(DISTINCT IFNULL(`locations`.`id`, '0') SEPARATOR ',') AS `location_ids`, GROUP_CONCAT(DISTINCT IFNULL(`categories`.`id`, '0') SEPARATOR ',') AS `category_ids`, `koshers`.`passover` AS `kosher_passover` FROM `products`    LEFT OUTER JOIN `product_stores` ON (`products`.`id` = `product_stores`.`product_id`)  LEFT OUTER JOIN `stores` ON (`stores`.`id` = `product_stores`.`store_id`)   LEFT OUTER JOIN `product_locations` ON (`products`.`id` = `product_locations`.`product_id`)  LEFT OUTER JOIN `locations` ON (`locations`.`id` = `product_locations`.`location_id`)   LEFT OUTER JOIN `category_products` ON (`products`.`id` = `category_products`.`product_id`)  LEFT OUTER JOIN `categories` ON (`categories`.`id` = `category_products`.`category_id`)   LEFT OUTER JOIN `koshers` ON `koshers`.id = `products`.kosher_id  WHERE `products`.`id` >= $start AND `products`.`id` <= $end GROUP BY `products`.`id`  ORDER BY NULL
+  sql_query_range = SELECT IFNULL(MIN(`id`), 1), IFNULL(MAX(`id`), 1) FROM `products` 
+  sql_attr_uint = sphinx_internal_id
+  sql_attr_uint = class_crc
+  sql_attr_uint = sphinx_deleted
+  sql_attr_uint = id
+  sql_attr_uint = kosher_id
+  sql_attr_uint = gluten_free_id
+  sql_attr_uint = lactose_free_id
+  sql_attr_bool = kosher_passover
+  sql_attr_str2ordinal = name_sort
+  sql_attr_multi = uint store_ids from field
+  sql_attr_multi = uint location_ids from field
+  sql_attr_multi = uint category_ids from field
+  sql_query_info = SELECT * FROM `products` WHERE `id` = (($id - 1) / 3)
+}
+
+index product_core
+{
+  source = product_core_0
+  path = [FILTERED]/releases/20101008215652/db/sphinx/staging/product_core
+  charset_type = utf-8
+}
+
+index product
+{
+  type = distributed
+  local = product_core
+}
+
+with[:store_ids] = ...
+ID
+with[:store_ids]
+1000
+[12,15,41]
+with[:store_ids] = [15,41]
+12

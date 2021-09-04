@@ -1,0 +1,67 @@
+Sub::Exporter
+into
+use strict;
+use warnings;
+
+package MyLog;
+
+use Log::Log4perl qw(:easy get_logger);
+
+use Sub::Exporter -setup => {
+    exports => [
+        log       => \&gen_log,
+        audit_log => \&gen_log,
+    ],
+    groups     => [ default => [qw(log audit_log)] ],
+    collectors => ['category'],
+    installer  => \&installer, # tunnel `into` value into generators
+};
+
+if ( not Log::Log4perl->initialized() ) {
+
+    #easy init if not initialised
+    Log::Log4perl->easy_init($ERROR);
+}
+
+sub gen_log {
+    my ( $class, $name, $arg, $global ) = @_;
+
+    my $category = $arg->{category};
+    $category = $global->{category}{$name} unless defined $category;
+
+    return sub {    # return generator
+        my $into = shift;    # class name passed by `installer`
+
+    $category = $name eq 'audit_log' ? "audit_log.$into" : $into
+        if !defined $category;    # set default category
+
+        # lazy logger
+        my $logger;
+        return sub {
+            $logger or $logger = get_logger($category);
+        };
+    };
+}
+
+sub installer {
+    my ( $args, $todo ) = @_;
+
+    # each even value is still generator thus generate final function
+    my $i;
+    1 & $i++ and $_ = $_->( $args->{into} ) for @$todo;
+
+    Sub::Exporter::default_installer(@_);
+}
+
+1;
+
+Sub::Exporter
+use MyLog category => { log => 'foo', audit_log => 'bar' };
+
+use MyLog -default => { -prefix => 'my_' };
+
+use MyLog
+    audit_log => { -as => 'audit' },
+    log       => { -as => 'my_log', category => 'my.log' };
+
+Sub::Exporter

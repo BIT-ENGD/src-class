@@ -1,0 +1,58 @@
+DROP FUNCTION IF EXISTS album_tree_connect;
+
+DELIMITER $$
+
+CREATE FUNCTION album_tree_connect(value varchar(32)) RETURNS INT
+NOT DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE _id varchar(32);
+    DECLARE _parent varchar(32);
+    DECLARE _next INT;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET @id = NULL;
+
+    SET _parent = @id;
+    SET _id = -1;
+
+    IF @id IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    LOOP
+        SELECT  MIN(album_id)
+        INTO    @id
+        FROM    album
+        WHERE   sub_album_of_album_id = _parent
+            AND album_id > _id;
+        IF @id IS NOT NULL OR _parent = @start_with THEN
+            SET @level = @level + 1;
+            RETURN @id;
+        END IF;
+        SET @level := @level - 1;
+        SELECT  album_id, sub_album_of_album_id
+        INTO    _id, _parent
+        FROM    album
+        WHERE   album_id = _parent;
+    END LOOP;   
+END
+$$
+
+DELIMITER ;
+
+
+## select statement to pull the tree menu
+
+SELECT   CONCAT(REPEAT('    ', level - 1), CAST(hi.album_id AS CHAR)) AS treeitem, sub_album_of_album_id, name, user_id, level
+FROM    (
+        SELECT  album_tree_connect(album_id) AS id, @level AS level
+        FROM    (
+                SELECT  @start_with := 0,
+                        @id := @start_with,
+                        @level := 0
+                ) vars, album
+        WHERE   @id IS NOT NULL
+        ) ho
+JOIN    album hi
+ON      hi.album_id = ho.id
+where user_id = 2
+

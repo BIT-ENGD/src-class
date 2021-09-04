@@ -1,0 +1,192 @@
+<?php
+class timeRangeCalculator
+{
+  /**
+   * Start time of block
+   *
+   * @var DateTime
+   */
+  private $blockStart;
+
+  /**
+   * Block duration in seconds
+   *
+   * @var int
+   */
+  private $blockDuration;
+
+  /**
+   * Start of range
+   *
+   * @var DateTime
+   */
+  private $rangeStart;
+
+  /**
+   * End of range
+   *
+   * @var DateTime
+   */
+  private $rangeEnd;
+
+  /**
+   *
+   */
+  public function __construct()
+  {
+    if (!class_exists('DateTime'))
+    {
+      throw new Exception('Built-in DateTime class not found');
+    }
+  }
+
+  /**
+   * Set whole time range
+   *
+   * @param DateTime $start
+   * @param DateTime $end
+   */
+  public function setRange(DateTime $start, DateTime $end)
+  {
+    if ($end < $start)
+    {
+      throw new Exception('End cannot be before start');
+    }
+
+    if ($start === $end)
+    {
+      throw new Exception('Start and end cannot be same');
+    }
+
+    $this->rangeStart = $start;
+    $this->rangeEnd = $end;
+
+    return true;
+  }
+
+  /**
+   * Set time block. Ignore year and month.
+   *
+   * @param DateTime $start
+   * @param int $duration duration in seconds
+   */
+  public function setBlock(DateTime $start, $duration)
+  {
+    if (!is_int($duration))
+    {
+      throw new Exception('Duration is not integer');
+    }
+
+    if ($duration > 86400)
+    {
+      throw new Exception('Duration is over one day');
+    }
+
+    $this->blockStart = $start;
+    $this->blockDuration = $duration;
+
+    return true;
+  }
+
+  /**
+   * Calculate time blocks from range
+   *
+   * @return array Returns array of blocks
+   */
+  public function calculate()
+  {
+    $result = array();
+
+    $rangeStart = $this->rangeStart;
+
+    $blockStart = $this->blockStart;
+    $blockDuration = $this->blockDuration;
+
+    do
+    {
+      // Reset end range
+      $rangeEnd = $this->rangeEnd;
+
+      // Set block's starting date to range's start date
+      $blockStart->setDate($rangeStart->format('Y'), $rangeStart->format('m'), $rangeStart->format('d'));
+
+      $blockEnd = clone $blockStart;
+      $blockEnd->modify("+$blockDuration seconds");
+
+      $rangeEnd->setDate($blockEnd->format('Y'), $blockEnd->format('m'), $blockEnd->format('d'));
+
+
+      if ($rangeStart < $blockStart)
+      {
+        $rangeStart->setTime($blockStart->format('G'), $blockStart->format('i'), $blockStart->format('s'));
+      }
+
+      if ($rangeEnd > $blockEnd)
+      {
+        $rangeEnd->setTime($blockEnd->format('G'), $blockEnd->format('i'), $blockEnd->format('s'));
+      }
+
+      if ($rangeStart < $rangeEnd)
+      {
+        $result[] = array($rangeStart, $rangeEnd);
+      }
+
+      // Full day after first iteration
+      $rangeStart->setTime(0, 0, 0);
+
+      $rangeStart->modify("+1 day");
+    }
+    while ($blockEnd <= $this->rangeEnd);
+
+    return $result;
+  }
+
+}
+
+<?php  
+$block_start = new DateTime("2000-01-01 22:00:00");
+$block_range = 60 * 60 * 8;
+
+$ranges = array(
+  array(new DateTime("2009-01-01 00:00:00"), new DateTime("2009-01-02 00:00:00")),
+  array(new DateTime("2009-01-01 00:00:00"), new DateTime("2009-01-07 00:00:00"))
+);
+
+$trc = new timeRangeCalculator();
+$trc->setBlock($block_start, $block_range);
+
+foreach ($ranges as $idx => $rangeInfo)
+{
+  list($start, $end) = $rangeInfo;
+
+  echo "Range " . $start->format("j.n.Y H:i:s") . " - " . $end->format("j.n.Y H:i:s") . "<br />";
+
+  $trc->setRange($start, $end);
+  $result = $trc->calculate();
+
+  if(is_array($result) && !empty($result))
+  {
+    echo "Has block 22-06: <br />";
+
+    foreach ($result as $block)
+    {
+      list($bs, $be) = $block;
+
+      echo "* " . $bs->format("j.n.Y H:i:s") . " - " . $be->format("j.n.Y H:i:s") . "<br />";
+    }
+
+  }
+
+  echo "<br />";
+}
+
+================================
+
+#######
+
+=====###=====###====....=====###
+     ^ ^                     ^ ^
+     | |                     | |
+     |  - end of block 1     |  - end of block N
+      - start of block 1      - start of block N
+

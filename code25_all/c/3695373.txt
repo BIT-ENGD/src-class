@@ -1,0 +1,63 @@
+#include <stdlib.h>
+
+typedef enum {
+    INT = 0,
+    FLOAT = 1,
+    STRING = 2,
+    NONE = 3,
+    BOOL = 4
+} TYPE;
+
+typedef struct {
+    TYPE type;
+    void * data;
+} Variable;
+
+typedef Variable ** var; //Convenience typedef for pointer to variable pointer
+
+typedef struct {
+    size_t size;
+    Variable *** pool; //Pointer to the array of pointers to the Variable structure pointers. Pointer required for memory allocation and array consists of pointers to pointers so the pointers to the Variable structures can be changed throughtout different functions.
+} VarPool; //Variable pools will just be used to deallocate all variables at the end of a scope
+
+VarPool * global_pool; //Pool for global scope
+VarPool ** pool_stack; //Keeps track of pools in stack
+unsigned int pool_stack_size;
+
+void init_pool_stack(){
+    pool_stack = malloc(sizeof(VarPool *)); //Start with global_pool
+    pool_stack_size = 1;
+    global_pool = malloc(sizeof(VarPool));
+    pool_stack[0] = global_pool;
+    global_pool->pool = NULL;
+    global_pool->size = 0;
+}
+
+Variable ** new_var(){ //Makes new variable
+    Variable ** return_variable;
+    Variable * new_variable = malloc(sizeof(Variable));
+    VarPool * var_pool = pool_stack[pool_stack_size-1]; //Current variable pool on top of stack
+    var_pool->size++;
+    var_pool->pool = realloc(var_pool->pool,var_pool->size*sizeof(Variable **));
+    return_variable = &new_variable;
+    var_pool->pool[var_pool->size - 1] = return_variable;
+    return return_variable; //Return pointer to new pointer so pointer can be changed to NULL when deleted
+}
+void empty_pool(){ //Frees all data from variable pool
+    VarPool * var_pool = pool_stack[pool_stack_size-1]; //Current pool on top of stack
+    for (int x = 0; x < var_pool->size; x++) {
+        free(*var_pool->pool[x]); //Free variable data
+    }
+    free(var_pool->pool); //Free pool variable array
+    free(var_pool); //This one
+    pool_stack_size--;
+    pool_stack = realloc(pool_stack, pool_stack_size*sizeof(VarPool *));
+}
+
+int main (int argc, const char * argv[]) {
+    init_pool_stack();
+    new_var();
+    empty_pool(); //Finally empty globals pool which will deallocate pool_stack
+    return 0;
+}
+

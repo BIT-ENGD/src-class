@@ -1,0 +1,65 @@
+private void transferFile(FileInfo file, long position, long readBytes)
+{
+    // transfer on socket stream
+    Stream stream = new FileStream(file.FullName, FileMode.Open);
+    if (position > 0)
+    {
+        stream.Seek(position, SeekOrigin.Begin);
+    }
+    // if this should be encrypted, wrap the encryptor stream
+    if (UseCipher)
+    {
+        stream = new CryptoStream(stream, streamEncryptor, CryptoStreamMode.Read);
+    }
+    using (stream)
+    {
+        int read;
+        byte[] array = new byte[8096];
+        while ((read = stream.Read(array, 0, array.Length)) > 0)
+        {
+            streamSocket.Send(array, 0, read, SocketFlags.None);
+            position += read;
+        }
+    }
+}
+
+private void receiveFile(FileInfo transferFile)
+{
+    byte[] array = new byte[8096];
+    // receive file
+    Stream stream = new FileStream(transferFile.FullName, FileMode.Append);
+    if (UseCipher)
+    {
+        stream = new CryptoStream(stream, streamDecryptor, CryptoStreamMode.Write);
+    }
+    using (stream)
+    {
+        long position = new FileInfo(transferFile.Path).Length;
+        while (position < transferFile.Length)
+        {
+            int maxRead = Math.Min(array.Length, (int)(transferFile.Length - position));
+            int read = position < array.Length
+                        ? streamSocket.Receive(array, maxRead, SocketFlags.None)
+                        : streamSocket.Receive(array, SocketFlags.None);
+            stream.Write(array, 0, read);
+            position += read;
+        }
+    }
+}
+
+private void setupStreamCipher(byte[] init)
+{
+    RijndaelManaged cipher = new RijndaelManaged();
+    cipher.KeySize = cipher.BlockSize = 256; // bit size
+    cipher.Mode = CipherMode.ECB;
+    cipher.Padding = PaddingMode.ISO10126;
+    byte[] keyBytes = new byte[32];
+    byte[] ivBytes = new byte[32];
+
+    Array.Copy(init, keyBytes, 32);
+    Array.Copy(init, 32, ivBytes, 0, 32);
+
+    streamEncryptor = cipher.CreateEncryptor(keyBytes, ivBytes);
+    streamDecryptor = cipher.CreateDecryptor(keyBytes, ivBytes);
+}
+

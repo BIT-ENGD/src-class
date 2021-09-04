@@ -1,0 +1,44 @@
+run_command
+Mongo error: not master at perlib/Connections.pm line 63.
+
+run_command()
+sub get_data {
+    my $self = shift;
+    my $dbh = shift;
+    my $collection_h = shift;   
+    my $since_time = $self->get_date_time(shift);
+    my $loop_limit = $self->get_data_limit(shift);
+
+    my %data = ();
+    my $ctr = 0;
+
+    my $temp_collection='temp_collection';
+
+    my $ids = $dbh->run_command([
+         "mapreduce" => $collection_h->{'name'}
+        ,"map" => _get_map()
+        ,"reduce" => _get_reduce()
+        ,"query"    =>  {'to.id' => {'$exists'=>'true'}, 'updatedDate' => { '$gte' => $since_time }}
+        ,"out" => $temp_collection      
+    ]);
+
+    die ("Mongo error: $ids") unless ref($ids) eq 'HASH';
+
+        # next we create a cursor to this new collection
+    my $cfs_h = $dbh->$temp_collection;
+    my $id_cursor = $cfs_h->find()->limit($loop_limit);
+
+    $id_cursor->slave_okay(1);
+    $id_cursor->immortal(1);
+    ...
+}
+
+sub _get_map {
+    return "function() {emit(this.to.id, 1);}"; 
+}
+
+sub _get_reduce {
+
+    return "function(k,vals) {return 1;}"
+}
+

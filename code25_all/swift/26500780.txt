@@ -1,0 +1,184 @@
+class ViewController: UIViewController, NSStreamDelegate, UITextFieldDelegate  {
+
+class XMPPConnection: NSObject, NSStreamDelegate
+
+viewDidLoad()
+init()
+init
+HasSpaceAvailable
+(lldb)
+class AppDelegate: UIResponder, UIApplicationDelegate, FBLoginViewDelegate
+lldb
+HasSpaceAvailable
+import UIKit
+import Foundation
+
+
+class XMPPConnection: NSObject, NSStreamDelegate { //NSObject
+
+    var input : NSInputStream?
+    var output: NSOutputStream?
+
+    //let XMLStream: String = "<stream:stream xmlns:stream='http://etherx.jabber.org/streams' version='1.0' xmlns='jabber:client' to='mydomain.com' xml:lang='en' xmlns:xml='http://www.w3.org/XML/1998/namespace'>"
+    let XMLStream: String = "<stream:stream to='mydomain.com' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>"
+    var XMLAuth: String?
+    let XMLStreamEnd: String = "</stream:stream>"
+    let XMLResource: String = "<iq type='set' id='bind_1'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><resource>OneSide</resource></bind></iq>"
+    let XMLSession: String = "<iq type='set' id='sess_1'><session xmlns='urn:ietf:params:xml:ns:xmpp-session'/></iq>"
+    let XMLStartTLS: String = "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>";
+    var messagesToBeSent:[String] = []
+    var lastSentMessageID = 0
+    var lastReceivedMessageID = 0
+
+
+    init(facebookID: String) {
+        super.init()
+        let username = "admin@mydomain.com" //should hash device ID
+        let password = "123456" //hash it
+        var UTF8AuthStr = "\0\(username)\0\(password)".dataUsingEncoding(NSUTF8StringEncoding)
+        let Base64Str = UTF8AuthStr!.base64EncodedStringWithOptions(NSDataBase64EncodingOptions.fromRaw(0)!)
+        XMLAuth = "<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>\(Base64Str)</auth>"
+        //println(XMLAuth)
+
+        self.connectToSocket("mydomain.com", port: 5222)
+        send(self.XMLStream)
+        //send(self.XMLStartTLS)
+        /*send(self.XMLAuth!)
+        send(self.XMLStream)
+        send(self.XMLResource)
+        send(self.XMLSession)*/
+        //sendMessage("hi")
+
+
+    }
+
+    func connectToSocket(host: String, port: Int) {
+
+        NSStream.getStreamsToHostWithName(host, port: port, inputStream: &(self.input), outputStream: &(self.output))
+
+        self.input!.delegate  = self
+        self.output!.delegate = self
+
+        self.input!.scheduleInRunLoop(NSRunLoop.currentRunLoop(), forMode: NSDefaultRunLoopMode)
+        self.output!.scheduleInRunLoop(NSRunLoop.currentRunLoop(), forMode: NSDefaultRunLoopMode)
+
+        self.input!.open()
+        self.output!.open()
+
+        println("Connected")
+
+
+        //let bytesWritten = self.output!.write(UnsafePointer(data.bytes), maxLength: data.length)
+
+        //println(bytesWritten)
+
+
+    }
+
+    //The delegate receives this message when a given event has occurred on a given stream.
+    func stream(theStream: NSStream!, handleEvent streamEvent: NSStreamEvent) {
+
+        println("Message received")
+
+        switch streamEvent {
+        case NSStreamEvent.None:
+            println("NSStreamEvent.None")
+        case NSStreamEvent.OpenCompleted:
+            println("NSStreamEvent.OpenCompleted")
+        case NSStreamEvent.HasBytesAvailable:
+            println("NSStreamEvent.HasBytesAvailable")
+            if let inputStream = theStream as? NSInputStream {
+                //println("is NSInputStream")
+                if inputStream.hasBytesAvailable {
+                    //println("hasBytesAvailable")
+                    let bufferSize = 1024
+                    var buffer = Array<UInt8>(count: bufferSize, repeatedValue: 0)
+
+                    var bytesRead: Int = inputStream.read(&buffer, maxLength: bufferSize)
+                    //println(bytesRead)
+                    if bytesRead >= 0 {
+                        lastReceivedMessageID++
+                        var output: String = NSString(bytes: &buffer, length: bytesRead, encoding: NSUTF8StringEncoding)
+                        //println("output is")
+                        println(output)
+                    } else {
+                        println("error")
+                        // Handle error
+                    }
+                }
+            }
+        case NSStreamEvent.HasSpaceAvailable:
+            println("NSStreamEvent.HasSpaceAvailable")
+            send(nil) //send next item
+            //send next message or
+            //what if there is no next message to send, and instead waiting user input?
+        case NSStreamEvent.ErrorOccurred:
+            println("NSStreamEvent.ErrorOccurred")
+        case NSStreamEvent.EndEncountered:
+            println("NSStreamEvent.EndEncountered")
+        default:
+            println("default")
+        }
+    }
+
+    func send(message:String?){
+        if (self.output!.hasSpaceAvailable){ //stream ready for input
+            //println("true hasSpaceAvailable")
+            var data:NSData
+            var thisMessage:String
+            if message == nil{ // no message specified
+                if messagesToBeSent.count != 0{ //messages waiting to be sent
+                    thisMessage = messagesToBeSent[0]
+                    data = messagesToBeSent[0].dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: false)!
+                    messagesToBeSent.removeAtIndex(0)
+                }
+                else{ //no data to be sent
+                    //no message specified and nothing to be sent
+                    return
+                }
+            }
+            else{
+                thisMessage = message!
+                data = message!.dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: false)!
+            }
+
+            //println("Sent the following")
+            wait()
+            let bytesWritten = self.output!.write(UnsafePointer(data.bytes), maxLength: data.length)
+            lastSentMessageID++
+            //println(thisMessage)
+            //println("Message sent to server and response is")
+            //println(bytesWritten) //int count
+        }
+        else{ //steam busy
+            println("no space available in stream")
+            if message != nil{
+                messagesToBeSent.append(message!)
+            }
+        }
+    }
+
+    func sendMessage(message:String, from:String, to:String){
+        let xmlMessage = "<message to='\(to)@mydomain.com' from='\(from)@mydomain.com' type='chat' xml:lang='en'> <body>\(message)</body></message>"
+        send(xmlMessage)
+    }
+
+
+    func wait() {
+        while true {
+            //println("waiting")
+            if lastSentMessageID == lastReceivedMessageID {
+                break
+            }
+
+            NSRunLoop.currentRunLoop().runUntilDate(NSDate(timeIntervalSinceNow: 0.1));
+            NSThread.sleepForTimeInterval(0.1)
+        }
+    }
+
+}
+
+self.input!.scheduleInRunLoop(NSRunLoop.currentRunLoop(), forMode: NSDefaultRunLoopMode)
+streamStatus.toRaw()
+1
+NSStreamStatusOpening

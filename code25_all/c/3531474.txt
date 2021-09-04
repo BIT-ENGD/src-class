@@ -1,0 +1,966 @@
+/***************************************************/ 
+/* AUTHOR         :  LAW CHIU YUEN                 */
+/* FILENAME     :  smtpr.c                         */
+/***************************************************/ 
+
+#ifdef WIN32
+#include <windows.h>
+#include <winsock.h>
+#else
+#define closesocket close
+#include <unistd.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <ctype.h>
+
+
+//#define MYPORT 40711    // the port users will be connecting to
+#define PORT 25
+#define MAXBUFLEN 1024      // max buffer size
+#define RELAY_NAME 255 // max length of file name
+#define BACKLOG 10     // how many pending connections queue will hold
+#define MAXDATASIZE 512 // max number of bytes we can get at once 
+#define SQMAXDATASIZE 1048576 //1024 * 1024
+#define RECVTIME 100    // max number of time to wait for client's message
+#define MAXEMAILADDRESS 320 // 64 + 1 + 255 
+#define MAXRCPT 50     //max number of mail receipients
+/* State1 */
+#define ACCEPT 0
+#define HELO 1
+#define MAILFROM 2
+#define RCPTTO 3
+#define DATA 4
+#define MESSAGE 5
+#define QUIT 6
+#define RELAY 7
+/* State2 */
+#define FIRSTHELO 0
+#define SECONDHELO 1
+#define MAXHELO 1024
+
+/*  tokenize mailto string, each time return the first email address */
+/* eg.  a@a.com,b@b.com,c@c.com -->  a@a.com  */
+char* tokenize(char *mailto){
+     const char delimiters[] = ",";
+     char *token, *cp;
+     printf("b4 strtok: mailto:%s\n",mailto);     
+                /* Make writable copy.  */
+     token = strtok (mailto, delimiters);      /* token => "words" */
+     printf("tokenize() speaking : mailto: %s\n",mailto);
+     printf("tokenize() speaking : token: %s\n",token);
+     return token;
+
+}
+
+/*  tokenize mailto string, each time return the email address other then the first one*/
+/* first call:  a@a.com,b@b.com,c@c.com -->  b@b.com  */
+/* second call:  a@a.com,b@b.com,c@c.com -->  c@c.com  */
+char* tokenize_null(){
+     const char delimiters[] = ",";
+     char *token, *cp;
+
+     token = strtok (NULL, delimiters);      /* token => "words" */
+     printf("tokenize_null() speaking : token: %s\n",token);
+     return token;
+}
+
+/* take in an email_address, and header; */
+/*  convert to :  header: email_address  */
+char* compose_mailheader(char *header,char *mail){
+  char *a = malloc(strlen(mail)+30);
+  char *b = NULL;
+  char *c = NULL;
+  strcpy(a, header);
+
+  b = strcat(a, mail);
+  c = strcat(b, "\r\n");
+  printf("compose_mailheader:   b=%s\n", b);
+  return b;
+}
+
+/*  1. receive message from smtp server  */
+void receive(int fd, char* command, char *buf){
+ int numbytes;
+
+   if ((numbytes=recv(fd, buf, MAXDATASIZE, 0)) == -1) {
+        fprintf(stderr,"error in receiving\n");
+        exit(1);
+    }
+    buf[numbytes] = '\0';
+    printf("    receive() Received buf : %s",buf);
+    if ( strstr(buf, command) != NULL ){
+    printf("    receive() Received command : %s\n",command);
+    }else{
+    }
+}
+/*  helo  */
+/*  1. called by relaymail()  */
+/*  2. interact with a smtp server */
+void helo(int sockfd){
+  int numbytes;
+  char buf2[MAXDATASIZE];
+  char buf[MAXDATASIZE];
+  printf("\n");
+  printf("helo is called\n");
+  /*receive 220*/
+  receive(sockfd, "220 ", buf);
+
+  /* send helo */
+  if (send(sockfd, "HELO server\r\n", 13, 0) == -1)
+    perror("HELO SERVER");
+//  printf("sent HELO SERVER\n");
+
+/* receive 250*/
+  receive(sockfd, "250 ", buf);
+
+/*      testing    */  
+//  if (send(sockfd, "HELO server\r\n", 13, 0) == -1)
+//    perror("HELO SERVER");
+
+//  receive(sockfd, "250 ", buf);
+}
+
+/*  mailfrom  */
+/*  1. called by relaymail()  */
+/*  2. interact with a smtp server */
+void mailfrom(int sockfd,char *mail_from){
+  char buf[MAXDATASIZE] = "MAIL FROM:";
+
+  char *out;
+  int numbytes;
+  int i;
+  printf("\n");
+  printf("mailfrom is called\n");
+
+  /*  compose the "MAIL FROM:email@address.com" message  */ 
+  strcat(buf, mail_from);
+  strcat(buf, "\r\n");
+  printf("mailfrom() speaking: buf=%s\n", buf);
+  printf("mailfrom() speaking: strlen(buf)=%i\n", strlen(buf));
+
+  /* send out */
+  if( send(sockfd, buf, strlen(buf), 0) == -1 )
+     perror("mailfrom()");
+
+  /* receive 250*/
+  receive(sockfd, "250 ", buf);
+
+}  //mailfrom
+
+/*  1. called by rcptto()  */
+/*  2. interact with a smtp server */
+void rcptto2(int sockfd,char *mailtos){
+  char buf[MAXDATASIZE]="";
+  char *a;
+  char *out;
+  int numbytes;
+  int i,len;
+  printf("\n");
+  printf("rcptto2 is called\n");
+  /*  compose the "RCPT TO:email@address.com" message  */ 
+    strcat(buf, "RCPT TO:");
+    strcat(buf, tokenize_null());
+    strcat(buf, "\r\n");
+    printf("rcptto2() speaking: buf=%s\n", buf);
+    printf("rcptto2() speaking: strlen(buf)=%i\n", strlen(buf));
+
+    /*  send out */
+    if( send(sockfd, buf, strlen(buf), 0) == -1 )
+       perror("rcptto()");
+
+    /*  receive 250*/
+    receive(sockfd, "250 ", buf);
+    /*  clear the buffer  */
+    for(i=0; i<strlen(buf);i++){
+     buf[i]='\0';
+    }//for()
+
+}
+
+/*  rcptto  */
+/*  1. called by relaymail()  */
+/*  2. interact with a smtp server */
+void rcptto(int sockfd,char *mailtos, int mailto_num){
+  char buf[MAXDATASIZE] = "RCPT TO:";
+  char *a;
+  char *out;
+  int numbytes;
+  int i,len;
+  printf("\n");
+  printf("rcptto is called\n");
+
+/* sending the first address... */
+    /*  compose the "RCPT TO:email@address.com" message  */ 
+    strcat(buf, tokenize(mailtos));
+    strcat(buf, "\r\n");
+    printf("rcptto() speaking: buf=%s\n", buf);
+    printf("rcptto() speaking: strlen(buf)=%i\n", strlen(buf));
+
+    /*  send out */
+    if( send(sockfd, buf, strlen(buf), 0) == -1 )
+       perror("rcptto()");
+
+    /*  receive 250*/
+    receive(sockfd, "250 ", buf);
+    /*  clear the buffer  */
+
+    /*  handle multiple recipients case*/
+    for(i=0;i<mailto_num-1;i++)
+      rcptto2(sockfd, mailtos);
+
+
+/* sending remaining addresses... */
+}  //rcptto
+
+/*  1. called by relaymail()  */
+/*  2. interact with a smtp server */
+void data(int sockfd){
+  char buf[MAXDATASIZE] = "";
+  printf("\n");
+  printf("data() is called\n");
+
+  /*  send "DATA"  */
+  if( send(sockfd, "DATA\r\n", 6, 0) == -1 )
+     perror("data()");
+
+  /*  receive 354  */
+  receive(sockfd, "354 ", buf);
+}
+
+
+/*  1. called by relaymail()  */
+/*  2. interact with a smtp server */
+void message(int sockfd, char *msg){
+  int times,i,j;
+  int remainder;
+  printf("\n");
+  char out[1025];
+  printf("message() is called\n");
+
+  times = strlen(msg) / MAXDATASIZE;
+  remainder = strlen(msg) - (times * MAXDATASIZE);
+
+  printf("remainder: %i\n", remainder);
+  printf("times: %i\n", times);
+
+  for (i=0;i< times;i++){
+     for (j=0;j< 1024;j++)
+        out[j]= msg[1024*i + j];
+     out[1024 +1] = '\0';
+
+     printf("sending msg: %i\n", i);
+      if( send(sockfd, out, 1025, 0) == -1 );
+  }
+  printf("end while: %i\n", i);
+  printf("out: %s\n", out);
+     for (j=0;j< remainder;j++)
+        out[j]= msg[1024*times + j];
+        out[remainder +1] = '\0';
+  if( send(sockfd, out, remainder+1, 0) == -1 )
+       perror("message");
+       printf("out: %s\n", out);
+}
+
+/*  1. called by relaymail()  */
+/*  2. interact with a smtp server */
+void quit(int sockfd){
+  char buf[MAXDATASIZE] = "";
+  printf("\n");
+  printf("quit() is called\n");
+
+  /*  send "QUIT"  */
+  if( send(sockfd, "QUIT\r\n", 6, 0) == -1 )
+     perror("quit()");
+
+  /*  receive 354  */
+  receive(sockfd, "250 ", buf);
+}
+
+
+/*relay mail to a email server*/
+void relaymail(char *relay,char *mail_from, char *mailto, int mailto_num, char *msg){
+
+    int sockfd, numbytes;  
+    char buf[MAXDATASIZE];
+    struct hostent *he;
+    struct sockaddr_in their_addr; // connector's address information 
+    int state = 1;
+    int logswitch = 0; 
+  int logwhile = 0;
+
+
+    if ((he=gethostbyname(relay)) == NULL) {  // get the host info 
+        fprintf(stderr,"gethostbyname fail\n");
+        exit(1);
+    }
+
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        fprintf(stderr,"fail to create socket\n");
+        exit(1);
+    }
+
+    their_addr.sin_family = AF_INET;    // host byte order 
+    their_addr.sin_port = htons(PORT);  // short, network byte order 
+    their_addr.sin_addr = *((struct in_addr *)he->h_addr);
+    memset(&(their_addr.sin_zero), '\0', 8);  // zero the rest of the struct 
+
+    if (connect(sockfd, (struct sockaddr *)&their_addr, sizeof(struct sockaddr)) == -1) {
+        fprintf(stderr,"connect fail\n");
+        exit(1);
+    }
+
+   while (state <7 && logwhile <10){  /*  make sure the program won't run indefinitely  */
+
+   logwhile++;
+   /*   log   */ 
+//      printf("\n");
+//   printf("logwhile = %i\n", logwhile);
+//   printf("state = %i\n", state);
+//      printf("\n");
+
+   switch (state){
+    case HELO :
+     helo(sockfd);
+     state++;
+     printf ("end of case HELO\n");
+     break;
+    case MAILFROM :
+     mailfrom(sockfd, mail_from);
+     state++;
+     printf ("relaymail():  end of case MAILFROM\n");    
+     break;
+    case RCPTTO :
+     rcptto(sockfd, mailto, mailto_num);
+     state++;
+     printf ("relaymail():  end of case RCPTTO\n");         
+     break;    
+    case DATA :
+     data(sockfd);
+     state++;
+     printf ("relaymail():  end of case DATA\n");
+     break;
+    case MESSAGE :
+     message(sockfd, msg);
+     printf ("relaymail():  end of case MESSAGE\n");
+     state++;
+     printf ("relaymail():  end of case MESSAGE\n");
+    case QUIT :
+     quit(sockfd);
+     state++;
+     printf ("end of case QUIT\n");
+     closesocket(sockfd);
+     break;
+
+    default :
+     break;    
+    }
+  }  // while()
+    closesocket(sockfd);
+}
+
+
+/*  remove  < >   */
+char* remove_brackets(char* input)
+{
+  int length;
+  int i, j;
+  char* output;
+
+  length = strlen(input);
+  output = (char*) malloc(length + 1); 
+  j = 0;
+
+  /* copy character of input which in not equal to < or > to output */
+  for (i=0; i<length; i++)
+    if ((input[i]!='<') && (input[i]!='>'))
+    {
+      output[j] = input[i];
+      j++; 
+    }     
+  output[j] = '\0';
+
+  return output;
+}
+
+
+/* trim the space(s) before and after the string */
+char* trim_space(char* input)
+{
+  int i, j, length, is_ch, is_end, end_pos;
+  char *output;
+
+  /* trim the space(s) before the string */
+  length = strlen(input);
+  output = (char*) malloc (length+1);
+  is_ch = 0;
+  is_end = 0;
+  j = 0;
+
+  for(i=0; i<length; i++)
+  {
+    /* copy input characters to output */
+    if (is_ch==1 || !isspace(input[i]))
+    {
+      output[j] = input[i];
+      j++;
+      is_ch = 1;
+    }
+ }
+  output[j] = '\0';
+
+  /* trim the space(s) after the string */
+  length = strlen(output);
+  end_pos = length-1;
+  is_end = 0;
+
+  for (i=0; i<length; i++)
+    if (is_end==0 && isspace(output[i]))
+    {
+      is_end = 1;
+      end_pos = i;   
+    }   
+    else if (!isspace(output[i]))
+      is_end = 0; 
+
+  output[end_pos] = '\0';
+
+  return output;
+}
+
+
+/* convert :    MAIL FROM: a@a.com  --->  a@a.com */
+char *extractemail(const char *buf, const int i){
+char * email = NULL;
+char * tmp_email = NULL;
+char * tmp_email2 = NULL;
+char * tmp_email3 = NULL;
+
+ /*           extract email address              */
+/*  1. remove MAIL FROM:  */
+    email = malloc(strlen(buf));
+        strcpy(email,buf);
+        email += i;
+        printf("\n");
+        printf("email =%s\n", email);
+        printf("email length =%i\n", strlen(email));
+        printf("\n");
+/*  2. trim head and trailing whitespace  */
+        tmp_email = trim_space(email);
+        printf("trimmed email= %s\n", tmp_email);
+/*  3. remove <>  */
+    tmp_email2 = remove_brackets(tmp_email);
+    printf("remove<> email= %s\n", tmp_email2);
+/*  4. trim again */
+//    tmp_email3 = trim_space("ellen@cs.com.hk");
+//    printf("\n");
+//    printf("extracted email= ~~~~~~%s~~~~~~\n", tmp_email3);
+//    printf("\n");
+
+//    printf("extracted email= ~~~~~~%s~~~~~~\n", tmp_email3);
+    return tmp_email2;
+}
+
+
+/* check if email address is a valid one  */
+int check_email_validity(const char *address) {
+  // check if email address is valid
+ // return 1 if valid
+ // return 0 if invalid
+
+  int number = 0;
+  const char *a, *host;
+  static char *special_characters = "()<>@,;:\\\"[]";
+   /* validate name  */
+  for (a = address;  *a;  a++) {
+    if (*a == '\"' && (a == address || *(a - 1) == '.' || *(a - 1) == 
+        '\"')) {
+      while (*++a) {
+        if (*a == '\"') break;
+        if (*a == '\\' && (*++a == ' ')) continue;
+        if (*a <= ' ' || *a >= 127) return 0;
+      }
+      if (!*a++) return 0;
+      if (*a == '@') break;
+      if (*a != '.') return 0;
+      continue;
+    }
+    if (*a == '@') break;
+    if (*a <= ' ' || *a >= 127) return 0;
+    if (strchr(special_characters, *a)) return 0;
+  }
+  if (a == address || *(a - 1) == '.') return 0;
+
+  /* next we validate the host portion (name@host) */
+  if (!*(host = ++a)) return 0;
+  do {
+    if (*a == '.') {
+      if (a == host || *(a - 1) == '.') return 0;
+      number++;
+    }
+    if (*a <= ' ' || *a >= 127) return 0;
+    if (strchr(special_characters, *a)) return 0;
+  } while (*++a);
+
+  return (number >= 1);
+}
+
+int main(int argc, char *argv[])
+{
+ int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
+    struct sockaddr_in my_addr;    // my address information
+    struct sockaddr_in their_addr; // connector's address information
+    int sin_size;
+    int yes=1;
+    socklen_t addr_len;
+    int numbytes=0;
+    char buf[MAXBUFLEN] = "";
+    char tmp_msg[MAXBUFLEN] ="";
+    char message[SQMAXDATASIZE];
+    char message_buf[10000];
+    char *msg = message;
+    char quit[MAXBUFLEN];
+    int MYPORT;
+    char relay[RELAY_NAME];
+    int i,j;
+    char *email = NULL;
+    char *email2 = NULL;
+    char *mail_from = NULL;
+    char *mail_to = NULL;
+    char *tmp_mail = NULL;
+    char mailtos[2000];
+    int mailto_num =0;
+    char *data = NULL;
+    char *data2 = NULL;
+    char *quit1 = NULL;
+    char *quit2 = NULL;
+
+
+
+    int state1 = 0;  //  
+    int state2 = 0;  //  keep track of number of 'helo's
+        int logwhile = 0;
+    char hardcode_email[15] = "cylaw@cs.hku.hk";
+
+
+    #ifdef WIN32
+      WSADATA wsaData;
+      WSAStartup(0x0101, &wsaData);
+    #endif
+
+    /* check number of parameters */
+    if ( argc != 3 && argc !=2 ) {
+  fprintf(stderr,"usage: smtpr <port number> (<relay server>)\n");
+  exit(1);
+    }
+
+    /* fill in port number */
+    MYPORT = atoi(argv[1]);
+    if ( MYPORT <= 0){
+ fprintf(stderr, "Invalid port number.\nusage: smtpr <port number> (<relay server>)\n");
+        exit(1);
+    }
+
+    /* fill in the server relay to */
+    if (argc == 2) strcpy(relay, "some.mail.server");
+    else if (argc == 3) strcpy(relay, argv[2]);
+    printf("relay to %s\n", relay);
+
+
+/*create a TCP socket */
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        perror("socket");
+        exit(1);
+    }
+
+    printf("port number : %i\n", MYPORT);
+
+    my_addr.sin_family = AF_INET;         // host byte order
+    my_addr.sin_port = htons(MYPORT);     // short, network byte order
+    my_addr.sin_addr.s_addr = htonl(INADDR_ANY); // automatically fill with my IP
+    memset(&(my_addr.sin_zero), '\0', 8); // zero the rest of the struct
+
+/* bind to the port number*/
+    if (bind(sockfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) == -1) {
+        perror("bind");
+        exit(1);
+    }
+/* listen*/
+    if (listen(sockfd, BACKLOG) == -1) {
+        perror("listen");
+        exit(1);
+    }  
+
+
+    /* slow the receiving speed */
+//    sleep(1);
+
+while(1){
+
+logwhile++;
+
+
+switch ( state1 ){
+
+case ACCEPT:
+/* accept */
+        sin_size = sizeof(struct sockaddr_in);
+        if ((new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size)) == -1) {
+            perror("accept");
+        }
+        printf("server: got connection from %s\n",inet_ntoa(their_addr.sin_addr));
+
+/* send msg : 220 */       
+       if (send(new_fd, "220 cylaw's smtpr ready\r\n", 25, 0) == -1)
+            perror("send");
+
+
+/*proceed to next state*/
+        printf("state1 = %i\n", state1);
+        state1++;
+    break;
+
+case HELO:
+
+      if(state2 == 0){ //state2 keep track of if this is the first HELO
+          if ((numbytes=recv(new_fd, buf, MAXDATASIZE, 0)) == -1) {
+              perror("recv");
+              exit(1);
+          }
+        }
+          buf[numbytes] = '\0';
+
+/*   log   */ 
+    printf("case HELO\n");
+    printf("============\n");
+        printf("buf :%s\n", buf);
+
+/* check on length */
+        if ( strlen(buf) < 6 || strlen(buf) > MAXDATASIZE ){
+             printf("550 Syntax: <HELO>\n");
+         if (send(new_fd, "550 Syntax: <HELO|EHLO> <hostname>\r\n", 36, 0) == -1)
+         perror("HELO send");
+         }
+
+/* compare (case-insensitively) the first 4 bytes of buf with "HELO" and "EHLO"  */
+
+        if ( (strncasecmp(buf, "HELO ", 5) != 0) && (strncasecmp(buf, "EHLO ", 5) != 0 )  ){
+             printf("550 Syntax: <HELO>\n");
+         if (send(new_fd, "550 Syntax: <HELO|EHLO> <hostname>\r\n", 36, 0) == -1)
+         perror("HELO-1 send");
+         }
+
+/* not implement case : helo<space>aaaaa<space> */
+        if ( buf[5] == '\0' && buf[5] == ' ' ){
+             printf("550 Syntax: <HELO|EHLO> <hostname>\n");
+         if (send(new_fd, "550 Syntax: <HELO|EHLO> <hostname>\r\n", 36, 0) == -1)
+         perror("HELO-2 send");
+         }
+
+/* send 250 OK */
+    printf("250 HELO OK\n");
+        if ( send( new_fd, "250 HELO OK\r\n", 13, 0 ) == -1 )
+        perror("HELO-250-OK send");
+        printf("\n");
+
+
+
+/*proceed to next state*/
+        state1++;
+        state2++;
+        break; //case HELO
+
+case MAILFROM :
+
+        if ((numbytes=recv(new_fd, buf, MAXDATASIZE, 0)) == -1) {
+            perror("recv");
+            exit(1);
+        }
+        buf[numbytes] = '\0';
+
+
+/*   log   */ 
+        printf("\n");
+    printf("case MAILFROM\n");
+    printf("=============\n");
+        printf("buf :%s\n", buf);
+
+
+
+/* HELO */
+    if ( (strncasecmp(buf, "HELO ", 5) == 0) || (strncasecmp(buf, "EHLO ", 5) == 0 )  ){
+    printf("HELO received at case MAILFROM, go back to case HELO\n");
+     state1--;
+     break;
+    }
+
+/*  check "MAIL FROM:"   */
+        if ( strncasecmp(buf, "MAIL FROM:", 10) != 0 ){
+             printf("550 Syntax: MAIL FROM: <email-address>\n");
+         if (send(new_fd, "550 Syntax: MAIL FROM: <email-address>\r\n", 40, 0) == -1)
+           perror("MAIL FROM: send()");
+          exit(1);
+        }
+
+/*  extract email address  */
+    mail_from = extractemail(buf, 10);
+
+
+/*  check email validity  */  
+
+        if ( check_email_validity(mail_from) == 0 ){  //0 - invalid 1 - valid
+             printf("550 Invalid email address\r\n");
+         if (send(new_fd, "550 Invalid email address\r\n", 27, 0) == -1)
+          perror("Email address send()");
+         break; //case MAILFROM
+
+         }
+
+/* send 250 OK */
+    printf("250 MAIL FROM OK\n");
+        if ( send( new_fd, "250 MAIL FROM OK\r\n", 18, 0 ) == -1 )
+        perror("MAILFROM-250-OK send()");
+
+        printf("\n");
+
+        state1++;
+        break; //case MAILFROM
+
+case RCPTTO :
+
+/*  check if this is the first MAIL FROM: <> line  */
+if ( mailto_num == 0){  
+        if ((numbytes=recv(new_fd, buf, MAXDATASIZE, 0)) == -1) {
+            perror("recv");
+            exit(1);
+        }
+        buf[numbytes] = '\0';
+}
+
+
+/*   log   */ 
+        printf("\n");
+    printf("case RCPTTO\n");
+    printf("=============\n");
+        printf("state1 = %i\n", state1);
+        printf("buf :%s\n", buf);
+
+
+/*  check RCPT TO: <...>   */
+        if ( strncasecmp(buf, "RCPT TO:", 8) != 0 ){
+             printf("550 Syntax: RCPT TO: <email-address>\n");
+             if (send(new_fd, "550 Syntax: RCPT TO: <email-address>\r\n", 38, 0) == -1)
+         perror("MAIL FROM: send()");
+        }
+
+/*  extract email address  */
+   mail_to = extractemail(buf, 8);  // 8 = strlen("RPCT TO:")
+
+
+/*  recipients address on to mailtos []*/
+  strcat(mailtos, mail_to);
+  strcat(mailtos, ",");
+  mailto_num++;
+  printf("mailtos %s\n", mailtos);
+  printf("mailto_num %i\n", mailto_num);
+
+
+
+/*  check email validity  */  
+
+        if ( check_email_validity(mail_to) == 0 ){
+             printf("550 Invalid email address\n");
+         if (send(new_fd, "550 Invalid email address\r\n", 27, 0) == -1)
+         perror("RCPTTO address send()");
+         break; //case MAILFROM
+
+         }
+
+/* send 250 OK */
+    printf("250 RCPT TO OK\n");
+        if ( send( new_fd, "250 RCPT TO OK\r\n", 16, 0 ) == -1 )
+        perror("MAILFROM-250-OK send()");
+
+        state1++;
+    break; // case RCPTTO
+
+case DATA :
+
+        if ((numbytes=recv(new_fd, buf, MAXDATASIZE, 0)) == -1) {
+            perror("recv");
+            exit(1);
+        }
+        buf[numbytes] = '\0';
+
+
+     /*   log   */ 
+        printf("\n");
+    printf("case DATA\n");
+    printf("=============\n");
+        printf("state1 = %i\n", state1);
+        printf("buf :%s\n", buf);
+
+
+/*  multiple recipients */
+
+    if ( strncasecmp(buf, "RCPT TO:", 8 ) == 0){
+     printf("Multiple recipients -- Go back to state RCPT TO\n");
+     printf("\n");
+     state1--;
+     break;
+    }
+
+        if ( strncasecmp(buf,"DATA", 4) != 0 ){  
+             printf("451 Syntax: DATA\n");      
+         if (send(new_fd, "451 Syntax: DATA\r\n", 18, 0) == -1)
+          perror("DATA send");
+         } else{
+
+
+
+/* send 354 OK */
+//    send( new_fd, "354 End\r\n", 10, 0 );
+    printf("354 End data with <CR><LF>.<CR><LF>\n");
+        if ( send( new_fd, "354 End data with <CR><LF>.<CR><LF>\r\n", 37, 0 ) == -1 ){
+         perror("MAILFROM-354-OK send()");
+         printf("354 error\n");
+         exit(1);
+       }
+
+        printf("\n");
+      }
+
+
+  state1++;
+ break; // case DATA
+
+
+case MESSAGE :
+
+       printf("\n");
+    printf("case MESSAGE\n");
+    printf("============\n");
+
+    i=0;
+    while(i<10000){
+     i++;
+         if ((numbytes=recv(new_fd, message_buf, 9999, 0)) == -1) {
+             perror("recv");
+             exit(1);
+         }
+         message_buf[numbytes] = '\0';
+/*  log  */
+//         printf("message_buf:\n\n%s", message_buf);        
+/*  append message_buf to message  */         
+         strcat(message, message_buf);
+
+         if (strstr (message_buf, "\r\n.\r\n") != NULL ){
+/* send 250 OK */
+          printf(". found\n");
+          if ( send( new_fd, "250 message received\r\n", 22, 0 ) == -1 )
+             perror("MESSAGE");
+          printf("message:\n\n %s\n", message);
+          state1++;
+      break;
+         }//if()
+       }//while()
+       state1++;
+       break;
+
+case QUIT :
+
+        if ((numbytes=recv(new_fd, quit, MAXDATASIZE, 0)) == -1) {
+            perror("recv");
+            exit(1);
+        }
+        quit[numbytes] = '\0';
+
+     /*   log   */ 
+    printf("\n");
+    printf("case QUIT\n");
+    printf("=============\n");
+        printf("buf :%s\n", quit);
+        printf("\n");
+
+    /*  trim space "     QUIT       "  */    
+//        quit1 = malloc(strlen(quit));
+//        strcpy(quit1, quit);
+//        printf("quit :%s\n", quit1);
+//        quit2 = trim_space(quit1);
+//        printf("quit :%s\n", quit1);
+
+
+/*  check QUIT   */
+        if ( strncasecmp(quit, "QUIT", 4) != 0 ){
+             state1 =  QUIT;
+         if (send(new_fd, "550 Syntax: QUIT\r\n", 18, 0) == -1)
+         perror("QUIT");
+        }else{
+
+/* send 221 OK */
+        if ( send( new_fd, "221 QUIT.\r\n", 11, 0 ) == -1 )
+        perror("QUIT");
+printf("QUIT!\n");
+closesocket(new_fd);
+state1++;
+break;
+}
+ break; // case QUIT
+
+case RELAY :
+  relaymail(relay,mail_from,mailtos,mailto_num, msg);
+
+  /* go back to ACCEPT states  */
+  state1 = ACCEPT;  
+
+/* reset variables  */
+  strcpy(buf, "");
+  strcpy(tmp_msg, "");
+  strcpy(message, "");
+    strcpy(message_buf, "");
+  strcpy(quit,"");
+    i=0;j=0;
+    email = NULL;
+    email2 = NULL;
+    mail_from = NULL;
+    mail_to = NULL;
+    tmp_mail = NULL;
+  strcpy(mailtos, "");
+    mailto_num =0;
+    data = NULL;
+    data2 = NULL;
+    quit1 = NULL;
+    quit2 = NULL;
+  state2 = 0;
+
+break;
+
+default : break;
+
+}//switch
+} // while(1)
+
+        close(new_fd);
+
+    #ifdef WIN32
+      WSACleanup();
+    #endif
+
+    return 0;
+}
+
+C:\MinGW\bin>gcc file.c -o compiled.exe
+file.c: In function `main':
+file.c:973: error: `socklen_t' undeclared (first use in this function)
+file.c:973: error: (Each undeclared identifier is reported only once
+file.c:973: error: for each function it appears in.)
+file.c:973: error: syntax error before "addr_len"
+

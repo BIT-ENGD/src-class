@@ -1,0 +1,114 @@
+local copas    = require("copas")
+local socket   = require("socket")
+local pl_class = require("pl.class")
+
+
+-- Connection between a server and a client
+pl_class.ClientConnection()
+
+function ClientConnection:_init(connectionName, socketToClient)
+    self.connectionName       = connectionName
+    self.socketToClient       = socketToClient
+    self.queueMessagesToSend  = {}
+end
+
+function ClientConnection:popMessageToSend()
+    return table.remove(self.queueMessagesToSend, 1);
+end
+
+function ClientConnection:pushMessageToSend(theMessage)
+    table.insert(self.queueMessagesToSend, theMessage)
+end
+
+
+-- Server base class
+pl_class.Server()
+
+function Server:_init(serverName, serverPort)
+    self.serverName            = serverName
+    self.serverPort            = serverPort
+    self.connectedClients      = {}
+end
+
+function Server:initServing()
+    local server = socket.bind("*", self.serverPort)
+    print("[" .. self.serverName .. "] Waiting for client connections on port " .. self.serverPort .. "...")
+    copas.addserver(server, function(c) return self.connectionHandler(copas.wrap(c), c:getpeername()) end )
+end
+
+
+-- Class for send-only servers
+pl_class.ServerSendOnly(Server)
+
+function ServerSendOnly:_init(serverName, serverPort)
+    self:super(serverName, serverPort)
+
+    self.connectionHandler = function (socketToClient, clientHost, clientPort)
+        local connObject = ClientConnection(clientHost..":"..tostring(clientPort), socketToClient)
+        self.connectedClients[connObject.connectionName] = connObject
+        while true do
+            local currMessage = connObject:popMessageToSend()
+            if currMessage then
+                copas.send(connObject.socketToClient, currMessage)
+            end
+            copas.sleep(0.01)
+        end
+        self.connectedClients[connObject.connectionName] = nil
+    end
+
+end
+
+function ServerSendOnly:broadcastMessage(currMessage)
+    for connName,connObject in pairs(self.connectedClients) do
+        connObject:pushMessageToSend(currMessage .. "\r\n")
+    end
+end
+
+
+-- Class for receive-only servers
+pl_class.ServerReceiveOnly(Server)
+
+function ServerReceiveOnly:_init(serverName, serverPort)
+    self:super(serverName, serverPort)
+    self.queueMessagesReceived = {}
+
+    self.connectionHandler = function (socketToClient, clientHost, clientPort)
+        local connObject = ClientConnection(clientHost..":"..tostring(clientPort), socketToClient)
+        self.connectedClients[connObject.connectionName] = connObject
+        while true do
+            local currDataReceived = copas.receive(connObject.socketToClient)
+            if currDataReceived ~= nil then
+                local currInfo = {client=connObject.connectionName, data=currDataReceived}
+                table.insert(self.queueMessagesReceived, currInfo)
+            end
+        end
+        self.connectedClients[connObject.connectionName] = nil
+    end
+
+end
+
+function ServerReceiveOnly:popMessageReceived()
+    return table.remove(self.queueMessagesReceived, 1);
+end
+
+
+-- Setup servers
+local serverSend    = ServerSendOnly("ServerTX", 2345)
+local serverReceive = ServerReceiveOnly("ServerRX", 1234)
+
+serverSend:initServing()
+serverReceive:initServing()
+
+
+-- Main loop: Pass messages which arrived at the RX server to the clients
+-- connected to the TX servers ("RX" and "TX" are used from the server's POV)
+while true do
+    copas.step()
+
+    local currMessage = serverReceive:popMessageReceived()
+    if currMessage then
+        print("[" .. serverReceive.serverName .. "] MESSAGE RECEIVED FROM '" .. currMessage.client .."': " .. currMessage.data)
+        serverSend:broadcastMessage(currMessage.data)
+    end
+end
+

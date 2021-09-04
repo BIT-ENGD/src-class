@@ -1,0 +1,138 @@
+UITable
+    -(NSArray *) loadAndFill: (NSString *)sql theClass: (Class)cls {
+        [self openDb];
+
+        NSMutableArray *list = [NSMutableArray array];
+
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+        DbObject *ds;
+        Class myClass = NSClassFromString([DbObject getTableName:cls]);
+
+        FMResultSet *rs = [self load:sql];
+
+        while ([rs next]) {
+            ds = [[myClass alloc] init];
+            NSDictionary *props = [ds properties];
+            NSString *fieldType = nil;
+            id fieldValue;
+
+            for (NSString *fieldName in [props allKeys]) {
+                fieldType = [props objectForKey: fieldName];
+
+                fieldValue = [self ValueForField:rs Name:fieldName Type:fieldType];
+
+                [ds setValue:fieldValue forKey:fieldName];
+            }
+
+            [list addObject :ds];
+
+            [ds release];
+        }
+        [rs close];
+
+        [pool drain];
+        return list;
+    }
+
+    -(id) ValueForField: (FMResultSet *)rs Name:(NSString *)fieldName Type:(NSString *)fieldType {
+        id fieldValue = nil;
+
+        if ([fieldType isEqualToString:@"i"] || // int
+                 [fieldType isEqualToString:@"I"] || // unsigned int
+                 [fieldType isEqualToString:@"s"] || // short
+                 [fieldType isEqualToString:@"S"] || // unsigned short
+                 [fieldType isEqualToString:@"f"] || // float
+                 [fieldType isEqualToString:@"d"] )  // double
+        {
+            fieldValue = [NSNumber numberWithInt: [rs longForColumn:fieldName]];
+        }
+        else if ([fieldType isEqualToString:@"B"]) // bool or _Bool
+        {
+            fieldValue = [NSNumber numberWithBool: [rs boolForColumn:fieldName]];
+        }
+        else if ([fieldType isEqualToString:@"l"] || // long
+                 [fieldType isEqualToString:@"L"] || // usigned long
+                 [fieldType isEqualToString:@"q"] || // long long
+                 [fieldType isEqualToString:@"Q"] ) // unsigned long long
+        {
+            fieldValue = [NSNumber numberWithLong: [rs longForColumn:fieldName]];
+        }
+        else if ([fieldType isEqualToString:@"c"] || // char
+                 [fieldType isEqualToString:@"C"] ) // unsigned char
+
+        {
+            fieldValue = [rs stringForColumn:fieldName];
+            //Is really a boolean?
+            if ([fieldValue isEqualToString:@"0"] || [fieldValue isEqualToString:@"1"]) {
+                fieldValue = [NSNumber numberWithInt: [fieldValue intValue]];
+            }
+        }
+        else if ([fieldType hasPrefix:@"@"] ) // Object
+        {
+            NSString *className = [fieldType substringWithRange:NSMakeRange(2, [fieldType length]-3)];
+
+            if ([className isEqualToString:@"NSString"]) {
+                fieldValue = [rs stringForColumn:fieldName];
+            }
+            else if ([className isEqualToString:@"NSDate"]) {
+                NSDateFormatter* dateFormatter = [[NSDateFormatter alloc] init];
+                [dateFormatter setDateFormat:@"yyyy-MM-dd'T'HH:mm:ss"];
+                NSString *theDate = [rs stringForColumn:fieldName];
+
+                if (theDate) {
+                    fieldValue = [dateFormatter dateFromString: theDate];
+                }
+                else
+                {
+                    fieldValue = nil;
+                }
+
+                [dateFormatter release];
+            }
+            else if ([className isEqualToString:@"NSInteger"]) {
+                fieldValue = [NSNumber numberWithInt: [rs intForColumn :fieldName]];
+            }
+            else if ([className isEqualToString:@"NSDecimalNumber"]) {
+                fieldValue = [rs stringForColumn :fieldName];
+                if (fieldValue) {
+                    fieldValue = [NSDecimalNumber decimalNumberWithString:[rs stringForColumn :fieldName]];
+                }
+            }
+            else if ([className isEqualToString:@"NSNumber"]) {
+                fieldValue = [NSNumber numberWithDouble: [rs doubleForColumn:fieldName]];
+            }
+            else
+            {
+                //Is a relationship one-to-one?
+                if (![fieldType hasPrefix:@"NS"]) {
+                    id rel =  class_createInstance(NSClassFromString(className), sizeof(unsigned));
+                    Class theClass = [rel class];
+                    if ([rel isKindOfClass:[DbObject class]]) {
+                        fieldValue = [rel init];
+                        //Load the record...
+                        NSInteger Id = [rs intForColumn:[theClass relationName]];
+                        if (Id>0) {
+                            [fieldValue release];
+
+                            Db *db = [Db currentDb];
+
+                            fieldValue = [db loadById: theClass theId:Id];
+                        }
+                    }
+                } else {
+
+                    NSString *error = [NSString stringWithFormat:@"Err Can't get value for field %@ of type %@", fieldName, fieldType];
+
+                    NSLog(error);
+                    NSException *e = [NSException
+                                      exceptionWithName:@"DBError"
+                                      reason:error
+                                      userInfo:nil];
+                    @throw e;
+                }
+            }
+        }
+        return fieldValue;
+    }
+

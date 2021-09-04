@@ -1,0 +1,52 @@
+module Main where
+
+import Control.Monad
+import Data.String.Utils
+import Data.List
+import Data.Char
+import System.Directory
+import System.FilePath
+import System.IO
+import System.IO.HVFS.Utils
+import Text.Regex
+
+alphaWords :: String -> [String]
+alphaWords = words . map (\c -> if isAlpha c then c else ' ') -- by ephemient
+-- was:
+-- words2 s =  case dropWhile isSpace2 s of
+--     "" -> []
+--     ss -> w : words2 sss
+--         where (w, sss) = break isSpace2 ss
+--     where isSpace2 = not . isAlpha
+
+findFiles :: FilePath -> IO [FilePath]
+findFiles path = do
+    cur_path <- getCurrentDirectory
+    files <- recurseDir SystemFS $ normalise $ combine cur_path path
+    filterM doesFileExist files
+
+wordsWithSuffix :: String -> String -> [String]
+wordsWithSuffix suffix text =
+    let tokens = (nub . alphaWords) text
+        endswithIgnoringCase = endswith suffix . map toLower
+    in filter endswithIgnoringCase tokens
+
+searchWords :: String -> String -> [String] -> IO [String]
+searchWords suffix path exts = do
+    let isSearchable = (`elem` exts) . takeExtension -- by yairchu
+    --was let isSearchable s = takeExtension s `elem` exts
+
+    --files <- filterM (fmap isSearchable) $ findFiles path -- by ephemient (compile error)
+    files <- liftM (filter isSearchable) $ findFiles path
+
+    wordsPerFile <- forM files $ fmap (wordsWithSuffix suffix) . readFile -- by ephemient
+    -- was: wordsPerFile <- forM files (\x -> liftM (wordsWithSuffix suffix) (readFile x))
+
+    return . sort . nub $ concat wordsPerFile -- by ephemient
+    -- was: return $ (sort . nub . concat) wordsPerFile
+
+main = do
+    words <- searchWords "tick" "/path/to/src" [".as", ".java", ".mxml"]
+    print $ length words
+    putStrLn $ unlines words
+

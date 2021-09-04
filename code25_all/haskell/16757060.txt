@@ -1,0 +1,66 @@
+GHC Haskell
+runTCPServer
+Packet
+encoder
+ByteString
+-- | Takes a generic type of STM chan and, given read and close functionality,
+--   returns a conduit 'Source' which consumes the elements of the channel.
+chanSource 
+    :: (MonadIO m, MonadSTM m)
+    => a                    -- ^ The channel
+    -> (a -> STM (Maybe b)) -- ^ The read function
+    -> (a -> STM ())        -- ^ The close/finalizer function
+    -> Source m b
+chanSource ch readCh closeCh = ConduitM pull
+    where close     = liftSTM $ closeCh ch
+          pull      = PipeM $ liftSTM $ readCh ch >>= translate
+          translate = return . maybe (Done ()) (HaveOutput pull close)
+
+-- | Takes a stream and, given write and close functionality, returns a sink
+--   which wil consume elements and broadcast them into the channel 
+chanSink
+    :: (MonadIO m, MonadSTM m)
+    => a                 -- ^ The channel
+    -> (a -> b -> STM()) -- ^ The write function
+    -> (a -> STM())      -- ^ The close/finalizer function
+    -> Sink b m ()
+chanSink ch writeCh closeCh = ConduitM sink
+    where close  = const . liftSTM $ closeCh ch
+          sink   = NeedInput push close
+          write  = liftSTM . writeCh ch
+          push x = PipeM $ write x >> return sink
+
+-- | Merges a list of 'Source' objects, sinking them into a 'TMChan' and returns
+--   a source which consumes the elements of the channel.
+mergeSources
+    :: (MonadIO m, MonadBaseControl IO m, MonadSTM m)
+    => [Source (ResourceT m) a]             -- ^ The list of sources
+    -> ResourceT m (Source (ResourceT m) a)
+mergeSources sx = liftSTM newTMChan >>= liftA2 (>>) (fsrc sx) retn
+    where push c s = s $$ chanSink c writeTMChan closeTMChan
+          fsrc x c = mapM_ (\s -> resourceForkIO $ push c s) x
+          retn c   = return $ chanSource c readTMChan closeTMChan
+
+-- | Helper which represents a conduit chain for each client connection
+serverApp :: Application SessionIO
+serverApp appdata = do
+    use ssBroadcast >>= liftIO . atomically . dupTMChan >>= assign ssBroadcast
+    -- appSource appdata $$ decoder $= protocol =$= encoder =$ appSink appdata
+    mergsrc $$ protocol $= encoder =$ appSink appdata
+    where chansrc = chanSource (use ssBroadcast) readTMChan closeTMChan
+          mergsrc = mergeSources [appSource appdata $= decoder, chansrc]
+
+-- | Structure which holds mutable information for clients
+data SessionState = SessionState
+    { _ssBroadcast     :: TMChan Packet -- ^ Outbound packet broadcast channel
+    }
+
+makeLenses ''SessionState
+
+-- | A transformer encompassing both SessionReader and SessionState
+type Session m = ReaderT SessionReader (StateT SessionState m)
+
+-- | Macro providing Session applied to an IO monad
+type SessionIO = Session IO
+
+Packet

@@ -1,0 +1,97 @@
+    progsem :: Prog -> State -> State
+
+    type State (Name -> Int, Name -> Int -> Int)
+
+     -- names (variables) are just strings.
+     type Name = String
+
+     -- a program is a series (list) of function definitions, followed by a
+     -- series of statements.
+     type Prog = ([FunDefn],[Stmt])
+
+     -- a statement is either...
+     data Stmt =
+         Assign Name Exp              -- ...assignment (<name> := <exp>;)
+       | If BExp [Stmt] [Stmt]        -- ...if-then-else (if <bexp> { <stmt>* } else { <stmt>* })
+       | While BExp [Stmt]            -- ...or a while-loop (while <bexp> { <stmt>*> })
+       | Let Name Exp [Stmt]          -- ...let bindings (let <name>=<exp> in { <stmt> *}) 
+       | LetArray Name Exp Exp [Stmt] -- ...let-array binding (letarray <name> [ <exp> ] := <exp> in { <stmt>* })
+       | Case Exp [(Int,[Stmt])]      -- ...case statements
+       | For Name Exp Exp [Stmt]      -- ...for statements 
+       | Return Exp                   -- ...return statement
+       | ArrayAssign Name Exp Exp     -- ...or array assignment (<name> [ <exp> ] := <exp>;)
+       deriving Show
+
+     -- an integer expression is either...
+     data Exp =
+         Add Exp Exp              -- ...addition (<exp> + <exp>)
+       | Sub Exp Exp              -- ...subtract (<exp> - <exp>)
+       | Mul Exp Exp              -- ...multiplication (<exp> * <exp>)
+       | Neg Exp                  -- ...negation (-<exp>)
+       | Var Name                 -- ...a variable (<name>)
+       | LitInt Int               -- ...or an integer literal (e.g. 3, 0, 42, 1999)
+       | FunCall Name [Exp] [Name] -- ...or a function call (<name> (<exp>,...,<exp> [; <name>,...,<name>]))
+       | VarArray Name Exp        -- ...or an array lookup (<name> [ <exp> ])
+       deriving Show
+
+     -- a boolean expression is either...
+     data BExp =
+         IsEq Exp Exp            -- ...test for equality (<exp> == <exp>)
+       | IsNEq Exp Exp           -- ...test for inequality (<exp> != <exp>)
+       | IsGT Exp Exp            -- ...test for greater-than (<exp> > <exp>)
+       | IsLT Exp Exp            -- ...test for less-than (<exp> < <exp>)
+       | IsGTE Exp Exp           -- ...test for greater-or-equal (<exp> >= <exp>)
+       | IsLTE Exp Exp           -- ...test for less-or-equal (<exp> <= <exp>)
+       | And BExp BExp           -- ...boolean and (<bexp> && <bexp>)
+       | Or BExp BExp            -- ...boolean or (<bexp> || <bexp>)
+       | Not BExp                -- ...boolean negation (!<bexp>)
+       | LitBool Bool            -- ... or a boolean literal (true or false)
+       deriving Show
+
+     type FunDefn = (Name,[Name],[Name],[Stmt])
+
+   expsem :: Exp -> State -> Int
+   expsem (Add e1 e2) s = (expsem e1 s) + (expsem e2 s)
+   expsem (Sub e1 e2) s = (expsem e1 s) - (expsem e2 s)
+   expsem (Mul e1 e2) s = (expsem e1 s) * (expsem e2 s)
+   expsem (Neg e) s   = -(expsem e s)
+   expsem (Var x) s   = s x
+   expsem (LitInt m) _ = m 
+
+
+   boolsem :: BExp -> State -> Bool
+   boolsem (IsEq  e1 e2) s = expsem e1 s == expsem e2 s       
+   boolsem (IsNEq e1 e2) s= not(expsem e1 s == expsem e2 s)
+   boolsem (IsGT  e1 e2) s= expsem e1 s >  expsem e2 s
+   boolsem (IsGTE e1 e2) s= expsem e1 s >=  expsem e2 s
+   boolsem (IsLT e1 e2)  s= expsem e1 s < expsem e2 s
+   boolsem (IsLTE e1 e2) s= expsem e1 s <= expsem e2 s
+   boolsem (And   b1 b2) s= boolsem b1 s &&  boolsem b2 s
+   boolsem (Or    b1 b2) s= boolsem b1 s || boolsem b2 s
+   boolsem (Not b)       s= not (boolsem b s)          
+   boolsem (LitBool x)   _= x          
+
+
+
+
+   stmtsem :: Stmt -> State -> State
+   stmtsem (Assign x e) s = (\z -> if (z==x) then expsem e s else s z)   
+   stmtsem (If b pt pf) s = if (boolsem b s) then (progsem pt s) else (progsem pf s) 
+   stmtsem (While b p)  s = if (boolsem b s) then stmtsem (While b p) (progsem p s) else s
+   stmtsem (Let x e p) s = s1 where
+                  initvalx = s x
+                  letvalx = expsem e s
+                  snew = progsem p (tweak s x letvalx)
+                  s1 z = if (z == x) then initvalx else snew z 
+
+   tweak :: State->Name->Int->State
+   tweak s vr n = \y -> if vr == y then n else s y 
+
+   progsem :: Prog -> State -> State
+   progsem smlist s0 = (foldl (\s -> \sm -> (stmtsem sm s)) (s0) ) smlist
+
+   s :: State
+   s "x" = 10
+
+  type State=  Name -> Int
+

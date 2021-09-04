@@ -1,0 +1,139 @@
+Imports Microsoft.VisualBasic
+Imports System.Data
+Imports System.Data.SqlClient
+Imports System.Text.RegularExpressions
+Imports System.Text
+Imports System.IO
+
+Namespace ABC
+    Public Class DataAccess
+        Public Class SQL
+            Dim objConnection As SqlConnection
+            Dim objAdapter As SqlDataAdapter
+            Dim objDataset As DataSet
+            Dim objTable As DataTable
+            Dim strSQL As String
+            Dim strCommandType As String
+            Shared sqlparams As List(Of param)
+            Public params As New Parameters
+            Shadows Application As HttpApplicationState = HttpContext.Current.Application
+            Shadows Server As HttpServerUtility = HttpContext.Current.Server
+            Shadows Response As HttpResponse = HttpContext.Current.Response
+            Shadows Session As HttpSessionState = HttpContext.Current.Session
+
+            Public Sub New()
+                Connection()
+            End Sub
+
+            Public Sub New(ByVal startingSql As String)
+                Connection()
+                sql = startingSql
+            End Sub
+
+            Private Sub Connection()
+                sqlparams = New List(Of param)
+                objConnection = New SqlConnection(ConfigurationManager.ConnectionStrings("sqlServerProd").ConnectionString)
+            End Sub
+
+            Public Function DataNQ(ByVal type As CommandType, Optional ByVal query As String = "") As Boolean
+                If query <> "" Then
+                    sql = query
+                End If
+                Dim objCommand As SqlCommand
+                Try
+                    objConnection.Open()
+                Catch ex As Exception
+                    objConnection.Close()
+                    objConnection.Open()
+                End Try
+                objCommand = New SqlCommand(sql, objConnection)
+                objCommand.CommandType = type
+                Dim cmd As New SqlCommand
+                HttpContext.Current.Trace.Warn(sql)
+                'HttpContext.Current.Trace.Write("Adding " & sqlparams.Count & " parameters")
+                HttpContext.Current.Trace.Warn(params.writeParams)
+                If sqlparams.Count > 0 Then
+                    For Each p As param In sqlparams
+                        Dim sparam As SqlParameter = p.makeParam
+                        HttpContext.Current.Trace.Write(sparam.DbType.ToString, sparam.ParameterName & "=" & sparam.Value)
+                        objCommand.Parameters.Add(p.makeParam)
+                    Next
+                    sqlparams = New List(Of param)
+                End If
+                HttpContext.Current.Trace.Warn("Successfully added " & objCommand.Parameters.Count & " parameters")
+                HttpContext.Current.Trace.Warn(params.writeParams)
+
+                '-- Create a SqlParameter object to hold the output parameter value
+                Dim paramRetVal As New SqlParameter("@RETURN_VALUE", SqlDbType.Int)
+                '-- Must set .Direction as ReturnValue
+                paramRetVal.Direction = ParameterDirection.ReturnValue
+                '-- Finally, add the parameter to the Command's Parameters collection
+                objCommand.Parameters.Add(paramRetVal)
+                '-- Call the sproc...
+                Dim reader As SqlDataReader = objCommand.ExecuteReader()
+                'Now you can grab the output parameter's value...
+
+                Dim intRetVal As Integer = Convert.ToInt32(paramRetVal.Value)
+                If intRetVal = 0 Then
+                    objConnection.Close()
+                    objCommand = Nothing
+                    reader = Nothing
+                    Return True
+                Else
+                    objConnection.Close()
+                    objCommand = Nothing
+                    reader = Nothing
+                    Return False
+                End If
+                objConnection.Close()
+
+            End Function
+
+            Public Sub freeResources()
+                sqlparams = Nothing
+                params = Nothing
+                objConnection = Nothing
+                objAdapter = Nothing
+                objDataset = Nothing
+                objTable = Nothing
+                strSQL = Nothing
+                strCommandType = Nothing
+            End Sub
+
+        Public Sub add(ByVal parameterName As String, ByVal dbType As System.Data.SqlDbType, ByVal size As Integer, ByRef value As Object)
+            HttpContext.Current.Trace.Write("adding param name/type/size/value", parameterName & " " & value)
+            Dim p As param
+            p = New param(parameterName, dbType, size, value)
+            p.Value = value
+            sqlparams.Add(p)
+        End Sub
+
+            Private Class param
+                Public name As String = Nothing
+                Public size As Integer = Nothing
+                Public type As System.Data.SqlDbType = Nothing
+                Public value As Object = Nothing
+                Public Function makeParam() As SqlParameter
+                    HttpContext.Current.Trace.Warn("before make param name=" & name & " type=" & type.ToString & " value=" & value)
+                    Dim p As New SqlParameter(name, type)
+                    If size <> Nothing Then
+                        p.Size = size
+                    End If
+                    p.Value = value
+                    HttpContext.Current.Trace.Warn("after make param name=" & p.ParameterName & " type=" & p.DbType.ToString)
+                    Return p
+                End Function
+
+        Public Sub New(ByVal pname As String, ByRef ptype As System.Data.SqlDbType, ByRef val As Object)
+            'HttpContext.Current.Trace.Write("new param object name/type/value name=" & pname & " type=" & ptype.ToString)
+            name = pname
+            type = ptype
+            value = val
+            'HttpContext.Current.Trace.Warn("added param name=" & name & " type=" & type.ToString)
+                End Sub
+            End Class
+
+
+        End Class
+    End Class
+

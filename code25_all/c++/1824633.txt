@@ -1,0 +1,221 @@
+
+// Original - works.
+
+void HandDistribution::Choose(unsigned __int64 &usedCards, bool &collided)
+{
+        _pickedHand = _hands[(*Random)()];
+
+        collided = (_pickedHand & usedCards) != 0;
+        usedCards |= _pickedHand;
+}
+
+// Modified - Doesn't work; biased equities.
+
+void HandDistribution::Choose(unsigned __int64 &usedCards, bool &collided)
+{
+        // Let's try to pick-up a hand from this distribution ten times, before
+        // we give up.
+
+        // NOTE: It doesn't matter, how many attempts there are (except one). 2 or 10,
+        // same biased results.
+
+        for (unsigned int attempts = 0; i < 10; ++i) {
+                _pickedHand = _hands[(*Random)()];
+
+                collided = (_pickedHand & usedCards) != 0;
+
+                if (!collided) {
+                        usedCards |= _pickedHand;
+
+                        return;
+                }
+        }
+
+        // All the picks collided with other hole cards...
+}
+
+
+
+func Calculate()
+{
+        for (std::vector<HandDistribution *>::iterator it = _handDistributions.begin(); it != _handDistributions.end(); ++it) {
+                (*it)->_equity = 0.0;
+                (*it)->_wins = 0;
+                (*it)->_ties = 0.0;
+                (*it)->_rank = 0;
+        }
+
+        std::bitset<32> bsBoardCardsHi(static_cast<unsigned long>(_boardCards >> 32)),
+                        bsBoardCardsLo(static_cast<unsigned long>(_boardCards & 0xffffffff));
+        int cardsToDraw = 5 - (bsBoardCardsHi.count() + bsBoardCardsLo.count()), count = 0;
+        HandDistribution *hd_first = *_handDistributions.begin(), *hd_current, *hd_winner;
+        unsigned __int64 deadCards = 0;
+        boost::shared_array<unsigned __int64> boards = boost::shared_array<unsigned __int64>(new unsigned __int64[2598960]);
+
+        memset(boards.get(), 0, sizeof(unsigned __int64) * 2598960);
+
+        hd_current = hd_first;
+
+        do {
+                deadCards |= hd_current->_deadCards; // All the unary-hands.
+
+                hd_current = hd_current->_next;
+        } while (hd_current != hd_first);
+
+        if (cardsToDraw > 0)
+                for (int c1 = 1; c1 < 49 + (5 - cardsToDraw); ++c1)
+                        if (cardsToDraw > 1)
+                                for (int c2 = c1 + 1; c2 < 50 + (5 - cardsToDraw); ++c2)
+                                        if (cardsToDraw > 2)
+                                                for (int c3 = c2 + 1; c3 < 51 + (5 - cardsToDraw); ++c3)
+                                                        if (cardsToDraw > 3)
+                                                                for (int c4 = c3 + 1; c4 < 52 + (5 - cardsToDraw); ++c4)
+                                                                        if (cardsToDraw > 4)
+                                                                                for (int c5 = c4 + 1; c5 < 53; ++c5) {
+                                                                                        boards[count] = static_cast<unsigned __int64>(1) << c1
+                                                                                                      | static_cast<unsigned __int64>(1) << c2
+                                                                                                      | static_cast<unsigned __int64>(1) << c3
+                                                                                                      | static_cast<unsigned __int64>(1) << c4
+                                                                                                      | static_cast<unsigned __int64>(1) << c5;
+
+                                                                                        if ((boards[count] & deadCards) == 0)
+                                                                                                ++count;
+                                                                                }
+                                                                        else {
+                                                                                boards[count] = static_cast<unsigned __int64>(1) << c1
+                                                                                              | static_cast<unsigned __int64>(1) << c2
+                                                                                              | static_cast<unsigned __int64>(1) << c3
+                                                                                              | static_cast<unsigned __int64>(1) << c4;
+
+                                                                                if ((boards[count] & deadCards) == 0)
+                                                                                        ++count;
+                                                                        }
+                                                        else {
+                                                                boards[count] = static_cast<unsigned __int64>(1) << c1
+                                                                              | static_cast<unsigned __int64>(1) << c2
+                                                                              | static_cast<unsigned __int64>(1) << c3;
+
+                                                                if ((boards[count] & deadCards) == 0)
+                                                                        ++count;
+                                                        }
+                                        else {
+                                                boards[count] = static_cast<unsigned __int64>(1) << c1
+                                                              | static_cast<unsigned __int64>(1) << c2;
+
+                                                if ((boards[count] & deadCards) == 0)
+                                                        ++count;
+                                        }
+                        else {
+                                boards[count] = static_cast<unsigned __int64>(1) << c1;
+
+                                if ((boards[count] & deadCards) == 0)
+                                        ++count;
+                        }
+        else {
+                boards[0] = _boardCards;
+                count = 1;
+        }
+
+        _distribution = boost::uniform_int<>(0, count - 1);
+
+        boost::variate_generator<boost::lagged_fibonacci607&, boost::uniform_int<> > Random(_generator, _distribution);
+
+        wxInitializer initializer;
+
+        Update *upd = new Update(this);
+
+        _trial = 0;
+        _done = false;
+
+        if (upd->Create() == wxTHREAD_NO_ERROR)
+                upd->Run();
+
+        hd_current = hd_first;
+
+        ::QueryPerformanceCounter((LARGE_INTEGER *) &_timer);
+
+        do {
+                hd_current = hd_first;
+
+                unsigned __int64 board = boards[Random()] | _boardCards, usedCards = _deadCards | board;
+                bool collision;
+
+                do {
+                        hd_current->Choose(usedCards, collision);
+
+                        hd_current = hd_current->_next;
+                } while (hd_current != hd_first && !collision);
+
+                if (collision) {
+                        hd_first = hd_current->_next;
+
+                        continue;
+                }
+
+                unsigned int best = 0, s = 1;
+
+                // Evaluate all hands.
+
+                do {
+                        hd_current->_pickedHand |= board;
+
+                        unsigned long i, l = static_cast<unsigned long>(hd_current->_pickedHand >> 32);
+                        int p;
+                        bool f = false;
+
+                        if (_BitScanForward(&i, l)) {
+                                p = _evaluator[53 + i + 32];
+                                l &= ~(static_cast<unsigned long>(1) << i);
+                                f = true;
+                        }
+
+                        if (f)
+                                while (_BitScanForward(&i, l)) {
+                                        l &= ~(static_cast<unsigned long>(1) << i);
+                                        p = _evaluator[p + i + 32];
+                                }
+
+                        l = static_cast<unsigned long>(hd_current->_pickedHand & 0xffffffff);
+
+                        if (!f) {
+                                _BitScanForward(&i, l);
+
+                                p = _evaluator[53 + i];
+                                l &= ~(static_cast<unsigned long>(1) << i);
+                        }
+
+                        while (_BitScanForward(&i, l)) {
+                                l &= ~(static_cast<unsigned long>(1) << i);
+                                p = _evaluator[p + i];
+                        }
+
+                        hd_current->_rank = p;
+
+                        if (p > best) {
+                                hd_winner = hd_current;
+                                s = 1;
+                                best = p;
+                        } else if (p == best)
+                                ++s;
+
+                        hd_current = hd_current->_next;
+                } while (hd_current != hd_first);
+
+                if (s > 1) {
+                        for (std::vector<HandDistribution *>::iterator it = _handDistributions.begin(); it != _handDistributions.end(); ++it) {
+                                if ((*it)->_rank == best) {
+                                        (*it)->_ties += 1.0 / s;
+                                        (*it)->_equity += 1.0 / s;
+                                }
+                        }
+                } else {
+                        ++hd_winner->_wins;
+                        ++hd_winner->_equity;
+                }
+
+                ++_trial;
+
+                hd_first = hd_current->_next;
+        } while (_trial < trials);
+}
+

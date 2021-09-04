@@ -1,0 +1,309 @@
+import java.net.*;
+import java.io.*;
+import java.awt.*;
+import java.awt.event.*;
+import javax.swing.*;
+
+public class SimpleChat extends JFrame {
+  private Socket         communicationSocket   = null;
+  private PrintWriter    outStream             = null;
+  private BufferedReader inStream              = null;
+  private Boolean        communicationContinue = true;
+  private String         disconnectString      = "disconnect764*#$1";
+  private JMenuItem      disconnectItem;
+  private JTextField     displayLabel;
+  private final Color    colorValues[]         = { Color.black, Color.blue, Color.red, Color.green };
+
+  // set up GUI
+  public SimpleChat() {
+    super("Simple Chat");
+
+    // set up File menu and its menu items
+    JMenu fileMenu = new JMenu("File");
+    fileMenu.setMnemonic('F');
+
+    // set up Activate Server menu item
+    JMenuItem serverItem = new JMenuItem("Activate Server");
+    serverItem.setMnemonic('S');
+    fileMenu.add(serverItem);
+    serverItem.addActionListener(new ActionListener() { // anonymous inner class
+                // display message dialog when user selects About...
+                public void actionPerformed(ActionEvent event) {
+                  setUpServer();
+                }
+              } // end anonymous inner class
+              ); // end call to addActionListener
+
+    // set up Activate Client menu item
+    JMenuItem clientItem = new JMenuItem("Activate Client");
+    clientItem.setMnemonic('C');
+    fileMenu.add(clientItem);
+    clientItem.addActionListener(new ActionListener() { // anonymous inner class
+                // display message dialog when user selects About...
+                public void actionPerformed(ActionEvent event) {
+                  setUpClient();
+                }
+              } // end anonymous inner class
+              ); // end call to addActionListener
+
+    // set up Activate Client menu item
+    disconnectItem = new JMenuItem("Disconnect Client/Server");
+    disconnectItem.setMnemonic('D');
+    disconnectItem.setEnabled(false);
+    fileMenu.add(disconnectItem);
+    disconnectItem.addActionListener(new ActionListener() { // anonymous inner
+                    // class
+                    // display message dialog when user selects About...
+                    public void actionPerformed(ActionEvent event) {
+                      disconnectClientServer(true);
+                    }
+                  } // end anonymous inner class
+                  ); // end call to addActionListener
+
+    // set up About... menu item
+    JMenuItem aboutItem = new JMenuItem("About...");
+    aboutItem.setMnemonic('A');
+    fileMenu.add(aboutItem);
+    aboutItem.addActionListener(new ActionListener() { // anonymous inner class
+               // display message dialog when user selects About...
+               public void actionPerformed(ActionEvent event) {
+                 JOptionPane.showMessageDialog(SimpleChat.this, "This is an example\nof using menus", "About",
+                                               JOptionPane.PLAIN_MESSAGE);
+               }
+             } // end anonymous inner class
+             ); // end call to addActionListener
+
+    // set up Exit menu item
+    JMenuItem exitItem = new JMenuItem("Exit");
+    exitItem.setMnemonic('x');
+    fileMenu.add(exitItem);
+    exitItem.addActionListener(new ActionListener() { // anonymous inner class
+              // terminate application when user clicks exitItem
+              public void actionPerformed(ActionEvent event) {
+                disconnectClientServer(true);
+                System.exit(0);
+              }
+            } // end anonymous inner class
+            ); // end call to addActionListener
+
+    // create menu bar and attach it to MenuTest window
+    JMenuBar bar = new JMenuBar();
+    setJMenuBar(bar);
+    bar.add(fileMenu);
+
+    // set up label to display text
+    displayLabel = new JTextField("Sample Text", SwingConstants.CENTER);
+    displayLabel.setForeground(colorValues[0]);
+    displayLabel.setFont(new Font("Serif", Font.PLAIN, 72));
+    displayLabel.addActionListener(new ActionListener() { // anonymous inner
+                  // class
+                  // display message dialog when user selects About...
+                  public void actionPerformed(ActionEvent event) {
+                    sendData();
+                  }
+                } // end anonymous inner class
+                ); // end call to addActionListener
+
+    getContentPane().setBackground(Color.CYAN);
+    getContentPane().add(displayLabel, BorderLayout.CENTER);
+
+    setSize(500, 200);
+    setVisible(true);
+
+  } // end constructor
+
+  public static void main(String args[]) {
+    final SimpleChat application = new SimpleChat();
+    application.addWindowListener(new WindowAdapter() {
+      public void windowClosing(WindowEvent e) {
+        application.disconnectClientServer(true);
+        System.exit(0);
+      }
+    });
+
+    // application.setDefaultCloseOperation( JFrame.EXIT_ON_CLOSE );
+  }
+
+  public void setCommunicationSocket(Socket sock) {
+    communicationSocket = sock;
+    communicationContinue = true;
+    disconnectItem.setEnabled(true);
+  }
+
+  public void setOutStream(PrintWriter out) {
+    outStream = out;
+  }
+
+  public void setInStream(BufferedReader in) {
+    inStream = in;
+  }
+
+  public void setUpServer() {
+    ServerThread st = new ServerThread(this);
+    st.start();
+  }
+
+  public void setUpClient() {
+    ClientThread st = new ClientThread(this);
+    st.start();
+  }
+
+  public void disconnectClientServer(Boolean sendMessage) {
+    if (communicationSocket == null)
+      return;
+
+    try {
+      // shut down socket read loop
+      communicationContinue = false;
+      disconnectItem.setEnabled(false);
+
+      // send notification to other end of socket
+      if (sendMessage == true)
+        outStream.println(disconnectString);
+
+      // sleep to let read loop shut down
+      Thread t = Thread.currentThread();
+      try {
+        t.sleep(500);
+      } catch (InterruptedException ie) {
+        return;
+      }
+
+      outStream.close();
+      inStream.close();
+      communicationSocket.close();
+    } catch (IOException e) {
+      System.err.println("Stream Read Failed.");
+      JOptionPane.showMessageDialog(SimpleChat.this, "Disconnection Failed", "SimpleChat", JOptionPane.PLAIN_MESSAGE);
+      return;
+    } finally {
+      communicationSocket = null;
+    }
+  }
+
+  public void sendData() {
+    if (communicationSocket != null) {
+      String data = displayLabel.getText();
+      outStream.println(data);
+    }
+  }
+
+  public void getData() {
+    String inputLine;
+    try {
+      while (communicationContinue == true) {
+        communicationSocket.setSoTimeout(100);
+        // System.out.println ("Waiting for Connection");
+        try {
+          while (((inputLine = inStream.readLine()) != null)) {
+            System.out.println("From socket: " + inputLine);
+            if (inputLine.equals(disconnectString)) {
+              disconnectClientServer(false);
+              return;
+            }
+            displayLabel.setText(inputLine);
+          }
+        } catch (SocketTimeoutException ste) {
+          // System.out.println ("Timeout Occurred");
+        }
+      } // end of while loop
+      System.out.println("communication is false");
+    } catch (IOException e) {
+      System.err.println("Stream Read Failed.");
+      JOptionPane.showMessageDialog(SimpleChat.this, "Input Stream read failed", "SimpleChat",
+                                    JOptionPane.PLAIN_MESSAGE);
+      return;
+    }
+  }
+}
+
+class ServerThread extends Thread {
+  private SimpleChat sc;
+  private JTextField display;
+
+  public ServerThread(SimpleChat scParam) {
+    sc = scParam;
+  }
+
+  public void run() {
+    ServerSocket connectionSocket = null;
+
+    try {
+      connectionSocket = new ServerSocket(10007);
+    } catch (IOException e) {
+      System.err.println("Could not listen on port: 10007.");
+      JOptionPane.showMessageDialog(sc, "Could not listen on port: 10007", "Server", JOptionPane.PLAIN_MESSAGE);
+      return;
+    }
+
+    JOptionPane.showMessageDialog(sc, "Server Socket is now activated", "Server", JOptionPane.PLAIN_MESSAGE);
+
+    Socket communicationSocket = null;
+
+    try {
+      communicationSocket = connectionSocket.accept();
+    } catch (IOException e) {
+      System.err.println("Accept failed.");
+      JOptionPane.showMessageDialog(sc, "Accept failed", "Server", JOptionPane.PLAIN_MESSAGE);
+      return;
+    }
+
+    JOptionPane.showMessageDialog(sc, "Comminucation is now activated", "Server", JOptionPane.PLAIN_MESSAGE);
+
+    try {
+      PrintWriter out = new PrintWriter(communicationSocket.getOutputStream(), true);
+      BufferedReader in = new BufferedReader(new InputStreamReader(communicationSocket.getInputStream()));
+
+      sc.setCommunicationSocket(communicationSocket);
+      sc.setOutStream(out);
+      sc.setInStream(in);
+
+      connectionSocket.close();
+
+      sc.getData();
+
+    } catch (IOException e) {
+      System.err.println("Accept failed.");
+      JOptionPane.showMessageDialog(sc, "Creation of Input//Output Streams failed", "Server", JOptionPane.PLAIN_MESSAGE);
+      return;
+    }
+  }
+}
+
+class ClientThread extends Thread {
+  private SimpleChat sc;
+
+  public ClientThread(SimpleChat scParam) {
+    sc = scParam;
+  }
+
+  public void run() {
+    Socket echoSocket = null;
+    PrintWriter out = null;
+    BufferedReader in = null;
+    String ipAddress = "127.0.0.1";
+
+    try {
+      echoSocket = new Socket(ipAddress, 10007);
+      out = new PrintWriter(echoSocket.getOutputStream(), true);
+      in = new BufferedReader(new InputStreamReader(echoSocket.getInputStream()));
+    } catch (UnknownHostException e) {
+      System.err.println("Don't know about host: " + ipAddress);
+      JOptionPane.showMessageDialog(sc, "Don't know about host: " + ipAddress, "Client", JOptionPane.PLAIN_MESSAGE);
+      return;
+    } catch (IOException e) {
+      System.err.println("Couldn't get I/O for " + "the connection to: " + ipAddress);
+      JOptionPane.showMessageDialog(sc, "Couldn't get I/O for the connection to: " + ipAddress, "Client",
+                                    JOptionPane.PLAIN_MESSAGE);
+      return;
+    }
+    JOptionPane.showMessageDialog(sc, "Comminucation is now activated", "Client", JOptionPane.PLAIN_MESSAGE);
+
+    sc.setCommunicationSocket(echoSocket);
+    sc.setOutStream(out);
+    sc.setInStream(in);
+
+    sc.getData();
+  }
+}
+

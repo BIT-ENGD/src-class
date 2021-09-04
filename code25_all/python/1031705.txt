@@ -1,0 +1,83 @@
+"""
+The most basic (working) CherryPy 3.1 Windows service possible.
+Requires Mark Hammond's pywin32 package.
+"""
+
+import cherrypy
+import win32serviceutil
+import win32service
+import sys
+import __builtin__
+
+__builtin__.theService = None
+
+class HelloWorld:
+    """ Sample request handler class. """
+
+    def __init__(self):
+        self.iVal = 0
+
+    @cherrypy.expose
+    def index(self):
+
+        try:
+
+            self.iVal += 1 
+
+            if self.iVal == 5:
+                sys.exit()
+            return "Hello world! " + str(self.iVal) 
+
+        except SystemExit:
+            StopServiceError(__builtin__.theService)
+
+
+class MyService(win32serviceutil.ServiceFramework):
+    """NT Service."""
+
+    _svc_name_ = "CherryPyService"
+    _svc_display_name_ = "CherryPy Service"
+    _svc_description_ = "Some description for this service"
+
+    def SvcDoRun(self):
+        __builtin__.theService = self
+        StartService()
+
+
+    def SvcStop(self):
+        StopService(__builtin__.theService)
+
+
+def StartService():
+
+    cherrypy.tree.mount(HelloWorld(), '/')
+
+    cherrypy.config.update({
+        'global':{
+            'tools.log_tracebacks.on': True,
+            'log.error_file': '\\Error_File.txt',
+            'log.screen': True,
+            'engine.autoreload.on': False,
+            'engine.SIGHUP': None,
+            'engine.SIGTERM': None
+            }
+        })
+
+    cherrypy.engine.start()
+    cherrypy.engine.block()
+
+
+def StopService(classObject):
+    classObject.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+    cherrypy.engine.exit()
+    classObject.ReportServiceStatus(win32service.SERVICE_STOPPED)
+
+
+def StopServiceError(classObject):
+    classObject.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+    cherrypy.engine.exit()
+    classObject.ReportServiceStatus(serviceStatus=win32service.SERVICE_STOPPED, win32ExitCode=1, svcExitCode=1)
+
+if __name__ == '__main__':
+    win32serviceutil.HandleCommandLine(MyService)
+

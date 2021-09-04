@@ -1,0 +1,91 @@
+int val = array[index*2 + 5]
+int val = array[index+9
+int val = array[Math.min(var,index)+7]
+public int compressNewer(final byte[] in, final int inLen, final byte[] out, int outPos){
+        int inPos = 0;
+        // initialize the hash table
+        if (cachedHashTable == null) {
+            cachedHashTable = new int[HASH_SIZE];
+        } else {
+            System.arraycopy(EMPTY, 0, cachedHashTable, 0, HASH_SIZE);
+        }
+        int[] hashTab = cachedHashTable;
+        // number of literals in current run
+        int literals = 0;
+        int future = first(in, inPos);
+        final int endPos = inLen-4;
+
+        // Loop through data until all of it has been compressed
+        while (inPos < endPos) {
+                future = (future << 8) | in[inPos+2] & 255;
+//                hash = next(hash,in,inPos);
+                int off = hash(future);
+                // ref = possible index of matching group in data
+                int ref = hashTab[off];
+                hashTab[off] = inPos;
+                off = inPos - ref - 1; //dropped for speed
+
+                // has match if bytes at ref match bytes in future, etc
+                // note: using ref++ rather than ref+1, ref+2, etc is about 15% faster
+                boolean hasMatch = (ref > 0 && off <= MAX_OFF && (in[ref++] == (byte) (future >> 16) && in[ref++] == (byte)(future >> 8) && in[ref] == (byte)future));
+
+                ref -=2; // ...EVEN when I have to recover it
+                // write out literals, if max literals reached, OR has a match
+                if ((hasMatch && literals != 0) || (literals == MAX_LITERAL)) {
+                    out[outPos++] = (byte) (literals - 1);
+                    System.arraycopy(in, inPos - literals, out, outPos, literals);
+                    outPos += literals;
+                    literals = 0;
+                }
+
+                //literal copying split because this improved performance by 5%
+
+                if (hasMatch) { // grow match as much as possible
+                    int maxLen = inLen - inPos - 2;
+                    maxLen = maxLen > MAX_REF ? MAX_REF : maxLen;
+                    int len = 3;
+                    // grow match length as possible...
+                    while (len < maxLen && in[ref + len] == in[inPos + len]) {
+                        len++;
+                    }
+                    len -= 2;
+
+                    // short matches write length to first byte, longer write to 2nd too
+                    if (len < 7) {
+                        out[outPos++] = (byte) ((off >> 8) + (len << 5));
+                    } else {
+                        out[outPos++] = (byte) ((off >> 8) + (7 << 5));
+                        out[outPos++] = (byte) (len - 7);
+                    }
+                    out[outPos++] = (byte) off;
+                    inPos += len;
+
+                    //OPTIMIZATION: don't store hashtable entry for last byte of match and next byte
+                    // rebuild neighborhood for hashing, but don't store location for this 3-byte group
+                    // improves compress performance by ~10% or more, sacrificing ~2% compression...
+                    future = ((in[inPos+1] & 255) << 16) | ((in[inPos + 2] & 255) << 8) | (in[inPos + 3] & 255);
+                    inPos += 2;
+                } else { //grow literals
+                    literals++;
+                    inPos++;
+                } 
+        }
+
+        // write out remaining literals
+        literals += inLen-inPos;
+        inPos = inLen-literals;
+        if(literals >= MAX_LITERAL){
+            out[outPos++] = (byte)(MAX_LITERAL-1);
+            System.arraycopy(in, inPos, out, outPos, MAX_LITERAL);
+            outPos += MAX_LITERAL;
+            inPos += MAX_LITERAL;
+            literals -= MAX_LITERAL;
+        }
+        if (literals != 0) {
+            out[outPos++] = (byte) (literals - 1);
+            System.arraycopy(in, inPos, out, outPos, literals);
+            outPos += literals;
+        }
+        return outPos; 
+    }
+

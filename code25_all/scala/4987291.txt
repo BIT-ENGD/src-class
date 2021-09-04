@@ -1,0 +1,94 @@
+import actors.{Actor, OutputChannel}
+import actors.remote.{RemoteActor, Node, FreshNameCreator}
+
+object Server extends Actor{
+
+    class ConnectedClient(id:Symbol,out:OutputChannel[Any]) extends Actor{
+        start
+
+        def act {
+            loop {
+                react {
+                    case m:ServerMessage =>
+                        out ! m
+                    case m:ClientMessage =>
+                        Server ! m
+                }
+            }
+        }
+    }
+
+    RemoteActor.alive(9999)
+    RemoteActor.register('server, this ) //'
+    println("Server started.")
+
+    var clients = new collection.mutable.HashSet[ConnectedClient]
+
+    def act  {
+        loop {
+            react {
+                case 'connect => //'
+                    println("Server: New Client")
+                    val id = FreshNameCreator.newName
+                    val client = new ConnectedClient(id,sender)
+                    clients += client
+                    RemoteActor.register(id, client) // This seems not to work
+                    reply(id)
+                case ClientMessage(m) =>
+                    println("Server: received: " + m)
+                    for( client <- clients )
+                        client ! ServerMessage(m)
+                case m =>
+                    println("Server: Unknown Message: " + m)
+            }
+        }
+    }
+}
+
+case class ServerMessage(m:String)
+case class ClientMessage(m:String)
+
+class Client(serverNode:Node) extends Actor{
+
+    println("Client: connecting...")
+    val server = RemoteActor.select( serverNode, 'server ) //'
+
+    start
+
+    def act{
+
+        //we want the symbol that is intended to identify our personal Actor at the Server
+        val id = (server !? 'connect).asInstanceOf[Symbol] //'
+        val personalServer = RemoteActor.select( serverNode, id)
+
+        println("Client["+id+"]: connected")
+
+        loop{
+            react{
+                case ServerMessage(m) => 
+                    println("Client["+id+"]: " + m)
+                case m:String =>
+                    personalServer ! ClientMessage(m)
+                case m =>
+                    println("Server: Unknown Message: " + m)
+            }
+        }
+    }
+}
+
+object Main{
+    def main(args:Array[String]){
+
+        Server.start
+
+        val serverNode = Node("localhost",9999)
+        val clientA = new Client(serverNode)
+        val clientB = new Client(serverNode)
+        val clientC = new Client(serverNode)
+
+        clientA ! "Hello. I am A."
+        clientB ! "Hello. I am B."
+        clientC ! "Hello. I am C."
+    }
+}
+

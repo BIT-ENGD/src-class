@@ -1,0 +1,59 @@
+class PagesController < ApplicationController
+  # GET /pages/1
+  # GET /pages/1.xml
+  # Show is the main page rendering action, page routes are aliased in routes.rb
+
+  def show
+    #-+-+-+-+-Core Page Queries-+-+-+-+-
+    @page = Page.find(params[:id])
+    @zones = @page.zones.find(:all, :order => 'zones.list_order ASC')
+    @mods = @page.mods.find(:all)
+    @columns = Page.columns
+
+    # restful params to influence page rendering, see routes.rb
+    @fragment = params[:fragment]   # render single module
+    @cluster = params[:cluster]     # render single zone
+    @head = params[:head]           # render html, body and head
+
+    #-+-+-+-+-Page Level Json Conversions-+-+-+-+-
+    @metas = @page.metas ? ActiveSupport::JSON.decode(@page.metas) : nil
+    @javascripts = @page.javascripts ? ActiveSupport::JSON.decode(@page.javascripts) : nil
+
+    #-+-+-+-+-Module Specific Queries-+-+-+-+-  
+    # would like to refactor this process
+
+    @mods.each do |mod|
+      # Reps Module Custom Queries
+      if mod.name == "reps"
+        @reps = User.find(:all, :joins => :roles, :conditions => { :roles => { :name => 'rep' } })
+      end
+      # Listing-poc Module Custom Queries
+      if mod.name == "listing-poc"
+        limit = params[:limit].to_i < 1 ? 10 : params[:limit] 
+        PropertyEntry.update_from_listing(mod.service_url)
+        @properties = PropertyEntry.all(:limit => limit, :order => "city desc")
+      end      
+      # Talents-index Module Custom Queries
+      if mod.name == "talents-index"
+        @talent = params[:type]
+        @reps = User.find(:all, :joins => :talents, :conditions => { :talents => { :name => @talent } })
+      end
+    end    
+
+    respond_to do |format|
+      format.html # show.html.erb
+      format.xml { render :xml => @page.to_xml( :include => { :zones => { :include => :mods } } ) }
+      format.json { render :json => @page.to_json }
+      format.css # show.css.erb, CSS dependency manager template
+    end
+  end
+
+  # for property listing ajax request
+  def update_properties
+    limit = params[:limit].to_i < 1 ? 10 : params[:limit]
+    offset = params[:offset]
+    @properties = PropertyEntry.all(:limit => limit, :offset => offset, :order => "city desc")
+    #render :nothing => true
+  end   
+end
+

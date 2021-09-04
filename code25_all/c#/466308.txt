@@ -1,0 +1,97 @@
+public static void ApplyChanges(this ObjectContext context, EntityObject entityWithChanges)
+    {
+        if (entityWithChanges.EntityState == EntityState.Detached)
+        {
+            object entityCurrentlyInDB = null;
+
+            if (context.TryGetObjectByKey(entityWithChanges.EntityKey, out entityCurrentlyInDB))
+            {
+                context.ApplyPropertyChanges(entityWithChanges.EntityKey.EntitySetName, entityWithChanges);
+
+                foreach (var relatedEnd in ((IEntityWithRelationships)entityCurrentlyInDB).RelationshipManager.GetAllRelatedEnds())
+                {
+                    var oldRef = relatedEnd as EntityReference;
+
+                    if (oldRef != null)
+                    {
+                        var newRef =
+                            ((IEntityWithRelationships)entityWithChanges).RelationshipManager
+                            .GetRelatedEnd(oldRef.RelationshipName, oldRef.TargetRoleName) as EntityReference;
+                        oldRef.EntityKey = newRef.EntityKey;
+                    }
+                }
+            }
+            else
+            {
+                throw new ObjectNotFoundException();
+            }
+
+        }
+    }
+
+public static void UpdateTemplate(Template template)
+    {
+        using (TheEntities context = new TheEntities())
+        {
+            context.ApplyChanges(template);
+            try
+            {
+                context.SaveChanges();
+            }
+            catch (OptimisticConcurrencyException)
+            {
+                context.Refresh(RefreshMode.ClientWins, template);
+                context.SaveChanges();
+            }
+
+            context.RemoveTracking(template);
+        }
+    }
+
+[TestMethod]
+    public void CanUpdateATemplate()
+    {
+        Template template = new Template();
+        template.Name = "Test";
+        template.Description = "Test";
+
+        TemplateType type = TemplateManager.FindTemplateTypeByName("Test");
+
+        if (type == null)
+        {
+            type = new TemplateType();
+            type.Name = "Test";
+        }
+
+        template.TemplateType = type;
+
+        TemplateManager.AddTemplate(template);
+
+        template = TemplateManager.FindTemplateByID(template.TemplateID);
+
+        Assert.IsNotNull(template);
+
+        type = TemplateManager.FindTemplateTypeByName("Round");
+
+        if (type == null)
+        {
+            type = new TemplateType();
+            type.Name = "Round";
+        }
+
+        template.TemplateType = type;
+
+        TemplateManager.UpdateTemplate(template);
+
+        template = TemplateManager.FindTemplateByID(template.TemplateID);
+
+        Assert.IsNotNull(template);
+        Assert.IsTrue(template.TemplateType.Name == "Round");
+
+        TemplateManager.DeleteTemplate(template);
+
+        template = TemplateManager.FindTemplateByID(template.TemplateID);
+
+        Assert.IsNull(template);
+    }
+

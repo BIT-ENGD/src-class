@@ -1,0 +1,176 @@
+    // Kind of stdClass. the User Domain Object
+    // Nothing more to say, it's just about to have a User object
+    // I guess we could do here some business logic like the username should
+    // be only alpha, etc..
+
+    class User
+    {
+        $_data = array('userId', 'userName');
+        public function __construct($data = null)
+        {
+            $this->populate($data);
+        }
+
+        public function populate($data = null)
+        {
+            if ( is_object ($data) )
+            {
+                $data = (array) $data;
+            }
+
+            if ( ! is_array($data) )
+            {
+                throw new Exception ('Data must be an array or an object');
+            }
+
+            foreach ($data as $property => $value)
+            {
+                $this->$property = $value;
+            }
+        }
+
+        public function toArray()
+        {
+            return $this->_data;
+        }
+    }
+
+   // The UserTable extends Zend_Db_Adapter_Abstract or Zend_Db_Table
+   // Here we do things like fetch, add, update, etc...
+   // Validating the data depending on the persistent layers which is the db :
+   // respect the data types and formats.
+
+   class UserTable extends Zend_Db_Adapter_Abstract
+    {
+        public function __construct ($options)
+        {
+            parent::__construct($options);
+        }
+
+        public function validateUser($user)
+        {
+            if ( null == $user->name || len($user->name) >= 30 || len($user->name) <= 0 )
+            {
+                throw new Zend_Db_Exception ('Username must be between  0 and 30 chars and must not be null');
+            } 
+
+            $user->name = $this->quote($user->name);
+
+            return $user;        
+        }
+
+        public function createUser(User $user)
+        {
+            $user = $this->validateUser($user);
+
+            $user = $user->toArray();
+
+            try
+            {
+                $this->insert('Users', $user);
+                $user->id $this->lastInsertId('Users');
+
+            } catch (Zend_Db_Expection $e) {
+                echo 'Error while creating user :', $e->getMessage();
+            }
+
+            return $user;
+        }
+
+        public function updateUser(User $user)
+        {
+            $user = $this->validateUser($user);
+
+            $user = $user->toArray();
+
+            if (null == $user->id)
+            {
+                throw new Exception ('User must have an userId to be updated');
+            }
+
+            try
+            {
+                $this->update('Users', $user, 'userId = ' . $user->id);
+
+            } catch (Zend_Db_Expection $e) {
+                echo 'Error while updating user :', $e->getMessage();
+            }
+
+            return $user;
+        }
+    }
+
+    // the UserService will be used like an API from the Controller
+    // Let says that our adapters must implements an interface for our Service
+    // be able to work.
+    // It overrides the method provided by the adapter without knowledge of
+    // the data is stored. You can then provide another adapter 
+    // than DB (like webservice, xml, etc...)
+    // But then, if the adapter implements an interface, why should I use 
+    // a Service Layer ? Maybe i didn't understand the Service Layer Concept.
+
+    class UserService
+    {
+        $_adapter = null;
+
+        public function __construct($adapter = null)
+        {
+            $this->setAdapter($adapter);
+        }
+
+        public function setAdapter($adapter = null)
+        {
+            $this->_adapter = $adaper;
+        }
+
+        public function getUserById($id = 0)
+        {
+            $this->getAdapter()->getUserById($id);
+        }
+
+        public function save(User $user)
+        {
+            if (null != $user->id)
+            {
+                $this->getAdapter()->createUser($user);
+            } else {
+                $this->getAdapter()->updateUser($user);
+            }
+        }
+
+        // proxy method to the PostService
+        // let's say that we have getPostsByUser($userId) method within the 
+        // PostService class
+        // Btw, Maybe we should find a better way to initialize the adapter,
+        // to let it less dependent.
+
+        public function getPosts(User $user)
+        {
+            $postService = new PostService(new PostTable());
+            return $postService->getPostsByUser($user->id);
+        }
+    }
+
+
+
+    // The use in a controller is pretty easy, and the controller, just do 
+    // what it should in an MVC architecture.
+    // get the data from the model, pass it to the view.
+
+    class UserController
+    {
+        protected $user = null;
+
+        public function init()
+        {
+            // get the user object from the session
+        }
+        public function postsAction()
+        {
+            $userService = new UserService(new UserTable());
+
+            $this->view->posts = $userService->getPostsByUser($user->id);
+
+        }
+    }
+

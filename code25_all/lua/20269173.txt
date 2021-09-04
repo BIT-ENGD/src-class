@@ -1,0 +1,692 @@
+tostring(function)
+    function learn()
+    -- learn()
+    --     Make it easier to learn Lua, based upon Matlab console functions
+    --     help()           print for help text in function source or help directory
+    --     who()            print defined variables (exlcuding those in loaded modules)
+    --     what()           print defined functions (exlcuding those in loaded modules)
+    --     which()          print path to function source file if present
+    --     list()           print the file to the console
+    --     edit()           edit "filename" or function source if present 
+    --                  note: edit(_) can be used after any call to list(), help(func), 
+    -- Helper functions
+    --     table.name()        returns table name as string
+    --     table.length()        this is difficult
+    --     table.keylist()        returns a list of keys
+    --     table.keytype()        returns a list of key types
+    --     edit_source()        process function names
+    --     edit_new()           create new "filename" (will use but not make subdirectories)
+    --     string.split()        returns a table from a string
+    --     io.exists()          test if a filename exists
+    --     io.newfile()         creates an empty file
+    --
+    -- global variables
+    --    editor = "P:\\MyPrograms\\EDITORS\\Addins\\Editor2\\editor2.exe "
+    --    helpindex a list of the names of the inbuilt functions - see end of file
+    --  topics        a table of help topics see topics.lua
+    --  web = "web"
+        web = "web"
+    --  webhelp = "http://www.nongnu.org/gsl-shell/doc/"
+        webhelp = "http://www.nongnu.org/gsl-shell/doc/"
+    --  editor = "P:\\MyPrograms\\EDITORS\\Addins\\Editor2\\editor2.exe "
+        editor = "P:\\MyPrograms\\EDITORS\\Addins\\Editor2\\editor2.exe "
+    -- required packages    
+    --    lfs         - lua file system (binary from lua-files)
+        require("lfs")  
+    --  topics  - for the help system   
+        require("topics")
+    end 
+
+    learn()
+
+
+    function who(t,i)
+    -- who(table) 
+    --  searches the table (or defaults to _G) to print a list of table keys + types
+    --  the second parameter is to add a prefix for a recursive call to search "sub" tables
+    --  still having difficulty with the "loaded" table as this is self referencing and sets up an infinate loop!
+    --  designed for the console, but could be modified to return a table
+    --
+        if type(t)~="table" then 
+            t=_G 
+        end
+
+        if type(i)~="string" then
+            i=""
+        end
+
+        local s={}
+        local u={}
+
+        s = table.keylist(t)
+        u = table.keytype(t)
+
+        for k,v in ipairs(s) do
+            if u[k]=="table" and s[k]~="_G" and s[k]~="loaded" then
+                who(t[s[k]],i..v..".")
+            else
+                if u[k]~="table" and u[k]~="function" and u[k]~="cdata" then
+                    print(u[k], i..v)
+                end
+            end
+        end
+    end
+
+    function what(t,i)
+    -- what(table) 
+    --  searches the table (or defaults to _G) to print a list of function names
+    --  the second parameter is to add a prefix for a recursive call to search "sub" tables
+    --  still having difficulty with the "loaded" table as this is self referencing and sets up an infinate loop!
+    --  designed for the console, but could be modified to return a table
+    --
+        if type(t)~="table" then 
+            t=_G 
+        end
+
+        if type(i)~="string" then
+            i=""
+        end
+
+        local s={}
+        local u={}
+
+        s = table.keylist(t)
+        u = table.keytype(t)
+
+        for k,v in ipairs(s) do
+            if u[k]=="table" and s[k]~="_G" and s[k]~="loaded" then
+                what(t[s[k]],i..v..".")
+            else
+                if u[k]=="function" then
+                    print(u[k], i..v)
+                end
+            end
+        end
+    end
+
+    function which(funcname)
+    -- which(funcname) 
+    --  identifies the source for the current definition of funcname
+    --  designed for the console, but could be modified to return a string
+    --
+        if type(funcname)~="function" then return end
+
+        local filename = _G.debug.getinfo(funcname).short_src
+        if filename=="[C]" then
+            print(tostring(funcname))
+        else
+            return filename
+        end
+    end
+
+    function help(funcname)
+    -- help(object)
+    --  for functions prints help text (from source or help\function.txt)
+    --      adding help text to source as ^--comments is recommended, 
+    --      for builtin functions use a subdirectory from the executable,
+    --      for uncommented source add a sibling help directory 
+    --  for table prints table name, size and list of contents
+    --  for variables prints the type of the object 
+    --
+        if type(funcname)=="boolean" then
+            io.write("boolean: ")
+            print(funcname)
+            return
+        end
+
+        if type(funcname)=="string" then
+            if funcname=="web" then
+                os.launch(webhelp)
+            else
+                print("string: "..funcname)
+            end
+            return
+        end
+
+        if type(funcname)=="number" then
+            print("number: "..funcname)
+            return
+        end
+
+        if type(funcname) == 'userdata' then
+            print(tostring(funcname))
+            io.write("metadata: ")
+            print(getmetatable(funcname))
+        end 
+
+        if type(funcname) == 'cdata' then
+            print(tostring(funcname))
+            -- *** Unfinished
+        end
+
+        if type(funcname)=="table" then 
+            print(tostring(funcname)..", size: "..table.length(funcname))
+            who(funcname)
+            what(funcname)
+            return 
+        end
+
+        if type(funcname)=="function" then 
+
+            -- Test for a source file
+            local filename = _G.debug.getinfo(funcname).short_src
+            if io.exists(filename) then
+                local codestart = _G.debug.getinfo(funcname).linedefined
+                local codeend = _G.debug.getinfo(funcname).lastlinedefined
+
+                if codestart < 1 then
+                    print("Start is less than 1")
+                    codestart = 1
+                end
+
+                if codeend< 1 then
+                    print("End is less than 1")
+                    codeend= 100
+                end
+
+                -- Try to read comments from the source
+                local output = 0        
+                local count = 0
+                for line in io.lines(filename) do 
+                    count = count+1
+                    if count > codestart and count < codeend then
+                        if line:match("^%-%-") then
+                            print(line)
+                            output = output + 1
+                        end
+                    end
+                end         
+                if output>0 then
+                    io.write("From : ")
+                    return filename -- to be used with edit(_)
+                end
+
+                -- Test for a help file as a sibling of the source
+                if output==0 then
+                    -- No comments in the source file so look for a help file
+                    local t = string.split(filename, "\\")
+                    local helppath = table.concat(t,"\\",1,table.length(t)-1).."\\help\\"..t[table.length(t)]
+                    helppath = string.gsub(helppath, "%.lua$" , ".txt")
+                    if io.exists(helppath) then
+                        local filename = list(helppath)
+                        io.write("From : ")
+                        return filename -- to be used with edit(_)
+                    else
+                        print("No help in source file : "..filename)
+                        io.write("No help in: ")
+                        return helppath -- to be used with edit_new(_)
+                    end
+                end
+            end 
+
+            --  Test for a help file in the generic help directory 
+            if helpindex[tostring(funcname)] then
+                local helppath = "help\\"..helpindex[tostring(funcname)]..".txt"
+                if io.exists(helppath) then
+                    local filename = list(helppath)
+                    io.write("From : ") 
+                    return filename -- to be used with edit(_)
+                else
+                    io.write("Built in function, but no help in: ")
+                    return helppath  -- to be used with edit_new(_)
+                end
+            else
+                print("No help index entry for "..tostring(funcname))
+                return
+            end
+        end
+    end
+
+    function list(filename)
+        if type(filename)=="function" then 
+            print("list will only accept a string with a valid file name")
+            return
+        end
+        if type(filename)~="string" then 
+            print("list will only accept a string with a valid file name")
+            return 
+        end
+        if io.exists(filename) then
+            for line in io.lines(filename) do 
+                print(line)
+            end
+            return filename
+        else
+            io.write("Can't find file: ")
+            return filename
+        end 
+    end
+
+    function edit(filename, linenum)
+    -- edit(filename[, linenum])
+    --  loads the file into my editor (defined as global editor)
+    --  the linenum parameter will move the cursor to linenum
+    --  you will need to edit the global "editor" and the source command line below
+    --  or download Editor²  from http://www.zabkat.com
+    --
+        if type(filename)=="function" then 
+            filename = edit_source(filename) 
+            return filename
+        end
+
+        if type(filename)~="string" then return end
+        if type(linenum)~="number" then linenum=1 end
+
+        if io.exists(filename) then
+            os.launch(editor.." /P /L:"..linenum.." \""..filename.."\"", " /P /L:"..linenum.." \""..filename.."\"")
+        else
+            print("To make a new file edit_new('filename')")
+            io.write("Can't find file: ")
+            return filename
+        end 
+    end
+
+    function edit_source(funcname)
+        if type(funcname)~="function" then return end
+
+        local filename = _G.debug.getinfo(funcname).short_src
+        if io.exists(filename) then
+            local linenum = _G.debug.getinfo(funcname).linedefined
+            if linenum < 1 then
+                linenum = 1
+            end
+            edit(filename, linenum)
+            io.write("Editing : ")
+            return filename
+        end
+    end
+
+    function edit_new(filename)
+        if type(filename)~="string" then return end
+        io.newfile(filename)
+        edit(filename) -- This will check for a valid file name
+        io.write("Editing : ")
+        return filename
+    end
+
+    function table.name(table)
+        if type(table)~="table" then return end
+        for k, v in pairs(_G) do
+            if v == table then
+                return k
+            end
+        end
+        return nil
+    end
+
+    function table.length(table)
+        if type(table)~="table" then return end
+
+        local len = 0 
+
+        for _ in pairs(table) do 
+            len = len + 1 
+        end
+
+        if type(len)=="number" then 
+            return len
+        else
+            return nil
+        end
+    end
+
+    function table.keylist(table)
+        if type(table)~="table" then return end
+
+        local keylist={}
+        local n=0
+        for key in pairs(table) do
+            n=n+1 
+            keylist[n]=key
+        end
+        return keylist
+    end
+
+    function table.keytype(table)
+        if type(table)~="table" then return end
+
+        local keytype={}
+        local n=0
+        for key in pairs(table) do
+            n=n+1 
+            keytype[n]=type(table[key])
+        end
+        return keytype
+    end
+
+    function table.tablelist(table)
+        if type(table)~="table" then return end
+
+        local tablelist={}
+        local n=0
+        for key in pairs(table) do
+            if type(table[key])=="table" then
+                n=n+1 
+                tablelist[n]=key
+            end
+        end
+        return tablelist
+    end
+
+    function string.split(inputstr, sep)
+            if sep == nil then
+                    sep = "%s"
+            end
+
+            local t={}
+            local i=1
+
+            for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+                    t[i] = str
+                    i = i + 1
+            end
+            return t
+    end
+
+    function  io.newfile(filename)
+    -- io.newfile(filename)
+    --  Will create a file if this is a valid filename
+    --  relative paths will work
+    --  files will not be overwritten
+        if type(filename)~="string" then 
+            print("This function requires a string")
+            return 
+        end
+        if io.exists(filename) then
+            io.write("This file already exists : ")
+            return filename
+        end
+        file, errormsg = io.open(filename, "w")
+        if errormsg then
+            print(errormsg)
+        else
+            file:write()
+            file:close()
+
+            io.write("New file created : ")
+            return filename
+        end
+    end
+
+    function io.exists(filename)
+        if type(filename)~="string" then return false end
+
+        local f=io.open(filename,"r")
+
+        if f~=nil then
+            io.close(f) return true
+        else 
+            return false 
+        end
+    end
+
+    function    os.launch(command,params)
+        -- Via a dos box works - but flashes up a dos console
+        --    would  love a way round this problem
+        command = "start "..command
+        os.execute(command)
+    end
+
+    helpindex =  {
+                    [tostring(assert)] = "assert",
+                    [tostring(collectgarbage)] = "collectgarbage", 
+                    [tostring(dofile)] = "dofile", 
+                    [tostring(error)] = "error", 
+                    [tostring(getfenv)] = "getfenv",
+                    [tostring(getmetatable)] = "getmetatable", 
+                    [tostring(ipairs)] = "ipairs",
+                    [tostring(load)] = "load",
+                    [tostring(loadfile)] = "loadfile",
+                    [tostring(loadstring)] = "loadstring",
+                    [tostring(next)] = "next" ,
+                    [tostring(pairs)] = "pairs" ,
+                    [tostring(pcall)] = "pcall" ,
+                    [tostring(rawequal)] = "rawequal" ,
+                    [tostring(rawget)] = "rawget" ,
+                    [tostring(rawset)] = "rawset" ,
+                    [tostring(select)] = "select" ,
+                    [tostring(setfenv)] = "setfenv" ,
+                    [tostring(setmetatable)] = "setmetatable" ,
+                    [tostring(tonumber)] = "tonumber" ,
+                    [tostring(tostring)] = "tostring" ,
+                    [tostring(type)] = "type" ,
+                    [tostring(unpack)] = "unpack" ,
+                    [tostring(xpcall)] = "xpcall" ,
+                    [tostring(coroutine.create)] = "coroutine.create" ,
+                    [tostring(coroutine.resume)] = "coroutine.resume" ,
+                    [tostring(coroutine.running)] = "coroutine.running" ,
+                    [tostring(coroutine.status )] = "coroutine.status ",
+                    [tostring(coroutine.wrap)] = "coroutine.wrap" ,
+                    [tostring(coroutine.yield)] = "coroutine.yield" ,
+                    [tostring(string.byte)] = "string.byte" ,
+                    [tostring(string.char)] = "string.char" , 
+                    [tostring(string.dump)] = "string.dump" , 
+                    [tostring(string.find )] = "string.find",
+                    [tostring(string.format)] = "string.format" , 
+                    [tostring(string.gmatch)] = "string.gmatch" ,
+                    [tostring(string.gsub)] = "string.gsub" ,
+                    [tostring(string.len)] = "string.len" ,
+                    [tostring(string.lower)] = "string.lower" ,
+                    [tostring(string.match)] = "string.match" ,
+                    [tostring(string.rep)] = "string.rep" ,
+                    [tostring(string.reverse)] = "string.reverse" ,
+                    [tostring(string.sub)] = "string.sub" ,
+                    [tostring(string.upper)] = "string.upper" ,
+                    [tostring(table.concat)] = "table.concat" ,
+                    [tostring(table.insert)] = "table.insert" ,
+                    [tostring(table.maxn)] = "table.maxn" ,
+                    [tostring(table.remove)] = "table.remove" ,
+                    [tostring(table.sort)] = "table.sort" ,
+                    [tostring(math.abs)] = "math.abs" , 
+                    [tostring(math.acos)] = "math.acos" ,
+                    [tostring(math.asin)] = "math.asin" ,
+                    [tostring(math.atan)] = "math.atan" , 
+                    [tostring(math.atan2)] = "math.atan2" ,
+                    [tostring(math.ceil)] = "math.ceil" ,
+                    [tostring(math.cos)] = "math.cos" ,
+                    [tostring(math.cosh)] = "math.cosh" ,
+                    [tostring(math.deg)] = "math.deg" ,
+                    [tostring(math.exp)] = "math.exp" ,
+                    [tostring(math.floor)] = "math.floor" ,
+                    [tostring(math.fmod)] = "math.fmod" ,
+                    [tostring(math.frexp)] = "math.frexp" ,
+                    [tostring(math.ldexp)] = "math.ldexp" ,
+                    [tostring(math.log)] = "math.log" ,
+                    [tostring(math.log10)] = "math.log10" ,
+                    [tostring(math.max)] = "math.max" , 
+                    [tostring(math.min)] = "math.min" ,
+                    [tostring(math.modf)] = "math.modf" ,
+                    [tostring(math.pow)] = "math.pow" ,
+                    [tostring(math.rad)] = "math.rad" ,
+                    [tostring(math.random)] = "math.random" ,
+                    [tostring(math.randomseed)] = "math.randomseed" ,
+                    [tostring(math.sin)] = "math.sin" ,
+                    [tostring(math.sinh)] = "math.sinh" ,
+                    [tostring(math.sqrt)] = "math.sqrt" ,
+                    [tostring(math.tan)] = "math.tan" ,
+                    [tostring(math.tanh)] = "math.tanh" ,
+                    [tostring(io.close)] = "io.close" ,
+                    [tostring(io.flush)] = "io.flush" ,
+                    [tostring(io.input)] = "io.input" ,
+                    [tostring(io.lines)] = "io.lines" ,
+                    [tostring(io.open)] = "io.open" ,
+                    [tostring(io.output)] = "io.output" ,
+                    [tostring(io.popen)] = "io.popen" ,
+                    [tostring(io.read)] = "io.read" ,
+                    [tostring(io.tmpfile)] = "io.tmpfile" , 
+                    [tostring(io.type)] = "io.type" ,
+                    [tostring(io.write)] = "io.write" ,
+                    [tostring(os.clock)] = "os.clock" ,
+                    [tostring(os.date)] = "os.date" ,
+                    [tostring(os.difftime)] = "os.difftime" ,
+                    [tostring(os.execute)] = "os.execute" ,
+                    [tostring(os.exit)] = "os.exit" ,
+                    [tostring(os.getenv)] = "os.getenv" ,
+                    [tostring(os.remove)] = "os.remove" ,
+                    [tostring(os.rename)] = "os.rename" ,
+                    [tostring(os.setlocale)] = "os.setlocale" , 
+                    [tostring(os.time)] = "os.time" ,
+                    [tostring(os.tmpname)] = "os.tmpname" ,
+                    [tostring(debug.debug)] = "debug.debug" ,
+                    [tostring(debug.getfenv)] = "debug.getfenv" ,
+                    [tostring(debug.gethook)] = "debug.gethook" ,
+                    [tostring(debug.getinfo)] = "debug.getinfo" ,
+                    [tostring(debug.getlocal)] = "debug.getlocal" ,
+                    [tostring(debug.getmetatable)] = "debug.getmetatable" ,
+                    [tostring(debug.getregistry)] = "debug.getregistry" ,
+                    [tostring(debug.getupvalue)] = "debug.getupvalue" ,
+                    [tostring(debug.setfenv)] = "debug.setfenv" ,
+                    [tostring(debug.sethook)] = "debug.sethook" ,
+                    [tostring(debug.setlocal)] = "debug.setlocal" ,
+                    [tostring(debug.setmetatable)] = "debug.setmetatable" ,
+                    [tostring(debug.setupvalue)] = "debug.setupvalue" ,
+                    [tostring(debug.traceback)] = "debug.traceback" ,
+                    [tostring(module)] = "module" ,
+                    [tostring(package.loadlib)] = "package.loadlib" ,
+                    [tostring(package.seeall)] = "package.seeall" ,
+                    [tostring(print)] = "print" ,
+                    [tostring(require)] = "require" ,
+                    [tostring(graph.fxplot)] = "graph.fxplot"
+                }
+
+    function help(funcname)
+    -- help(object)
+    --  for functions prints help text (from source or help\function.txt)
+    --      adding help text to source as ^--comments is recommended, 
+    --      for builtin functions use a subdirectory from the executable,
+    --      for uncommented source add a sibling \help directory and function.txt
+    --       (note that the source file may contain several functions)
+    --  for table prints table name, size and list of contents
+    --  for variables prints the type of the object 
+    --
+        if type(funcname)=="boolean" then
+            io.write("boolean: ")
+            print(funcname)
+            return
+        end
+
+        if type(funcname)=="string" then
+            if funcname=="web" then
+                os.launch(webhelp)
+            else
+                print("string: "..funcname)
+            end
+            return
+        end
+
+        if type(funcname)=="number" then
+            print("number: "..funcname)
+            return
+        end
+
+        if type(funcname) == 'userdata' then
+            print(tostring(funcname))
+            io.write("metadata: ")
+            print(getmetatable(funcname))
+        end 
+
+        if type(funcname) == 'cdata' then
+            print(tostring(funcname))
+            -- *** Unfinished
+        end
+
+        if type(funcname)=="table" then 
+            print(tostring(funcname)..", size: "..table.length(funcname))
+            who(funcname)
+            what(funcname)
+            return 
+        end
+
+        if type(funcname)=="function" then 
+
+            -- Test for a source file
+            local filename = _G.debug.getinfo(funcname).short_src
+            if io.exists(filename) then
+                local codestart = _G.debug.getinfo(funcname).linedefined
+                local codeend = _G.debug.getinfo(funcname).lastlinedefined
+
+                if codestart < 1 then
+                    print("Start is less than 1")
+                    codestart = 1
+                end
+
+                if codeend< 1 then
+                    print("End is less than 1")
+                    codeend= 100
+                end
+
+                -- Try to read comments from the source
+                local output = 0        
+                local count = 0
+                for line in io.lines(filename) do 
+                    count = count+1
+                    if count > codestart and count < codeend then
+                        if line:match("^%-%-") then
+                            print(line)
+                            output = output + 1
+                        end
+                    end
+                end         
+                if output>0 then
+                    io.write("From : ")
+                    return filename -- to be used with edit(_)
+                end
+
+                -- Try to read comments from \help\function.txt
+                if output==0 then
+                    -- No comments in the source file so look for a help file
+                    local t = string.split(filename, "\\")
+                    local helppath = table.concat(t,"\\",1,table.length(t)-1).."\\help\\"..helpindex[funcname]..".txt"
+                    if io.exists(helppath) then
+                        local filename = list(helppath)
+                        io.write("From : ")
+                        return filename -- to be used with edit(_)
+                    else
+                        print("No help in source file : "..filename)
+                        io.write("No help in: ")
+                        return helppath -- to be used with edit_new(_)
+                    end
+                end
+            end 
+
+            --  Test for a help file in the generic help directory 
+            if helpindex[funcname] then
+                local helppath = "help\\"..helpindex[funcname]..".txt"
+                if io.exists(helppath) then
+                    local filename = list(helppath)
+                    io.write("From : ") 
+                    return filename -- to be used with edit(_)
+                else
+                    io.write("Built in function, but no help in: ")
+                    return helppath  -- to be used with edit_new(_)
+                end
+            else
+                print("No help index entry for "..helpindex[funcname])
+                return
+            end
+        end
+    end
+
+
+    -- helpindex as a [function literal -> string] mapping of names.
+    --  many thanks to Ryan Stein 
+    --  http://stackoverflow.com/questions/20269173/lua-help-function-can-i-extract-the-name-of-a-function
+    helpindex = {}
+    do
+        local function indexfn(t, n)
+            if n == '_G' then n = '' else n = n .. '.' end
+
+            for k, v in pairs(t) do
+                if type(v) == 'function' then
+                    helpindex[v] = n .. k
+                end
+            end
+        end
+
+        for k, v in pairs(_G) do -- Iterate all tables in global scope.
+            if type(v) == 'table' then
+                indexfn(v, k)
+            end
+        end
+    end
+

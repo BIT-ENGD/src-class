@@ -1,0 +1,266 @@
+HttpRequestActor
+HttpSnoopClient
+ChannelPipelineFactory
+SimpleChannelUpstreamHandler
+messageReceived
+DefaultHttpRequest
+ChannelFuture
+messageRecieved
+HttpRequestActor
+    import scala.actors.Actor
+import java.net.{InetSocketAddress,URI}
+import org.jboss.netty.handler.codec.http._
+import org.jboss.netty.bootstrap.ClientBootstrap
+import org.jboss.netty.channel.Channel
+import org.jboss.netty.channel._
+import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory
+import org.jboss.netty.channel.group.DefaultChannelGroup
+import java.util.concurrent.{Executors,CancellationException}
+import org.jboss.netty.util.CharsetUtil
+import scala.concurrent.{ Promise, Future }
+import scala.concurrent.ExecutionContext.Implicits.global
+
+/**
+ * @author mebinum
+ *
+ */
+class HttpRequestActor extends Actor {
+    //initialize response with default uninitialized value
+    private var resp:Response = _
+    private val executor = Executors.newCachedThreadPool
+    private val executor2 = Executors.newCachedThreadPool
+    private val factory = new NioClientSocketChannelFactory(
+                          executor,
+                          executor2);
+
+    private val allChannels = new DefaultChannelGroup("httpRequester")
+
+    def act = loop {
+        react {
+            case RequestPage(uri) => requestUri(uri)
+            case Reply(msg) => setResponse(Reply(msg))
+            case NoReply => println("didnt get a reply");setResponse(NoReply)
+            case NotReadable => println("got a reply but its not readable");setResponse(NotReadable)
+            case ShutDown => shutDown()
+        }
+    }
+
+    private def requestUri(uri:URI) = {
+
+      makeChannel(uri) map {
+          channel => {
+              allChannels.add(channel)
+              val request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, uri.toString)
+              request.setHeader(HttpHeaders.Names.HOST, uri.getHost())
+              request.setHeader(HttpHeaders.Names.CONNECTION, HttpHeaders.Values.CLOSE)
+              request.setHeader(HttpHeaders.Names.ACCEPT_ENCODING, HttpHeaders.Values.GZIP)
+
+              val writeFuture = channel.write(request).awaitUninterruptibly()
+
+              FutureReactor !? writeFuture match {
+                  case future : ChannelFuture => {
+                      future.addListener(new ChannelFutureListener() {
+                          def operationComplete(future:ChannelFuture) {
+                              // Perform post-closure operation
+                              println("current response is " + resp)
+                              sendResponse("look ma I finished")
+                          }
+                      })
+                      future.getChannel().close()
+                  }
+              }
+
+              this ! ShutDown
+          }
+      }
+      //thread ends only if you send a reply from here
+      //println("this is final sender " + sender)
+      //reply("I am the true end")
+    }
+
+    private def makeChannel(uri:URI) = {
+      val scheme = Some(uri.getScheme()).getOrElse("http")
+      val host = Some(uri.getHost()).getOrElse("localhost")
+
+      val port = Utils.getPort(uri.getPort, uri.getScheme)
+
+      // Set up the event pipeline factory.
+      val client = new ClientBootstrap(factory)
+      client.setPipelineFactory(new PipelineFactory(this))
+
+      //get the promised channel
+      val channel = NettyFutureBridge(client.connect(new InetSocketAddress(host, port)))
+      channel  
+    }
+
+    private def setResponse(aResponse:Response) = resp = aResponse
+
+    private def sendResponse(msg:String) = {
+      println("Sending the response " + msg)
+      reply(resp)
+    }
+
+    private def shutDown() = {
+        println("got a shutdown message")
+        val groupFuture = allChannels.close().awaitUninterruptibly()
+        factory.releaseExternalResources()
+    }
+
+    override def exceptionHandler = {
+      case e : CancellationException => println("The request was cancelled"); throw e
+      case tr: Throwable => println("An unknown exception happened " + tr.getCause()); throw tr
+    }
+}
+
+
+
+trait Response
+case class RequestPage(url:URI)
+
+case class Reply(content:String) extends Response
+case object NoReply extends Response
+case object NotReadable extends Response
+case object ShutDown
+
+object FutureReactor extends Actor{
+  def act = //loop {
+      react {
+        case future: ChannelFuture => {
+            if (future.isCancelled) {
+                throw new CancellationException()
+            }
+            if (!future.isSuccess()) {
+                future.getCause().printStackTrace()
+                throw future.getCause()
+            }
+            if(future.isSuccess() && future.isDone()){
+                future.getChannel().getCloseFuture().awaitUninterruptibly()
+                reply(future)
+            }
+        }
+      }
+    //}
+  this.start
+}
+
+
+class ClientHandler(listener:Actor) extends SimpleChannelUpstreamHandler {
+
+  override def exceptionCaught( ctx:ChannelHandlerContext, e:ExceptionEvent){
+    e.getCause().printStackTrace()
+    e.getChannel().close();
+    throw e.getCause()
+  }
+
+  override def messageReceived(ctx:ChannelHandlerContext,  e:MessageEvent) = {
+        var contentString = ""
+        var httpResponse:Response =  null.asInstanceOf[Response]
+
+        e.getMessage match {
+          case (response: HttpResponse) if !response.isChunked => {
+              println("STATUS: " + response.getStatus);
+              println("VERSION: " + response.getProtocolVersion);
+              println
+
+              val content = response.getContent();
+              if (content.readable()) {
+                  contentString = content.toString(CharsetUtil.UTF_8)
+                  httpResponse = Reply(contentString)
+                  //notify actor
+
+              }else{
+                 httpResponse = NotReadable
+              }
+          }
+          case chunk: HttpChunk if !chunk.isLast => {
+            //get chunked content
+            contentString = chunk.getContent().toString(CharsetUtil.UTF_8)
+            httpResponse = Reply(contentString)
+          }
+          case _ => httpResponse = NoReply
+        }
+         println("sending actor my response")
+         listener ! httpResponse
+         println("closing the channel")
+         e.getChannel().close()
+         //send the close event
+
+    }
+
+
+}
+
+
+class PipelineFactory(listener:Actor) extends ChannelPipelineFactory {
+
+    def  getPipeline(): ChannelPipeline = {
+            // Create a default pipeline implementation.
+            val pipeline = org.jboss.netty.channel.Channels.pipeline()
+
+            pipeline.addLast("codec", new HttpClientCodec())
+
+            // Remove the following line if you don't want automatic content decompression.
+            pipeline.addLast("inflater", new HttpContentDecompressor())
+
+            // Uncomment the following line if you don't want to handle HttpChunks.
+            //pipeline.addLast("aggregator", new HttpChunkAggregator(1048576))
+
+            pipeline.addLast("decoder", new HttpRequestDecoder())
+            //assign the handler
+            pipeline.addLast("handler", new ClientHandler(listener))
+
+            pipeline;
+    }
+}
+
+
+object NettyFutureBridge { 
+  import scala.concurrent.{ Promise, Future }
+  import scala.util.Try
+  import java.util.concurrent.CancellationException 
+  import org.jboss.netty.channel.{ Channel, ChannelFuture, ChannelFutureListener }
+
+  def apply(nettyFuture: ChannelFuture): Future[Channel] = { 
+    val p = Promise[Channel]() 
+    nettyFuture.addListener(new ChannelFutureListener { 
+      def operationComplete(future: ChannelFuture): Unit = p complete Try( 
+        if (future.isSuccess) {
+          println("Success")
+          future.getChannel
+        }
+        else if (future.isCancelled) {
+          println("Was cancelled")
+          throw new CancellationException 
+        }
+
+        else {
+          future.getCause.printStackTrace()
+          throw future.getCause
+        })
+    }) 
+    p.future 
+  }
+} 
+
+val url = "http://hiverides.com"
+
+test("Http Request Actor can recieve and react to message"){
+    val actor = new HttpRequestActor()
+    actor.start
+
+    val response = actor !? new RequestPage(new URI(url)) 
+    match {
+      case Reply(msg) => {
+          println("this is the reply response in test")
+          assert(msg != "")
+          println(msg)
+        }
+      case NoReply => println("Got No Reply")
+      case NotReadable => println("Got a not Reachable")
+      case None => println("Got a timeout")
+      case s:Response => println("response string \n" + s)
+      case x => {println("Got a value not sure what it is"); println(x);}
+
+    }
+  }
+

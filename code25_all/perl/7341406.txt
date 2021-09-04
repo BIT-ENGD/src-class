@@ -1,0 +1,59 @@
+sub mysub {
+    my ($self, $int) = @_;
+    assert_int($int, 'int[1]');
+}
+
+Assertion error! 'int[1]' is not an integer; got 'HASH(0xXXXXXXXXX)'
+
+Data::Util
+Mouse
+use Inline C => <<'END_C';
+
+static int S_nv_is_integer(pTHX_ NV const nv) {
+  if(nv == (NV)(IV)nv){
+    return TRUE;
+  }
+  else {
+    char buf[64];  /* Must fit sprintf/Gconvert of longest NV */
+    const char* p;
+    (void)Gconvert(nv, NV_DIG, 0, buf);
+    p = &buf[0];
+
+    /* -?[0-9]+ */
+    if(*p == '-') p++;
+
+    while(*p){
+        if(!isDIGIT(*p)){
+            return FALSE;
+        }
+        p++;
+    }
+    return TRUE;
+  }
+}
+
+int assert_int(SV* sv, char* attributeName) {
+  assert(sv);
+  int result;
+  if(SvPOKp(sv)){
+    int const num_type = grok_number(SvPVX(sv), SvCUR(sv), NULL);
+    result = num_type && !(num_type & IS_NUMBER_NOT_INT);
+  }
+  else if(SvIOKp(sv)){
+    result = TRUE;
+  }
+  else if(SvNOKp(sv)) {
+    result = S_nv_is_integer(aTHX_ SvNVX(sv));
+  }
+  else {
+    result = FALSE;
+  }
+
+  if(! result) {
+    croak("'%s' was not an integer; got '%s'", attributeName, SvPV(sv, PL_na));
+  }
+  return result;
+}
+
+END_C
+

@@ -1,0 +1,132 @@
+    public Form1( )
+    {
+        InitializeComponent( );
+        testPBox1.Image = Properties.Resources.test;
+        trackBar1.Value = 100;
+        trackBar1.ValueChanged += trackBar1_ValueChanged;        
+    }     
+
+    void trackBar1_ValueChanged( object sender, EventArgs e )
+    {
+        testPBox1.IntensityScale = (float) trackBar1.Value / 100;
+    }
+
+class TestPBox : Control
+{
+    private const int MIN_SAT_WARNING = 240;        
+    private Bitmap m_srcBitmap;
+    private Bitmap m_dispBitmap;
+    private float m_scale;           
+
+    public TestPBox( )
+    {
+        this.DoubleBuffered = true;                                              
+        IntensityScale = 1.0f;
+    }      
+
+    public Bitmap Image
+    {
+        get
+        {
+            return m_dispBitmap;
+        }
+        set
+        {
+            if ( value != null )
+            {
+                m_srcBitmap = value;
+                m_dispBitmap = (Bitmap) value.Clone( );
+                Invalidate( );
+            }
+        }
+    }
+
+    [DefaultValue( 1.0f )]
+    public float IntensityScale
+    {
+        get
+        {
+            return m_scale;
+        }
+        set
+        {
+            if ( value == 0.0 || m_scale == value )
+            {                   
+                return;
+            }
+
+            if ( !this.DesignMode )
+            {
+                m_scale = value;
+                ProcessImage( );                    
+            }
+        }
+    }   
+
+    private void ProcessImage( )
+    {
+        if ( Image != null )
+        {
+            int sections = 10;
+            int sectionHeight = (int) m_srcBitmap.Height / sections;
+            for ( int i = 0; i < sections; ++i )
+            {
+                Rectangle next = new Rectangle( 0, i * sectionHeight, m_srcBitmap.Width, sectionHeight );
+                ThreadPool.QueueUserWorkItem( new WaitCallback( delegate { ChangeIntensity( next ); } ) );
+            }
+        }
+    }
+
+    private unsafe void ChangeIntensity( Rectangle rect )
+    {            
+        BitmapData srcData = m_srcBitmap.LockBits( rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb );
+        BitmapData dspData = m_dispBitmap.LockBits( rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb );            
+        byte* pSrc = (byte*) srcData.Scan0;
+        byte* pDsp = (byte*) dspData.Scan0;
+
+        for ( int y = 0; y < rect.Height; ++y )
+        {
+            for ( int x = 0; x < rect.Width; ++x )
+            {
+                // we are dealing with a monochrome image, so r = g = b.
+                // We only need to get one component value to use for all r, g, and b.
+                byte b = (byte) CompMinMax( 0, 255, (int) ( pSrc[0] * m_scale ) );
+                Color c = ( b > MIN_SAT_WARNING ) ? Color.FromArgb( b, Color.Red ) : Color.FromArgb( 255, b, b, b );                     
+
+                // windows stores images internally in 
+                // reverse byte order, i.e., Bgra, not Argb.
+                pDsp[3] = (byte) c.A;
+                pDsp[2] = (byte) c.R;
+                pDsp[1] = (byte) c.G;
+                pDsp[0] = (byte) c.B;
+
+                pSrc += 4;
+                pDsp += 4;                        
+            }
+        }
+
+        m_srcBitmap.UnlockBits( srcData );
+        m_dispBitmap.UnlockBits( dspData );
+        this.Invalidate( );                      
+    }
+
+    private int CompMinMax( int min, int max, int value )
+    {
+        if ( value > max ) return max;
+        if ( value < min ) return min;
+        return value;
+    }        
+
+    protected override void OnPaint( PaintEventArgs e )
+    {
+        if ( Image != null )
+        {               
+            Graphics g = e.Graphics;
+            Rectangle drawingRect = PaintUtils.CenterInRect( ClientRectangle, PaintUtils.ScaleRect( ClientRectangle, Image.Size ).Size );
+            g.DrawImage( Image, drawingRect, 0, 0, Image.Width, Image.Height, GraphicsUnit.Pixel );         
+        }
+
+        base.OnPaint( e );
+    }
+}
+

@@ -1,0 +1,72 @@
+DependentTransaction
+    Sub StartThreads()
+        Using Scope As New TransactionScope
+            Dim TL(100) As Tasks.Task
+            Dim dTx As DependentTransaction
+            For i As Int32 = 0 To 100
+                Dim A(1) As Object
+                dTx = CType(Transaction.Current.DependentClone(DependentCloneOption.BlockCommitUntilComplete), DependentTransaction)
+                'A(0) = some_other_data
+                A(1) = dTx 'the Dependent Transaction
+
+                TL(i) = Tasks.Task.Factory.StartNew(AddressOf Me.ProcessData, A) 'Start the thread and add it to the array
+            Next
+
+            Tasks.Task.WaitAll(TL) 'Wait for threads to finish
+
+            Scope.Complete()
+        End Using
+    End Sub
+    Dim TransLock As New Object
+    Sub ProcessData(ByVal A As Object)
+        Dim DTX As DependentTransaction = A(1)
+        Dim Trans As Transactions.TransactionScope
+        Dim I As Int32
+        Do While True
+            Try
+                SyncLock (TransLock)
+                    Trans = New Transactions.TransactionScope(DTX, TimeSpan.FromMinutes(1))
+                End SyncLock
+                Exit Do
+            Catch ex As TransactionAbortedException
+                If ex.ToString.Contains("Failure while attempting to promote transaction") Then
+                ElseIf ex.Message = "The transaction has aborted." Then
+                    Throw New Exception(ex.ToString)
+                    Exit Sub
+                End If
+                I += 1
+                If I > 5 Then
+                    Throw New Exception(ex.ToString)
+                End If
+            Catch ex As Exception
+
+            End Try
+            Thread.Sleep(10)
+        Loop
+        Using Trans
+            Using DALS As New DAC.DALScope
+                Do While True
+                    Try
+                        SyncLock (TransLock)
+                            'This opens two connection to the same DB for later use.
+                            DALS.CurrentDAL.OpenConnection(DAC.DAL.ConnectionList.FirstConnection)
+                            DALS.CurrentDAL.OpenConnection(DAC.DAL.ConnectionList.SecondConnection)
+                        End SyncLock
+                        Exit Do
+                    Catch ex As Exception
+                        'This is usually where I find the bottleneck
+                        '"Transaction context in use by another session" is the exception that I get
+                        Thread.Sleep(100)
+                    End Try
+                Loop
+
+                '*****************
+                'Do some work here
+                '*****************
+
+                Trans.Complete()
+            End Using
+        End Using
+        DTX.Complete()
+    End Sub
+

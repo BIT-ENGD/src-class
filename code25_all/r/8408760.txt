@@ -1,0 +1,42 @@
+library(lubridate)
+library(ggplot2)
+library(reshape2)
+dates <- seq(as.Date("2010-02-01"), length=24, by="1 month") - 1
+dates[5] <- dates[5]+3 #we are making one payment date that is 3 days late
+dates#look how the payment date is the last day of every month except for
+#2010-05 where it takes place on 2010-06-03 - naughty boy!
+amounts <- rep(50,each=24)# pay $50 every month
+register <- data.frame(dates,amounts)#this is the starting register or ledger
+ggplot(data=register,aes(dates,amounts))+geom_point()#look carefully and you will see that 2010-05 has no dots in it and 2010-06 has two dots
+register.by.month <- ddply(register,.(y=year(dates),month=month(dates)),summarise,month.tot=sum(amounts))#create a summary of totals by month but it lands up omiting a month in which nothing happened. Further badness is that it creates a new dataframe where one is not needed. Instead I created a new variable that allocates each date into a particular "zone" such as month or 
+register$cutmonth <- as.Date(cut(register$dates, breaks = "month"))#until recently I did not know that the cut function can handle dates
+table(register$cutmonth)#see how there are two payments in the month of 2010-06
+#now lets look at what we paid each month. What is the total for each month
+ggplot(register, aes(cutmonth, amounts))+ stat_summary(fun.y = sum, geom = "bar")#that is the truth but it is a useless truth
+
+#so lets use cummulated expense over time
+register$cumamount <- cumsum(register$amounts)
+cum <- ggplot(data=register,aes(dates,cumamount))+geom_point()
+cum+stat_smooth()
+
+#That was for everything the same every month, now lets introduce a situation where there is a trend that in the second year the amounts start to go up, 
+increase <- c(rep(1,each=12),seq(from=1.01,to=1.9,length.out=12))
+amounts.up <- round(amounts*increase,digits=2)#this is the monthly amount with a growth of amount in each month of the second year
+register <- cbind(register,amounts.up)#add the variable to the data frarme
+register$cumamount.up <- cumsum(register$amounts.up) #work out th cumulative sum for the new scenario
+ggplot(data=register,aes(x=dates))+
+   geom_point(aes(y=amounts, colour="amounts",shape="amounts"))+
+   geom_point(aes(y=amounts.up, colour="amounts.up",shape="amounts.up"))# the plot of amount by date
+#I am now going to plot the cumulative amount over time but now that I have two scenarios it is easier to deal with the data frame in long format (melted) rather than wide format (casted)
+#before I can melt, the reshape2 package unforutnately can't handle date class so will have to turn them int o characters and then back again.
+register[,c("dates","cutmonth")] <- lapply(register[,c("dates","cutmonth")],as.character)
+register.long <- melt.data.frame(register,measure.vars=c("amounts","amounts.up"))
+register.long[,c("dates","cutmonth")] <- lapply(register.long[,c("dates","cutmonth")],as.Date)
+ggplot(register.long, aes(cutmonth,value))+ stat_summary(fun.y = sum, geom = "bar")+facet_grid(. ~ variable) #that is the truth but it is a useless truth, 
+cum <- ggplot(data=register,aes(dates,cumamount))+geom_point()
+#that is the truth but it is a useless truth. Furthermore it appears as if 2010-06 is similar to what is going on in 2011-12
+#that is patently absurd. All that happened was that the 2010-05 payment was delayed by 3 days.
+
+#so lets use cummulated expense over time    
+ggplot(data=register.long,aes(dates,c(cumamount,cumamount.up)))+geom_point() + scale_y_continuous(name='cumulative sum of amounts ($)')
+

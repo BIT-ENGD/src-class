@@ -1,0 +1,67 @@
+-- load credentials, 'SSID' and 'PASSWORD' declared and initialize in there
+dofile("credentials.lua")
+
+function startup()
+    if file.open("init.lua") == nil then
+        print("init.lua deleted or renamed")
+    else
+        print("Running")
+        file.close("init.lua")
+        -- the actual application is stored in 'application.lua'
+        -- dofile("application.lua")
+    end
+end
+
+print("Connecting to WiFi access point...")
+wifi.setmode(wifi.STATION)
+wifi.sta.config(SSID, PASSWORD)
+-- wifi.sta.connect() not necessary because config() uses auto-connect=true by default
+tmr.create():alarm(1000, tmr.ALARM_AUTO, function(cb_timer)
+    if wifi.sta.getip() == nil then
+        print("Waiting for IP address...")
+    else
+        cb_timer:unregister()
+        print("WiFi connection established, IP address: " .. wifi.sta.getip())
+        print("You have 3 seconds to abort")
+        print("Waiting...")
+        tmr.create():alarm(3000, tmr.ALARM_SINGLE, startup)
+    end
+end)
+
+alt=45 -- altitude of the measurement place
+
+bme280.init(3, 4)
+
+P, T = bme280.baro()
+-- convert measure air pressure to sea level pressure
+QNH = bme280.qfe2qnh(P, alt)
+ldk=string.format("Ld=%d.%03d ", QNH/1000, QNH%1000)
+
+H, T = bme280.humi()
+if T<0 then    
+  temp=string.format("T=-%d.%02d°C ", -T/100, -T%100)
+else
+  temp=string.format("T=%d.%02d°C ", T/100, T%100)
+end
+luftf=string.format("Lf=%d%% ", H/1000, H%1000)
+D = bme280.dewpoint(H, T)
+if D<0 then
+  taupu=string.format("Tp=-%d.%02d°C ", -D/100, -D%100)
+else
+  taupu=string.format("Tp=%d.%02d°C ", D/100, D%100)
+end
+m = mqtt.Client("wetterstation", 120)
+m:connect("192.168.1.116", 1883)
+m:publish("wetterstation",temp .. taupu .. luftf .. ldk,0,0)
+node.dsleep(10*1000000)
+
+dofile(bme280_mqtt.lua)
+
+dofile('bme280_mqtt.lua')
+bme280_mqtt.lua:25: not connected
+stack traceback:
+    [C]: in function 'publish'
+    bme280_mqtt.lua:25: in main chunk
+    [C]: in function 'dofile'
+    stdin:1: in main chunk
+

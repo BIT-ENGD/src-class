@@ -1,0 +1,537 @@
+conky -t '${downspeedf wlan0}'
+conky_parse
+-------------------------------------------------------------------------------
+--                                                              draw_gauge_ring
+-- display gauges
+--
+function draw_gauge_ring(data)
+    local value = data.value
+    local value_max = data.value_max
+    local x, y = data.x, data.y
+    local graph_radius = data.graph_radius
+    local graph_thickness, graph_unit_thickness = data.graph_thickness, data.graph_unit_thickness
+    local graph_start_angle = data.graph_start_angle
+    local graph_unit_angle = data.graph_unit_angle
+    local graph_bg_colour, graph_bg_alpha = data.graph_bg_colour, data.graph_bg_alpha
+    local graph_fg_colour, graph_fg_alpha = data.graph_fg_colour, data.graph_fg_alpha
+    local hand_fg_colour, hand_fg_alpha = data.hand_fg_colour, data.hand_fg_alpha
+    local graph_end_angle = (value_max * graph_unit_angle) % 360
+
+    if value == nil then value=0  end
+
+    -- background ring
+    cairo_arc(cr, x, y, graph_radius, angle_to_position(graph_start_angle, 0), angle_to_position(graph_start_angle, graph_end_angle))
+    cairo_set_source_rgba(cr, rgb_to_r_g_b(graph_bg_colour, graph_bg_alpha))
+    cairo_set_line_width(cr, graph_thickness)
+    cairo_stroke(cr)
+
+    -- arc of value
+    local val = value % (value_max + 1)
+    local start_arc = 0
+    local stop_arc = 0
+    local i = 1
+    while i <= val do
+        start_arc = (graph_unit_angle * i) - graph_unit_thickness
+        stop_arc = (graph_unit_angle * i)
+        cairo_arc(cr, x, y, graph_radius, angle_to_position(graph_start_angle, start_arc), angle_to_position(graph_start_angle, stop_arc))
+        cairo_set_source_rgba(cr, rgb_to_r_g_b(graph_fg_colour, graph_fg_alpha))
+        cairo_stroke(cr)
+        i = i + 1
+    end
+    local angle = start_arc
+
+    -- hand
+    start_arc = (graph_unit_angle * val) - (graph_unit_thickness * 2)
+    stop_arc = (graph_unit_angle * val)
+    cairo_arc(cr, x, y, graph_radius, angle_to_position(graph_start_angle, start_arc), angle_to_position(graph_start_angle, stop_arc))
+    cairo_set_source_rgba(cr, rgb_to_r_g_b(hand_fg_colour, hand_fg_alpha))
+    cairo_stroke(cr)
+
+    -- graduations marks
+    local graduation_radius = data.graduation_radius
+    local graduation_thickness, graduation_mark_thickness = data.graduation_thickness, data.graduation_mark_thickness
+    local graduation_unit_angle = data.graduation_unit_angle
+    local graduation_fg_colour, graduation_fg_alpha = data.graduation_fg_colour, data.graduation_fg_alpha
+    if graduation_radius > 0 and graduation_thickness > 0 and graduation_unit_angle > 0 then
+        local nb_graduation = graph_end_angle / graduation_unit_angle
+        local i = 0
+        while i < nb_graduation do
+            cairo_set_line_width(cr, graduation_thickness)
+            start_arc = (graduation_unit_angle * i) - (graduation_mark_thickness / 2)
+            stop_arc = (graduation_unit_angle * i) + (graduation_mark_thickness / 2)
+            cairo_arc(cr, x, y, graduation_radius, angle_to_position(graph_start_angle, start_arc), angle_to_position(graph_start_angle, stop_arc))
+            cairo_set_source_rgba(cr,rgb_to_r_g_b(graduation_fg_colour,graduation_fg_alpha))
+            cairo_stroke(cr)
+            cairo_set_line_width(cr, graph_thickness)
+            i = i + 1
+        end
+    end
+
+    -- text
+    local txt_radius = data.txt_radius
+    local txt_weight, txt_size = data.txt_weight, data.txt_size
+    local txt_fg_colour, txt_fg_alpha = data.txt_fg_colour, data.txt_fg_alpha
+    local movex = txt_radius * math.cos(angle_to_position(graph_start_angle, angle))
+    local movey = txt_radius * math.sin(angle_to_position(graph_start_angle, angle))
+    cairo_select_font_face (cr, "ubuntu", CAIRO_FONT_SLANT_NORMAL, txt_weight)
+    cairo_set_font_size (cr, txt_size)
+    cairo_set_source_rgba (cr, rgb_to_r_g_b(txt_fg_colour, txt_fg_alpha))
+    cairo_move_to (cr, x + movex - (txt_size / 2), y + movey + 3)
+    cairo_show_text (cr, value)
+    cairo_stroke (cr)
+
+    -- caption
+    local caption = data.caption
+    local caption_weight, caption_size = data.caption_weight, data.caption_size
+    local caption_fg_colour, caption_fg_alpha = data.caption_fg_colour, data.caption_fg_alpha
+    local tox = graph_radius * (math.cos((graph_start_angle * 2 * math.pi / 360)-(math.pi/2)))
+    local toy = graph_radius * (math.sin((graph_start_angle * 2 * math.pi / 360)-(math.pi/2)))
+    cairo_select_font_face (cr, "ubuntu", CAIRO_FONT_SLANT_NORMAL, caption_weight);
+    cairo_set_font_size (cr, caption_size)
+    cairo_set_source_rgba (cr, rgb_to_r_g_b(caption_fg_colour, caption_fg_alpha))
+    cairo_move_to (cr, x + tox + 5, y + toy + 3)
+    -- bad hack but not enough time !
+    if graph_start_angle < 105 then
+        cairo_move_to (cr, x + tox - 30, y + toy + 1)
+    end
+    cairo_show_text (cr, caption)
+    cairo_stroke (cr)
+end
+
+-------------------------------------------------------------------------------
+--                                                                    draw_ring
+-- simple rings
+--
+function draw_ring(data)
+
+    local value = data.value
+    local value_max = data.value_max
+    local bgc = data.bg_colour
+    local bga = data.bg_alpha
+    local fgc = data.fg_colour
+    local fga = data.fg_alpha
+    local xc, yc = data.x, data.y
+    local radius = data.radius
+    local thickness = data.thickness
+    local sa = data.start_angle
+    local ea = data.end_angle
+    local lr = data.lr
+    if value == nil then value=0  end
+    local pct = value/value_max
+
+    local angle_0 = sa * math.pi/180 - math.pi/2
+    local angle_f = ea * math.pi/180 - math.pi/2
+    local pct_arc = pct * (angle_f - angle_0)
+
+    -- Draw background ring
+    cairo_arc(cr, xc, yc, radius, angle_0, angle_f)
+    cairo_set_source_rgba(cr, rgb_to_r_g_b(bgc, bga))
+    cairo_set_line_width(cr, thickness)
+    cairo_stroke(cr)
+
+    -- Draw indicator ring
+    cairo_arc(cr, xc, yc, radius, angle_0, angle_0 + pct_arc)
+    cairo_set_source_rgba(cr, rgb_to_r_g_b(fgc, fga))
+    cairo_stroke(cr)
+end
+
+-------------------------------------------------------------------------------
+--                                                              draw_gauge_bars
+-- display gauge
+--
+function draw_gauge_bars(data)
+    local x=data.x
+    local y=data.y
+    local divisions=data.divisions
+    local div_width=data.div_width
+    local div_height=data.div_height
+    local div_gap=data.div_gap
+    local br,bg,bb,ba=rgb_to_r_g_b(data.bg_color, data.bg_alpha)
+    local sr,sg,sb,sa=rgb_to_r_g_b(data.st_color, data.fg_alpha)
+    local mr,mg,mb,ma=rgb_to_r_g_b(data.mid_color, data.fg_alpha)
+    local er,eg,eb,ea=rgb_to_r_g_b(data.end_color, data.fg_alpha)
+
+    if data.value==nil then value=0 else value=data.value end
+
+    local value_max=data.value_max
+    local value_divs=(value/value_max)*divisions
+
+    cairo_set_line_width (cr,div_width)
+
+    for i=1,divisions do
+        if i<(divisions/2) and i<=value_divs then
+            colr=((mr-sr)*(i/(divisions/2)))+sr
+            colg=((mg-sg)*(i/(divisions/2)))+sg
+            colb=((mb-sb)*(i/(divisions/2)))+sb
+            cola=((ma-sa)*(i/(divisions/2)))+sa
+        elseif i>=(divisions/2) and i<=value_divs then
+            colr=((er-mr)*((i-(divisions/2))/(divisions/2)))+mr
+            colg=((eg-mg)*((i-(divisions/2))/(divisions/2)))+mg
+            colb=((eb-mb)*((i-(divisions/2))/(divisions/2)))+mb
+            cola=((ea-ma)*((i-(divisions/2))/(divisions/2)))+ma
+        else
+            colr=br
+            colg=bg
+            colb=bb
+            cola=ba
+        end
+
+        cairo_set_source_rgba (cr,colr,colg,colb,cola)
+        if data.orientation == "horizontal" then
+            cairo_move_to (cr,x+((div_width+div_gap)*i-1),y)
+        else
+            cairo_move_to (cr,x,y-((div_width+div_gap)*i-1))
+        end
+        cairo_rel_line_to (cr,0,div_height)
+        cairo_stroke (cr)
+    end
+end--function bars
+
+-------------------------------------------------------------------------------
+--                                                                         MAIN
+function conky_main(color, theme, drawbg, unit, area_code, posfix)
+
+    if conky_window == nil then return end
+
+    local cs = cairo_xlib_surface_create(conky_window.display, conky_window.drawable, conky_window.visual, conky_window.width, conky_window.height)
+
+    cr = cairo_create(cs)
+
+    local updates=tonumber(conky_parse('${updates}'))
+    if updates>5 then
+
+    -- BACKGROUND COLOR
+    if color == "white" then
+        bgc = 0xffffff
+        bga = 0.4
+    else
+        bgc = 0x1e1c1a
+        bga = 0.8
+    end
+
+    local theme = ("0x" .. theme)
+    local w = conky_window.width
+    local h = conky_window.height
+    local hori_space = w*0.07
+    local vert_space = h*0.5
+    local xp = hori_space
+    local yp = vert_space
+
+    -- BACKGROUND
+    if drawbg == "on" then
+    settings={
+        x=0-1    , y=0 ,
+        w=w+1    , h=h ,
+        border=1 ,
+        colour={{0,bgc,0.2},},
+    };draw_box(settings)
+    settings={
+        x=0-1 , y=0 ,
+        w=w+1 , h=h ,
+        colour={{0.5,bgc,bga},{1,bgc,bga-0.1},},
+        linear_gradient={0,0,w/2,h/2},
+    };draw_box(settings)
+    end
+
+    -- APPEARANCE
+    if color == "white" then
+        bgc = 0x1e1c1a
+        fgc = 0x1e1c1a
+        bga = 0.15
+        fga = 0.8
+    else
+        bgc = 0xffffff
+        fgc = 0xffffff
+        bga = 0.1
+        fga = 0.8
+    end
+
+    settings = {--HOUR
+        txt="88:88",
+        x=(w/2)-140             , y=50          ,
+        txt_weight=1        , txt_size=50,
+        txt_fg_colour=fgc , txt_fg_alpha=bga ,
+        font = "Digital Readout Thick Upright"
+    };display_text(settings)
+    settings = {--HOUR
+        txt=conky_parse("${time %H:}"),
+        x=(w/2)-140            , y=50          ,
+        txt_weight=1        , txt_size=50,
+        txt_fg_colour=theme , txt_fg_alpha=fga ,
+        font = "Digital Readout Thick Upright"
+    };display_text(settings)
+    settings = {--MINUTES
+        txt=conky_parse("${time %M}"),
+        x=(w/2)-78             , y=50          ,
+        txt_weight=1        , txt_size=50 ,
+        txt_fg_colour=theme , txt_fg_alpha=fga ,
+        font = "Digital Readout Thick Upright"
+    };display_text(settings)
+
+    if unit =='f' then
+        unitChar = 'F°'
+    else
+        unitChar = 'C°'
+    end
+
+    settings = {--DAY TEMP
+        txt="Temp: " .. get_yahoo_weather_info("cur", area_code, unit) .. unitChar,
+        x=(w/2)+60               , y=20            ,
+        txt_weight=0        , txt_size=12 ,
+        txt_fg_colour=fgc , txt_fg_alpha=fga    ,
+    };display_text(settings)
+    settings = {--DATA
+        txt=conky_parse("${time %d}") .. " " .. conky_parse("${time %b}") .. " " .. conky_parse("${time %Y}"),
+        x=(w/2)+60               , y=35            ,
+        txt_weight=0        , txt_size=12 ,
+        txt_fg_colour=theme , txt_fg_alpha=fga    ,
+    };display_text(settings)
+    settings = {--NAME WEEK
+        txt=conky_parse("${time %A}"),
+        x=(w/2)+60               , y=48           ,
+        txt_weight=0        , txt_size=12 ,
+        txt_fg_colour=fgc , txt_fg_alpha=fga    ,
+    };display_text(settings)
+
+    settings = {--DAYS GRAPH
+        value=tonumber(conky_parse("${time %d}")),
+        value_max=31               ,
+        x=w/2                     , y=yp                        ,
+        graph_radius=33            ,
+        graph_thickness=5          ,
+        graph_start_angle=215      ,
+        graph_unit_angle=3.6       , graph_unit_thickness=2.6    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=42              ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=28       ,
+        graduation_thickness=0     , graduation_mark_thickness=1 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.4     ,
+        caption=''                 ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    settings = {--MONTHS GRAPH
+        value=tonumber(conky_parse("${time %m}")),
+        value_max=12               ,
+        x=w/2                     , y=yp                        ,
+        graph_radius=33            ,
+        graph_thickness=5          ,
+        graph_start_angle=34       ,
+        graph_unit_angle=9.2       , graph_unit_thickness=8.2    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=42              ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=28       ,
+        graduation_thickness=0     , graduation_mark_thickness=1 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.3     ,
+        caption=''                 ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    settings = {--SECONDS
+        value=tonumber(conky_parse("${time %S}")),
+        value_max = 60    ,
+        x = w/2          , y = yp          ,
+        bg_colour = bgc   , bg_alpha = bga  ,
+        fg_colour = theme , fg_alpha = fga  ,
+        radius =25        , thickness = 10  ,
+        start_angle = 0   , end_angle = 360 ,
+        lr = 0            ,
+    };draw_ring(settings)
+
+    settings = {--CLOCK HANDS
+        xc = w/2          ,
+        yc = yp          ,
+        colour = bgc     ,
+        alpha = 1        ,
+        show_secs = true ,
+        size = 40        ,
+    };clock_hands(settings)
+
+    xp = ((w/2)/2.6) - posfix
+    settings = {--CPU GRAPH CPU1
+        value=tonumber(conky_parse("${cpu cpu1}")),
+        value_max=100              ,
+        x=xp                       , y=yp                        ,
+        graph_radius=22            ,
+        graph_thickness=5          ,
+        graph_start_angle=180      ,
+        graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=35              ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=28       ,
+        graduation_thickness=0     , graduation_mark_thickness=1 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.3     ,
+        caption='CPU'              ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    settings = {--CPU GRAPH CPU2
+        value=tonumber(conky_parse("${cpu cpu2}")) ,
+        value_max=100              ,
+        x=xp                       , y=yp                        ,
+        graph_radius=17            ,
+        graph_thickness=5          ,
+        graph_start_angle=180      ,
+        graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=0               ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=28       ,
+        graduation_thickness=0     , graduation_mark_thickness=1 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.3     ,
+        caption=''                 ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    xp = xp + hori_space
+    settings = {--MEMPERC GRAPH
+        value=tonumber(conky_parse("${memperc}")),
+        value_max=100              ,
+        x=xp                       , y=yp                        ,
+        graph_radius=22            ,
+        graph_thickness=5          ,
+        graph_start_angle=180      ,
+        graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=0               ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=22       ,
+        graduation_thickness=4     , graduation_mark_thickness=2 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.5     ,
+        caption='MEM'              ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    xp = xp + hori_space
+    settings = {--SWAP FILESYSTEM USED GRAPH
+        value=tonumber(conky_parse("${swapperc}")),
+        value_max=100              ,
+        x=xp                       , y=yp                        ,
+        graph_radius=22            ,
+        graph_thickness=5          ,
+        graph_start_angle=180      ,
+        graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=0               ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=22       ,
+        graduation_thickness=4     , graduation_mark_thickness=2 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.5     ,
+        caption='SWAP'             ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    xp = w/2 + 170
+    disks = {'/', '/home'}
+    disksLabel = {'ROOT', 'HOME'}
+    for i, partitions in ipairs(disks) do
+        settings = {--ROOT FILESYSTEM USED GRAPH
+            value=tonumber(conky_parse("${fs_used_perc " .. partitions .. "}")),
+            value_max=100              ,
+            x=xp                       , y=yp                        ,
+            graph_radius=22            ,
+            graph_thickness=5          ,
+            graph_start_angle=180      ,
+            graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+            graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+            graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+            hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+            txt_radius=0               ,
+            txt_weight=1               , txt_size=8.0                ,
+            txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+            graduation_radius=23       ,
+            graduation_thickness=0     , graduation_mark_thickness=2 ,
+            graduation_unit_angle=27   ,
+            graduation_fg_colour=theme , graduation_fg_alpha=0.5     ,
+            caption=disksLabel[i]      ,
+            caption_weight=1           , caption_size=10.0           ,
+            caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+        };draw_gauge_ring(settings)
+    end
+
+    xp = xp + hori_space
+    settings = {--NETWORK GRAPH DOWN
+        value=tonumber(conky_parse("${downspeedf wlan0}")),
+        value_max=100              ,
+        x=xp                       , y=yp                        ,
+        graph_radius=22            ,
+        graph_thickness=5          ,
+        graph_start_angle=180      ,
+        graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=35              ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=28       ,
+        graduation_thickness=0     , graduation_mark_thickness=1 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.3     ,
+        caption='NET'              ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    settings = {--NETWORK GRAPH UP
+        value=tonumber(conky_parse("${upspeedf wlan0}")),
+        value_max=100              ,
+        x=xp                       , y=yp                        ,
+        graph_radius=17            ,
+        graph_thickness=5          ,
+        graph_start_angle=180      ,
+        graph_unit_angle=2.7       , graph_unit_thickness=2.7    ,
+        graph_bg_colour=bgc        , graph_bg_alpha=bga          ,
+        graph_fg_colour=theme      , graph_fg_alpha=fga          ,
+        hand_fg_colour=theme       , hand_fg_alpha=0.0           ,
+        txt_radius=0               ,
+        txt_weight=1               , txt_size=8.0                ,
+        txt_fg_colour=fgc          , txt_fg_alpha=fga            ,
+        graduation_radius=28       ,
+        graduation_thickness=0     , graduation_mark_thickness=1 ,
+        graduation_unit_angle=27   ,
+        graduation_fg_colour=theme , graduation_fg_alpha=0.3     ,
+        caption=''                 ,
+        caption_weight=1           , caption_size=10.0           ,
+        caption_fg_colour=fgc      , caption_fg_alpha=fga        ,
+    };draw_gauge_ring(settings)
+
+    end-- if updates>5
+    cairo_destroy(cr)
+    cairo_surface_destroy(cs)
+    cr=nil
+end-- end main function
+

@@ -1,0 +1,96 @@
+Private Sub SearchWorker_ProgressChanged(ByVal sender As Object, ByVal e As System.ComponentModel.ProgressChangedEventArgs) Handles SearchWorker.ProgressChanged
+    Dim itmX As ListViewItem
+    Dim tmpCustomer As CustomerItem
+
+    If e.UserState.ToString = "New" Then
+        lstResults.Items.Clear()
+    Else
+        Try
+            tmpCustomer = e.UserState
+            itmX = lstResults.Items.Add(tmpCustomer.CustomerName) ' <-- Error here
+            itmX.Tag = tmpCustomer.CustomerID
+            itmX.Name = tmpCustomer.CustomerID
+            itmX.SubItems.Add(tmpCustomer.City)
+            itmX.SubItems.Add(tmpCustomer.State)
+            itmX.SubItems.Add(tmpCustomer.Zip)
+        Catch ex As Exception
+            MsgBox(ex.Message)
+        End Try
+    End If
+
+    progBar.Value = e.ProgressPercentage
+
+    Application.DoEvents()
+End Sub
+
+An unhandled exception of type 'System.StackOverflowException' occurred in System.Windows.Forms.dll
+
+Private Sub SearchWorker_ProgressChanged(ByVal sender As Object, ByVal e As System.ComponentModel.ProgressChangedEventArgs) Handles SearchWorker.ProgressChanged
+
+    If e.UserState.ToString = "New" Then
+        lstResults.Items.Clear()
+    Else
+        Try
+            itmX = lstResults.Items.Add("Test")
+        Catch ex As Exception
+            MsgBox(ex.Message)
+        End Try
+    End If
+
+    progBar.Value = e.ProgressPercentage
+
+    Application.DoEvents()
+End Sub
+
+Sub doSearch(ByVal sender As Object, ByVal e As System.ComponentModel.DoWorkEventArgs) Handles SearchWorker.DoWork
+    canceled = False
+    If curSearch = doSearchText Then
+        canceled = True
+        Exit Sub
+    End If
+    curSearch = doSearchText
+
+    SearchWorker.ReportProgress(0, "New")
+    Dim rSelect As New ADODB.Recordset
+    Dim CustomerID As Integer = MakeNumeric(doSearchText)
+    Dim sSql As String = "SELECT DISTINCT CustomerID, CustomerName, City, State, Zip FROM qrySearchFieldsQuick WHERE "
+    Dim sWhere As String = "CustomerID = " & CustomerID & " OR CustomerName Like '" & doSearchText & "%'"
+    If Not doSearchText.Contains(" ") Then
+        sWhere &= " OR FirstName Like '" & doSearchText & "%' OR LastName Like '" & doSearchText & "%'"
+    Else
+        Dim str() As String = doSearchText.Split(" ")
+        sWhere &= " OR (FirstName Like '" & str(0) & "%' AND LastName Like '" & str(1) & "%')"
+    End If
+
+    Dim i As Integer = 0
+    Dim tmpCustomer As CustomerItem
+
+    With rSelect
+        .Open(sSql & sWhere & " ORDER BY CustomerName", MyCn, ADODB.CursorTypeEnum.adOpenStatic, ADODB.LockTypeEnum.adLockReadOnly)
+        Do While Not .EOF
+            If SearchWorker.CancellationPending Then
+                canceled = True
+                Exit Do
+            End If
+
+            Do While IsDBNull(.Fields("CustomerID").Value)
+                .MoveNext()
+            Loop
+
+            tmpCustomer.CustomerID = "c" & .Fields("CustomerID").Value
+            tmpCustomer.CustomerName = NZ(.Fields("CustomerName").Value, "").ToString.Trim
+            tmpCustomer.City = Trim(NZ(.Fields("City").Value, ""))
+            tmpCustomer.State = Replace(Trim(NZ(.Fields("State").Value, "")), ",", "")
+            tmpCustomer.Zip = Trim(NZ(.Fields("Zip").Value, ""))
+
+            SearchWorker.ReportProgress((i / .RecordCount) * 100, tmpCustomer)
+            i += 1
+            Application.DoEvents()
+aMoveNext:
+
+            .MoveNext()
+        Loop
+        .Close()
+    End With
+End Sub
+

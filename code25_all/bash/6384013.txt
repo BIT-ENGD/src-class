@@ -1,0 +1,56 @@
+trap
+# need monitor mode for trap CHLD to work
+set -m
+# store the PIDs of the children being watched
+declare -a child_pids
+
+function child_done
+{
+    echo "Child $1 result = $2"
+}
+
+function check_pid
+{
+    # check if running
+    kill -s 0 $1
+    if [ $? == 0 ]; then
+        child_pids=("${child_pids[@]}" "$1")
+    else
+        wait $1
+        ret=$?
+        child_done $1 $ret
+    fi
+}
+
+# check by copying pids, clearing list and then checking each, check_pid
+# will add back to the list if it is still running
+function check_done
+{
+    to_check=("${child_pids[@]}")
+    child_pids=()
+
+    for ((i=0;$i<${#to_check};i++)); do
+        check_pid ${to_check[$i]}
+    done
+}
+
+function run_command
+{
+    "$@" &
+    pid=$!
+    # check this pid now (this will add to the child_pids list if still running)
+    check_pid $pid
+}
+
+# run check on all pids anytime some child exits
+trap 'check_done' CHLD
+
+# test
+for ((tl=0;tl<10;tl++)); do
+    run_command bash -c "echo FAIL; sleep 1; exit 1;"
+    run_command bash -c "echo OKAY;"
+done
+
+# wait for all children to be done
+wait
+

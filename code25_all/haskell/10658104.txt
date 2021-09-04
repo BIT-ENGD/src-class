@@ -1,0 +1,108 @@
+FFISo.hs
+{-# LANGUAGE OverloadedStrings #-}
+module Main where
+
+import qualified Data.ByteString.Char8 as B
+
+import FFIFun.Foo
+
+main :: IO ()
+main = do
+  B.putStrLn "main"
+  callMeFromC
+  callMeFromHaskell
+  return ()
+
+c.c
+#include <stdio.h>
+
+void callMeFromC(void);
+
+void callMeFromHaskell(void)
+{
+    printf("callMeFromHaskell\n");
+    callMeFromC();
+}
+
+FFIFun/Foo.hs
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+module FFIFun.Foo where
+
+import qualified Data.ByteString.Char8 as B
+
+foreign import ccall "callMeFromHaskell"
+  callMeFromHaskell :: IO ()
+
+foreign export ccall callMeFromC :: IO ()
+callMeFromC :: IO ()
+callMeFromC = B.putStrLn "callMeFromC"
+
+Makefile
+SHELL := bash
+
+GHC_OPT := -Wall -O2 -fno-warn-unused-do-bind
+
+
+all: ffiso
+
+test: ffiso
+    ./$<
+
+ffiso: FFISo.hs c.c
+    ghc --make $(GHC_OPT) $^ -o $@
+
+clean:
+    rm -rf *{.hi,o,_stub.*} ffiso FFIFun/*{.hi,.o,_stub.*}
+
+ghci: ffiso
+    ghci -package bytestring FFIFun/Foo.o c.o FFISo.hs
+
+$ make ghci
+[...]
+Ok, modules loaded: Main, FFIFun.Foo.
+Prelude Main> -- fine, it's loading.
+Prelude Main> :t callMeFromC
+
+<interactive>:1:1: Not in scope: `callMeFromC'
+Prelude Main> -- uhm, why?
+Prelude Main> :t main
+main :: IO ()
+Prelude Main> main
+
+
+GHCi runtime linker: fatal error: I found a duplicate definition for symbol
+   FFIFunziFoo_callMeFromC_info
+whilst processing object file
+   ./FFIFun/Foo.o
+This could be caused by:
+   * Loading two different object files which export the same symbol
+   * Specifying the same object file twice on the GHCi command line
+   * An incorrect `package.conf' entry, causing some object to be
+     loaded twice.
+GHCi cannot safely continue in this situation.  Exiting now.  Sorry.
+
+i686
+x86_64
+GHCi runtime linker: fatal error: I found a duplicate definition for symbol
+   __stginit_FFIFunziFoo
+whilst processing object file
+   ./FFIFun/Foo.o
+This could be caused by:
+   * Loading two different object files which export the same symbol
+   * Specifying the same object file twice on the GHCi command line
+   * An incorrect `package.conf' entry, causing some object to be
+     loaded twice.
+GHCi cannot safely continue in this situation.  Exiting now.  Sorry.
+
+make test
+$ ghc --make -Wall -O2 -fno-warn-unused-do-bind FFISo.hs c.c -o ffiso
+[1 of 2] Compiling FFIFun.Foo       ( FFIFun/Foo.hs, FFIFun/Foo.o )
+[2 of 2] Compiling Main             ( FFISo.hs, FFISo.o )
+Linking ffiso ...
+./ffiso
+main
+callMeFromC
+callMeFromHaskell
+callMeFromC
+

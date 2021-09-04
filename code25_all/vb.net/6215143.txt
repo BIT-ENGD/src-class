@@ -1,0 +1,136 @@
+    If (txtQuickSearch.Text.Length >= 3) Or (e.Key = Key.Enter) Then
+        If SearchWorker.IsBusy Then
+            SearchWorker.CancelAsync()
+            Do While SearchWorker.IsBusy
+                'Application.DoEvents() 
+                'System.Threading.Thread.Sleep(500)
+            Loop
+        End If
+        doSearchText = txtQuickSearch.Text
+        SearchWorker.RunWorkerAsync()
+    End If
+
+Do while searchworker.isbusy doevents loop
+Imports System.ComponentModel
+Imports System.Collections.ObjectModel
+Imports System.Threading
+Imports System.Threading.Tasks
+
+Public Class QuickSearch
+    Private doSearchText As String
+    Private canceled As Boolean
+    Private curSearch As String
+    Dim searchResults As New ObservableCollection(Of ocSearchResults)
+
+    'Task Factory
+    Private cts As CancellationTokenSource
+    Private searchtask As Task(Of ObservableCollection(Of ocSearchResults))
+
+    Private Sub txtQuickSearch_KeyDown(ByVal sender As System.Object, ByVal e As System.Windows.Input.KeyEventArgs) Handles txtQuickSearch.KeyDown
+        If e.Key = Key.Enter Then
+            curSearch = ""
+        End If
+        If ((txtQuickSearch.Text.Length >= 3) Or (e.Key = Key.Enter)) And Not txtQuickSearch.Text = curSearch Then
+            If Not cts Is Nothing Then
+                cts.Cancel()
+                ColorChecker.CancelAsync()
+                Try
+                    ' searchtask.Wait()
+                Catch ex As AggregateException
+                    MsgBox(ex.InnerException.Message) 
+                End Try
+                cts = New CancellationTokenSource
+            Else
+                cts = New CancellationTokenSource
+            End If
+            Dim cToken = cts.Token
+            Me.Height = 400
+            doSearchText = txtQuickSearch.Text
+'This always completes fully before continuing on to tRunWorkerComplete(searchtask.Result) '
+            searchtask = Task(Of ObservableCollection(Of ocSearchResults)).Factory.StartNew(Function() tPerformSearch(cToken), cToken)
+            Try
+                tRunWorkerCompleted(searchtask.Result)
+            Catch ex As AggregateException
+                ' MsgBox(ex.InnerException.Message) 
+            End Try
+        Else
+            If Not cts Is Nothing Then
+                cts.Cancel()
+            End If
+            searchResults.Clear()
+        End If
+    End Sub
+
+
+    Function tPerformSearch(ByVal ct As CancellationToken) As ObservableCollection(Of ocSearchResults)
+        On Error GoTo sError
+
+        canceled = False
+        If curSearch = doSearchText Then
+            canceled = True
+            Return Nothing
+        End If
+        curSearch = doSearchText
+        Dim SR As New ObservableCollection(Of ocSearchResults)
+
+        Dim t As ocSearchResults
+        Dim rSelect As New ADODB.Recordset
+        Dim sSql As String = "SELECT DISTINCT CustomerID, CustomerName, City, State, Zip FROM qrySearchFieldsQuick WHERE "
+        Dim sWhere As String = "CustomerName Like '" & doSearchText & "%'" 
+
+        SR.Clear()
+
+        With rSelect
+            .Open(sSql & sWhere & " ORDER BY CustomerName", MyCn, ADODB.CursorTypeEnum.adOpenStatic, ADODB.LockTypeEnum.adLockReadOnly)
+            Do While Not .EOF 
+                If ct.IsCancellationRequested Then ' This never shows true, the process always returns a value, as if it wasn't async'
+                    canceled = True
+                    Return Nothing
+                End If
+
+                Do While IsDBNull(.Fields("CustomerID").Value)
+                    .MoveNext()
+                Loop
+
+                t = New ocSearchResults(.Fields!CustomerID.Value, .Fields!CustomerName.Value.ToString.Trim, .Fields!City.Value.ToString.Trim, .Fields!State.Value.ToString.Trim, .Fields!Zip.Value.ToString.Trim)
+                If Not SR.Contains(t) Then
+                    SR.Add(t)
+                End If
+aMoveNext:
+                .MoveNext()
+            Loop
+            .Close()
+        End With
+
+        Return SR
+        Exit Function
+sError:
+        MsgBox(ErrorToString, MsgBoxStyle.Exclamation)
+    End Function
+
+    Sub tRunWorkerCompleted(ByVal SR As ObservableCollection(Of ocSearchResults))
+        If canceled Then
+            Exit Sub
+        End If
+        If cts.IsCancellationRequested Then
+            Exit Sub
+        End If
+
+        searchResults.Clear()
+        For Each t As ocSearchResults In SR
+            searchResults.Add(t)
+        Next
+
+        ColorChecker = New BackgroundWorker
+        ColorChecker.WorkerReportsProgress = True
+        ColorChecker.WorkerSupportsCancellation = True
+        ColorChecker.RunWorkerAsync(searchResults)
+
+        lblRecordCount.Text = "(" & searchResults.Count & ") Records"
+
+        progBar.Value = 100
+        Exit Sub
+sError:
+        MsgBox(ErrorToString)
+    End Sub
+

@@ -1,0 +1,113 @@
+#!/usr/bin/perl
+
+use strict;
+use Son;
+use CGI;
+use Data::Dumper;
+use DBI;
+my $q = new CGI;
+
+#DB connect vars
+my $user = "##";
+my $pass = "##";
+my $db = "##";
+my $host = "localhost";
+
+my $dsn = "DBI:mysql:database=$db;host=$host";
+
+my $dbh = DBI->connect($dsn,$user,$pass);
+eval { $dbh->do("DROP TABLE sons") };
+print "Drop failed: $@\n" if $@;
+
+$dbh->do("CREATE TABLE sons (son VARCHAR(30) PRIMARY KEY, father VARCHAR(30))");
+
+my @rows = ( ["bill", "sam"],
+        ["bob", ""],
+        ["jack", "sam"],
+        ["jone", "mike"],
+        ["mike", "bob"],
+        ["sam", "bob"]
+);
+
+for my $i (0 .. $#rows) {
+    $dbh->do("INSERT INTO sons (son, father) VALUES (?,?)",  {}, $rows[$i][0], $rows[$i][1]);   
+}
+
+our @sons_array;
+my $sth = $dbh->prepare("SELECT * FROM sons");
+$sth->execute();
+while (my $ref = $sth->fetchrow_hashref()) {
+    $sons_array[++$#sons_array] = Son->new($ref->{'son'}, $ref->{'father'});
+}
+$sth->finish();
+$dbh->disconnect();
+
+
+print $q->header("text/html"),$q->start_html("Perl CGI");
+print "\n\n";
+constructFamilyTree(@sons_array, '');
+print $q->end_html;
+
+sub constructFamilyTree {
+    my @sons_array = @_[0..$#_ -1];
+    my $print_father;
+    my $print_son;
+    my $print_relation;
+    my $current_parent = @_[$#_];
+    my @new_sons_array;
+    my @new_siblings;
+
+    #print $current_parent."\n";
+    foreach my $item (@sons_array){
+        if(!$item->{'son'} || $item->{'son'} eq $item->{'father'}) { # == ($item->{'son'} eq '')
+            print "\n List contains bad data\n";
+            return 0;
+        }
+
+        if($item->{'father'} eq $current_parent) {
+            my $temp_print_relation;
+            foreach my $child (@sons_array) {
+                if($child->{'father'} eq $item->{'son'}) {
+                    if(!$temp_print_relation) {
+                        $temp_print_relation .= '   |';
+                    }
+                    else {
+                        $temp_print_relation .= '-----|';
+                    }
+                }
+            }
+            $print_relation .= $temp_print_relation."   ";
+            $print_son .= '('.$item->{'son'}.')  ';
+            @new_siblings[++$#new_siblings] = $item;
+            $print_father = $item->{'father'};
+        }
+        else {
+            $new_sons_array[++$#new_sons_array] = $item;
+        }
+    }
+
+    print $print_son. "\n". $print_relation."\n";
+    #print $print_father."\n";
+    #print $print_relation  . "\n". $print_son;
+    foreach my $item (@new_siblings) {
+        constructFamilyTree(@new_sons_array, $item->{'son'});
+    }   
+}
+
+
+perl module:
+#File Son.pm, module for class Son
+
+package Son;
+
+sub new {
+    my($class, $son, $father) = @_;
+    my $self = {'son' => $son,
+              'father' => $father};
+
+    bless $self, $class;
+    return $self;
+}
+
+1;
+

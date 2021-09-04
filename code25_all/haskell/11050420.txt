@@ -1,0 +1,77 @@
+unpack
+unpack
+chris@gigabyte:~/Dropbox/haskell-workspace/hub/dist/build/spoke$ ./spoke
+45
+45
+["a","8","4a","6f","68","6e","20","44","6f","65","10","d2","9","1a","10","6a","64","6f","65","40","65","78","61","6d","70","6c","65","2e","63","6f","6d","22","c","a","8","35","35","35","2d","34","33","32","31","10","1"]
+
+0a:08:4a:6f:68:6e:20:44:6f:65:10:c3:92:09:1a:10:6a:64:6f:65:40:65:78:61:6d:70:6c:65:2e:63:6f:6d:22:0c:0a:08:35:35:35:2d:34:33:32:31:10
+
+"65","10","d2","9"
+65:10:c3:92:09
+-- Spoke.hs:
+
+module Main where
+
+import Data.Bits
+import Network.Socket -- hiding (send, sendTo, recv, recvFrom)
+-- import Network.Socket.ByteString
+import Network.BSD
+import Data.List
+import qualified Data.ByteString.Lazy.Char8 as B
+import Text.ProtocolBuffers.Header (defaultValue, uFromString)
+import Text.ProtocolBuffers.WireMessage (messageGet, messagePut)
+import Data.Char (ord, intToDigit)
+import Numeric
+
+import Data.Sequence ((><), fromList)
+
+import AddressBookProtos.AddressBook
+import AddressBookProtos.Person
+import AddressBookProtos.Person.PhoneNumber
+import AddressBookProtos.Person.PhoneType
+
+data UDPHandle = 
+     UDPHandle {udpSocket  :: Socket,
+                udpAddress :: SockAddr}
+opensocket :: HostName             -- ^ Remote hostname, or localhost
+           -> String               -- ^ Port number or name
+           -> IO UDPHandle         -- ^ Handle to use for logging
+opensocket hostname port =
+    do -- Look up the hostname and port.  Either raises an exception
+       -- or returns a nonempty list.  First element in that list
+       -- is supposed to be the best option.
+       addrinfos <- getAddrInfo Nothing (Just hostname) (Just port)
+       let serveraddr = head addrinfos
+
+       -- Establish a socket for communication
+       sock <- socket (addrFamily serveraddr) Datagram defaultProtocol
+
+       -- Save off the socket, and server address in a handle
+       return $ UDPHandle sock (addrAddress serveraddr)
+
+john = Person {
+  AddressBookProtos.Person.id = 1234,
+  name = uFromString "John Doe",
+  email = Just $ uFromString "jdoe@example.com",
+  phone = fromList [
+    PhoneNumber {
+      number = uFromString "555-4321",
+      type' = Just HOME
+    }
+  ]
+}
+
+johnStr = B.unpack (messagePut john)
+
+charToHex x = showIntAtBase 16 intToDigit (ord x) ""
+
+main::IO()
+main = 
+    do udpHandle <- opensocket "localhost" "4567"
+       sent <- sendTo (udpSocket udpHandle) johnStr (udpAddress udpHandle)
+       putStrLn $ show $ length johnStr
+       putStrLn $ show sent
+       putStrLn $ show $ map charToHex johnStr
+       return ()
+

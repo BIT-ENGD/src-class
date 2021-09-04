@@ -1,0 +1,55 @@
+3-150
+2-151
+4-152
+5-154
+7-154
+1-155
+9-155
+6-156
+
+{-# LANGUAGE OverloadedStrings #-}
+
+import Data.Maybe (isJust, fromJust)
+import qualified Data.ByteString.Char8 as C
+import Control.Applicative ((<$>), (<*>))
+
+import Data.Conduit -- the core library
+import qualified Data.Conduit.List as CL -- some list-like functions
+import qualified Data.Conduit.Binary as CB -- bytes
+import qualified Data.Conduit.Text as CT
+
+data MyData = MyData Int Int
+    deriving (Show)
+
+binaryToData :: C.ByteString -> Maybe MyData
+binaryToData bn = do
+    let parts = C.split '-' bn
+    case parts of
+        (a:b:[]) -> MyData <$> (fst <$> (C.readInt a)) <*> (fst <$> (C.readInt b))
+        _ -> Nothing
+
+streamGenerator =
+    CB.sourceFile "sample.txt" =$=
+    CB.lines =$=
+    CL.map binaryToData =$=
+    CL.filter isJust =$=
+    CL.map fromJust =$=
+    CL.groupBy (\(MyData _ x) (MyData _ y) -> (x `quot` 4) == (y `quot` 4))
+
+main :: IO ()
+main = do
+    mlines <- runResourceT $ streamGenerator $$ CL.consume
+    print mlines
+
+2 second bar : 0-1, 2-3, 4-5, etc...
+4 second bar : 0-3, 4-7, 8-11, etc...
+combo: (0-1, null), (2-3, 0-3), (4-5, 0-3),  (6-7, 4-7), etc... 
+
+4 second bar : [[MyData 3 150,MyData 2 151],[MyData 4 152,MyData 5 154,MyData 7 154,MyData 1 155,MyData 9 155],[MyData 6 156]]
+2 second bar : [[MyData 3 150,MyData 2 151],[MyData 4 152],[MyData 5 154,MyData 7 154,MyData 1 155,MyData 9 155],[MyData 6 156]]
+
+[([MyData 3 150,MyData 2 151], [MyData 3 150,MyData 2 151])
+,([MyData 4 152], [MyData 3 150,MyData 2 151])
+,([MyData 5 154,MyData 7 154,MyData 1 155,MyData 9 155], [MyData 4 152,MyData 5 154,MyData 7 154,MyData 1 155,MyData 9 155])
+,([MyData 6 156],[MyData 4 152,MyData 5 154,MyData 7 154,MyData 1 155,MyData 9 155])]
+

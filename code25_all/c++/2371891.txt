@@ -1,0 +1,208 @@
+void Camera::Init()
+{
+    CreateComObjects();
+
+    _captureGraphBuilder->SetFiltergraph(_filterGraph);
+
+    InitializeVideoFilter();
+    InitializeStillImageFilter();
+}
+
+void Camera::DisplayVideoPreview(HWND windowHandle)
+{
+    IVideoWindow *_vidWin;
+
+    _filterGraph->QueryInterface(IID_IMediaControl,(void **) &_mediaControl);
+    _filterGraph->QueryInterface(IID_IVideoWindow, (void **) &_vidWin);
+    _videoCaptureFilter->QueryInterface(IID_IAMVideoControl, 
+        (void**) &_videoControl);
+
+    _captureGraphBuilder->RenderStream(&PIN_CATEGORY_PREVIEW, 
+        &MEDIATYPE_Video, _videoCaptureFilter, NULL, NULL);
+
+    CRect rect;
+    long width, height;
+
+    GetClientRect(windowHandle, &rect);
+
+    _vidWin->put_Owner((OAHWND)windowHandle);
+    _vidWin->put_WindowStyle(WS_CHILD | WS_CLIPSIBLINGS);
+
+    _vidWin->get_Width(&width);
+    _vidWin->get_Height(&height);
+    height = rect.Height();
+
+    _vidWin->put_Height(height);
+    _vidWin->put_Width(rect.Width());
+    _vidWin->SetWindowPosition(0,0, rect.Width(), height);
+
+    _mediaControl->Run();
+}
+
+void Camera::TakePicture(WCHAR *fileName)
+{
+    CComPtr<IFileSinkFilter> fileSink;
+    CComPtr<IPin> stillPin;
+    CComPtr<IUnknown> unknownCaptureFilter;
+    CComPtr<IAMVideoControl> videoControl;
+
+    _imageSinkFilter.QueryInterface(&fileSink);
+    fileSink->SetFileName(fileName, NULL);
+
+    _videoCaptureFilter.QueryInterface(&unknownCaptureFilter);
+
+    _captureGraphBuilder->FindPin(unknownCaptureFilter, PINDIR_OUTPUT, 
+        &PIN_CATEGORY_STILL, &MEDIATYPE_Video, FALSE, 0, &stillPin);
+
+    _videoCaptureFilter.QueryInterface(&videoControl);
+    videoControl->SetMode(stillPin, VideoControlFlag_Trigger);
+}
+
+void Camera::SetVideoResolution(int width, int height)
+{
+    SetResolution(true, width, height);
+}
+
+void Camera::SetPhotoResolution(int width, int height)
+{
+    SetResolution(false, width, height);
+}
+
+
+void Camera::SetResolution(bool video, int width, int height)
+{
+    IAMStreamConfig *config;
+    config = NULL;
+
+    if (video)
+    {
+        _captureGraphBuilder->FindInterface(&PIN_CATEGORY_PREVIEW, 
+            &MEDIATYPE_Video, _videoCaptureFilter, IID_IAMStreamConfig, 
+            (void**) &config);
+    }
+    else
+    {
+        _captureGraphBuilder->FindInterface(&PIN_CATEGORY_STILL,
+            &MEDIATYPE_Video, _videoCaptureFilter, IID_IAMStreamConfig,
+            (void**) &config);
+
+    }
+
+    int resolutions, size;
+    VIDEO_STREAM_CONFIG_CAPS caps;
+    config->GetNumberOfCapabilities(&resolutions, &size);
+
+    for (int i = 0; i < resolutions; i++) 
+    {
+        AM_MEDIA_TYPE *mediaType;
+        if (config->GetStreamCaps(i, &mediaType, 
+            reinterpret_cast<BYTE*>(&caps)) == S_OK ) 
+        {
+            int maxWidth = caps.MaxOutputSize.cx;
+            int maxHeigth = caps.MaxOutputSize.cy;
+
+            if(maxWidth == width && maxHeigth == height) 
+            {
+                VIDEOINFOHEADER *info =
+                    reinterpret_cast<VIDEOINFOHEADER*>(mediaType->pbFormat);
+
+                info->bmiHeader.biWidth = maxWidth; 
+                info->bmiHeader.biHeight = maxHeigth;
+                info->bmiHeader.biSizeImage = DIBSIZE(info->bmiHeader); 
+                config->SetFormat(mediaType);
+
+                DeleteMediaType(mediaType);
+                break;
+
+            }
+
+            DeleteMediaType(mediaType);
+        }
+    }
+}
+
+void Camera::CreateComObjects()
+{
+    CoInitialize(NULL);
+
+    CoCreateInstance(CLSID_CaptureGraphBuilder, NULL, CLSCTX_INPROC_SERVER, 
+        IID_ICaptureGraphBuilder2, (void **) &_captureGraphBuilder);
+
+    CoCreateInstance(CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
+        IID_IGraphBuilder, (void **) &_filterGraph);
+
+    CoCreateInstance(CLSID_VideoCapture, NULL, CLSCTX_INPROC, 
+        IID_IBaseFilter, (void**) &_videoCaptureFilter);
+
+    CoCreateInstance(CLSID_IMGSinkFilter, NULL, CLSCTX_INPROC, 
+        IID_IBaseFilter, (void**) &_imageSinkFilter);
+}
+
+void Camera::InitializeVideoFilter()
+{
+    _videoCaptureFilter->QueryInterface(&_propertyBag);
+
+    wchar_t deviceName[MAX_PATH] = L"\0";  
+    GetDeviceName(deviceName);
+    CComVariant comName = deviceName;
+
+    CPropertyBag propertyBag;
+    propertyBag.Write(L"VCapName", &comName);
+    _propertyBag->Load(&propertyBag, NULL);
+
+    _filterGraph->AddFilter(_videoCaptureFilter, 
+        L"Video Capture Filter Source");
+}
+
+void Camera::InitializeStillImageFilter()
+{
+    _filterGraph->AddFilter(_imageSinkFilter, L"Still image filter");
+
+    _captureGraphBuilder->RenderStream(&PIN_CATEGORY_STILL, 
+        &MEDIATYPE_Video, _videoCaptureFilter, NULL, _imageSinkFilter);
+}
+
+void Camera::GetDeviceName(WCHAR *deviceName)
+{
+    HRESULT hr = S_OK;
+    HANDLE handle = NULL;
+    DEVMGR_DEVICE_INFORMATION di;
+    GUID guidCamera = { 0xCB998A05, 0x122C, 0x4166, 0x84, 0x6A, 0x93, 0x3E, 
+        0x4D, 0x7E, 0x3C, 0x86 };
+
+    di.dwSize = sizeof(di);
+
+    handle = FindFirstDevice(DeviceSearchByGuid, &guidCamera, &di);
+    StringCchCopy(deviceName, MAX_PATH, di.szLegacyName);
+}
+
+#ifndef __CAMERA_H__
+#define __CAMERA_H__
+
+class Camera
+{
+    public:
+        void Init();
+        void DisplayVideoPreview(HWND windowHandle);
+        void TakePicture(WCHAR *fileName);
+        void SetVideoResolution(int width, int height);
+        void SetPhotoResolution(int width, int height);
+
+    private:
+        CComPtr<ICaptureGraphBuilder2> _captureGraphBuilder;
+        CComPtr<IGraphBuilder> _filterGraph;
+        CComPtr<IBaseFilter> _videoCaptureFilter;
+        CComPtr<IPersistPropertyBag> _propertyBag;
+        CComPtr<IMediaControl> _mediaControl;
+        CComPtr<IAMVideoControl> _videoControl;
+        CComPtr<IBaseFilter> _imageSinkFilter;
+
+        void GetDeviceName(WCHAR *deviceName);
+        void InitializeVideoFilter();
+        void InitializeStillImageFilter();
+        void CreateComObjects();
+        void SetResolution(bool video, int width, int height);
+};
+
+#endif
+

@@ -1,0 +1,149 @@
+using System;
+using System.Net;
+using System.Text;
+using System.IO;
+using System.Collections;
+using System.Collections.Generic;
+using System.Drawing;
+
+namespace Skimpt_3._0
+{
+    class PostFile
+    {
+        private Hashtable FormElements;
+        private HttpWebRequest Request;
+        private MemoryStream FileStream;
+
+        private string CONTENT_BOUNDARY = "---------------------------265001916915724";
+
+        public string ContentMIMEType;
+        public string FormURL;
+        public string FileName;
+        public string Response;
+        public string FileBoxName;
+
+        //private int BufferSize;
+
+        public PostFile(string Url, string strFileName)
+        {
+            FormElements = new Hashtable();
+            FormURL = Url;
+            Request = (HttpWebRequest)WebRequest.Create(Url);
+            //BufferSize = 10240;
+            FileStream = new MemoryStream();
+            FileName = strFileName;
+        }
+
+        public void Send(Image image)
+        {
+            //Assign the request here too, just in case
+            Request = (HttpWebRequest)WebRequest.Create(FormURL);
+
+            Request.Method = "POST";
+            Request.AllowWriteStreamBuffering = true;
+            Request.ProtocolVersion = HttpVersion.Version11;
+            Request.Headers.Add("Cache-Control", "no-cache");
+            Request.KeepAlive = true;
+            Request.ContentType = "multipart/form-data; boundary=---------------------------265001916915724";
+            StartFileStream(FileStream);
+
+            //Must be done in this order for stream to write properly:
+            //----
+            //Form elements
+            //File header
+            //Image
+            //File trailer
+            //----
+            WriteStringToStream(FileStream, GetFormElements());
+            WriteImageToStream(FileStream, image, FileName);
+
+            CloseStream(FileStream);
+
+
+            byte[] FileByteArray = FileStream.ToArray();
+
+            Request.ContentLength = FileByteArray.Length;
+
+            Stream PostingStream = Request.GetRequestStream();
+            PostingStream.Write(FileByteArray, 0, FileByteArray.Length);
+
+            WebResponse resp = (HttpWebResponse)Request.GetResponse();
+
+            StreamReader SR = new StreamReader(resp.GetResponseStream());
+
+            PostingStream.Close();
+
+            FileStream.Close();
+            Request.GetRequestStream().Close();
+            Response = SR.ReadToEnd();
+            Request = null;
+        }
+
+        private void CloseStream(MemoryStream FileStream)
+        {
+            byte[] BytesToWrite = Encoding.ASCII.GetBytes(CONTENT_BOUNDARY);
+            FileStream.Write(BytesToWrite, 0, BytesToWrite.Length);
+        }
+
+        private void StartFileStream(MemoryStream FileStream)
+        {
+            // \r\n = new line
+            string str = "POST " + FormURL +"Content-Type: multipart/form-data; boundary="+CONTENT_BOUNDARY+" \r\n \r\n" + CONTENT_BOUNDARY;
+            byte[] BytesToWrite = Encoding.ASCII.GetBytes(str);
+            FileStream.Write(BytesToWrite, 0, BytesToWrite.Length);
+        }
+
+        private Byte[] ConvertImageToByteArray(Image img)
+        {
+            //Method taken from http://www.csharp-station.com/Articles/Thumbnails.aspx and adapted
+            MemoryStream memStream = new MemoryStream();
+            img.Save(memStream, System.Drawing.Imaging.ImageFormat.Png);
+
+            byte[] byteArray = new Byte[memStream.Length];
+
+            memStream.Position = 0;
+            memStream.Read(byteArray, 0, (int)memStream.Length);
+            return byteArray;
+        }
+
+        public void AddFormElement(string ElementName, string ElementValue)
+        {
+            FormElements[ElementName] = ElementValue;
+        }
+
+        private string GetFormElements()
+        {
+            string str = "";
+            IDictionaryEnumerator myEnumerator = FormElements.GetEnumerator();
+            while (myEnumerator.MoveNext())
+            {
+                str += CONTENT_BOUNDARY + "\r\n" +
+                    "Content-Disposition: form-data; name=" + myEnumerator.Key +
+                    "\r\n\r\n" +
+                    myEnumerator.Value +"\r\n";
+            }
+            return str;
+        }
+
+
+        private void WriteStringToStream(System.IO.MemoryStream stream, string String)
+        {
+            byte[] PostData = System.Text.Encoding.ASCII.GetBytes(String);
+            stream.Write(PostData, 0, PostData.Length);
+        }
+
+        private void WriteImageToStream(System.IO.MemoryStream Stream, Image img, string FileName)
+        {
+            byte[] ByteArray = ConvertImageToByteArray(img);
+            string head = CONTENT_BOUNDARY + "\r\n" +
+                          "Content-Disposition: form-data; name=\"" + FileBoxName + "\"; filename=\"" + FileName + "\"\r\n" +
+                          "Content-Type: " + ContentMIMEType + "\r\n\r\n";
+            byte[] header = Encoding.ASCII.GetBytes(head);
+
+            Stream.Write(header, 0, header.Length);
+
+            Stream.Write(ByteArray, 0, ByteArray.Length);
+        }
+    }
+}
+

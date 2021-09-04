@@ -1,0 +1,137 @@
+BUILD
+BUILDALL
+Class::MOP::load_class
+BUILD
+Perl version: 5.012002
+Class::MOP::Version: 1.11
+Moose::Version: 1.24
+Applying fixup GV::WebServer::Fixups::Development
+aflott-g3 at a.pl line 83.
+Error: trying to call refresh() in GV::WebServer::Fixups::Development produced: The     'add_attribute' method cannot be called on an immutable instance at /opt/cidc-perl/perl-5.12.2/lib/perl5/x86_64-linux/Class/MOP/Class/Immutable/Trait.pm line 32
+        Class::MOP::Class::Immutable::Trait::_immutable_cannot_call('add_attribute') called at /opt/cidc-perl/perl-5.12.2/lib/perl5/x86_64-linux/Class/MOP/Class/Immutable/Trait.pm line 37
+        Class::MOP::Class:::around('CODE(0x13a2e028)', 'Class::MOP::Class::Immutable::Moose::Meta::Class=HASH(0x13d58...', 'architecture', 'is', 'ro', 'isa', 'Str', 'lazy', 1, ...) called at /opt/cidc-perl/perl-5.12.2/lib/perl5/x86_64-linux/Class/MOP/Method/Wrapped.pm line 159
+        Class::MOP::Method::Wrapped::__ANON__('Class::MOP::Class::Immutable::Moose::Meta::Class=HASH(0x13d58...', 'architecture', 'is', 'ro', 'isa', 'Str', 'lazy', 1, 'default', ...) called at /opt/cidc-perl/perl-5.12.2/lib/perl5/x86_64-linux/Class/MOP/Method/Wrapped.pm line 89
+        Class::MOP::Class::Immutable::Moose::Meta::Class::add_attribute('Class::MOP::Class::Immutable::Moose::Meta::Class=HASH(0x13d58...', 'architecture', 'is', 'ro', 'isa', 'Str', 'lazy', 1, 'default', ...) called at a.pl line 47
+        Amethyst::SystemInfo::BUILD('Amethyst::SystemInfo=HASH(0x13e83010)', 'HASH(0x13e50cc0)') called at generated method (unknown origin) line 147
+        Amethyst::SystemInfo::new('Amethyst::SystemInfo') called at a.pl line 92
+        GV::WebServer::Fixups::AutoSet::set() called at a.pl line 84
+        GV::WebServer::Fixups::Development::refresh('GV::WebServer::Fixups::Development') called at a.pl line 114
+        main::__ANON__() called at /opt/cidc-perl/perl-5.12.2/lib/perl5/Try/Tiny.pm line 76
+        eval {...} called at /opt/cidc-perl/perl-5.12.2/lib/perl5/Try/Tiny.pm line 67
+        Try::Tiny::try('CODE(0x13e82fe0)', 'Try::Tiny::Catch=REF(0x13e8cd50)') called at a.pl line 118
+
+BUILDALL
+Perl version: 5.012002
+Class::MOP::Version: 1.11
+Moose::Version: 1.24
+Applying fixup GV::WebServer::Fixups::Development
+aflott-g3 at a.pl line 71.
+aflott-g3364136 at a.pl line 81.
+
+package Amethyst::SystemInfo;
+
+use v5.10;
+
+use Moose;
+
+use Sys::Hostname qw();
+use Sys::HostIP;
+use Try::Tiny;
+
+has '_host_ip' => ('is' => 'ro', 'isa' => 'Sys::HostIP', 'default' => sub { Sys::HostIP->new });
+has 'eth0_ipv4' => ('is' => 'rw', 'isa' => 'Str',);
+has 'ethernet_interfaces' => ('is' => 'rw', 'isa' => 'HashRef',);
+has 'hostname' => ('is' => 'ro', 'isa' => 'Str', 'default' => sub { Sys::Hostname::hostname });
+
+sub BUILD {
+    my ($self) = @_;
+
+    $self->ethernet_interfaces($self->_host_ip->interfaces);
+
+    if ($self->ethernet_interfaces->{'eth0'}) {
+        $self->eth0_ipv4($self->ethernet_interfaces->{'eth0'});
+    }
+
+    foreach my $attrib (
+        qw(architecture domain fqdn kernel kernelrelease kernelversion memorytotal operatingsystem processor processorcount swap)
+      ) {
+        $self->meta->add_attribute(
+            $attrib => (
+                'is'      => 'ro',
+                'isa'     => 'Str',
+                'lazy'    => 1,
+                'default' => sub { return $self->_load_value($attrib) }
+            )
+        );
+    }
+
+    $self->meta->make_immutable;
+
+    return;
+}
+
+sub _load_value {
+    my ($self, $module_name) = @_;
+
+    try {
+        Class::MOP::load_class("Pfacter::$module_name");
+    }
+    catch {
+        warn("Failed to load Pfacter::$module_name");
+    };
+
+    my $value = "Pfacter::$module_name"->pfact({'pfact' => {'kernel' => 'Linux'}});
+
+    unless (defined($value)) {
+        warn("finding value for $module_name returned undef");
+    }
+
+    chomp($value);
+
+    return $value;
+}
+
+no Moose;
+
+package GV::WebServer::Fixups::Development;
+
+use v5.10;
+
+sub refresh {
+    warn Amethyst::SystemInfo->new->hostname;
+    return GV::WebServer::Fixups::AutoSet::set();
+}
+
+package GV::WebServer::Fixups::AutoSet;
+
+use v5.10;
+
+sub set {
+    my $sysinfo = Amethyst::SystemInfo->new;
+    warn $sysinfo->hostname, ' ', $sysinfo->swap;
+}
+
+package main;
+
+use v5.10;
+
+use Class::MOP;
+use Try::Tiny;
+
+my $module_name = "GV::WebServer::Fixups::Development";
+
+say('Perl version: ',        $]);
+say('Class::MOP::Version: ', $Class::MOP::VERSION);
+say('Moose::Version: ',      $Moose::VERSION);
+say("Applying fixup $module_name");
+
+Class::MOP::load_class($module_name);
+
+my $ret;
+try {
+    $ret = $module_name->refresh;
+}
+catch {
+    warn("Error: trying to call refresh() in $module_name produced: " . shift);
+};
+

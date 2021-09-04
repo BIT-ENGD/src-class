@@ -1,0 +1,206 @@
+Dim Matches = From mRows In LinqMasterTable Join sRows In LinqSecondTable _
+         On mRows(ThePrimaryKey) Equals sRows(TheForignKey) _
+         Order By mRows(ThePrimaryKey) _
+         Select mRows, sRows
+
+LinqMasterTable:
+ -------------------------------------
+|ThePrimaryKey| Description           |
+ -------------------------------------
+|Green        | This is a Green apple | 
+|GREEN        | This is a Green apple | 
+|green        | This is a Green apple | 
+|Red          | This is a Red apple   | 
+|RED          | This is a Red apple   | 
+|red          | This is a Red apple   | 
+ -------------------------------------
+
+LinqSecondTable
+ --------------------------
+|TheForignKey | ApplePrice |
+ -------------------------- 
+|Green        | $0.90      | 
+|Pink         | $0.80      | 
+|Red          | $0.85      | 
+|Yellow       | $0.79      |
+ --------------------------
+
+ --------------------------------------
+|Green | This is a Green apple | $0.90 |
+|GREEN | This is a Green apple | $0.90 | 
+|green | This is a Green apple | $0.90 |
+|Red   | This is a Red apple   | $0.85 |
+|RED   | This is a Red apple   | $0.85 |
+|red   | This is a Red apple   | $0.85 |
+ --------------------------------------
+
+ --------------------------------------
+|Green | This is a Green apple | $0.90 |
+|Red   | This is a Red apple   | $0.85 |
+ --------------------------------------
+
+Private Sub LinqTwoTableInnerJoinCaseInsensitive(ByRef qMasterDS As DataSet, _
+                                  ByRef qMasterTable As DataTable, _
+                                  ByRef qSecondDS As DataSet, _
+                                  ByRef qSecondTable As DataTable, _
+                                  ByRef qPrimaryKey As String, _
+                                  ByRef qForignKey As String, _
+                                  ByVal qResultsName As String)
+
+    Dim TheMasterTable As String = qMasterTable.TableName 'Table Name'
+    Dim TheSecondTable As String = qSecondTable.TableName 'Table Name'
+    Dim ThePrimaryKey As String = qPrimaryKey 'The variable name of the first 'merge on' column'
+    Dim TheForignKey As String = qForignKey 'The variable name of the second 'merge on' column'
+    Dim TheNewForignKey As String = "" 'For handling duplicate column names'
+
+    MasterTableColumns = GetColumns(qMasterDS, TheMasterTable)
+    SecondTableColumns = GetColumns(qSecondDS, TheSecondTable)
+
+    Dim mColumnCount As Integer = MasterTableColumns.Count
+    Dim sColumnCount As Integer = SecondTableColumns.Count
+
+    Dim ColumnCount As Integer = mColumnCount + sColumnCount
+
+    Dim LinqMasterTable = qMasterDS.Tables(TheMasterTable).AsEnumerable
+    Dim LinqSecondTable = qSecondDS.Tables(TheSecondTable).AsEnumerable
+
+    'Original LINQ Query: (Works, but is case sensitive)'
+    Dim Matches = From mRows In LinqMasterTable Join sRows In LinqSecondTable _
+         On mRows(ThePrimaryKey) Equals sRows(TheForignKey) _
+         Order By mRows(ThePrimaryKey) _
+         Select mRows, sRows
+
+    'IntelliSense doesnt see "ToUpper" as available. No errors, but no search results.'
+    'Error: Public member "ToUpper" on type "DBNull" not found.'
+    'Dim Matches = From mRows In LinqMasterTable Join sRows In LinqSecondTable _'
+    '              On mRows(ThePrimaryKey).ToUpper Equals sRows(TheForignKey).ToUpper _'
+    '              Order By mRows(ThePrimaryKey) _'
+    '              Select mRows, sRows'
+
+
+    'Message = "Public member "sRows" on type "String" not found."'
+    'Dim Matches2 = From mRows In LinqMasterTable _'
+                   'From sRows In LinqSecondTable _'
+                   'Where String.Equals(mRows(ThePrimaryKey), sRows(TheForignKey), StringComparison.OrdinalIgnoreCase) _'
+                   'Select mRows, sRows'
+
+
+    'Conversion from type "DBNull" to type "String" is not valid.'
+    'Dim Matches = _'
+    'LinqMasterTable.AsEnumerable().Join( _'
+    'LinqSecondTable.AsEnumerable(), _'
+    'Function(mRows) mRows("ThePrimaryKey"), _'
+    'Function(sRows) sRows("TheForignKey"), _'
+    'Function(mRows As DataRow, sRows As DataRow) New With {mRows, sRows}, _'
+    'StringComparer.InvariantCultureIgnoreCase)'
+
+        'Doesnt work at all - multiple errors'
+        'Dim Matches2 = _'
+        'LinqMasterTable _'
+        '    .Join( _'
+        '        LinqSecondTable, _'
+        '        Function(x) x.Key.ToLower(), _'
+        '        Function(x) x.Key.ToLower(), _'
+        '        Function(o, i) New With {.ID = o.Key, .Description = o.Value, .Price = i.Value} _'
+        '    ).Dump()'
+
+
+    ' Make sure the dataset is available and/or cleared:'
+    If dsResults.Tables(qResultsName) Is Nothing Then dsResults.Tables.Add(qResultsName)
+    dsResults.Tables(qResultsName).Clear() : dsResults.Tables(qResultsName).Columns.Clear()
+
+    'Adds Master Table Column Names'
+    For x = 0 To MasterTableColumns.Count - 1
+        dsResults.Tables(qResultsName).Columns.Add(MasterTableColumns(x))
+    Next
+
+    'Rename Second Table Names if Needed:'
+    For x = 0 To SecondTableColumns.Count - 1
+        With dsResults.Tables(qResultsName)
+            For y = 0 To .Columns.Count - 1
+                If SecondTableColumns(x) = .Columns(y).ColumnName Then
+                    SecondTableColumns(x) = SecondTableColumns(x) & "_2"
+                End If
+            Next
+        End With
+    Next
+
+    'Make sure that the Forign Key is a Unique Value'
+    If ForignKey1 = PrimaryKey Then
+        TheNewForignKey = ForignKey1 & "_2"
+    Else
+        TheNewForignKey = ForignKey1
+    End If
+
+    'Adds Second Table Column Names'
+    For x = 0 To SecondTableColumns.Count - 1 'Need error handling for if columnname exists'
+        dsResults.Tables(qResultsName).Columns.Add(SecondTableColumns(x))
+    Next
+
+    PleaseWait(True) 'Locks controls while processing data'
+
+    'Copy Results into the Dataset:'
+    For Each Match In Matches
+
+        'Build an array for each row:'
+        Dim NewRow(ColumnCount - 1) As Object
+
+        'Add the mRow Items:'
+        For x = 0 To MasterTableColumns.Count - 1
+            NewRow(x) = Match.mRows.Item(x)
+        Next
+
+        'Add the srow Items:'
+        For x = 0 To SecondTableColumns.Count - 1
+            Dim y As Integer = x + (MasterTableColumns.Count)
+            NewRow(y) = Match.sRows.Item(x)
+        Next
+
+        'Add the array to dsResults as a Row:'
+        dsResults.Tables(qResultsName).Rows.Add(NewRow)
+
+    Next
+
+
+    If chkUnique.Checked = True Then
+        ReMoveDuplicates(dsResults.Tables(qResultsName), ThePrimaryKey)
+    End If
+
+    PleaseWait(False) 'Unlocks controls after processing data'
+
+    If Not chkRetainKeys.Checked = True Then 'Removes Forign Key'
+        dsResults.Tables(qResultsName).Columns.Remove(TheNewForignKey)
+    End If
+
+    'Clear Arrays'
+    MasterTableColumns.Clear()
+    SecondTableColumns.Clear()
+
+End Sub
+
+Dim MasterTableColumns As New ArrayList() 'Holds the Names of the Master Table Columns'
+Dim SecondTableColumns As New ArrayList() 'Holds the Names of the Second Table Columns'
+Dim MasterTable As String 'Current User Selected Master Table'
+Dim PrimaryKey As String 'Table 0 User Selected Key'
+Dim ForignKey1 As String 'Table 1 User Selected Key'
+
+
+Private Function GetColumns(ByVal aDataset As DataSet, ByVal aTable As String) As ArrayList
+
+    If aDataset Is Nothing Then Return Nothing
+
+    If Not aDataset.Tables(aTable) Is Nothing Then
+        Dim TempArray As New ArrayList()
+        For x = 0 To aDataset.Tables(aTable).Columns.Count - 1
+            With aDataset.Tables(aTable).Columns(x)
+                TempArray.Add(.ColumnName)
+            End With
+        Next
+        Return TempArray
+    Else
+        MsgBox("There are no column names in the table """ & aTable & """ to load.")
+        Return Nothing
+    End If
+
+End Function
+

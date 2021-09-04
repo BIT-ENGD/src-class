@@ -1,0 +1,89 @@
+Public Shared Function Compute(ByVal text As String, ByVal algorithm As String, Optional ByVal salt() As Byte = Nothing) As String
+    If salt Is Nothing Then
+        Dim saltSize As Integer = 8
+        salt = New Byte(saltSize - 1) {}
+
+        Dim rng As New RNGCryptoServiceProvider
+        rng.GetNonZeroBytes(salt)
+    End If
+
+    Dim textBytes As Byte() = Encoding.UTF8.GetBytes(text)
+    Dim saltedTextBytes() As Byte = New Byte(textBytes.Length + salt.Length - 1) {}
+    For i As Integer = 0 To textBytes.Length - 1
+        saltedTextBytes(i) = textBytes(i)
+    Next i
+
+    For i As Integer = 0 To salt.Length - 1
+        saltedTextBytes(textBytes.Length + i) = salt(i)
+    Next i
+
+    Dim hash As HashAlgorithm
+    If algorithm Is Nothing Then
+        algorithm = ""
+    End If
+
+    Select Case algorithm.ToUpper
+        Case "SHA1" : hash = New SHA1Managed
+        Case "SHA256" : hash = New SHA256Managed
+        Case "SHA384" : hash = New SHA384Managed
+        Case "SHA512" : hash = New SHA512Managed
+        Case Else : hash = New MD5CryptoServiceProvider
+    End Select
+
+    Dim hashBytes As Byte() = hash.ComputeHash(saltedTextBytes)
+    Dim saltedHash() As Byte = New Byte(hashBytes.Length + salt.Length - 1) {}
+    For i As Integer = 0 To hashBytes.Length - 1
+        saltedHash(i) = hashBytes(i)
+    Next i
+
+    For i As Integer = 0 To salt.Length - 1
+        saltedHash(hashBytes.Length + i) = salt(i)
+    Next i
+
+    Dim hashValue As String = Convert.ToBase64String(saltedHash)
+
+    Return Left(hashValue, 36)
+End Function
+
+        ' The email address needs to be valid
+        Dim pattern As String = "^(?("")("".+?""@)|(([0-9a-zA-Z]((\.(?!\.))|[-!#\$%&'\*\+/=\?\^`\{\}\|~\w])*)(?<=[0-9a-zA-Z])@))(?(\[)(\[(\d{1,3}\.){3}\d{1,3}\])|(([0-9a-zA-Z][-\w]*[0-9a-zA-Z]\.)+[a-zA-Z]{2,6}))$"
+        Dim match As Match = Regex.Match(txtEmail.Text, pattern)
+        If match.Success Then
+            'Hash the user's password before entering it into the database.
+            Dim pass As String = Crypt.Compute(txtPass.Text, "SHA512", Nothing)
+
+            ' Enter the information from the form into the database.
+            Dim sql As String = "INSERT INTO Users(Username, Password, EmailAddress) " & _
+                "VALUES(@User, @Pass, @Email)"
+            Dim cmd As New SqlCommand(sql, conn)
+            cmd.Parameters.AddWithValue("@User", txtName.Text)
+            cmd.Parameters.AddWithValue("@Pass", pass)
+            cmd.Parameters.AddWithValue("@Email", txtEmail.Text)
+
+            conn.Open()
+            cmd.ExecuteNonQuery()
+            conn.Close()
+        Else
+            lblError.Text = "Invalid email address. Please correct."
+            lblError.ForeColor = Drawing.Color.Red
+        End If
+
+            Dim pass As String = Crypt.Compute(txtPass.Text, "SHA512", Nothing)
+
+            Dim UserData As New DataSet
+            Dim UserAdapter As New SqlDataAdapter
+            UserAdapter.SelectCommand = New SqlCommand("SELECT * FROM Users " & _
+                                                       "WHERE Username = @User AND Password = @Pass", conn)
+            UserAdapter.SelectCommand.Parameters.AddWithValue("@User", txtUser.Text)
+            UserAdapter.SelectCommand.Parameters.AddWithValue("@Pass", pass)
+            UserAdapter.Fill(UserData)
+
+            If UserData.Tables(0).Rows.Count <> 1 Then
+                lblError.Text = "Invalid username or password."
+                lblError.ForeColor = Drawing.Color.Red
+                Session("LoginAttempt") = CInt(Session("LoginAttempt")) + 1
+            Else
+                Session("LoggedIn") = True
+                Response.Redirect("Home.aspx")
+            End If
+

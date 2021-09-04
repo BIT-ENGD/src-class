@@ -1,0 +1,110 @@
+system()
+Net::SFTP
+Crypt::PGPSimple
+Net::SFTP
+Crypt::PGPSimple
+new
+Net::SFTP
+Crypt::PGPSimple
+use Crypt::PGPSimple;
+use Net::SFTP;
+use File::Copy;
+use Log::Log4perl qw(get_logger :levels);
+use File::Basename;
+
+my %CONS = (
+    RECIPIENT => "ClientName";
+    URL       => 'ftp.host.com';
+    USER      => 'user';
+    PASS      => ''; # use subroutine to obfuscate the password
+    PORT      => '22'
+    HOME_DIR  => '/Home';
+    IN_DIR    => '/Incoming';
+    OUT_DIR   => '/Outgoing';
+);
+my %VARS;
+
+# private member variables
+my ($logger);
+
+BEGIN {
+    %VARS = (
+        IS_PROD     => $L_is_prod ? 1 : 0;
+        APPS        => $ENV{'APPS'};
+        OUTDIR      => $ENV{'OUTDIR'};
+        TIME_ZONE   => $ENV{"TZ"};
+    );
+
+    $logger = get_logger("Lib");
+}
+
+sub new {
+    my ($class, $self) = @_;
+
+    $self = {
+        pgp     => _setup_pgp();
+        sftp    => undef; # Don't create SFTP connection until we need it
+    };
+
+    return bless($self, $class);
+}
+
+sub _setup_pgp {
+    my $pgp = Crypt::PGPSimple->new();
+
+    $pgp->PgpVersion(6.5.8);
+    $pgp->PgpExePath("/path/to/pgp-6.5.8");
+    $pgp->PgpKeyPath("/home/username/.pgp"); # Set this based on environment
+    $pgp->PublicKey("pubring.pkr");
+    $pgp->PrivateKey("secring.skr");
+    $pgp->Password(pp());
+    $pgp->UserId();
+    $pgp->PgpTempDir("/tmp/");
+    $pgp->PgpTimeZone();
+    $pgp->PgpVerbose(2);
+
+    return $pgp;
+}
+
+sub _setup_sftp {
+    # Create SFTP connection 
+    my $sftp;
+    my ($host, $user, $pass);
+
+    $host = $CONS{URL};
+    $user = $CONS{USER};
+    $pass = $CONS{PASS};
+
+    $sftp = _connect_sftp($host, (user => $user, password => $pass));
+    return $sftp;
+}
+
+sub encrypt {
+
+    my ($self, $plain_file) = @_;
+    my $pgp = $self->{pgp};
+
+    $logger->info("Setting \$pgp->PlainTextFile to $plain_file");
+    $pgp->PlainTextFile($plain_file);
+    $pgp->PgpFlags("e");
+
+    my $result = $pgp->EncryptFile;
+    if($result != 0) {
+        $logger->info("Failed to successfully encrypt $plain_file. Error code: " . $pgp->ErrCode() . ", Result: " . $pgp->Result());
+    }
+
+    return $result;
+}
+
+sub put {
+
+    my $self = shift;
+    $self->{sftp} = _setup_sftp() if(!defined $self->{sftp});
+    my $local = $self->{pgp}->EncryptedTextFile();
+    my $remote = basename($local);
+    ...
+    $sftp->put($local, $remote)
+    ...
+
+}
+

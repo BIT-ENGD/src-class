@@ -1,0 +1,84 @@
+Data.WAVE
+import Data.WAVE
+import Graphics.UI.SDL.Mixer.Samples
+
+import Control.Applicative
+import Data.List.Split (splitOn)
+import Data.Char
+import Data.Int (Int32)
+import Data.List (group)
+import System.IO (hGetContents, Handle, openFile, IOMode(..))
+
+a4 = 440.0
+
+frameRate = 16000
+
+noteToFreq :: (String, Int) -> Double
+noteToFreq (note, octave) =
+    if octave >= -1 && octave < 10
+    then if n /= 15.0
+         then (2 ** (n + (12.0 * ((fromIntegral octave ::Double) - 4.0)))) * a4
+         else error $ "Bad note: " ++ note
+    else error $ "Bad octave: " ++ show octave
+    where n = case note of
+                "B#" -> -9.0
+                "C"  -> -9.0
+                "C#" -> -8.0
+                "Db" -> -8.0
+                "D"  -> -7.0
+                "D#" -> -6.0
+                "Eb" -> -6.0
+                "E"  -> -5.0
+                "Fb" -> -5.0
+                "E#" -> -4.0
+                "F"  -> -4.0
+                "F#" -> -3.0
+                "Gb" -> -3.0
+                "G"  -> -2.0
+                "G#" -> -1.0
+                "Ab" -> -1.0
+                "A"  -> 0.0
+                "A#" -> 1.0
+                "Bb" -> 1.0
+                "B"  -> 2.0
+                "Cb" -> 2.0
+                _    -> 15.0
+
+notesToSamples :: [(String, Int)] -> [WAVESample]
+notesToSamples ns =
+    map doubleToSample [sin $ pi * i * (f/fr) | i <- [0,0.1..len], f <- freqs]
+    where freqs = map noteToFreq ns
+          fr = fromIntegral frameRate :: Double
+          len = fromIntegral (length ns) :: Double
+
+getFileName :: IO FilePath
+getFileName = putStr "Enter the name of the file: " >> getLine
+
+openMFile :: IO Handle
+openMFile = getFileName >>= \path -> 
+            openFile path ReadMode
+
+getNotesAndOctaves :: IO String
+getNotesAndOctaves = openMFile >>= hGetContents
+
+noteValuePairs :: String -> [(String, Int)]
+noteValuePairs = pair . splitOn " "
+    where pair (x:y:ys) = (x, read y) : pair ys
+          pair []       = []
+
+getWavSamples :: IO [WAVESample]
+getWavSamples = (notesToSamples . noteValuePairs) <$> getNotesAndOctaves 
+
+constructWAVE :: IO WAVE
+constructWAVE = do
+  samples <- map (:[]) . concatMap (replicate 1000) <$> getWavSamples
+  let channels      = 1
+      bitsPerSample = 32
+      frames        = Just (length samples)
+      header        =
+          WAVEHeader channels frameRate bitsPerSample frames
+  return $ WAVE header samples
+
+makeWavFile :: IO ()
+makeWavFile = constructWAVE >>= \wav -> putWAVEFile "temp.wav" wav
+

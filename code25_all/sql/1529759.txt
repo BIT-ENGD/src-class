@@ -1,0 +1,58 @@
+DISTINCT
+ALTER PROCEDURE [dbo].[sp_GetTrashListWithSorting] --'6dbf9a01-c88f-414d-8dd9-696749258cef', '6dbf9a01-c88f-414d-8dd9-696749258cef','DateTime ASC','0','30'
+(
+    @p_CreatedBy UNIQUEIDENTIFIER,
+    @p_ToReceipientID UNIQUEIDENTIFIER,
+    @p_SortExpression NVARCHAR(100),
+    @p_StartIndex INT,
+    @p_MaxRows INT
+)
+AS
+    SET NOCOUNT ON;
+
+    IF LEN(@p_SortExpression) = 0 
+       SET @p_SortExpression ='DateTime DESC'
+
+    DECLARE @Sql NVARCHAR(4000)
+
+    SET @sql = 'SELECT ID, DateTime, Subject, CreatedBy, ToReceipientID, Status
+                FROM (SELECT ID, 
+                             DateTime, 
+                             Subject, 
+                             CreatedBy, 
+                             ToReceipientID, 
+                             Status,
+                             ROW_NUMBER() OVER(ORDER BY '+ @p_SortExpression +') AS Indexing
+                      FROM (SELECT ID,
+                                   DateTime, 
+                                   Subject, 
+                                   CreatedBy, 
+                                   ToReceipientID, 
+                                   SenderStatus AS Status
+                             FROM ComposeMail 
+                             WHERE (CreatedBy = @p)
+                               AND (SenderStatus = 7 OR SenderStatus = 8)
+                             UNION
+                             SELECT ID,
+                                    DateTime, 
+                                    Subject, 
+                                    CreatedBy, 
+                                    ToReceipientID, 
+                                    ReceiverStatus As Status
+                              FROM ComposeMail
+                              WHERE (ToReceipientID = @p1) 
+                                AND (ReceiverStatus = 7 OR ReceiverStatus = 8)) AS NewDataTable
+            ) AS IndexTable
+   WHERE 
+       Indexing > @p2 AND Indexing<= (@p2+@p3)' 
+
+   DECLARE @paramDefinition NVARCHAR(500)
+
+   SET @paramDefinition = N'@p UNIQUEIDENTIFIER ,@p1 UNIQUEIDENTIFIER, @p2 INT, @p3 INT'
+
+   EXEC sp_executesql @sql, @paramDefinition,
+                @p = @p_CreatedBy,
+                @p1 = @p_ToReceipientID,
+                @p2 = @p_StartIndex ,
+                @p3 = @p_MaxRows
+

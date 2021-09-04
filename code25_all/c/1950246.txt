@@ -1,0 +1,98 @@
+twi_master_driver.h
+#ifndef TWI_MASTER_DRIVER_H_
+#define TWI_MASTER_DRIVER_H_
+
+#define TWI_INPUT_QUEUE_SIZE 256
+
+// define callback function pointer signature
+typedef void (*twi_slave_callback_t)(uint8_t*, uint16_t);
+
+typedef struct {
+    uint8_t buffer[TWI_INPUT_QUEUE_SIZE];
+    volatile uint16_t length; // currently used bytes in the buffer
+    twi_slave_callback_t slave_callback;
+} twi_global_slave_t;
+
+typedef struct {
+    uint8_t slave_address;
+    volatile twi_global_slave_t slave;
+} twi_global_t;
+
+void twi_init(uint8_t slave_address, twi_global_t *twi, twi_slave_callback_t slave_callback);
+
+#endif
+
+twi_driver.c
+#include <stdint.h>
+#include "twi_master_driver.h"
+
+void twi_init(uint8_t slave_address, twi_global_t *twi, twi_slave_callback_t slave_callback)
+{
+    twi->slave.length = 0;
+    twi->slave.slave_callback = slave_callback;
+
+    twi->slave_address = slave_address;
+
+    // temporary workaround <- why does this work??
+    twi->slave.slave_callback = twi->slave.slave_callback;
+}
+
+void twi_slave_interrupt_handler(twi_global_t *twi)
+{
+    (twi->slave.slave_callback)(twi->slave.buffer, twi->slave.length);
+
+    // some other stuff (nothing touches twi->slave.slave_callback)
+}
+
+main.c
+//  ...define microcontroller safe way for mystdout ...
+
+twi_global_t bus_a;
+
+ISR(TWIC_TWIS_vect, ISR_NOBLOCK)
+{
+    twi_slave_interrupt_handler(&bus_a);
+}
+
+void my_callback(uint8_t *buf, uint16_t len)
+{
+    uint8_t i;
+
+    fprintf(&mystdout, "C: ");
+    for(i = 0; i < length; i++)
+    {
+        fprintf(&mystdout, "%d,", buf[i]);
+    }
+    fprintf(&mystdout, "\n"); 
+}
+
+int main(int argc, char **argv)
+{
+    twi_init(2, &bus_a, &my_callback);
+
+    // ...PMIC setup...
+
+    // enable interrupts.
+    sei();
+
+    // (code that causes interrupt to fire)
+
+    // spin while the rest of the application runs...
+    while(1){
+        _delay_ms(1000);
+    }
+    return 0;
+}
+
+twi->slave.slave_callback
+twi_init
+twi_slave_interrupt_handler
+twi_init
+twi_slave_interrupt_handler
+twi_driver.c
+twi->slave.slave_callback = twi->slave.slave_callback;
+
+volatile
+fprintf
+twi_init
+-Wall -Os -fpack-struct -fshort-enums -funsigned-char -funsigned-bitfields -mmcu=atxmega128a1 -DF_CPU=2000000UL

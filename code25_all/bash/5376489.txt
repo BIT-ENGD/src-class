@@ -1,0 +1,29 @@
+$ mkfifo to_server from_server;
+$ while true; do 
+  # Really, this awk script BEGIN's with reading in a huge file, 
+  # thus the client-server model
+  awk '{sub("wrong", "correct");print;} /\0/ {fflush();}' <to_server >from_server; 
+  echo "restarting..."; 
+done
+
+#!/bin/bash
+# According to http://mywiki.wooledge.org/BashFAQ/085 , using 
+# `exec 3>mypipe; echo foo >&3;` instead of `echo foo >mypipe` 
+# should ensure that the pipe does not get the EOF which closes it:
+exec 3>to_server;
+exec 4<from_server;
+
+cat >&3;
+echo -e '\0' >&3;
+while read -rd '' <&4; do echo -n "$REPLY"; break; done;
+
+$ echo This is wrong | bash client.sh
+This is correct
+$ exec 3>to_server; exec 4<from_server;
+$ echo "This is wrong" | sh client.sh
+
+$ exec 3>&-; exec 4<&-
+
+$ echo "This is wrong" | sh client.sh
+
+ls /proc/$$/fd/

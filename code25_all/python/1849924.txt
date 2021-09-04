@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""
+Created by Teifion Jordan
+http://woarl.com
+
+Notes: The roller does not correctly apply * and / signs:
+A + B * C is worked out as (A + B) * C, not A + (B * C) as would be correct
+"""
+
+import random
+import re
+import math
+
+class Roller_dict (object):
+    """A 'dictionary' that stores rollers, if it's not got that roller it'll make a new one"""
+    def __init__(self, generator=random.randint):
+        super(Roller_dict, self).__init__()
+        self.rollers = {}
+
+        # Generator is used to supply a "rigged" random function for testing purposes
+        self.generator = generator
+
+    def __call__(self, constructor):
+        constructor = constructor.replace(" ", "")
+        if constructor not in self.rollers:
+            self.rollers[constructor] = Roller(constructor, self.generator)
+
+        return self.rollers[constructor]()
+
+# Regular expressions used by the Roller class
+# Compiled here to save time if we need to make lots of Roller objects
+pattern_split       = re.compile(r"(\+|-|\*|/)")
+pattern_constant    = re.compile(r"([0-9]*)")
+pattern_die         = re.compile(r"([0-9]*)[Dd]([0-9]*)")
+pattern_sign        = re.compile(r"^(\+|-|\*|/)")
+
+class Roller (object):
+    def __call__(self):
+        return self.roll()
+
+    def __init__(self, constructor, generator=random.randint):
+        super(Roller, self).__init__()
+        self.items = []
+        self.rebuild(constructor)
+        self.generator = generator
+
+    def rebuild(self, constructor):
+        """Builds the Roller from a new constructor string"""
+        # First we need to split it up
+        c = pattern_split.split(constructor.replace(" ", ""))
+
+        # Check for exceptions
+        if len(c) == 0:
+            raise Exception('String "%s" did not produce any splits' % constructor)
+
+        # Stitch signs back into their sections
+        parts = []
+        last_p = ""
+        for p in c:
+            if p in "+-*/":
+                last_p = p
+                continue
+
+            if last_p != "":
+                p = "%s%s" % (last_p, p)
+                last_p = ""
+
+            parts.append(p)
+
+        # We have the parts, now we need to evaluate them into items
+        for p in parts:
+            # Look for a sign, default to positive
+            sign = pattern_sign.search(p)
+            if sign == None: sign = "+"
+            else: sign = sign.groups()[0]
+
+            # Strip out the sign, we're left with just the pure value
+            body = p.replace(sign, "")
+
+            # Now we find out what our main body is
+
+            # Die
+            value = pattern_die.search(body)
+            if value != None:
+                # Sign, Number, Sides
+                self.items.append(("die", sign, int(value.groups()[0]), int(value.groups()[1])))
+                continue
+
+            # Constant
+            value = pattern_constant.search(body)
+            if value != None:
+                self.items.append(("constant", sign, int(value.groups()[0])))
+                continue
+
+            # No matches
+            raise Exception('The part string "%s" had no matches' % body)
+
+    def roll(self):
+        """Rolls the die/dice and returns the result"""
+        result = 0
+
+        for i in self.items:
+            # Get value
+            if i[0] == "die":           value = self._derive_die(i[2], i[3])
+            elif i[0] == "constant":    value = self._derive_constant(i[2])
+            else: raise Exception('No handler for item type "%s"' % i[0])
+
+            # Apply sign
+            if i[1] == "+":     result += value
+            elif i[1] == "-":   result -= value
+            elif i[1] == "*":   result *= value
+            elif i[1] == "/":   result /= value
+
+        return result
+
+    def _derive_die(self, number, sides):
+        result = 0
+        for n in range(0, number):
+            result += self.generator(0, sides)
+
+        return result
+
+    def _derive_constant(self, value):
+        return value
+
+# Useful for running the tests to make sure that it uses "random" numbers
+false_numbers = (int(math.cos(x)*5)+5 for x in range(0,1000))
+def false_numbers_func(*args):
+    return false_numbers.next()
+
+# If it's main, run unit tests?
+if __name__ == '__main__':
+    r = Roller_dict(false_numbers_func)
+
+    print(r("2D6"))
+    print(r("2D6"))
+    print(r("2D6"))
+

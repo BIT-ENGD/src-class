@@ -1,0 +1,37 @@
+Network.HTTP.Conduit
+haskeline
+main = runInputT defaultSettings loop
+where 
+    loop :: InputT IO ()
+    loop = do
+        Just username <- getInputLine "WM username: "
+        Just password <- getPassword (Just '*') "WM password: "
+        Just date     <- getInputLine "Date (YYYYMMDD): "
+
+        outputStrLn "querying WM..."
+        clients <- lift $ getWMClients username password
+        outputStrLn "successfully retrieved client list from WM..."
+
+        let outHeader = renderHeader date username
+
+        reportString <- mapM  (\x -> createString x clients)  cList
+
+        lift $ writeFile (date ++ "_report.html") (outHeader ++ concat reportString)
+        outputStrLn "Done"
+
+getWMClients :: Username -> String -> IO [Client]
+getWMClients username password = do
+    let f = [Size "-1", Skip "0"]
+    let fs = [Select "id",
+              Select "status",
+              Select "last-name",
+              Select "first-name",
+             ]
+    let query = WMQuery {transaction=SHARE,service=Query,businessObject=CONT,field=f,fields=fs}
+
+    results <- doQuery username (Just password) Nothing (Just query)
+    rows <- xmlResultsToMaps results
+
+    let clients = map makeClient rows
+    return clients
+

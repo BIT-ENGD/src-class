@@ -1,0 +1,47 @@
+module Main where
+
+import Control.Concurrent        (forkIO)
+import Control.Monad             (when,forever,void)
+import Network                   (PortID(PortNumber),listenOn)
+import Network.Socket hiding     (listen,recv,send)
+import Network.Socket.ByteString (recv,sendAll)
+import qualified Data.ByteString as B
+import System
+
+type Host = String
+type Port = PortNumber
+
+main :: IO ()
+main = do
+  [lp,h,p] <- getArgs  
+  start (port lp) h (port p)
+  where
+    port = fromInteger . read
+
+start :: Port -> Host -> Port -> IO ()
+start lp rh rp = withSocketsDo $ do
+  proxy <- listenOn $ PortNumber lp
+  forever $ do
+    (client,_) <- accept proxy
+    void . forkIO $ (client >-<) =<< rh .@. rp
+
+(.@.) :: Host -> Port -> IO Socket
+host .@. port = do
+  addr:_ <- getAddrInfo Nothing (Just host) (Just $ show port)
+  server <- socket (addrFamily  addr) Stream defaultProtocol
+  connect server   (addrAddress addr)
+  return  server
+
+(>-<) :: Socket -> Socket -> IO ()
+x >-< y = do x >- y; y >- x
+
+(>-) :: Socket -> Socket -> IO ()
+s >- r = void . forkIO . handle $ forever stream
+  where
+    stream = recv s (64 * 1024) >>= ifNot0 >>= sendAll r
+    ifNot0  = \c -> do when (B.null c) $ handle (error "0"); return c
+    handle = flip catch $ \e -> print e >> sClose s >> sClose r
+
+proxy 2000 localhost 3389
+
+(>-)

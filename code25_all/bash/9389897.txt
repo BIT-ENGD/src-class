@@ -1,0 +1,192 @@
+#Path of Log file 
+logdir="$HOME/log" 
+
+ftp="/usr/bin/ftp" 
+
+IP="192.168.1.199" 
+
+#User ID to login into remote server 
+user="tux" 
+
+#Password to login in remote server 
+pass="tux" 
+
+#Mention the path where the files will come in the current server 
+getlocaldir="/home/local/in" 
+
+#Mention the path where the FILEs are to FTP(get) in the remote server 
+getremotedir="/home/remote/out" 
+
+
+#Mention type of data transfer "asc" or "bin" 
+type="asc" 
+
+#date of FTP - Current date 
+dd=`date +%d`
+
+# Creating a log file with datestamp 
+log="$logdir/wns_ft.log" 
+host=`hostname` 
+rc=0 
+boj=`date`
+
+#current business date
+BUSINESS_DATE=$HOME/file/businessdate
+
+#==================
+# Get Business Date
+#==================
+if [ ! -s $BUSINESS_DATE ]
+then
+   echo -e "Get system date as the business date" >>$log
+   BDATE=`date +%y%m%d`
+else
+   BDATE=`cut -c3-8 $BUSINESS_DATE` 2>>$log
+fi
+echo -e "Current business date: $BDATE" >>$log
+
+#a text file contains the name of all file which has to be copied 
+
+bingoFileName=List.txt 
+
+dogetftp ()
+{
+    LOCAL=$1
+    REMOTE=$2
+
+    echo "================================================"
+    echo "==          Receiving Files From $IP          =="
+    echo "================================================"
+    exec 4>&1
+    ftp -nv >&4 2>&1 |&
+
+    pid2=$!
+    print -p open $IP
+    print -p user $user $pass
+    print -p asc
+    print -p lcd $LOCAL
+    print -p cd $REMOTE
+    print -p pwd
+    print -p prompt
+    print -p mget $fileNamesListStr
+    print -p mdelete $fileNamesListStr $bingoFileName
+    print -p bye
+    wait $pid2
+}
+
+
+
+# method to get the bingo file containing plu-files-names to download
+dogetbingo ()
+{
+    LOCAL=$1
+    REMOTE=$2
+
+    echo "================================================"
+    echo "==       Receiving Bingo file From $IP        =="
+    echo "================================================"
+    exec 4>&1
+    ftp -nv >&4 2>&1 |&
+
+    pid2=$!
+    print -p open $IP
+    print -p user $user $pass
+    print -p asc
+    print -p lcd $LOCAL
+    print -p cd $REMOTE
+    print -p pwd
+    print -p prompt
+    print -p mget $bingoFileName
+    print -p bye
+    wait $pid2
+}
+
+# Method to read content of bingo file and creates file name string.
+doreadBingo () {
+    echo "================================================"
+    echo "=           Begin Reading Bingo File           =" 
+    echo "================================================"
+    LOCAL=$1    
+
+    cd $LOCAL
+    if test -f $bingoFileName         # Check if the bingo file exists
+    then
+        while read -r line
+        do    
+            fileNamesListStr="$fileNamesListStr $line"
+        done < $bingoFileName
+    fi
+    echo "Files to download: $fileNamesListStr "  
+    echo "================================================"
+    echo "=            End Reading Bingo File            =" 
+    echo "================================================"
+}
+
+docheckget () {
+    LOCAL=$1
+    REMOTE=$2
+
+    DNLD_SUCCESS=`grep 'local: PLU' $log`
+    echo "SUCCESS: "$DNLD_SUCCESS
+    if [ "X$DNLD_SUCCESS" == "X" ]
+    then
+        NOT_FND_FILE_NAME="PLUNOTFOUND`date +%Y%m%d`.txt"
+        touch $LOCAL/$NOT_FND_FILE_NAME
+        echo "================================================"
+        echo "==       Sending PLUNOTFOUND File to $IP      =="
+        echo "================================================"
+        exec 4>&1
+        ftp -nv >&4 2>&1 |&
+
+        pid2=$!
+        print -p open $IP
+        print -p user $user $pass
+        print -p asc
+        print -p lcd $LOCAL
+        print -p cd $REMOTE
+        print -p pwd
+        print -p prompt
+        print -p put $NOT_FND_FILE_NAME
+        print -p bye
+        wait $pid2
+
+        rm $LOCAL/$NOT_FND_FILE_NAME
+    fi
+}
+
+case $1 in
+
+mget)   
+    #cd $localdir
+    exec 1>$log 2>&1 
+
+    echo "---------------------------------------------------" 
+    echo "               Transfer bingo file                 " 
+    echo "---------------------------------------------------" 
+    dogetbingo $getlocaldir $getremotedir
+
+    echo "---------------------------------------------------" 
+    echo "     Read bingo file for file names to download    " 
+    echo "---------------------------------------------------" 
+    doreadBingo $getlocaldir
+
+    echo "---------------------------------------------------" 
+    echo "                 Begin FTP Session                 " 
+    echo "---------------------------------------------------" 
+
+    if [ "X$fileNamesListStr" != "X" ]
+    then
+        dogetftp $getlocaldir $getremotedir
+        docheckget $getlocaldir $getremotedir
+    else
+        echo "Nothing in Bingo file to download"
+    fi
+
+    echo "---------------------------------------------------"
+    echo "                  End FTP Session                  "
+    echo "---------------------------------------------------" ;;
+
+esac
+
+exit 0
+

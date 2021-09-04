@@ -1,0 +1,121 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+my $len = 11; # resolution of the peaks
+
+#$ARGV[0] is input file
+#$ARGV[1] is call number
+# optional -s = spread number from call
+# optional -o specify output file name
+my $usage = "see arguments";
+my $input = shift @ARGV or die $usage;
+my $call = shift @ARGV or die $usage;
+my $therest = join(" ",@ARGV) . " ";
+print "the rest".$therest."\n";
+my $spread = 1;
+my $output = $input . ".out";
+if ($therest =~ /-s\s+(\d+)\s/) {$spread = $1;}
+if ($therest =~ /-o\s+(.+)\s/) {$output = $1;}
+
+# initialize master hash
+my %genomehits = ();
+
+foreach (split ';', $input) {
+    my $mygenename = "err_naming";
+    if ($_ =~ /^(.+)-/) {$mygenename = $1;}
+
+    open (INPUT, $_);
+    my @wiggle = <INPUT>;
+
+    &singlegene(\%genomehits, \@wiggle, $mygenename);
+
+    close (INPUT);
+}
+
+&printhits;
+
+#print %genomehits;
+sub printhits {
+    foreach my $key (%genomehits) {
+        print "key: $key , values: ";
+    foreach (@{$genomehits{$key}}) {
+        print $_ . ";";
+    }
+    print "\n";
+    }
+}
+
+sub singlegene {
+ # let %hash be the mapping hash
+ # let @mygene be the gene to currently process
+ # let $mygenename be the name of the gene to currently process
+
+    my (%hash) = %{$_[0]};
+    my (@mygene) = @{$_[1]};
+    my $mygenename = $_[2];
+
+    my $chromosome;
+    my $leftbound = -2;
+    my $rightbound = -2;
+
+    foreach (@mygene) {
+        #print "Doing line ". $_ . "\n";
+
+        if ($_ =~ "track" or $_ =~ "output" or $_ =~ "#") {next;}
+
+        if ($_ =~ "Step") {
+            if ($_ =~ /chrom=(.+)\s/) {$chromosome = $1;}
+            if ($_ =~ /span=(\d+)/) {$1 == 1 or die ("don't support span not equal to one, see wig spec")};
+            $leftbound = -2;
+            $rightbound = -2;
+            next;
+        }
+
+        my @line = split /\t/, $_;
+        my $pos = $line[0];
+        my $val = $line[-1];
+
+        # above threshold for a call
+        if ($val >= $call) {
+            # start of range
+            if ($rightbound != ($pos - 1)) {
+                $leftbound = $pos;
+                $rightbound = $pos;
+            }
+            # middle of range, increment rightbound
+            else {
+                $rightbound = $pos;
+            }
+
+            if (\$_ =~ $mygene[-1]) {goto FORTHELASTONE;}
+        }
+        # else reinitialize: not a call
+        else {
+            FORTHELASTONE:
+            # typical case, in an ocean of OFFs
+            if ($rightbound != ($pos-1)) {
+                $leftbound = $pos;
+            }
+            else {
+            # register the range
+                my $range = $rightbound - $leftbound;
+                for ($spread) {
+                    $leftbound -= $len;
+                    $rightbound += $len;
+                }
+                #print $range . "\n";
+
+                foreach ($leftbound .. $rightbound) {
+                    my $key = "$chromosome:$_";
+                    if (not defined $hash{$key}) {
+                        $hash{$key} = [$mygenename];
+                    }
+                    else { push @{$hash{$key}}, $mygenename; }
+                }
+            }
+        }
+
+    }
+
+}

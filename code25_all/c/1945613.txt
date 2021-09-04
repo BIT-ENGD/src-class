@@ -1,0 +1,148 @@
+gcc -c -o sinc.o sinx.c -g3
+gcc -c -o sins.o sinx.s -g3
+gcc -o sinx sinc.o sins.o -g3
+
+./sinx
+
+.......insert x:
+
+segmentation fault
+
+/*-----------------------------------Sin[x]----------------------------------------*/
+
+extern float Sin(float x);                                //extern assembly function
+
+#include <stdio.h>                                             //necessary libraries
+
+int main()                                                          // main function
+{
+    float x;                                      //allocate variable 'x' as a float
+    float sine;                                //allocate variable 'sine' as a float
+
+    printf("Calculate Sin[x], with 'x' in radians\n");      //purpose of the program
+
+    printf("Insert 'x': ");                                            //user prompt
+    scanf("%f",&x);                                                //get input value
+
+    sine=Sin(x);                                                   //calculate sin(x)
+
+    printf("Sin[%f]=%f\n",x,sine);                                     //print sin(x)
+
+    return 0;                                                       //successful exit
+}
+/*----------------------------------------------------------------------------------*/
+
+#---------------------------Sin[x]-----------------------------#
+.data
+.text
+.globl Sin             #global function visible by main function
+
+#function sumplus
+sumplus:
+   pushl  %ebp
+   movl   %esp,%ebp
+   fld1                                             #load 1 in ST(0)
+   movl   12(%ebp),%ecx                                       #ecx=i
+power:
+   fmul   %st(0),%st(1)                   #ST(0)=ST(0)*ST(1),ST(1)=x
+   loop   power                                #at the end ST(0)=x^i
+   movl   12(%ebp),%ecx                                       #ecx=i
+   xorl   %edx,%edx                           #reset edx used in mul
+   movl   $1,%eax                                   #set accumulator
+factorial:
+   mul    %ecx                                          #eax=eax*ecx
+   loop   factorial                               #at the end eax=i!
+   pushl  %eax
+   fild   -4(%ebp)                       #ST(0)=i!,ST(1)=x^i,ST(2)=x
+   popl   %eax
+   fdiv   %st(1),%st(0)                  #ST(1)=ST(1)/ST(0)=(x^i)/i!
+   fld    8(%ebp)                      #load partial result in ST(0)
+   fadd   %st(0),%st(2)                #ST(0)=updated partial result
+   fstp   8(%ebp)               #store partial result into the stack
+   fcomip %st(0),%st(0)                                      #pop i!
+   fcomip %st(0),%st(0)                          #pop x^i/i!,ST(0)=x
+   leave
+   ret
+
+#function summinus
+summinus:
+   pushl  %ebp
+   movl   %esp,%ebp
+   fld1                                             #load 1 in ST(0)
+   movl   12(%ebp),%ecx                                       #ecx=i
+power2:
+   fmul   %st(0),%st(1)                   #ST(0)=ST(0)*ST(1),ST(1)=x
+   loop   power2                               #at the end ST(0)=x^i
+   movl   12(%ebp),%ecx                                       #ecx=i
+   xorl   %edx,%edx                           #reset edx used in mul
+   movl   $1,%eax                                   #set accumulator
+factorial2:
+   mul    %ecx                                          #eax=eax*ecx
+   loop   factorial2                              #at the end eax=i!
+   pushl  %eax
+   fild   -4(%ebp)                       #ST(0)=i!,ST(1)=x^i,ST(2)=x
+   popl   %eax
+   fdiv   %st(1),%st(0)                  #ST(1)=ST(1)/ST(0)=(x^i)/i!
+   fld    8(%ebp)                      #load partial result in ST(0)
+   fsub   %st(0),%st(2)                #ST(0)=updated partial result
+   fstp   8(%ebp)               #store partial result into the stack
+   fcomip %st(0),%st(0)                                      #pop i!
+   fcomip %st(0),%st(0)                          #pop x^i/i!,ST(0)=x
+   leave
+   ret
+
+#function develop
+develop:
+   pushl %ebp
+   movl  %esp,%ebp
+   sub   $8,%esp                #allocate room for local variables
+   movl  $9,-4(%ebp)       #store development-order,only odd values
+   fldz                                          #load 0.0 in ST(0)
+   fstp  -8(%ebp)           #store ST(0) and pop to collect results
+Cycle:
+   movl   -4(%ebp),%eax                    #eax=i,development-order
+   xorl   %edx,%edx                       #reset edx because of div
+   sub    $1,%eax                                              #i-1
+   movl   $2,%ecx                                          #divisor
+   div    %ecx                                   #eax=(i-1)/2,edx=0
+   div    %ecx           #eax=((i-1)/2)/2,remainder edx=0 or edx!=0
+   movl   %edx,%ecx                                  #ecx=remainder
+   jecxz  Sumplus                                 #n even,(-1)^n=+1
+Summinus:
+   call   summinus                                 #n odd,(-1)^n=-1
+   jmp    Restore                        #if sum- occured skip sum+
+Sumplus:
+   call   sumplus
+Restore:
+   movl   -4(%ebp),%ecx                            #restore counter
+   sub    $2,-4(%ebp)                                 #update order
+   loop   Cycle                                      #decrement ecx
+   fcomip %st(0),%st(0)                                      #pop x
+   fld    -8(%ebp)                       #load final result in ST(0)
+   leave
+   ret
+
+#function sin
+Sin:
+   pushl %ebp
+   movl  %esp,%ebp
+   fld   8(%ebp)                   #push onto the stack 'x' value
+   fldpi                           #load pi into ST(0),x in ST(1)
+ControlPi:
+   fcomi  %st(1)                                #compare pi and x
+   jae    LoadNPi              #stop ControlPi, x is less than pi 
+   fsub   %st(1),%st(0)                     #store (x-pi) in ST(1)
+   jmp    ControlPi                            #return to control 
+LoadNPi:            
+   fimul   -1                           #(-pi) in ST(0),x in ST(1)                   
+ControlPi2:
+   fcomi  %st(1)                               #compare -pi and x
+   jbe    PopStack        #stop ControlPi2, x is greater than -pi
+   fadd   %st(1),%st(0)                     #store (x+pi) in ST(1)
+   jmp    ControlPi2                           #return to control
+PopStack:
+   fcomip %st,%st(0)   #compare -pi to -pi then pop register stack
+   call  develop                            #call develop function
+   leave                                              #restore ebp
+   ret                                                     #return
+

@@ -1,0 +1,45 @@
+-- file: tone.hs
+
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BLC
+import Data.Binary.Put
+
+-- au format header: https://en.wikipedia.org/wiki/Au_file_format
+header :: Double -> Integer -> Integer -> Put
+header dur rate bps = do
+  putLazyByteString $ BLC.pack ".snd"
+  putWord32be 24
+  putWord32be $ fromIntegral $ floor $ fromIntegral bps * dur * fromIntegral rate
+  putWord32be 3
+  putWord32be $ fromIntegral rate
+  putWord32be 1
+
+
+-- audio sample data
+samples :: Double -> Integer -> Integer -> Double -> Double -> Put
+samples dur rate bps freq vol =
+    foldl1 (>>) [put i | i <- [0..numSamples-1]]
+  where
+    numSamples = floor $ fromIntegral rate * dur
+    scale i = 2 * pi * freq / fromIntegral rate * fromIntegral i
+    sample i = vol * sin (scale i)
+    coded samp = floor $ (2 ^ (8*bps-1) - 1) * samp
+    put i = putWord16be $ coded $ sample i
+
+
+freq = 440 :: Double    -- 440 Hz sine wave
+dur = 5 :: Double       -- played for 5 seconds
+rate = 44100 :: Integer -- at a 44.1 kHz sample rate
+vol = 0.8 :: Double     -- with a peak amplitude of 0.8
+bps = 2 :: Integer      -- at 16 bits (2 bytes) per sample
+
+main =
+    BL.putStr $ runPut au
+  where
+    au = do
+      header dur rate bps
+      samples dur rate bps freq vol
+
+runghc tone.hs | aplay
+.au
+fromIntegral

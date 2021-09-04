@@ -1,0 +1,106 @@
+if (stage == kFSOperationStageComplete)
+CFRunLoopRef runLoop = CFRunLoopGetCurrent();
+FSFileOperationRef fileOp = FSFileOperationCreate(kCFAllocatorDefault);
+
+OSStatus status = FSFileOperationScheduleWithRunLoop(fileOp, 
+                     runLoop, kCFRunLoopDefaultMode);
+
+if (status) {
+    NSLog(@"Failed to schedule operation with run loop: %@", status);
+    return NO;
+}
+
+// Create a filesystem ref structure for the source and destination and 
+// populate them with their respective paths from our NSTextFields.
+
+FSRef source;
+FSRef destination;
+
+// Used FSPathMakeRefWithOptions instead of FSPathMakeRef which is in the 
+// original example because I needed to use the kFSPathMakeRefDefaultOptions
+// to deal with file paths to remote folders via a /Volume reference
+
+FSPathMakeRefWithOptions((const UInt8 *)[aSource fileSystemRepresentation],
+    kFSPathMakeRefDefaultOptions, 
+    &source, 
+    NULL);
+
+Boolean isDir = true;
+
+FSPathMakeRefWithOptions((const UInt8 *)[aDestDir fileSystemRepresentation],
+    kFSPathMakeRefDefaultOptions, 
+    &destination, 
+    &isDir);
+
+// Needed to change from the original to use CFStringRef so I could convert
+// from an NSString (aDestFile) to a CFStringRef (targetFilename)
+
+CFStringRef targetFilename = (CFStringRef)aDestFile;
+
+// Start the async copy.
+
+status = FSCopyObjectAsync (fileOp,
+             &source,
+             &destination, // Full path to destination dir
+             targetFilename,
+             kFSFileOperationDefaultOptions,
+             statusCallback,
+             1.0,
+             NULL);
+
+CFRelease(fileOp);
+
+if (status) {
+
+    NSString * errMsg = [NSString stringWithFormat:@"%@ - %@", 
+                           [self class], status];
+
+        NSLog(@"Failed to begin asynchronous object copy: %@", status);
+}
+
+static void statusCallback (FSFileOperationRef fileOp,
+           const FSRef *currentItem,
+           FSFileOperationStage stage,
+           OSStatus error,
+           CFDictionaryRef statusDictionary,
+           void *info )
+{
+
+    NSLog(@"Callback got called.");
+
+    // If the status dictionary is valid, we can grab the current values to 
+    // display status changes, or in our case to update the progress indicator.
+
+    if (statusDictionary)
+    {
+
+        CFNumberRef bytesCompleted;
+
+        bytesCompleted = (CFNumberRef) CFDictionaryGetValue(statusDictionary,
+                 kFSOperationBytesCompleteKey);
+
+        CGFloat floatBytesCompleted;
+        CFNumberGetValue (bytesCompleted, kCFNumberMaxType, 
+                              &floatBytesCompleted);
+
+        NSLog(@"Copied %d bytes so far.", 
+                              (unsigned long long)floatBytesCompleted);
+
+        // fileProgressIndicator is currently declared as a pointer to a 
+        // static progress bar - but this needs to change so that it is a 
+        // pointer passed in via the controller. Would like to have a 
+        // pointer to an instance of a progress bar
+
+        [fileProgressIndicator setDoubleValue:(double)floatBytesCompleted];
+        [fileProgressIndicator displayIfNeeded];
+     }
+
+if (stage == kFSOperationStageComplete) {
+
+    NSLog(@"Finished copying the file");
+
+    // Would like to call a Cocoa Method here...
+}
+
+} 
+

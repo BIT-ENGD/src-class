@@ -1,0 +1,182 @@
+ #!/usr/bin/perl
+    use strict;
+    use warnings;
+    use Getopt::Long;
+    use SnmpUtil;
+    use AdresseMac;
+    use Net::SNMP;
+    use Net::SNMP::Interfaces;
+
+    my $ifname;
+    my $hostname;
+    my $community;
+    my $version = 1;
+
+    GetOptions( "ifname=s"  => \$ifname,
+                "host=s"    => \$hostname,
+                "community=s"   => \$community,
+                "protocol:s"    => \$version);
+
+    my $interfaces = Net::SNMP::Interfaces->new(Hostname => $hostname, Community => $community);
+    my $inter = $interfaces->interface($ifname);
+    #Get interface $ifname
+    my $ifindex = $inter->index();
+    #Vitesse
+    my $vitesse = $inter->ifHighSpeed();
+    #Alias
+    my $ifalias = $inter->ifAlias();
+
+    #Seek for VLANs
+    my $vlan_trouve;
+
+    #Listing all VLANS
+    my $vmVlan = "1.3.6.1.4.1.9.9.68.1.2.2.1.2"; #OID of vlan table
+    my $vlans = SnmpUtil->new($hostname, $community);
+    my %vl = $vlans->requeteTable($vmVlan);
+
+    $vlans->deconnexion();
+
+    #Get the good VLAN corresponding to index interface
+    $vlan_trouve = $vl{$ifindex};
+
+    #Listing : port VLAN <-> @mac
+    my $dot1dTpFdbAddress = "1.3.6.1.2.1.17.4.3.1.1";
+    my $dot = SnmpUtil->new($hostname, $community."@".$vlan_trouve);
+    my %dot1address = $dot->requeteTable($dot1dTpFdbAddress);
+
+    #Listing : numPortBridge <-> port VLAN
+    my $dot1dTpFdbPort = "1.3.6.1.2.1.17.4.3.1.2";
+    my %portdot = reverse($dot->requeteTable($dot1dTpFdbPort));
+
+    #Listing : num Port bridge <-> ID port switch
+    my $dot1dBasePortIfIndex = "1.3.6.1.2.1.17.1.4.1.2";
+    my %dotindex = reverse($dot->requeteTable($dot1dBasePortIfIndex));
+
+    #Duplex (auto, half or full)
+    my $oid_cisco_duplex = "1.3.6.1.2.1.10.7.2.1.19.".$ifindex;
+    my $duplex = $dot->requete($oid_cisco_duplex);
+    if ($duplex==1) {
+        $duplex= "Auto";
+    }
+    elsif ($duplex==2) {
+        $duplex = "Half";
+    }
+    elsif ($duplex==3) {
+        $duplex= "Full";
+    }
+    #Close connection
+    $dot->deconnexion();
+
+    #Go back up, to find mac add
+    my $numportbridge = $dotindex{$ifindex};
+    if (!defined($numportbridge)) {
+        print "Erreur : $ifindex not found in list : num Port bridge <-> ID port switch\n";
+        exit 2;
+    }
+    my $portVlan = $portdot{$numportbridge};
+    if (!defined($portVlan)) {
+        print "Erreur : $numportbridge not found in list : numPortBridge <-> ports du VLAN\n";
+        exit 3;
+    }
+    my $add = uc($dot1address{$portVlan});
+    if (!defined($add)) {
+        print "Erreur : $portVlan not found in list : ports du VLAN <-> \@mac\n";
+        exit 4;
+    }
+    $add =~ s/^0X//g;
+    printf "<b>Port : $ifname</b><br/>Index $ifindex on VLAN : $vlan_trouve<br/>\@mac : $add<br/>Speed=$vitesse Mbps Alias=$ifalias<br/>Duplex: $duplex\n";
+
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Net::SNMP;
+package SnmpUtil;
+
+our ($session, $error);
+
+sub new {
+  my ($classe, $hostname, $community) = @_;
+  my $this = {
+    "hostname"  => $hostname,
+    "community" => $community
+  };
+  bless($this, $classe);
+  $this->{connexion} = $this->connexion;
+  return $this;
+}
+
+sub connexion {
+    my ($this) = @_;
+
+    ($session, $error) = Net::SNMP->session(
+        -hostname  => $this->{hostname},
+        -community => $this->{community},
+        -version   => "1",
+        -timeout   => 3,
+    );
+    request_error_connexion() if (!defined($session));
+}
+
+sub request_error_connexion {   
+    my ($this) = @_;
+    print "Erreur : can't connect to host\n";
+    print "Erreur : $error\n";
+    if ($error =~ /The argument "-community" is unknown/)
+        {
+                # protocol SNMP version 3 not working 
+                exit 3;  # code ret final = 3*256 = 768
+        }
+    else
+    {
+        exit 1; # code retour final = 1*256 = 256
+    }
+}
+
+sub request_error {
+        my ($this) = @_;
+        print "Error : no answer from host\n";
+        printf "Erreur : %s\n",$session->error;
+        if ($session->error =~ /No response from remote host/)
+        {
+                #host ok, bad community or host refuse connection
+                $session->close;
+                exit 2; # code retour final = 2*256 = 512
+        }
+        else
+        {
+                #can not find table
+                $session->close;
+                exit 4; # code retour final = 4*256 = 1024
+        }
+}
+
+sub requeteTable {
+    my ($this, $oid) = @_;
+    my $result = $session->get_table( -baseoid => $oid );
+    request_error() if (!defined($result));
+    my %tab = ();
+
+    foreach my $i (Net::SNMP::oid_lex_sort(keys %{$result})) {
+        my $index = $i;
+        $index =~ s/$oid.//;
+        $tab{ $index } = $result->{$i};  
+        #print $index."--".$result->{$i}."\n";
+    }
+
+    return %tab;
+}
+
+sub requete {
+    my ($this, $oid) = @_;
+    my $result = $session->get_request($oid);
+    request_error() if (!defined($result));
+    return $result->{$oid}; 
+}
+
+sub deconnexion {
+    my ($this) = @_;
+    $session->close();
+}
+
+1;
+

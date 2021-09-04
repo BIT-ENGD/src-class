@@ -1,0 +1,104 @@
+void f1(int *v)
+{
+   *v = 55;
+}
+void f2(int *v)
+{
+   *v = 44;
+}
+
+char *template;
+template = allocExecutablePages(...);
+
+char *allocExecutablePages (int pages)
+{
+    template = (char *) valloc (getpagesize () * pages);
+    if (mprotect (template, getpagesize (),
+        PROT_READ|PROT_EXEC|PROT_WRITE) == -1) {
+            perror (“mprotect”);
+    }
+}
+
+Address Machine code
+0          10
+1          5
+2          6
+3          20
+and the second one (f2) has
+Address Machine code
+0          10
+1          9
+2          3
+3          20
+At obfuscation time, one will replace f1 and f2 by the template
+Address Machine code
+0           10
+1           ?
+2           ? 
+3           20
+and by the two edit scripts e1 = {1 becomes 5, 2 becomes 6} and e2 = {1
+becomes 9, 2 becomes 3}.
+
+
+#include <stdlib.h>
+#include <string.h>
+
+typedef unsigned int uint32;
+typedef char * addr_t;
+
+typedef struct {
+uint32 offset;
+char value;
+} EDIT;
+
+EDIT script1[200], script2[200];
+char *template;
+int template_len, script_len = 0;
+typedef void(*FUN)(int *);
+int val, state = 0;
+
+void f1_stub ()
+{
+if (state != 1) {
+patch (script1, script_len, template);
+state = 1;
+}
+((FUN)template)(&val);
+}
+
+void f2_stub () {
+if (state != 2) {
+patch (script2, script_len, template);
+state = 2;
+}
+((FUN)template)(&val);
+}
+
+int new_main (int argc, char **argv)
+{
+f1_stub ();
+f2_stub ();
+return 0;
+}
+
+void f1 (int *v) { *v = 99; }
+void f2 (int *v) { *v = 42; }
+
+int main (int argc, char **argv)
+{
+int f1SIZE, f2SIZE;
+/* makeCodeWritable (...); */
+/* template = allocExecutablePages(...); */
+/* Computed at obfuscation time */
+diff ((addr_t)f1, f1SIZE,
+(addr_t)f2, f2SIZE,
+script1, script2,
+&script_len,
+template,
+&template_len);
+/* We hide the proper code */
+memset (f1, 0, f1SIZE);
+memset (f2, 0, f2SIZE);
+return new_main (argc, argv);
+}
+

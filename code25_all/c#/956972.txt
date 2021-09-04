@@ -1,0 +1,93 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Xml;
+using System.Text;
+using System.Configuration;
+using System.Threading;
+using System.Text.RegularExpressions;
+using altRouteFinder.VEStagingToken;
+using altRouteFinder.VERoutingService;
+
+namespace altRouteFinder
+{
+ class Program
+{
+    static void Main(string[] args)
+    {
+        waypointString = "53.450356,-2.873335;53.399184,-2.980577;53.440535,-2.864101;53.449368,-2.885361;53.454417,-2.930646;53.450356,-2.873335";
+
+        string[] points = waypointString.Split(';');
+        Waypoint[] waypoints = new Waypoint[points.Length];
+        double dayDistance = 0;
+        int pointIndex = -1;
+        foreach (string point in points)
+        {
+            pointIndex++;
+            waypoints[pointIndex] = new Waypoint();
+            string[] digits = point.Split(',');
+            waypoints[pointIndex].Location = new VERoutingService.Location();
+            waypoints[pointIndex].Location.Latitude = double.Parse(digits[0].Trim());
+            waypoints[pointIndex].Location.Longitude = double.Parse(digits[1].Trim());
+
+            if (pointIndex == 0)
+                waypoints[pointIndex].Description = "Start";
+            else if (pointIndex == points.Length)
+                waypoints[pointIndex].Description = "End";
+            else
+                waypoints[pointIndex].Description = string.Format("Stop #{0}", pointIndex);
+        }
+
+        routeRequest.Waypoints = waypoints;
+
+        RouteOptions myRouteOptions = new RouteOptions();
+        //Set travel mode - Driving or Walking 
+        myRouteOptions.Mode = TravelMode.Driving;
+        //Set the optimization type - MinimizeDistance or MinimizeTime 
+        myRouteOptions.Optimization = RouteOptimization.MinimizeTime;
+        //Set the use of traffic conditions - TrafficBasedRouteAndTime, TrafficBasedTime, or None 
+        myRouteOptions.TrafficUsage = TrafficUsage.TrafficBasedTime;
+        //Pass the Route Options to the Route Object 
+        routeRequest.Options = myRouteOptions; 
+
+        // Make the calculate route request
+        RouteServiceClient routeService = new RouteServiceClient();
+
+        RouteResponse routeResponse = routeService.CalculateRoute(routeRequest);
+
+        // Iterate through each itinerary item to get the route directions
+        StringBuilder directions = new StringBuilder("");
+
+        if (routeResponse.Result.Legs.Length > 0)
+        {
+            int instructionCount = 0;
+            int legCount = 0;
+
+            foreach (RouteLeg leg in routeResponse.Result.Legs)
+            {
+                legCount++;
+                directions.Append(string.Format("Leg #{0}\n", legCount));
+
+                foreach (ItineraryItem item in leg.Itinerary)
+                {
+                    instructionCount++;
+                    directions.Append(string.Format("{0}. {1} {2}\n",
+                        instructionCount, item.Summary.Distance, item.Text));
+                    dayDistance += item.Summary.Distance;
+                }
+            }
+            //Remove all Bing Maps tags around keywords.  
+            //If you wanted to format the results, you could use the tags
+            Regex regex = new Regex("<[/a-zA-Z:]*>",
+              RegexOptions.IgnoreCase | RegexOptions.Multiline);
+            results = regex.Replace(directions.ToString(), string.Empty);
+        }
+        else
+            results = "No Route found";
+
+        Console.WriteLine(results);
+        Console.WriteLine(dayDistance);
+    }
+
+}
+

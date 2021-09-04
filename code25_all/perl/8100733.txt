@@ -1,0 +1,46 @@
+#!/usr/bin/perl
+
+use CGI;
+use CGI::Session;
+use CGI::Session::Driver::mysql;
+use DBI;
+use DBD::mysql;
+use Net::LDAPS;
+
+require '../include/include.pl';
+
+$LDAP_SERVER = 'my.test.ldap.example.com';
+$LDAP_SSL_PORT = '636';
+$LDAP_BASE = 'ou=users,dc=example,dc=com';
+
+$ldap = Net::LDAPS->new($LDAP_SERVER, port=> $LDAP_SSL_PORT)
+    or die "Unable to create LDAP object because: $! \n";
+
+$dbh = DBI->connect("DBI:mysql:host=$db_host;database=$db_name",$db_user,$db_pswd)
+    or die "Unable to connect to database: \"$DBI::errstr\" $! \n";
+
+$q = CGI->new;
+
+$usr = $q->param('usr') || undef;
+$userDN = "uid=$usr,$LDAP_BASE";
+
+if($usr) {
+    $pwd = $q->param('pwd');
+    $ldapMsg = $ldap->bind($userDN, password=>$pwd);
+    $result = $ldap->code;
+
+    if ($result == 0) {
+        $session = CGI::Session->new('driver:mysql', undef, 
+                     {  TableName=>'car_sessions',
+                        IdColName=>'id',
+                        DataColName=>'a_session',
+                        Handle=>$dbh})
+            or die "Unable to create session because: $!";
+
+        $session->expire('+1h');
+        $session->param(-name=>'car_login', -value=>$usr);
+        $sess_cookie = $q->cookie(-name=>'CGISESSID', -value=>$session->id, -expires=>'+1h', -path=>'/hr_car/');
+        $login_cookie = $q->cookie(-name=>'car_login', -value=>$usr, -expires=>'+1h', -path=>'/hr_car/');
+        print $q->header(-cookie=>[$sess_cookie, $login_cookie], -location=>'manage.cgi');
+    }
+

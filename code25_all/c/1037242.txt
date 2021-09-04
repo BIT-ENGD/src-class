@@ -1,0 +1,152 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<sys/types.h>
+#include<netinet/in.h>
+#include<string.h>
+
+#include "protHeaders.x"
+#include "gen.h"
+
+U16 csum(U16* buf, S32 nwords)
+  {
+   U32 sum;
+   for (sum = 0; nwords > 0; nwords--)
+     sum += *buf++;
+   sum = (sum >> 16) + (sum & 0xffff);
+   sum += (sum >> 16);
+
+
+   return ~sum;
+  }/*csum*/
+
+ int main(int argc,char** argv)
+  {
+    U8 datagram[MAX_IPPACKET];
+    U8 udpPayLoad[MAX_UDPPAYLOAD];
+    CustIpHeader* ipH;
+    CustUdpHeader* udpH;
+    struct sockaddr_in sin;
+    S32 sockFd;
+    S32 one = 1;
+    const S32* val = &one;
+
+
+   ipH   = (CustIpHeader *)datagram;
+   udpH  = (CustUdpHeader *)(datagram + sizeof(CustIpHeader));
+
+   memset(datagram,0,sizeof(datagram));
+   memset(udpPayLoad,0,sizeof(udpPayLoad));
+   memset(&sin,0,sizeof(struct sockaddr_in));
+
+   strcpy(udpPayLoad,"<<<<Aditya>>>>");
+
+   sin.sin_family = AF_INET;
+   sin.sin_port   = htons(atoi(argv[4]));
+
+   /* fill the Ip header */
+
+    ipH->ip_hl         = 5;
+    ipH->ip_v          = 4;
+    ipH->ip_tos        = 0;
+    ipH->ip_len        = sizeof(CustIpHeader) + sizeof(CustUdpHeader) + strlen(udpPayLoad);
+    ipH->ip_id         = htonl(54321);
+    ipH->ip_off        = 0;
+    ipH->ip_p          = 17;
+    ipH->ip_ttl        = 65;
+    ipH->ip_sum        = 0;
+    ipH->ip_src.s_addr = inet_addr(argv[1]);
+    ipH->ip_dst.s_addr = inet_addr(argv[3]);
+
+  /* fill the Udp header */
+
+    udpH->uh_sport     = htons(atoi(argv[2]));
+    udpH->uh_dport     = htons(atoi(argv[4]));
+    udpH->uh_len       = sizeof(CustUdpHeader) + strlen(udpPayLoad);
+    udpH->uh_check     = 0;
+
+   printf("Checksum = %u\n",udpH->uh_check);
+  /* copy udpPayLoad */
+    strcpy(datagram+sizeof(CustIpHeader)+sizeof(CustUdpHeader),udpPayLoad);
+   #if 1
+    printf("Datagram %p,UdpPayload %p\n",(void *)datagram,(void *)datagram+sizeof(CustIpHeader)+sizeof(CustUdpHeader));
+    printf("IpHeader %p, UdpHeader %p\n",(void *)ipH,udpH);
+   #endif
+
+  /* fill in the checksum */
+
+   ipH->ip_sum = csum((U16 *)datagram,ipH->ip_len >> 1);
+
+   printf("Checksum = %u\n",ipH->ip_sum);
+
+
+  if ((sockFd = socket(PF_INET,SOCK_RAW,IPPROTO_UDP)) < 0)
+      {
+         perror("socket:create");
+         RETURN(RFAILED);
+      }
+  /* doing the IP_HDRINCL call */
+
+    if (setsockopt(sockFd,IPPROTO_IP,IP_HDRINCL,val,sizeof(one)) < 0)
+     {
+        perror("Client:setsockopt");
+     }
+
+
+   while(1)
+    {
+      if ( sendto(sockFd,
+                  datagram,
+                  ipH->ip_len,
+                  0,
+                  (struct sockaddr *)&sin,
+                  sizeof (sin)) < 0)
+           { perror("Client:sendto"); }
+
+      else
+           printf(".");
+
+    }
+
+   RETURN(ROK);
+  }
+
+typedef struct _ipheader
+ {
+   U8 ip_hl:4,ip_v:4; /* ip_hl: the ip header length in 32bit octets.
+                       * ip_v : ip version (always 4 for our case).
+                       */
+
+   U8 ip_tos;         /* reliability of the service. 0x00 is Normal */
+
+   U16 ip_len;        /* totoal length including ip header,icmp/tcp/udp header
+                       * and payload size in bytes
+                       */
+
+   U16 ip_id;         /* sequence no. used for reassembly of fragmented IP packets */
+
+   U16 ip_off;        /* the fragment offset used for reassembly of fragmented packets */
+
+   U16 ip_p;          /* the transport layer protocol. can be tcp (6), udp(17) */
+
+
+   U8 ip_ttl;         /* time to live */
+
+   U16 ip_sum;        /* the datagram checksum for the whole IP packet */
+
+   struct in_addr ip_src;        /* the source IP address, converted to a long format */
+
+   struct in_addr ip_dst;        /* the desitnation IP address, converted to a long format */
+ }CustIpHeader; /* total ip header length: 20 bytes */
+
+
+
+typedef struct _udpheader
+{
+
+ U16 uh_sport;      /* The source port that a client bind()s to */
+ U16 uh_dport;      /* The desination port that a server bind()s to*/
+ U16 uh_len;        /* The length of udp header and payload data in bytes */
+ U16 uh_check;      /* The checksum of header and data */
+
+}CustUdpHeader; /* total udp header length: 8 bytes (=64 bits) */
+

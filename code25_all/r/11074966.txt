@@ -1,0 +1,127 @@
+# Purpose: Scrape Floraweb.de for plant species data (photograph, sociology, ecology, anatomy)
+# Author: Kay Cichini
+# Date: 2012-06-10
+# Output: PDF saved to created folder .~/FLORAWEB
+# Packages: XML, jpeg, 
+# Licence: cc by-nc-sa
+
+floraweb_scraper <- function(input) {
+
+    # I didn't get around this encoding issue other than with gsub..
+    spch_sub <- function(x) {
+        x <- gsub("Ã¼", "ü", x)
+        x <- gsub("Ã¤", "ä", x)
+        x <- gsub("Ã¶", "ö", x)
+        x <- gsub("Ã„", "Ä", x)
+        x <- gsub("Ãoe", "Ü", x)
+        x <- gsub("Ã¼", "Ä", x)
+        x <- gsub("Ã–", "Ö", x)
+        x <- gsub("ÃŸ", "ß", x)
+        x <- gsub("Ã©", "é", x)
+        x <- gsub("Ã-", "í", x)
+        x <- gsub("Ã¡", "á", x)
+        x <- gsub("Â±", "~", x)
+        x <- gsub("Â ", "", x)  # pattern for backspaces
+    }
+
+    # automated package installation:
+    pkgs <- c("XML", "jpeg")
+
+    pkgs_miss <- pkgs[which(!pkgs %in% installed.packages()[, 1])]
+    if (length(pkgs_miss) > 0) {
+        install.packages(pkgs_miss)
+    }
+
+    # load packages:
+    require(XML)
+    require(jpeg)
+
+
+    # prepare input and get parsed script:
+    input1 <- gsub("[[:space:]]", "+", input)
+    URL <- paste("http://www.floraweb.de/pflanzenarten/taxoquery.xsql?taxname=", 
+                 input1, sep = "")
+    doc <- htmlParse(URL)
+
+    # get returned species names (dismiss last row with additional info):
+    sp <- xpathSApply(doc, "//div[@id='contentblock']//a", xmlValue)
+    sp <- sp[1:length(sp)-1]
+
+    # get species ids from contentblock:
+    con <- getNodeSet(doc, "//div[@id='contentblock']//a")[1:len]
+    urls <- sapply(con, xmlGetAttr, "href")
+    id_1 <- gsub("[^0-9]", "", urls)
+
+    # check matching and assign to resulting dataframe:
+    match <- numeric()
+    for (i in 1:len) {
+        match[i] <- sum(unlist(strsplit(tolower(sp), " ")[i]) %in% unlist(strsplit(input, 
+            " ")) == 0)
+    }
+    df <- data.frame(sp, id_1, match)
+
+    # select the one with best match:
+    sel <- id_1[rank(df$match)][1]
+
+    # build urls for retrieving species data
+    url <- paste("http://www.floraweb.de/pflanzenarten/druck.xsql?suchnr=", sel, sep = "")
+
+    doc <- htmlParse(url)
+    img_src <- xpathSApply(doc, '//*/p[@class="centeredcontent"]/img/@src')
+    img_url <- gsub("../", "http://www.floraweb.de/", img_src, fixed = T)
+
+    # get infos:
+    infos <- xpathSApply(doc, "//div[@id='content']//p", xmlValue)[c(2, 7, 22, 33, 35, 14)]
+
+    # replace special characters:
+    infos <- spch_sub(infos)
+
+    # make dir to save data:
+    dir.create(path.expand("~/FLORAWEB/"), showWarnings = F)
+    setwd(path.expand("~/FLORAWEB/"))
+
+    # download image:
+    download.file(img_url, "floraweb.jpg", mode = "wb")
+
+    # open device:
+    pdf(paste(spch_sub(df$sp[df$id_1 == sel]), ".FloraWeb.pdf", sep = ""), paper = "a4")
+
+    # read image:
+    img <- readJPEG("floraweb.jpg")
+    w <- dim(img)[2]
+    h <- dim(img)[1]
+
+    # print img to plot region:
+    par(mar = rep(0, 4), oma = rep(0, 4), mfrow = c(2, 1))
+    plot(NA, xlim = c(0, w), ylim = c(0, h), xlab = "", ylab = "", axes = F, 
+    type = "n", yaxs = "i", xaxs = "i", asp = 1)
+    rasterImage(img, 0, 0, w, h)
+
+    # print text:
+    plot(NA, xlim = c(0, 1), ylim = c(0, 1), xlab = "", ylab = "", axes = F, type = "n", 
+        yaxs = "i", xaxs = "i")
+    # text left intendent and center adjustment:
+    l <- 0.5
+    c_adj <- c(0.5, 0.5)
+
+    # plot text:
+    text(l, 0.95, paste("Eingabe = ", input, " / Gefunden = ", infos[1], sep = ""), font = 2, adj = c_adj, cex = 0.7)
+    text(l, 0.5, paste(strwrap(infos[-1], width = 112), collapse = "\n"), adj = c_adj, cex = 0.7)
+
+    # Credit:
+    text(l, 0.05, "Die hier verwendeten Daten sind der Internet-Seite FloraWeb.de entnommen.", 
+        adj = c_adj, cex = 0.4, font = 3)
+
+    graphics.off()
+    message(paste(sp_name, "PDF wurde erzeugt\n\n", sep = "\n -- "))
+
+    # remove jpegs:
+    unlink(dir(pattern = ".jpg"))
+}
+
+# Examples:
+floraweb_scraper("Poa alp")
+
+pfl_liste <- c("leuc alp", "Poa badensis", "Poa alp")
+lapply(pfl_liste, FUN = floraweb_scraper)
+

@@ -1,0 +1,99 @@
+select
+select
+#!/usr/bin/perl -w
+use strict;
+use Socket;
+
+# forward declaration
+sub logmsg;
+
+my $remote = shift || "localhost";
+my $port = 9877;
+
+($port) = $port =~ /^(\d+)$/ or die "invalid port";
+
+my $iaddr = inet_aton($remote) || die "no host: $remote";
+my $paddr = sockaddr_in($port, $iaddr);
+my $proto = getprotobyname('sctp');
+
+my $sockfd;
+
+socket($sockfd, PF_INET, SOCK_STREAM, $proto) || die "socket: $!";
+connect($sockfd, $paddr) || die "connect: $!";
+
+str_cli($sockfd);
+
+exit(0);
+
+#----- subs down here ------#
+
+sub str_cli {
+    my $sockfd = shift;
+
+    my ($n, $buff, $stdineof, $s);
+    my $rin = '';
+
+    $stdineof = 0;
+    while ( 1 ) {
+        if ($stdineof == 0) {
+            vec($rin, fileno(STDIN), 1) = 1;
+        }
+        vec($rin, fileno($sockfd), 1) = 1; 
+
+        my $nfound = select($rin, undef, undef, 1.0);
+        if ($nfound < 0) {
+            next if $!{EINTR};
+            die "select: $!";
+        } else { print "\$nfound == $nfound\n"; }
+
+        if (vec($rin, fileno($sockfd), 1) == 1) { # socket readable
+            print "trying to read from sockfd\n";
+            $n = sysread($sockfd, $buff, 1024);
+            if (!defined($n) || $n < 0) {
+                # resume if sysread() returned because a signal was received
+                next if $!{EINTR};
+                die "sysread: $!";
+            } elsif($n == 0) {
+                if ($stdineof == 1) { return; } # normal termination
+                else { die "str_cli: server terminated prematurely"; }
+            }
+            writen(*STDOUT, $buff);
+        }
+
+        if (vec($rin, fileno(STDIN), 1) == 1) { # stdin readable
+            $n = sysread(STDIN, $buff, 1024);
+            if (!defined($n) || $n < 0) {
+                # resume if sysread() returned because a signal was received
+                next if $!{EINTR};
+                die "sysread: $!";
+            } elsif($n == 0) {
+                $stdineof = 1;
+                if (!defined($s = shutdown($sockfd, SHUT_WR)) 
+                    || $s == 0) { die("shutdown: $!"); }
+                vec($rin, fileno(STDIN), 1) = 0;
+                next;
+            }
+            writen($sockfd, $buff);
+        }
+    }
+}
+
+sub writen {
+    my ($connfd, $buff) = @_;
+    my $nleft = length($buff);
+    my $total = 0;
+    my $nwritten = 0;
+    while ($nleft) {
+        if (($nwritten = syswrite($connfd, $buff, $nleft, $total)) <= 0) {
+            # resume if syswrite() returned because a signal was received
+            # 0 indicates an error in this context
+            next if $!{EINTR};
+            die "syswrite: $!";
+        }
+        $nleft -= $nwritten;
+        $total += $nwritten;
+    }
+}
+
+sub logmsg { print "$0 $$: @_ at ", scalar localtime, "\n" }
+

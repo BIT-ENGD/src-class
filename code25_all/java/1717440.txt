@@ -1,0 +1,342 @@
+package model;
+
+import java.util.Random;
+
+public class Neuron {
+
+
+boolean oldActive=true,active=true; //ie part of the solution
+int state=0,previousState=0;
+
+public Square s1,s2;
+
+public Neuron(Square s1,Square s2){
+    this.s1=s1;this.s2=s2;
+
+
+    //status of the neuron is initialised randomly
+    oldActive=active= (new Random()).nextInt(2)==1?true:false;
+
+}
+
+public int activeNeighbours(){
+
+    //discount this neuron if it is active
+    int s=0;if(isActive()){s=-2;}
+
+    for(Object o:s1.neurons)
+        if(((Neuron)o).isActive())s++;
+
+    for(Object o:s2.neurons)
+        if(((Neuron)o).isActive())s++;
+
+
+    return s;
+
+}
+
+public boolean hasChanged(){
+    return  oldActive != active||previousState != state;
+}
+
+
+
+public boolean isActive(){return active;}
+
+public void updateState(){
+    previousState=state;
+    state+=2-activeNeighbours();
+}
+
+public void updateOutput(){
+    oldActive=active;
+    if (state>3) active=true;
+    else if(state<0)active=false;
+
+}
+
+
+}
+
+package model;
+
+import java.util.Vector;
+
+public class Square {
+
+Vector neurons=new Vector();//neurons which connect to this square
+public int col;
+public int row;
+
+public Square(int row, int col){
+
+    this.col=col;
+    this.row=row;
+
+
+}
+
+
+/**
+ * creates a neuron which links this square with the square s,
+ * then tells both squares about it,
+ * also returns the neuron for inclusion in the global list.
+ * 
+ * @param s
+ * @return neuron n, or null
+ */
+public Neuron link(Square s){
+
+    for(Object o: neurons)
+        //discounts the link if it has already been created
+        if (((Neuron)o).s1==s ||((Neuron)o).s2==s)return null;
+
+    Neuron n=new Neuron(this,s);
+    neurons.add(n);
+    s.neurons.add(n);
+    return n;
+
+}
+
+
+}
+
+package model;
+
+import java.util.Vector;
+import gui.Board;
+
+public class Control {
+Board b; //the graphic board
+
+Vector neurons=new Vector();   //all 168 neurons
+
+Square[][] squares=new Square[8][8];
+
+int[][] moves={
+        {-2,-2, 2, 2,-1,-1, 1, 1},
+        { 1,-1, 1,-1, 2,-2, 2,-2}};
+
+public Control(Board b){
+    this.b=b;
+
+    //create 64 squares
+    for(int row=0;row<8;row++)
+        for (int col=0;col<8;col++)
+            squares[row][col]=new Square(row,col);
+
+    //create neurons
+    for(int row=0;row<8;row++)
+        for(int col=0;col<8;col++)
+            findMoves(squares[row][col]);
+
+    dl();//draw the initial active neurons on the graphic
+
+    //try this many enumerations of the board before giving up
+    int counter=1000;
+
+    //the main updating loop
+    while(counter>0){
+        for(Object o:neurons)((Neuron)o).updateState();//update all the states
+        for(Object o:neurons)((Neuron)o).updateOutput();//then all the outputs
+
+        counter--;
+
+        if(isStable())break;
+    }
+
+    dl();   //draw the neurons when the solution is found/attempt abandoned
+}
+
+/**
+ * draws the lines (active neurons) on the graphic display
+ */
+private void dl(){
+    b.clear();
+    for(Object o:neurons)
+        b.drawLine((Neuron)o);
+    b.repaint();
+
+
+}
+
+
+/**
+ * Identify all of the squares legal to move to from this one - link with a neuron,
+ * then add the neuron to the collection
+ * 
+ * @param s
+ */
+private void findMoves(Square s){
+
+    for (int i=0;i<moves[0].length;i++){
+        int newRow=s.row+moves[0][i];
+        int newCol=s.col+moves[1][i];
+
+        if(isInBounds(newRow,newCol)){
+
+            Neuron n=s.link(squares[newRow][newCol]);
+            if (n!=null)neurons.add(n);         
+        }           
+    }
+
+}
+
+/**
+ * tests whether the identified square is contained within the (8*8) board
+ * @param row
+ * @param col
+ * @return
+ */
+private boolean isInBounds(int row,int col){
+    if (row>=0 && row<8 && col>=0 && col<8)return true;
+    return false;
+}
+
+
+/**
+ * returns true if no neuron changes its state/output
+ * @return
+ */
+private boolean isStable(){
+
+    for (Object o:neurons)
+        if(((Neuron)o).hasChanged())
+            return false;
+    return true;
+
+}
+
+
+
+public static void main(String[]s){
+    Board b=new Board(50,50,60);
+    new Control(b);
+}
+
+}
+
+package gui;
+import java.util.Vector;
+import javax.swing.JFrame;
+import model.Neuron;
+/**
+* sets up the graphic representation of the chess board, and draws on the neurons as required
+ * @param x
+ * @param y
+ * @param squareSize
+ */
+public class Board extends JFrame {
+Vector lines=new Vector();
+int squareSize;
+
+public Board(int x, int y,int squareSize){
+
+    //initialize dimensions etc
+    super("there.");
+    setDefaultCloseOperation(EXIT_ON_CLOSE);
+
+    setBounds(x,y,squareSize*8+8,squareSize*8+30);
+    this.setLayout(null);
+    this.setVisible(true);
+    this.squareSize=squareSize;
+
+    //draw the squares
+    drawSquares();
+
+    repaint();
+}
+
+private void drawSquares(){
+    for(int i=0;i<8;i++)
+        for (int j=0;j<8;j++){
+            GuiSquare s=new GuiSquare(i,j,squareSize);
+            this.add(s,0);
+        }
+}
+
+/**
+ * represent the neuron as a line on the board
+ * @param n
+ */
+public void drawLine(Neuron n){
+    Line l=new Line(n.s1.col+n.s1.row*8,n.s2.col+n.s2.row*8,squareSize);
+    if(n.isActive()){
+        lines.add(l);
+        add (l,0);
+    }
+}
+
+/**
+ * removes all of the lines (neurons) from the board
+ */
+public void clear(){
+    for(Object o:lines)
+        remove((Line)o);
+
+    lines.clear();
+}
+
+package gui;
+import java.awt.*;
+
+public class GuiSquare extends Component{
+
+int row,col;
+int x;
+int y;
+int size;
+
+public GuiSquare(int row,int col,int size){
+
+    this.row=row;this.col=col;this.size=size;
+    y=row*size; x=col*size;
+    setBounds(x,y,size,size);
+    setBackground((row+col)%2==0?Color.white:Color.black);
+}
+
+public void paint(Graphics g){
+    g.setColor(getBackground());        
+    g.fillRect(0,0, size-1, size-1);
+    g.setColor(Color.gray);
+    g.drawString(""+((row*8)+col), size/2, size/2);
+}
+}
+
+package gui;
+
+import java.awt.*;
+
+public class Line extends Component{
+
+int x1,y1,x2,y2;
+int x,y,w,h;
+
+public Line(int a,int b, int squareSize){
+    setBackground(Color.blue);
+    x1=((a%8)*squareSize)+(squareSize/2);
+    y1=((a/8)*squareSize)+(squareSize/2);
+    x2=((b%8)*squareSize)+(squareSize/2);
+    y2=((b/8)*squareSize)+(squareSize/2);
+
+    if(x1<x2){
+        x=x1;w=x2-x1;
+    }else{
+        x=x2;w=x1-x2;
+    }
+
+    if(y1<y2){
+        y=y1;h=y2-y1;
+    }else{
+        y=y2;h=y1-y2;
+    }
+    setBounds(x,y,w,h);
+}
+
+public void paint(Graphics g){
+    g.setColor(getBackground());
+    g.drawLine(x1-x,y1-y,x2-x,y2-y);
+}
+
+}
+

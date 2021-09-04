@@ -1,0 +1,85 @@
+#!/usr/bin/perl
+use strict;
+use IO::Socket;
+use threads;
+use Thread::Queue;
+
+# init
+my $clients = {};
+my $queue = Thread::Queue->new;
+
+# thread that monitors
+threads->create("monitor");
+
+# create the listen socket
+my $listenSocket = IO::Socket::INET->new(LocalPort  => 12345,
+                                      Listen   => 10,
+                                      Proto   => 'tcp',
+                                      Reuse   => 1);
+
+# make sure we are bound to the port
+die "Cant't create a listening socket: $@" unless $listenSocket;
+
+print "Server ready. Waiting for connections on 34567 ... \n";
+
+# wait for connections at the accept call
+while (my $connection = $listenSocket->accept) {
+    # set client socket to non blocking
+    my $nonblocking = 1;
+    ioctl($connection, 0x8004667e, \\$nonblocking);
+
+    # autoflush
+    $connection->autoflush(1);
+
+    # debug
+    print "Accepted new connection\n";
+
+    # add to list
+    $clients->{time()} = $connection;
+
+    # start new thread and listen on the socket
+    threads->create("readData", $connection);
+}
+
+sub readData {
+     # socket parameter
+     my ($client) = @_;
+
+     # read client
+     while (<$client>) {
+      # remove newline
+      chomp $_;
+
+  # add to queue
+      $queue->enqueue($_);
+     }
+
+     close $client;
+}
+
+sub monitor {
+    # endless loop
+    while (1) {
+
+        # loop while there is something in the queue
+        while ($queue->pending) {
+
+            # get data from a queue
+            my $data = $queue->dequeue;
+
+            # loop all sockets
+            while ( my ($key, $value) = each(%$clients) ) {
+
+               # send to socket
+               print $value "$data\n";
+
+            }
+        }
+
+        # wait 0,25 seconds
+        select(undef, undef, undef, 0.25);
+    }
+}
+
+close $listenSocket;
+

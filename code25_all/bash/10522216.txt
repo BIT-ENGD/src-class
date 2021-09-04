@@ -1,0 +1,129 @@
+#!/bin/bash
+
+
+
+###################################################
+# Variables
+#
+BACKIFS=$IFS
+IFS=$'\n'
+db_file="$PWD/test"
+path_db="$PWD"
+check_first_start="$PWD/status"
+num_args=$#
+###################################################
+
+
+###################################################
+# Fist time that program start
+#
+function check_before_start(){
+if [ ! -f "$path_db/status" ];then
+    pass_2=$(yad --form --field "Password:H" --field "Retype Password:H" --separator="@_@" --title "Password" --image="dialog-password")
+    if [ $(echo $pass_2 | awk -F"@_@" '{print $1}') != $(echo $pass_2 | awk -F"@_@" '{print $2}') ];then
+        yad --title "Errore" --text "Le password sono differenti, riprovare..."
+        check_before_start
+    fi
+    pass=$(echo $pass_2 | awk -F"@_@" '{print $1}')
+    touch "$path_db/status"
+fi
+type_of=$(file $db_file | cut -f2 -d':' | sed '/ /s/^ //' | cut -f1 -d' ')
+if [ "$type_of" = "ASCII" ]; then
+    pass_2=$(yad --form --field "Password:H" --field "Retype Password:H" --separator="@_@" --title "Password" --image="dialog-password")
+    if [ $(echo $pass_2 | awk -F"@_@" '{print $1}') != $(echo $pass_2 | awk -F"@_@" '{print $2}') ];then
+        yad --title "Errore" --text "Le password sono differenti, riprovare..."
+        check_before_start
+    fi
+    pass=$(echo $pass_2 | awk -F"@_@" '{print $1}') 
+    encrypt_db
+fi
+}
+###################################################
+
+
+###################################################
+# Check exit status
+#
+function exit_script(){
+if [ $? != 0 ] ; then
+    type_of=$(file $db_file | cut -f2 -d':' | sed '/ /s/^ //' | cut -f1 -d' ')
+    if [ "$type_of" = "ASCII" ]; then
+        encrypt_db
+    fi
+    exit 0
+fi
+}
+###################################################
+
+
+###################################################
+# Encryption functions
+#
+function encrypt_db(){
+echo $pass | gpg --passphrase-fd 0 -o $path_db/enc_db --cipher-algo=aes256 -c $db_file
+mv $path_db/enc_db $db_file
+}
+###################################################
+
+
+###################################################
+# Decryption functions
+#
+function check_gpg_pwd_decrypt(){
+if [ $? != 0 ] ; then
+    yad --title "Errore Password" --text "È stata inserita una password errata, riprovare..." --width=450 --height=150
+    decrypt_db
+fi
+}
+
+function decrypt_db(){
+pass=$(yad --form --field "Password:H" --separator="" --title "Password" --image="dialog-password")
+echo $pass | gpg --passphrase-fd 0 -o $path_db/out_db --cipher-algo=aes256 -d $db_file
+check_gpg_pwd_decrypt
+mv $path_db/out_db $db_file
+}
+###################################################
+
+
+###################################################
+# Read data from db
+function read_data_from_db(){
+choosed_num=$(cat $db_file | sed -n ${line}'p' | cut -f${c1},${c2} -d'.' | tr '.' ' ')
+cifra_1=$(echo $choosed_num | cut -f1 -d' ')
+cifra_2=$(echo $choosed_num | cut -f2 -d' ')
+yad --text "Riga -------><b>${line}</b>\nCifra $c1: --><b>$cifra_1</b>\nCifra $c2: --><b>$cifra_2</b>"
+}
+###################################################
+
+
+###################################################
+# Read from user the line, c1 and c2 numbers and check these values
+#
+function input_info(){
+info=$(yad --form --field "Numero riga" --field "Prima cifra" --field "Seconda cifra" --separator="-" --title "Input Info")
+line=$(echo $info | cut -f1 -d'-')
+c1=$(echo $info | cut -f2 -d'-')
+c2=$(echo $info | cut -f3 -d'-')
+if [ $line -lt 1 ] || [ $line -gt 32 ]; then
+    yad --text "Errore: il numero di linea deve essere compreso fra 1 e 32" --title "Errore"
+    input_info
+fi
+if [ $c1 -lt 1 ] || [ $c1 -gt 4 ] || [ $c2 -lt 1 ] || [ $c2 -gt 4 ]; then
+    yad --text "Errore: le cifre devono essere comprese fra 1 e 4" --title "Errore"
+    input_info
+fi
+}
+###################################################
+
+
+###################################################
+# Main
+check_before_start
+input_info
+decrypt_db
+read_data_from_db
+encrypt_db
+exit 0
+###################################################
+
+error: cannot mv file

@@ -1,0 +1,91 @@
+int size = Width*Width*sizeof(float);
+float* Md, *Nd, *Pd;
+cudaError_t err = cudaSuccess;
+
+//Allocate Device Memory for M, N and P
+err = cudaMalloc((void**)&Md, size);
+err = cudaMalloc((void**)&Nd, size);
+err = cudaMalloc((void**)&Pd, size);
+
+//Copy Matrix from Host Memory to Device Memory
+err = cudaMemcpy(Md, M, size, cudaMemcpyHostToDevice);
+err = cudaMemcpy(Nd, N, size, cudaMemcpyHostToDevice);
+
+//Setup the execution configuration
+dim3 dimBlock(TileWidth, TileWidth, 1);
+dim3 dimGrid(ceil((float)(Width)/TileWidth), ceil((float)(Width)/TileWidth), 1);
+
+MatrixMultiplicationMultiBlock_Kernel<<<dimGrid, dimBlock>>>(Md, Nd, Pd, Width);
+
+err = cudaMemcpy(P, Pd, size, cudaMemcpyDeviceToHost);
+
+//Free Device Memory
+cudaFree(Md);
+cudaFree(Nd);
+cudaFree(Pd);
+
+err = cudaMemcpy(P, Pd, size, cudaMemcpyDeviceToHost);
+
+//Matrix Multiplication Kernel - Multi-Block Implementation
+__global__ void MatrixMultiplicationMultiBlock_Kernel (float* Md, float* Nd, float* Pd, int Width) 
+{
+int TileWidth = blockDim.x;
+
+//Get row and column from block and thread ids
+int Row = (TileWidth*blockIdx.y) + threadIdx.y;
+int Column = (TileWidth*blockIdx.x) + threadIdx.x;
+
+//Pvalue store the Pd element that is computed by the thread
+float Pvalue = 0;
+
+for (int i = 0; i < Width; ++i)
+{
+    float Mdelement = Md[Row * Width + i];
+    float Ndelement = Nd[i * Width + Column];
+    Pvalue += Mdelement * Ndelement;
+}
+
+//Write the matrix to device memory each thread writes one element
+Pd[Row * Width + Column] = Pvalue;
+}
+
+            MatrixMultiplicationSharedMemory_Kernel<<<dimGrid, dimBlock, sizeof(float)*TileWidth*TileWidth*2>>>(Md, Nd, Pd, Width);
+
+ //Matrix Multiplication Kernel - Shared Memory Implementation
+ __global__ void MatrixMultiplicationSharedMemory_Kernel (float* Md, float* Nd, float* Pd, int Width) 
+ {
+int TileWidth = blockDim.x;
+
+//Initialize shared memory
+extern __shared__ float sharedArrays[];
+float* Mds = (float*) &sharedArrays;
+float* Nds = (float*) &Mds[TileWidth*TileWidth];
+
+int tx = threadIdx.x;
+int ty = threadIdx.y;
+
+//Get row and column from block and thread ids
+int Row = (TileWidth*blockIdx.y) + ty;
+int Column = (TileWidth*blockIdx.x) + tx;
+float Pvalue = 0;
+
+//For each tile, load the element into shared memory
+for( int i = 0; i < ceil((float)Width/TileWidth); ++i)
+{
+    Mds[ty*TileWidth+tx] = Md[Row*Width + (i*TileWidth + tx)];
+    Nds[ty*TileWidth+tx] = Nd[(ty + (i * TileWidth))*Width + Column]; 
+
+    __syncthreads();
+
+    for( int j = 0; j < TileWidth; ++j)
+    {
+        Pvalue += Mds[ty*TileWidth+j] * Nds[j*TileWidth+tx];
+    }
+
+    __syncthreads();
+}
+
+//Write the matrix to device memory each thread writes one element
+Pd[Row * Width + Column] = Pvalue;
+}
+

@@ -1,0 +1,476 @@
+package citic.android.remoteir;
+
+public class ServerCp extends ListActivity{
+
+private RemoteIrDbAdapter mDbHelper; 
+
+private static final int ACTIVITY_CREATE=0;
+private static final int ACTIVITY_EDIT=1;
+
+private static final int  INSERT_ID = Menu.FIRST;
+private static final int  EDIT_ID = Menu.FIRST + 1;
+private static final int  DELETE_ID = Menu.FIRST + 2;
+
+@Override
+public void onCreate(Bundle savedInstanceState) {
+
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.contentlist);
+
+    mDbHelper = new RemoteIrDbAdapter(this);
+    mDbHelper.open();
+
+    fillDataServer();
+    registerForContextMenu(getListView());
+
+}
+
+private void fillDataServer() {
+
+    Cursor c = mDbHelper.fetchAllQueryDataAutoCompleteServerName();
+    startManagingCursor(c);
+
+    String[] from;
+
+    from = new String[] { RemoteIrDbAdapter.KEY_NAMESERVER}; 
+
+    int[] to = new int[] { R.id.row1 };
+
+    SimpleCursorAdapter data =
+        new SimpleCursorAdapter(this, R.layout.listrow, c, from, to);
+
+    setListAdapter(data);
+}
+
+@Override
+public boolean onCreateOptionsMenu(Menu menu) {
+    super.onCreateOptionsMenu(menu);
+    menu.add(0, INSERT_ID, 0, R.string.menu_insert_server);
+    return true;
+}
+
+@Override
+public boolean onMenuItemSelected(int featureId, MenuItem item) {
+    switch(item.getItemId()) {
+    case INSERT_ID:
+        createServer();
+        return true;
+    }
+
+    return super.onMenuItemSelected(featureId, item);
+}
+
+
+public void onCreateContextMenu(ContextMenu menu, View v,
+        ContextMenuInfo menuInfo) {
+    super.onCreateContextMenu(menu, v, menuInfo);
+    menu.add(0, EDIT_ID, 0, R.string.menu_edit_server);
+    menu.add(0, DELETE_ID, 0, R.string.menu_delete_server);
+
+}
+
+@Override
+public boolean onContextItemSelected(MenuItem item) {
+    switch(item.getItemId()) {
+    case EDIT_ID:
+        AdapterContextMenuInfo infoEdit = (AdapterContextMenuInfo) item.getMenuInfo();
+        Intent i = new Intent(this, ServerEdit.class);
+        i.putExtra(RemoteIrDbAdapter.KEY_ROWIDSERVER, infoEdit.id);
+        startActivityForResult(i, ACTIVITY_EDIT);
+
+    case DELETE_ID:
+        AdapterContextMenuInfo infoDelete = (AdapterContextMenuInfo) item.getMenuInfo();
+        mDbHelper.deleteQueryDataServer(infoDelete.id);
+        fillDataServer();
+        return true;
+    }
+    return super.onContextItemSelected(item);
+}
+
+private void createServer() {
+    Intent i = new Intent(this, ServerEdit.class);
+    startActivityForResult(i, ACTIVITY_CREATE);
+}
+
+/*@Override
+protected void onListItemClick(ListView l, View v, int position, long id) {
+    super.onListItemClick(l, v, position, id);
+    Intent i = new Intent(this, ProfileEdit.class);
+    i.putExtra(RemoteIrDbAdapter.KEY_ROWID, id);
+    startActivityForResult(i, ACTIVITY_EDIT);
+}
+
+
+*/
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, 
+                                    Intent intent) {
+        super.onActivityResult(requestCode, resultCode, intent);
+        fillDataServer();
+    }
+
+
+}
+
+package citic.android.remoteir;
+
+public class ServerEdit extends Activity{
+
+private EditText mNameText;
+private EditText mIpText;
+private EditText mPortText;
+private Long mRowId;
+private RemoteIrDbAdapter mDbHelper;
+
+@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    mDbHelper = new RemoteIrDbAdapter(this);
+    mDbHelper.open();
+    setContentView(R.layout.editserver);
+
+
+    mNameText = (EditText) findViewById(R.id.name);
+    mIpText = (EditText) findViewById(R.id.ip);
+    mPortText = (EditText) findViewById(R.id.port);
+
+    Button confirmButton = (Button) findViewById(R.id.confirm);
+
+    mRowId = savedInstanceState != null ? savedInstanceState.getLong(RemoteIrDbAdapter.KEY_ROWIDSERVER) 
+                                        : null;
+    if (mRowId == null) {
+        Bundle extras = getIntent().getExtras();            
+        mRowId = extras != null ? extras.getLong(RemoteIrDbAdapter.KEY_ROWIDSERVER) 
+                                : null;
+    }
+
+    System.out.println("el rowid es" + mRowId);
+    populateFields();
+
+    confirmButton.setOnClickListener(new View.OnClickListener() {
+
+        public void onClick(View view) {
+            setResult(RESULT_OK);
+            finish();
+        }
+
+    });
+}
+
+private void populateFields() {  // <- This is where the error refers
+    if (mRowId != null) {
+        Cursor server = mDbHelper.fetchServer(mRowId);
+        startManagingCursor(server);
+        mIpText.setText(server.getString(
+                server.getColumnIndexOrThrow(RemoteIrDbAdapter.KEY_IP)));
+        mPortText.setText(server.getString(
+                server.getColumnIndexOrThrow(RemoteIrDbAdapter.KEY_PORT)));
+        mNameText.setText(server.getString(
+                server.getColumnIndexOrThrow(RemoteIrDbAdapter.KEY_NAMESERVER)));    
+    }
+}
+
+@Override
+protected void onSaveInstanceState(Bundle outState) {
+    super.onSaveInstanceState(outState);
+    outState.putLong(RemoteIrDbAdapter.KEY_ROWIDSERVER, mRowId);
+}
+
+@Override
+protected void onPause() {
+    super.onPause();
+    saveState();
+}
+
+@Override
+protected void onResume() {
+    super.onResume();
+    populateFields();
+}
+
+private void saveState() {
+    String name = mNameText.getText().toString();
+    String ip = mIpText.getText().toString();
+    String port = mPortText.getText().toString();
+
+    if (mRowId == null) {
+        long id = mDbHelper.createQueryDataServer(ip, port, name);
+        if (id > 0) {
+            mRowId = id;
+        }
+    } else {
+        mDbHelper.updateServerData(mRowId, ip, port, name);
+    }
+}
+
+package citic.android.remoteir;
+
+public class RemoteIrDbAdapter{
+
+    public static final boolean DISTINCT = true;
+
+    public static final String KEY_ROWIDSERVER= "_id"; //ANTES _IDS
+    public static final String KEY_PORT = "port";
+    public static final String KEY_IP = "ip";
+    public static final String KEY_NAMESERVER = "server";
+
+    public static final String KEY_ROWIDPROFILE= "_id"; //ANTES _id
+    public static final String KEY_NAMEPROFILE= "profile";
+
+    //public static final String KEY_ROWID = "_id";
+
+    private static final String TAG = "RemoteIrDbAdapterBak";
+    private DatabaseHelper mDbHelper;
+    private SQLiteDatabase mDb;
+
+
+    private static final String DATABASE_CREATE_SERVER = "create table server (_id integer primary key autoincrement,ip string not null, port string not null, server string not null);";
+            /*"create table server (_id integer primary key autoincrement, " 
+                    + "ip string not null, port string not null, server string not null);";*/
+
+    private static final String DATABASE_CREATE_PROFILE = "create table profile (_id integer primary key autoincrement, profile string not null);";
+
+            /*"create table profile (_id integer primary key autoincrement, "
+                    + "profile string not null);";*/
+
+    private static final String DATABASE_CREATE_SERPRO = "create table serpro (_ids integer not null, _idp integer not null, PRIMARY KEY (_ids, _idp), CONSTRAINT fk_idsps FOREIGN KEY (_ids) REFERENCES server(_id) ON DELETE CASCADE, CONSTRAINT fk_idspp FOREIGN KEY (_ids) REFERENCES server(_id) ON DELETE CASCADE);";
+
+            /*"create table serpro (_ids integer not null, _idp integer not null, PRIMARY KEY (_ids, _idp), " 
+                    + " CONSTRAINT fk_idsps REFERENCES server(_id) ON DELETE CASCADE "
+                    + " CONSTRAINT fk_idspp REFERENCES profile(_id) ON DELETE CASCADE);";*/
+
+private static final String DATABASE_TABLE_SERVER = "server";
+
+    private static final String DATABASE_TABLE_PROFILE = "profile";
+
+    private static final String DATABASE_TABLE_SERPRO = "serpro";
+
+    private static final String TRIGGER_SERPRO_IP = "create trigger serpro_pi before insert on serpro for each row when ((select _id from profile where _id = new._id) is null) begin select raise(abort, 'insert on table \"serpro\" violates foreign key constraint \"fk_idspp\"'); end;";
+    /*"CREATE TRIGGER SERPRO_PI BEFORE INSERT ON serpro FOR EACH ROW BEGIN SELECT CASE WHEN ((SELECT _id FROM profile WHERE _id = NEW._id) IS NULL ) THEN RAISE (ABORT, ‘insert on table serpro violates foreign key constraint fk_idspp’) END; END;";*/
+
+    private static final String TRIGGER_SERPRO_UP = "create trigger serpro_up before update on serpro for each row when ((select _id from profile where _id = new._id) is null) begin select raise(abort, 'update on table \"serpro\" violates foreign key constraint \"fk_idspp\"'); end;"; 
+    /*"CREATE TRIGGER SERPRO_UP BEFORE UPDATE ON serpro FOR EACH ROW BEGIN SELECT CASE WHEN ((SELECT _id FROM profile WHERE _id = NEW._id) IS NULL ) THEN RAISE (ABORT, ‘update on table serpro violates foreign key constraint fk_idspp’) END; END;";*/
+
+    private static final String TRIGGER_SERPRO_DP = "create trigger serpro_dp before delete on profile for each row begin select raise(abort, 'delete on table \"profile\" violates foreign key constraint \"fk_idspp\" on \"serpro\"') where (select _idp from serpro where _idp = old._id) is not null; end;";
+    /*"CREATE TRIGGER SERPRO_DP BEFORE DELETE ON profile FOR EACH ROW BEGIN SELECT CASE WHEN ((SELECT _id FROM serpro WHERE _id = OLD._id) IS NULL ) THEN RAISE (ABORT, ‘delete on table profile violates foreign key constraint fk_idspp’) END; END;";*/
+
+
+    private static final String TRIGGER_SERPRO_IS = "create trigger serpro_is before insert on serpro for each row when ((select _id from server where _id = new._id) is null) begin select raise(abort, 'insert on table \"serpro\" violates foreign key constraint \"fk_idsps\"'); end;";
+    /*"CREATE TRIGGER SERPRO_IS BEFORE INSERT ON serpro FOR EACH ROW BEGIN SELECT CASE WHEN ((SELECT _id FROM server WHERE _id = NEW._id) IS NULL ) THEN RAISE (ABORT, ‘insert on table serpro violates foreign key constraint fk_idsps’) END; END;";*/
+
+    private static final String TRIGGER_SERPRO_US = "create trigger serpro_us before update on serpro for each row when ((select _id from server where _id = new._id) is null) begin select raise(abort, 'update on table \"serpro\" violates foreign key constraint \"fk_idsps\"'); end;";
+    /*"CREATE TRIGGER SERPRO_US BEFORE UPDATE ON serpro FOR EACH ROW BEGIN SELECT CASE WHEN ((SELECT _id FROM server WHERE _id = NEW._id) IS NULL ) THEN RAISE (ABORT, ‘update on table serpro violates foreign key constraint fk_idsps’) END; END;";*/
+
+    private static final String TRIGGER_SERPRO_DS = "create trigger serpro_ds before delete on server for each row when ((select _ids from serpro where _ids = old._id) is not null) begin select raise(abort, 'delete on table \"server\" violates foreign key constraint \"fk_idsps\" on \"server\"'); end;";
+    /*"CREATE TRIGGER PROFILE_DS BEFORE DELETE ON server FOR EACH ROW BEGIN SELECT CASE WHEN ((SELECT _id FROM serpro WHERE _id = OLD._id) IS NULL ) THEN RAISE (ABORT, ‘delete on table server violates foreign key constraint fk_idsps’) END; END;";*/
+
+
+    /*private static final String DATABASE_CREATE =
+            "create table userdata (_id integer primary key autoincrement, "
+                    + "ip string not null, port string not null, query string not null, calendar string not null);";*/
+
+    private static final String DATABASE_NAME = "data";
+    //private static final String DATABASE_TABLE = "remoteirdata";
+    private static final int DATABASE_VERSION = 2;
+
+    private final Context mCtx;
+
+    private static class DatabaseHelper extends SQLiteOpenHelper {
+
+        DatabaseHelper(Context context) {
+
+            super(context, DATABASE_NAME, null, DATABASE_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL(DATABASE_CREATE_SERVER);
+            db.execSQL(DATABASE_CREATE_PROFILE);
+            db.execSQL(DATABASE_CREATE_SERPRO);
+            db.execSQL(TRIGGER_SERPRO_IP);
+            db.execSQL(TRIGGER_SERPRO_UP);
+            db.execSQL(TRIGGER_SERPRO_DP);
+            db.execSQL(TRIGGER_SERPRO_IS);
+            db.execSQL(TRIGGER_SERPRO_US);
+            db.execSQL(TRIGGER_SERPRO_DS);  
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            Log.w(TAG, "Upgrading database from version " + oldVersion + " to "
+                    + newVersion + ", which will destroy all old data");
+            db.execSQL("DROP TABLE IF EXISTS server");
+            db.execSQL("DROP TABLE IF EXISTS profile");
+            db.execSQL("DROP TABLE IF EXISTS serpro");
+            onCreate(db);
+        }
+    }
+
+    public RemoteIrDbAdapter(Context ctx) {
+        this.mCtx = ctx;
+    }
+
+    public RemoteIrDbAdapter open() throws SQLException {
+        mDbHelper = new DatabaseHelper(mCtx);
+        mDb = mDbHelper.getWritableDatabase();
+        return this;
+    }
+
+    public void close() {
+        mDbHelper.close();
+    }
+
+
+    public long createQueryDataServer(String ip, String port, String server) {
+        ContentValues initialValues = new ContentValues();
+        initialValues.put(KEY_IP, ip);
+        initialValues.put(KEY_PORT, port);
+        initialValues.put(KEY_NAMESERVER, server);
+
+        return mDb.insert(DATABASE_TABLE_SERVER, null, initialValues);
+    }
+
+    public long createQueryDataProfile(String profile) {
+        ContentValues initialValues = new ContentValues();
+        initialValues.put(KEY_NAMEPROFILE, profile);
+
+        return mDb.insert(DATABASE_TABLE_PROFILE, null, initialValues);
+    }
+
+    public long createQueryDataSerpro(Integer _id, Integer _idp) {
+        ContentValues initialValues = new ContentValues();
+        initialValues.put(KEY_ROWIDSERVER, _id);
+        initialValues.put(KEY_ROWIDPROFILE, _idp);
+
+        return mDb.insert(DATABASE_TABLE_SERPRO, null, initialValues);
+    }
+
+    public boolean deleteQueryDataServer(long rowId) {
+
+        return mDb.delete(DATABASE_TABLE_SERVER, KEY_ROWIDSERVER + "=" + rowId, null) > 0;
+    }
+
+    public boolean deleteQueryDataProfile(long rowId) {
+
+        return mDb.delete(DATABASE_TABLE_PROFILE, KEY_ROWIDPROFILE + "=" + rowId, null) > 0;
+    }
+
+
+    public Cursor fetchServer(long rowId) throws SQLException {
+
+        Cursor mCursor =
+
+                mDb.query(true, DATABASE_TABLE_SERVER, new String[] {KEY_ROWIDSERVER,
+                        KEY_IP, KEY_PORT, KEY_NAMESERVER}, KEY_ROWIDSERVER + "=" + rowId, null,
+                        null, null, null, null);
+        if (mCursor != null) {
+            mCursor.moveToFirst();
+        }
+        return mCursor;
+
+    }
+
+    public Cursor fetchAllQueryDataServer() {
+        return mDb.query(DISTINCT, DATABASE_TABLE_SERVER, new String[] {KEY_ROWIDSERVER,KEY_IP, KEY_PORT, KEY_NAMESERVER}, null, null, null, null, null, null);   
+    }
+
+    public Cursor fetchAllQueryDataProfile() {
+        return mDb.query(DISTINCT, DATABASE_TABLE_PROFILE, new String[] {KEY_ROWIDPROFILE,KEY_NAMEPROFILE}, null, null, null, null, null, null);   
+    }
+
+    public Cursor fetchAllQueryDataAutoCompleteIp(){
+
+        return mDb.query(DISTINCT, DATABASE_TABLE_SERVER, new String[] {KEY_ROWIDSERVER, KEY_IP}, null, null, KEY_IP, null, null, null);    
+    }
+
+    public Cursor fetchAllQueryDataAutoCompletePort(){
+
+        return mDb.query(DISTINCT, DATABASE_TABLE_SERVER, new String[] {KEY_ROWIDSERVER, KEY_PORT}, null, null, KEY_PORT, null, null, null);    
+    }
+
+    public Cursor fetchAllQueryDataAutoCompleteServerName(){
+
+        //return mDb.query(DISTINCT, DATABASE_TABLE_SERVER, new String[] {KEY_ROWIDSERVER, KEY_NAMESERVER}, null, null, KEY_NAMESERVER, null, null, null);  
+
+        return mDb.rawQuery("SELECT DISTINCT server, _id as _id from server order by _id", null);   
+    }
+
+    public Cursor fetchAllQueryDataAutoCompleteProfileName(){
+
+    //      return mDb.query(DISTINCT, DATABASE_TABLE_PROFILE, new String[] {KEY_ROWIDPROFILE, KEY_NAMEPROFILE}, null, null, KEY_NAMEPROFILE, null, null, null);    
+            //"SELECT DISTINCT (ip, _id) FROM userdata ORDER BY ip";
+
+        return mDb.rawQuery("SELECT DISTINCT profile, _id from profile order by _id", null);    
+
+        //return mDb.rawQuery("SELECT DISTINCT profile, _id as _id from profile order by _id", null);   
+    } 
+
+
+
+    public Cursor fetchAllQueryData() {
+
+        return mDb.query(DISTINCT, DATABASE_TABLE_SERVER, new String[] {KEY_ROWIDSERVER,KEY_IP, KEY_PORT, KEY_NAMESERVER}, null, null, null, null, null, null);           
+    }
+
+    public Cursor fetchAllServersNotOnProfileData(long idProfile ){
+
+        String sqlstart = "SELECT server.server FROM server INNER JOIN ( serpro INNER JOIN profile ON serpro._id = profile._id WHERE profile._id NOT LIKE '"; 
+        String sqlend = "')ON server._id = serpro._id;";
+        String sql = sqlstart + idProfile + sqlend;     
+
+        return mDb.rawQuery(sql, null);
+
+    }
+
+ public Cursor fetchAllServersOnProfileData(long idProfile ){
+
+        String sqlstart = "SELECT server.server FROM server INNER JOIN ( serpro INNER JOIN profile ON serpro._id = profile._id WHERE profile._id LIKE '"; 
+        String sqlend = "')ON server._id = serpro._id;";
+        String sql = sqlstart + idProfile + sqlend;     
+
+        return mDb.rawQuery(sql, null);
+
+    }
+
+    public boolean updateServerData(long rowId, String ip, String port, String server) {
+        ContentValues args = new ContentValues();
+        args.put(KEY_IP, ip);
+        args.put(KEY_PORT, port);
+        args.put(KEY_NAMESERVER, server);
+
+        return mDb.update(DATABASE_TABLE_SERVER, args, KEY_ROWIDSERVER + "=" + rowId, null) > 0;
+    }
+
+    public boolean updateProfileData(long rowId, String profile) {
+        ContentValues args = new ContentValues();
+        args.put(KEY_NAMEPROFILE, profile);
+
+        return mDb.update(DATABASE_TABLE_PROFILE, args, KEY_ROWIDPROFILE + "=" + rowId, null) > 0;
+    }
+
+
+}
+
+05-14 10:07:46.766: ERROR/AndroidRuntime(324): Uncaught handler: thread main exiting due to uncaught exception
+05-14 10:07:46.776: ERROR/AndroidRuntime(324): java.lang.RuntimeException: Unable to start activity ComponentInfo{citic.android.remoteir/citic.android.remoteir.ServerEdit}: android.database.CursorIndexOutOfBoundsException: Index 0 requested, with a size of 0
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:2401)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:2417)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.ActivityThread.access$2100(ActivityThread.java:116)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.ActivityThread$H.handleMessage(ActivityThread.java:1794)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.os.Handler.dispatchMessage(Handler.java:99)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.os.Looper.loop(Looper.java:123)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.ActivityThread.main(ActivityThread.java:4203)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at java.lang.reflect.Method.invokeNative(Native Method)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at java.lang.reflect.Method.invoke(Method.java:521)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at com.android.internal.os.ZygoteInit$MethodAndArgsCaller.run(ZygoteInit.java:791)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:549)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at dalvik.system.NativeStart.main(Native Method)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324): Caused by: android.database.CursorIndexOutOfBoundsException: Index 0 requested, with a size of 0
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.database.AbstractCursor.checkPosition(AbstractCursor.java:580)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.database.AbstractWindowedCursor.checkPosition(AbstractWindowedCursor.java:172)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.database.AbstractWindowedCursor.getString(AbstractWindowedCursor.java:41)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at citic.android.remoteir.ServerEdit.populateFields(ServerEdit.java:57)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at citic.android.remoteir.ServerEdit.onCreate(ServerEdit.java:41)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1123)
+05-14 10:07:46.776: ERROR/AndroidRuntime(324):     at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:2364)
+

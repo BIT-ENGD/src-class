@@ -1,0 +1,130 @@
+rewrite_by_lua '
+
+    -- Load Memcached module
+    local memcached = require "resty.memcached"
+    local memc, err = memcached:new()
+    if not memc then
+        ngx.log(ngx.ERR, "Failed to instantiate memc: ", err)
+        return
+    end
+'
+
+memcached.lua
+rewrite_by_lua_file
+unexpected "," in /etc/nginx/sites-enabled/memcached.lua
+unknown directive "--" in /etc/nginx/sites-enabled/memcached.lua
+rewrite_by_lua
+cat /etc/nginx/sites-enabled/memcached.lua
+-- Define Memcached key
+local memcached_key = "saas_" .. ngx.var.host
+
+-- Load Memcached module
+local memcached = require "resty.memcached"
+local memc, err = memcached:new()
+if not memc then
+    ngx.log(ngx.ERR, "Failed to instantiate memc: ")
+end
+
+-- Set Memcached timeout
+memc:set_timeout(1000)
+
+-- Connect to Memcached daemon
+local ok, err = memc:connect("127.0.0.1", 11211)
+if not ok then
+    ngx.log(ngx.ALERT, "Failed to connect to Memcached: ", err)
+end
+
+-- Query for branch name in Memcached
+local branch, flags, err = memc:get(memcached_key)
+if err then
+    ngx.log(ngx.NOTICE, "Failed to get account from Memcached: ", err)
+end
+
+-- If branch not found in Memcached, ask MySQL instead
+if not branch then
+
+    -- Load MySQL module
+    local mysql = require "resty.mysql"
+    local db, err = mysql:new()
+    if not db then
+        ngx.log(ngx.ALERT, "Failed to instantiate MySQL: ", err)
+        return
+    end
+
+    -- Set MySQL timeout
+    db:set_timeout(1000) -- 1 sec
+
+    -- Connect to MySQL daemon
+    local ok, err, errno, sqlstate = db:connect{
+        path = "/var/run/mysqld/mysqld.sock",
+        database = "dbname",
+        user = "dbuser",
+        password = "dbpass" }
+    if not ok then
+        ngx.log(ngx.ALERT, "Failed to connect to DB: ", err, ": ", errno, " ", sqlstate)
+        return
+    end
+
+    -- Define subdomain string by extracting it from the http hostname
+    local subdomain = string.match(ngx.var.host, "([%w-]+).")
+    local quoted_subdomain = ngx.quote_sql_str(subdomain)
+
+    -- Execute an SQL query to get the branch name based on the subdomain
+    local sql = "SELECT branch FROM saas_account WHERE account = " .. quoted_subdomain
+    local res, err, errno, sqlstate = db:query(sql, 1)
+    if not res then
+        ngx.log(ngx.ALERT, "Bad result from DB: ", err, ": ", errno, ": ", sqlstate, ".")
+        return
+    end
+
+    -- Check we got a result
+    if not res[1] then
+        ngx.log(ngx.NOTICE, "No docroot was returned for subdomain: ", subdomain)
+        ngx.var.branch = "chaletops"
+    -- Assign the result from MySQL to the Nginx variable
+    else
+        ngx.var.branch = res[1].branch
+
+        -- Store the result from MySQL back in to Memcached with a lifetime of 1 hour (3600 seconds)
+        local ok, err = memc:set(memcached_key, ngx.var.branch, 3600)
+        if not ok then
+            ngx.log(ngx.WARN, "Failed to set branch in Memcached: ", err)
+            -- return
+        end
+    end
+
+    -- Save MySQL KeepAlive connection
+    local ok, err = db:set_keepalive(10000, 100)
+    if not ok then
+        ngx.log(ngx.ALERT, "Cannot set MySQL keepalive: ", err)
+        return
+    end
+
+    ngx.log(ngx.NOTICE, "Loading branch from MySQL: ", ngx.var.branch)
+
+-- Else we did get a result from Memcached
+else
+
+    -- Assign the result from Memcached to the Nginx variable
+    ngx.var.branch = branch
+
+    ngx.log(ngx.NOTICE, "Loading branch from Memcached: ", ngx.var.branch)
+
+end
+
+-- Save Memcached KeepAlive connection
+local ok, err = memc:set_keepalive(10000, 100)
+if not ok then
+    ngx.log(ngx.ALERT, "Cannot set Memcached keepalive: ", err)
+    -- return
+end
+
+2015/12/17 10:04:02 [emerg] 6903#0: unexpected "," in /etc/nginx/sites-enabled/memcached.lua:18
+memcached.lua
+rewrite_by_lua_file /path/to/my/project/memcached.lua;
+/etc/nginx/sites-enabled/memcached.lua
+rewrite_by_lua_file memcached.lua;
+rewrite_by_lua_file
+/etc/nginx/sites-enabled
+/etc/nginx/sites-enabled/*
+/etc/nginx/sites-enabled/*.conf

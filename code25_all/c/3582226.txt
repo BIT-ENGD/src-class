@@ -1,0 +1,150 @@
+recv()
+select()
+SIGINT
+recv()
+errno
+EINTR
+pthread_join()
+recv()
+pthread_kill()
+SIGINT
+recv()
+SIGINT
+SIGUSR1
+SIGUSR1
+recv()
+sleep()
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <memory.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <errno.h>
+
+static void
+err(const char *msg)
+{
+    perror(msg);
+    abort();
+}
+
+static void
+blockall()
+{
+    sigset_t ss;
+    sigfillset(&ss);
+    if (pthread_sigmask(SIG_BLOCK, &ss, NULL))
+        err("pthread_sigmask");
+}
+
+static void
+unblock(int signum)
+{
+    sigset_t ss;
+    sigemptyset(&ss);
+    sigaddset(&ss, signum);
+    if (pthread_sigmask(SIG_UNBLOCK, &ss, NULL))
+        err("pthread_sigmask");
+}
+
+void
+sigusr1(int signum)
+{
+    (void)signum;
+    printf("%lu: SIGUSR1\n", pthread_self());
+}
+
+void*
+read_thread(void *arg)
+{
+    int sock, r;
+    char buf[100];
+
+    unblock(SIGUSR1);
+    signal(SIGUSR1, &sigusr1);
+    sock = *(int*)arg;
+    printf("Thread (self=%lu, sock=%d)\n", pthread_self(), sock);
+    r = 1;
+    while (r > 0)
+    {
+        r = recv(sock, buf, sizeof buf, 0);
+        printf("recv=%d\n", r);
+    }
+    if (r < 0)
+        perror("recv");
+    return NULL;
+}
+
+int sock;
+pthread_t t;
+
+void
+sigint(int signum)
+{
+    int r;
+    (void)signum;
+    printf("%lu: SIGINT\n", pthread_self());
+    printf("Killing %lu\n", t);
+    r = pthread_kill(t, SIGUSR1);
+    if (r)
+    {
+        printf("%s\n", strerror(r));
+        abort();
+    }
+}
+
+int
+main()
+{
+    pthread_attr_t attr;
+    struct sockaddr_in addr;
+
+    printf("main thread: %lu\n", pthread_self());
+    memset(&addr, 0, sizeof addr);
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket < 0)
+        err("socket");
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(8888);
+    if (inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) <= 0)
+        err("inet_pton");
+    if (connect(sock, (struct sockaddr *)&addr, sizeof addr))
+        err("connect");
+
+    blockall();
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    if (pthread_create(&t, &attr, &read_thread, &sock))
+        err("pthread_create");
+    pthread_attr_destroy(&attr);
+    unblock(SIGINT);
+    signal(SIGINT, &sigint);
+
+    if (sleep(1000))
+        perror("sleep");
+    if (pthread_join(t, NULL))
+        err("pthread_join");
+    if (close(sock))
+        err("close");
+
+    return 0;
+}
+
+import socket
+import time
+
+s = socket.socket(socket.AF_INET)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1',8888))
+s.listen(1)
+c = []
+while True:
+    (conn, addr) =  s.accept()
+    c.append(conn)
+

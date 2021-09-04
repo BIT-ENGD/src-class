@@ -1,0 +1,59 @@
+
+#!/usr/bin/perl -X
+
+use strict;
+use Net::OpenSSH;
+use Net::Telnet;
+
+my $lhost = "linuxserver";
+my $luser = "linuxuser";
+my $lpass = "linuxpassword";
+
+my $chost = "routername";
+my $cpass = "Routerpassword";
+
+my $prompt = '/(?:Password: |[>])/m';
+my @commands = ("show users\r");
+
+my $ssh = Net::OpenSSH->new($lhost,
+'user' => $luser,
+'password' => $lpass,
+'master_opts' => [ '-t' ],
+#'async' => 1 # if enabled then password cannot be set here
+);
+my ($pty, $err, $pid) = $ssh->open2pty("telnet $chost");
+
+my $t = new Net::Telnet(
+-telnetmode => 0,
+-fhopen => $pty,
+-prompt => $prompt,
+-cmd_remove_mode => 1,
+-output_record_separator => "\r",
+#-dump_log => "debug.log",
+);
+
+my $end = 0;
+
+while (!$end) {
+  my ($pre, $post) = $t->waitfor($prompt);
+  if ($post =~ /Password: /m) {
+    # send password
+    $t->print("$cpass");
+  }
+  elsif ($post =~ /[>#]/ && @commands) {
+    my $cmd = shift(@commands);
+    if ($cmd !~ /[\r\n]/) {
+      $t->print($cmd);
+    }
+    else {
+      print $t->cmd($cmd);
+    }
+  }
+  else {
+    $end = 1;
+    $t->cmd("exit");
+  }
+}
+#close $pty;
+$t->close();
+

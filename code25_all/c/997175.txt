@@ -1,0 +1,124 @@
+HDC hDCMem = CreateCompatibleDC(NULL);
+HBITMAP hBmp;
+RECT rect;
+HDC hDC;
+HGDIOBJ hOld;    
+
+GetWindowRect(hWnd, & rect);
+
+hBmp = NULL;
+
+{
+    hDC = GetDC(hWnd);
+    hBmp = CreateCompatibleBitmap(hDC, rect.right - rect.left, rect.bottom - rect.top);
+    ReleaseDC(hWnd, hDC);
+}
+
+hOld = SelectObject(hDCMem, hBmp);
+SendMessage(hWnd, WM_PRINT, (WPARAM) hDCMem, PRF_CHILDREN | PRF_CLIENT | PRF_ERASEBKGND | PRF_NONCLIENT | PRF_OWNED);
+
+SelectObject(hDCMem, hOld);
+DeleteObject(hDCMem);
+
+return hBmp;
+
+    #include <windows.h>
+#include <stdio.h>
+#include <gdiplus.h>
+
+using namespace Gdiplus;
+
+
+int GetEncoderClsid(WCHAR *format, CLSID *pClsid)
+{
+    unsigned int num = 0,  size = 0;
+    GetImageEncodersSize(&num, &size);
+    if(size == 0) return -1;
+    ImageCodecInfo *pImageCodecInfo = (ImageCodecInfo *)(malloc(size));
+    if(pImageCodecInfo == NULL) return -1;
+    GetImageEncoders(num, size, pImageCodecInfo);
+    for(unsigned int j = 0; j < num; ++j)
+    {
+        if(wcscmp(pImageCodecInfo[j].MimeType, format) == 0){
+            *pClsid = pImageCodecInfo[j].Clsid;
+            free(pImageCodecInfo);
+            return j;
+        }    
+    }
+    free(pImageCodecInfo);
+    return -1;
+}
+
+int GetScreeny(LPWSTR lpszFilename, ULONG uQuality) // by Napalm
+{
+    ULONG_PTR gdiplusToken;
+    GdiplusStartupInput gdiplusStartupInput;
+    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+    HWND hMyWnd = GetForegroundWindow(); // get my own window
+    RECT  r;                             // the area we are going to capture 
+    int w, h;                            // the width and height of the area
+    HDC dc;                              // the container for the area
+    int nBPP;
+    HDC hdcCapture;
+    LPBYTE lpCapture;
+    int nCapture;
+    int iRes;
+    CLSID imageCLSID;
+    Bitmap *pScreenShot;
+    HGLOBAL hMem;
+    int result;
+
+    // get the area of my application's window  
+    //GetClientRect(hMyWnd, &r);
+    GetWindowRect(hMyWnd, &r);
+    dc = GetWindowDC(hMyWnd);//   GetDC(hMyWnd) ;
+    w = r.right - r.left;
+    h = r.bottom - r.top;
+    nBPP = GetDeviceCaps(dc, BITSPIXEL);
+    hdcCapture = CreateCompatibleDC(dc);
+
+
+    // create the buffer for the screenshot
+    BITMAPINFO bmiCapture = {
+          sizeof(BITMAPINFOHEADER), w, -h, 1, nBPP, BI_RGB, 0, 0, 0, 0, 0,
+    };
+
+    // create a container and take the screenshot
+    HBITMAP hbmCapture = CreateDIBSection(dc, &bmiCapture,
+        DIB_PAL_COLORS, (LPVOID *)&lpCapture, NULL, 0);
+
+    // failed to take it
+    if(!hbmCapture)
+    {
+        DeleteDC(hdcCapture);
+        DeleteDC(dc);
+        GdiplusShutdown(gdiplusToken);
+        printf("failed to take the screenshot. err: %d\n", GetLastError());
+        return 0;
+    }
+
+    // copy the screenshot buffer
+    nCapture = SaveDC(hdcCapture);
+    SelectObject(hdcCapture, hbmCapture);
+    BitBlt(hdcCapture, 0, 0, w, h, dc, 0, 0, SRCCOPY);
+    RestoreDC(hdcCapture, nCapture);
+    DeleteDC(hdcCapture);
+    DeleteDC(dc);
+
+    // save the buffer to a file    
+    pScreenShot = new Bitmap(hbmCapture, (HPALETTE)NULL);
+    EncoderParameters encoderParams;
+    encoderParams.Count = 1;
+    encoderParams.Parameter[0].NumberOfValues = 1;
+    encoderParams.Parameter[0].Guid  = EncoderQuality;
+    encoderParams.Parameter[0].Type  = EncoderParameterValueTypeLong;
+    encoderParams.Parameter[0].Value = &uQuality;
+    GetEncoderClsid(L"image/jpeg", &imageCLSID);
+    iRes = (pScreenShot->Save(lpszFilename, &imageCLSID, &encoderParams) == Ok);
+    delete pScreenShot;
+    DeleteObject(hbmCapture);
+    GdiplusShutdown(gdiplusToken);
+    return iRes;
+
+}
+

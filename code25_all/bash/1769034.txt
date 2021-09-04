@@ -1,0 +1,102 @@
+Linux servername 2.6.9-42.ELsmp #1 SMP Wed Jul 12 23:27:17 EDT 2006 i686 i686 i386
+GNU/Linux
+#!/bin/bash
+log_this()
+{
+    message="$1"
+    now=`date "+%D-%T"`
+    echo $$": "$now ": " $message
+}
+usage()
+{
+    cat << EOF
+Usage: $0 <Directory to be watched> <Directory to transfer> <time interval>
+Time interval is the amount of time after which the modification time of a
+file will be monitored. 
+EOF
+    `exit 1`
+}
+
+if [ $# -lt 2 ]
+then
+    usage
+fi
+
+WATCH_DIR=$1
+APP_DIR=$2
+
+if [ ! -d "$WATCH_DIR" ]
+then
+    log_this "FATAL: WATCH_DIR, $WATCH_DIR does not exist. Exiting"
+    exit 1
+fi
+
+if [ ! -d "$APP_DIR" ]
+then
+    log_this "APP_DIR: $APP_DIR does not exist. Exiting"
+    exit 1
+fi
+
+
+# This needs to be set after considering the rate of file transfer.
+# Represents the seconds elapsed after the last modification to the file.
+# If not supplied as parameter, defaults to 3.
+
+seconds_between_mods=$3
+
+if ! [[ "$seconds_between_mods" =~ ^[0-9]+$ ]]; then
+        if [ ${#seconds_between_mods} -eq 0 ]; then
+                log_this "No value supplied for elapse time. Defaulting to 3."
+                seconds_between_mods=3
+        else
+                log_this "Invalid value provided for elapse time"
+                exit 1
+        fi
+fi
+
+log_this "Start Monitor."
+
+while true
+do
+        ls -1 $WATCH_DIR | while read file_name
+        do
+            log_this "Start Monitoring for $file_name"
+
+            # Refer only the modification with reference to the mount folder.
+            # If there is a diff in time between servers, we are in trouble.
+
+            token_file=$WATCH_DIR/foo.$$
+            current_time=`touch $token_file && stat -c "%Y" $token_file`
+            rm -f $token_file 2>/dev/null
+
+            log_this "Current Time: $current_time"
+            last_mod_time=`stat -c "%Y" $WATCH_DIR/$file_name`
+
+            elapsed_time=`expr $current_time - $last_mod_time`
+            log_this "Elapsed time ==> $elapsed_time"
+
+            if [ $elapsed_time -ge $seconds_between_mods ]
+            then
+                    log_this "Moving $file_name to $APP_DIR"
+
+                    # In case if there is no space left on the target mount, hide the     file
+                    # in the mount itself and remove the incomplete file from APP_DIR.
+                    mv $WATCH_DIR/$file_name $APP_DIR
+                    if [ $? -ne 0 ]
+                    then
+                            log_this "FATAL: mv failed!! Hiding $file_name"
+                            rm $APP_DIR/$file_name
+                            mv $WATCH_DIR/$file_name $WATCH_DIR/.$file_name
+                            log_this "Removed $APP_DIR/$file_name. Look for $WATCH_DIR/.$file_name and submit later."
+                    fi
+
+                    log_this "End Monitoring for $file_name"
+            else
+                    log_this "$file_name: Transfer seems to be in progress"
+            fi
+    done
+    log_this "Nothing more to monitor."
+    echo
+    sleep 5
+done
+

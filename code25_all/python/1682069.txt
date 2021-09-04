@@ -1,0 +1,89 @@
+from django import forms
+from django.forms.formsets import BaseFormSet
+from tagging.forms import TagField
+from rss.feeder.models import Feed 
+
+
+class FeedForm(forms.Form):
+    subscribe = forms.BooleanField(required=False, initial=False)
+    tags = TagField(required=False, initial='')
+
+    def __init__(self, *args, **kwargs):
+        feed = kwargs.pop("feed")
+        super(FeedForm, self).__init__(*args, **kwargs)
+        self.title = feed.title
+        self.description = feed.description
+
+    def clean(self):
+        """apply our custom validation rules"""
+        data = self.cleaned_data
+        feed = data.get("subscribe")
+        tags = data.get("tags")
+        tag_len = len(tags.split())
+        self._errors = {}
+        if feed == True and tag_len < 1:
+            raise forms.ValidationError("No tags specified for feed")
+        return data
+
+
+
+class FeedFormSet(BaseFormSet):
+
+    def __init__(self, *args, **kwargs):
+        self.feeds = list(kwargs.pop("feeds"))
+        self.req_subs = 3    # TODO: convert to kwargs arguement
+        self.extra = len(self.feeds)
+        super(FeedFormSet, self).__init__(*args, **kwargs)
+
+    # WARNING! Using  undocumented. see   for details...
+    def _construct_form(self, i, **kwargs):
+        kwargs["feed"] = self.feeds[i]
+        return super(FeedFormSet, self)._construct_form(i, **kwargs)
+
+
+    def clean(self):
+        """Checks that only a required number of Feed subscriptions are present"""
+        if any(self.errors):
+            # Do nothing, don't bother doing anything unless all the FeedForms are valid
+            return
+        total_subs = 0
+        for i in range(0, self.extra):
+            form = self.forms[i]
+            feed = form.cleaned_data
+            subs = feed.get("subscribe")
+            if subs == True:
+                total_subs += 1
+        if total_subs != self.req_subs:
+            raise forms.ValidationError("More subscriptions...") # TODO more informative
+        return form.cleaned_data
+
+from django.forms import formsets
+from django.http import Http404
+from django.http import HttpResponseRedirect
+from django.shortcuts import render_to_response
+
+from rss.feeder.forms import FeedForm
+from rss.feeder.forms import FeedFormSet
+from rss.feeder.models import Feed
+
+FeedSet = formsets.formset_factory(FeedForm, FeedFormSet)
+
+def feeds(request):
+    if request.method == "POST":
+        formset = create_feed_formset(request.POST)
+        if formset.is_valid():
+            # submit the results
+            return HttpResponseRedirect('/feeder/thanks/')
+    else:
+        formset = create_feed_formset() 
+    return render_to_response('feeder/register_step_two.html', {'formset': formset})    
+
+
+def create_feed_formset(data=None):
+    """Create and populate a feed formset"""
+    feeds = Feed.objects.order_by('id')
+    if not feeds:
+        # No feeds found, we should have created them
+        raise Http404('Invalid Step')
+    return FeedSet(data, feeds=feeds)        # return the instance of the formset
+

@@ -1,0 +1,214 @@
+/*
+
+    Takes a jquery object and binds its form elements with a backing javascript object. Takes two arguments: the object 
+    to be bound to, and an optional "changeListener", which must implement a "changeHappened" method.
+
+    Example: 
+
+    // ============================
+    // =     backing object       =
+    // ============================
+
+    demoBean = {
+        prop1 : "val",
+        prop2 : [
+            {nestedObjProp:"val"},
+            {nestedObjProp:"val"}
+        ],
+        prop3 : [
+            "stringVal1",
+            "stringVal12"
+        ]
+    }
+
+    // ===========================
+    // =        FORM FIELD       =
+    // ===========================
+
+    <input class="bindable" name="prop2[1].nestedObjProp">
+
+
+    // ===========================
+    // =       INVOCATION        =
+    // ===========================
+
+    $jq(".bindable").bindData( 
+        demoBean, 
+        {changeHappened: function(){console.log("change")}}
+    )
+
+
+*/
+
+
+(function($){
+
+
+    // returns the value of the property found at the given path
+    // plus a function you can use to set that property
+    var navigateObject = function(parentObj, pathArg){
+        var immediateParent = parentObj;
+        var path = pathArg
+            .replace("[", ".")
+            .replace("]", "")
+            .replace("].", ".")
+            .split(".");
+        for(var i=0; i< (path.length-1); i++){
+            var currentPathKey = path[i];
+            immediateParent = immediateParent[currentPathKey];
+            if(immediateParent === null){
+                throw new Error("bindData plugin encountered a null value at  " + path[i] + " in path" + path);
+            }
+        }
+
+        return {
+            value: immediateParent[path[path.length - 1]],
+            set: function(val){
+                immediateParent[path[path.length - 1]] = val
+            },
+            deleteObj: function(){
+                if($.isArray(immediateParent)){
+                    immediateParent.splice(path[path.length - 1], 1);
+                }else{
+                    delete  immediateParent[path[path.length - 1]];
+                }
+            } 
+        }
+
+    }
+
+    var isEmpty = function(str){
+        return str == null || str == "";
+    }
+
+    var bindData = function(parentObj, changeListener){
+
+        var parentObj,
+            radioButtons = [];
+        var changeListener;
+        var settings;
+        var defaultSettings = {
+            // if this flag is true, you can put a label in a field,
+            // like <input value="Phone Number"/>, and the value
+            // won't be replaced by a blank value in the parentObj
+            // Additionally, if the user clicks on the field, the field will be cleared.
+            allowLabelsInfields: true 
+        };
+
+        // allow two forms: 
+        // function(parentObj, changeListener)
+        // and function(settings). 
+        if(arguments.length == 2){
+            parentObj = arguments[0];
+            changeListener = arguments[1]
+            settings = defaultSettings;
+        }else{  
+            settings = $jq.extend(defaultSettings, arguments[0]);
+            parentObj = settings.parentObj;
+            changeListener = settings.changeListener;
+        }
+
+        var changeHappened = function(){};
+        if(typeof changeListener != "undefined"){
+            if(typeof changeListener.changeHappened == "function"){
+                changeHappened = changeListener.changeHappened;
+            }else{
+                throw new Error("A changeListener must have a method called 'changeHappened'.");
+            }
+        };
+        this.each(function(key,val){
+            var formElem = $(val);
+            var tagName = formElem.attr("tagName").toLowerCase();
+            var fieldType;
+          if(tagName == "input"){
+            fieldType = formElem.attr("type").toLowerCase();
+          }else{
+            fieldType = tagName;
+          }
+
+
+            // Use the "name" attribute as the address of the property we want to bind to.
+            // Except if it's a radio button, in which case, use the "value" because "name" is the name of the group
+            // This should work for arbitrarily deeply nested data. 
+            var navigationResult = navigateObject(parentObj, formElem.attr(fieldType === "radio"? "value" : "name"));
+
+            // populate the field with the data in the backing object
+
+            switch(fieldType){
+
+        // is it a radio button? If so, check it or not based on the 
+        // boolean value of navigationResult.value
+        case "radio":
+          radioButtons.push(formElem);
+          formElem.data("bindDataPlugin", {navigationResult: navigationResult});
+          formElem.attr("checked", navigationResult.value);
+          formElem.change(function(){
+            // Radio buttons only seem to update when _selected_, not 
+            // when deselected. So if one is clicked, update the bound
+            // object for all of them. I know it's a little ugly,
+            // but it works.
+            $jq.each(radioButtons, function(index, button){
+              var butt = $jq(button);
+              butt.data("bindDataPlugin").navigationResult.set(butt.attr("checked"));
+            });
+            navigationResult.set(formElem.attr("checked"));           
+            changeHappened();
+          });
+          break;
+
+        case "text":
+          // if useFieldLabel is true, it means that the field is 
+          // self-labeling. For example, an email field whose 
+          // default value is "Enter Email".
+          var useFieldLabel = isEmpty( navigationResult.value )
+                   && !isEmpty( formElem.val() )  
+                   && settings.allowLabelsInfields;
+          if(useFieldLabel){
+           var labelText = formElem.val();
+           formElem.click(function(){
+             if(formElem.val() === labelText){
+               formElem.val("");
+             }
+           })
+          }else{
+           formElem.attr("value", navigationResult.value);
+          }
+          formElem.keyup(function(){
+           navigationResult.set(formElem.attr("value"));
+           changeHappened();
+          });
+
+          break;
+
+        case "select":
+          var domElem = formElem.get(0);
+                $jq.each(domElem.options, function(index, option){
+                    if(option.value === navigationResult.value){
+                        domElem.selectedIndex = index;
+                    }
+                });
+                formElem.change(function(){
+                    navigationResult.set(formElem.val());
+                })
+          break;
+
+        case "textarea":
+          formElem.text(navigationResult.value);
+          formElem.keyup(function(){
+           changeHappened();
+           navigationResult.set(formElem.val());
+          });
+          break;
+      }
+
+
+        });
+        return this;
+    };
+
+    bindData.navigateObject = navigateObject;
+
+    $.fn.bindData = bindData;
+
+})(jQuery);
+

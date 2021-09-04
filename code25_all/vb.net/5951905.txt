@@ -1,0 +1,85 @@
+<script type="text/javascript">
+    $(document).ready(function () {
+        //get current date
+        var _currdate = new Date();
+        var currday = _currdate.getDate();
+        var currmonth = _currdate.getMonth() + 1;
+        var curryear = _currdate.getFullYear();
+        var currdate = curryear + "-" + currmonth + "-" + currday;
+
+        //on page load event, check to see if employees are added to the schedule
+        $.ajax({
+            type: "POST",
+            url: "Schedule.aspx/GetSchedule",
+            data: '{"FinancialDate" : "' + currdate + '"}',
+            contentType: "application/json; charset=utf-8",
+            dataType: "json",
+            success: function (data) {
+                $('#timepanel').append(data.d);
+                $('.schslider').each(function () {
+                    //check employee checkboxes if schedule exists
+                    if ($('.schslider').length > 0) {
+                        $('input#chk' + $(this).attr('id')).attr('checked', true);
+                        $('input:checkbox:checked').parent('label').addClass('selected');
+                        empcount = $('input:checkbox:checked').length;
+                        $('#emplistddl').text("Liste d'employés (" + empcount + " Employés Selectionnés) | Employees' List (" + empcount + " Selected Employees)");
+                    }
+                    //get the values for the slider
+                    var startvalue = $('span#' + $(this).attr('id') + 'start').text();
+                    var endvalue = $('span#' + $(this).attr('id') + 'end').text();
+                    startvalue = (parseInt(startvalue.substring(0, 2), 10) * 60) + parseInt(startvalue.substring(3), 10);
+                    endvalue = (parseInt(endvalue.substring(0, 2), 10) * 60) + parseInt(endvalue.substring(3), 10);
+                    $('span#' + $(this).attr('id') + 'start').remove();
+                    $('span#' + $(this).attr('id') + 'end').remove();
+                    $(this).slider({
+                        range: true,
+                        min: 480,
+                        max: 1380,
+                        values: [startvalue, endvalue],
+                        step: 5,
+                        slide: function (event, ui) {
+                            var minutes0 = parseInt(ui.values[0] % 60);
+                            var hours0 = parseInt(ui.values[0] / 60 % 24);
+                            var minutes1 = parseInt(ui.values[1] % 60);
+                            var hours1 = parseInt(ui.values[1] / 60 % 24);
+                            var time = getTime(hours0, minutes0) + ' - ' + getTime(hours1, minutes1);
+                            $(this).parent('div').children('span#' + $(this).attr('id') + 'timestamp').text(time);
+                            var total = parseFloat((hours1 + (minutes1 / 60)) - (hours0 + (minutes0 / 60)));
+                            $(this).parent('div').children('span#' + $(this).attr('id') + 'total').text(total.toFixed(2) + ' hrs');
+                        }
+                    });
+                });
+            },
+            error: function (e) { $('#loaderrorboxtimepanel').removeClass('hidebox').addClass('showbox'); }
+        });
+</script>
+
+<WebMethod(True)> _
+    Public Shared Function GetSchedule(ByVal FinancialDate As String) As String
+        Dim StoreNumber_ForWebMethod As String = ConfigurationManager.AppSettings("StoreNumberKey")
+        Dim _SqlConnection As New SqlConnection("Data Source=INTRIS;Initial Catalog=*****;User ID=sa;Password=*****")
+        Dim _SqlDataAdapter As New SqlDataAdapter("select h.magasin, h.employe, e.nom, h.datefinancier, h.debut, h.fin, h.totalheure, h.annee, h.semaine, h.evenement, h.etat, h.breakstart, h.breakend " _
+                                                & "from web.dbo.hours h , web.dbo.employee e " _
+                                                & "where h.employe = e.numero and h.magasin = " & StoreNumber_ForWebMethod & " and h.datefinancier = '" & FinancialDate & "'", _SqlConnection)
+        Dim _DataSet As New DataSet
+        Dim ScheduleBuilder As String = Nothing
+
+        _SqlDataAdapter.Fill(_DataSet, "Schedule")
+
+        If Not _SqlDataAdapter Is Nothing Then
+            If _DataSet.Tables("Schedule").Rows.Count > 0 Then
+                For i As Integer = 0 To _DataSet.Tables("Schedule").Rows.Count - 1
+                    ScheduleBuilder += "<div id='" & _DataSet.Tables("Schedule").Rows(i).Item("employe").ToString & "timecontainer' class='timecontainer'>" _
+                                    & "<span id='" & _DataSet.Tables("Schedule").Rows(i).Item("employe").ToString & "start'>" & _DataSet.Tables("Schedule").Rows(i).Item("debut").ToString & "</span>" _
+                                    & "<span id='" & _DataSet.Tables("Schedule").Rows(i).Item("employe").ToString & "end'>" & _DataSet.Tables("Schedule").Rows(i).Item("fin").ToString & "</span>" _
+                                    & "<label>" & StrConv(_DataSet.Tables("Schedule").Rows(i).Item("nom").ToString, VbStrConv.ProperCase) & "</label>" _
+                                    & "<span id='" & _DataSet.Tables("Schedule").Rows(i).Item("employe").ToString & "timestamp' class='timestamp'>" & _DataSet.Tables("Schedule").Rows(i).Item("debut").ToString & " - " & _DataSet.Tables("Schedule").Rows(i).Item("fin").ToString & "</span>" _
+                                    & "<span id='" & _DataSet.Tables("Schedule").Rows(i).Item("employe").ToString & "total' class='total'>" & _DataSet.Tables("Schedule").Rows(i).Item("TotalHeure").ToString & " hrs</span>" _
+                                    & "<div id='" & _DataSet.Tables("Schedule").Rows(i).Item("employe").ToString & "' class='schslider'></div></div>"
+                Next
+            End If
+        End If
+
+        Return ScheduleBuilder
+    End Function
+

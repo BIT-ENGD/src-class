@@ -1,0 +1,146 @@
+git push heroku master
+heroku rake db:migrate
+SELECT posts.*, count(*) as vote_total FROM "posts"   INNER JOIN "votes" ON votes.post_id = posts.id   GROUP BY votes.post_id ORDER BY created_at DESC LIMIT 5 OFFSET 0):
+
+Processing PostsController#index (for 99.7.50.140 at 2010-04-21 12:50:47) [GET]
+
+ActiveRecord::StatementInvalid (PGError: ERROR:  column "posts.id" must appear in the GROUP BY clause or be used in an aggregate function
+: SELECT posts.*, count(*) as vote_total FROM "posts"   INNER JOIN "votes" ON votes.post_id = posts.id   GROUP BY votes.post_id ORDER BY created_at DESC LIMIT 5 OFFSET 0):
+  vendor/gems/will_paginate-2.3.12/lib/will_paginate/finder.rb:82:in `send'
+  vendor/gems/will_paginate-2.3.12/lib/will_paginate/finder.rb:82:in `paginate'
+  vendor/gems/will_paginate-2.3.12/lib/will_paginate/collection.rb:87:in `create'
+  vendor/gems/will_paginate-2.3.12/lib/will_paginate/finder.rb:76:in `paginate'
+  app/controllers/posts_controller.rb:28:in `index'
+  /home/heroku_rack/lib/static_assets.rb:9:in `call'
+  /home/heroku_rack/lib/last_access.rb:25:in `call'
+  /home/heroku_rack/lib/date_header.rb:14:in `call'
+  thin (1.0.1) lib/thin/connection.rb:80:in `pre_process'
+  thin (1.0.1) lib/thin/connection.rb:78:in `catch'
+  thin (1.0.1) lib/thin/connection.rb:78:in `pre_process'
+  thin (1.0.1) lib/thin/connection.rb:57:in `process'
+  thin (1.0.1) lib/thin/connection.rb:42:in `receive_data'
+  eventmachine (0.12.6) lib/eventmachine.rb:240:in `run_machine'
+  eventmachine (0.12.6) lib/eventmachine.rb:240:in `run'
+  thin (1.0.1) lib/thin/backends/base.rb:57:in `start'
+  thin (1.0.1) lib/thin/server.rb:150:in `start'
+  thin (1.0.1) lib/thin/controllers/controller.rb:80:in `start'
+  thin (1.0.1) lib/thin/runner.rb:173:in `send'
+  thin (1.0.1) lib/thin/runner.rb:173:in `run_command'
+  thin (1.0.1) lib/thin/runner.rb:139:in `run!'
+  thin (1.0.1) bin/thin:6
+  /usr/local/bin/thin:20:in `load'
+  /usr/local/bin/thin:20
+
+  def index
+    @tag_counts = Tag.count(:group => :tag_name, 
+       :order => 'count_all DESC', :limit => 20)
+       conditions, joins = {}, :votes
+
+    @ugtag_counts = Ugtag.count(:group => :ugctag_name, 
+       :order => 'count_all DESC', :limit => 20)
+       conditions, joins = {}, :votes
+
+    @vote_counts = Vote.count(:group => :post_title, 
+          :order => 'count_all DESC', :limit => 20)
+          conditions, joins = {}, :votes
+
+
+       unless(params[:tag_name] || "").empty?
+         conditions = ["tags.tag_name = ? ", params[:tag_name]]
+         joins = [:tags, :votes]
+       end
+       @posts=Post.paginate(
+                 :select => "posts.*, count(*) as vote_total", 
+                 :joins => joins, 
+                 :conditions=> conditions, 
+                 :group => "votes.post_id", 
+                 :order => "created_at DESC",
+                 :page => params[:page], :per_page => 5)
+        @popular_posts=Post.paginate(
+                 :select => "posts.*, count(*) as vote_total", 
+                 :joins => joins, 
+                 :conditions=> conditions, 
+                 :group => "votes.post_id", 
+                 :order => "vote_total DESC",
+                 :page => params[:page], :per_page => 3)
+
+    respond_to do |format|
+      format.html # index.html.erb
+      format.xml  { render :xml => @posts }
+      format.json { render :json => @posts }
+      format.atom
+    end
+  end
+
+ActionController::Routing::Routes.draw do |map|
+
+  map.resources :ugtags
+  map.resources :wysihat_files
+  map.resources :users
+  map.resources :votes
+  map.resources :votes, :belongs_to => :user
+  map.resources :tags, :belongs_to => :user
+  map.resources :ugtags, :belongs_to => :user
+  map.resources :posts, :collection => {:auto_complete_for_tag_tag_name => :get }
+  map.resources :posts, :sessions
+  map.resources :posts, :has_many => :comments
+  map.resources :posts, :has_many => :tags
+  map.resources :posts, :has_many => :ugtags
+  map.resources :posts, :has_many => :votes
+  map.resources :posts, :belongs_to => :user
+  map.resources :tags, :collection => {:auto_complete_for_tag_tag_name => :get }
+  map.resources :ugtags, :collection => {:auto_complete_for_ugtag_ugctag_name => :get }
+
+  map.login 'login', :controller => 'sessions', :action => 'new'
+  map.logout 'logout', :controller => 'sessions', :action => 'destroy'
+  map.root :controller => "posts"
+
+  map.connect ':controller/:action/:id'
+  map.connect ':controller/:action/:id.:format'
+end
+
+class Post < ActiveRecord::Base
+
+  has_attached_file :photo
+  validates_presence_of :body, :title
+  has_many :comments, :dependent => :destroy
+  has_many :tags, :dependent => :destroy
+  has_many :ugtags, :dependent => :destroy
+  has_many :votes, :dependent => :destroy
+  belongs_to :user
+  after_create :self_vote
+      def self_vote
+       # I am assuming you have a user_id field in `posts` and `votes` table.
+       self.votes.create(:user => self.user)
+      end
+
+  cattr_reader :per_page 
+    @@per_page = 10
+
+end
+
+class CreatePosts < ActiveRecord::Migration
+  def self.up
+    create_table :posts do |t|
+      t.string :title
+      t.text :body
+
+      t.timestamps
+    end
+  end
+
+  def self.down
+    drop_table :posts
+  end
+end
+
+class AddUserIdToPost < ActiveRecord::Migration
+  def self.up
+    add_column :posts, :user_id, :string
+  end
+
+  def self.down
+    remove_column :posts, :user_id
+  end
+end
+

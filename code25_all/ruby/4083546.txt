@@ -1,0 +1,66 @@
+Post has_many assets
+@search_logic_filter
+@search_logic_filter
+Post.title_or_body_or...like("fun")
+test "find posts and assets by filter for user" do
+  customer = users(:customer)
+
+  create_post_for_user(customer, {:body => "Rails is fun", :tags => "rails ruby"})
+  create_post_for_user(customer, {:body => "Fun is what Emacs is all about", :title => "emacs"})
+
+
+  # File with post
+  asset_post = create_post_for_user(customer, {:body => "Ruby is pretty fun too",
+                                     :tags => "ruby"})
+  asset_post.assets << Asset.new(:upload_file_name => "ruby_tips",
+                                :upload_file_size => 100,
+                                :upload_content_type => "text")
+  asset_post.save
+
+  # search post
+  assert_equal 3, Post.find_for_user(customer.id, "fun").size
+  assert_equal 2, Post.find_for_user(customer.id, "ruby").size
+  assert_equal 1, Post.find_for_user(customer.id, "emacs").size
+
+  # search asset
+  puts "about to run last test"
+  assert_equal 1, Post.find_for_user(customer.id, "ruby_tips").size
+end
+
+class Post < ActiveRecord::Base
+
+  def self.find_for_user(user_id, filter, page=1)
+    Post.
+      user_id_equals(user_id).
+      title_or_body_or_tags_or_assets_upload_file_name_like(filter).all
+  end
+
+  class << self
+    def method_missing(name, *args, &block)
+      if name.to_s =~ /\w+_or_\w+_like$/
+        # ** only gets here once **
+        @search_logic_filter = args.first
+        super
+      elsif name == :assets_upload_file_name_like
+        # args is [] here which is the reason for the above setting of @search_logic_filter
+        named_scope :assets_upload_file_name_like, lambda {
+          {:joins => "left outer join assets on posts.id = assets.post_id",
+            :conditions => "assets.upload_file_name like '%#{@search_logic_filter}%'"}
+        }
+        assets_upload_file_name_like
+      else
+        super
+      end
+    end
+  end
+end
+
+SELECT `posts`.* 
+FROM `posts` 
+  left outer join assets 
+    on posts.id = assets.post_id 
+WHERE (
+  ((posts.title LIKE '%ruby_tips%') OR (posts.body LIKE '%ruby_tips%') OR (posts.tags LIKE '%ruby_tips%') OR (assets.upload_file_name like '%fun%')) 
+  AND (posts.user_id = 20549131)
+)
+

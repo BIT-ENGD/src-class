@@ -1,0 +1,75 @@
+Matrix[A]
+A
++
+A
+Matrix
+class Matrix[+A] private(val contents: Vector[Vector[A]])(implicit numericEv: Numeric[A])
+    extends ((Int, Int) => A) with Proxy {
+
+  import numericEv._
+  import Prelude._
+
+  // delegate `equals` and `hashCode` implementations to `contents`
+  override def self = contents
+
+  val nRows: Int = contents.length
+
+  val nColumns: Int = contents(0).length.ensuring { len =>
+    contents.forall(_.length == len)        
+  }
+
+  def dimensions = (nRows, nColumns)
+
+  def isSquare = nRows == nColumns
+
+  def hasSameOrderAs[B : Numeric](that: Matrix[B]) = this.dimensions == that.dimensions
+
+  def isComformableWith[B : Numeric](that: Matrix[B]) = this.nColumns == that.nRows
+
+  private def assertSameOrder[B : Numeric](that: Matrix[B]) {
+    assert(this.hasSameOrderAs(that), "Matrices differ in dimensions.")
+  }
+
+  private def assertIsSquare() {
+    assert(this.isSquare, "Not a square matrix.")
+  }      
+
+  def zipWith[B : Numeric, C : Numeric](that: Matrix[B])(f: (A, B) => C): Matrix[C] = {
+    assertSameOrder(that)
+    val zippedContents = (contents, that.contents).zipped.map((v1, v2) => (v1, v2).zipped.map(f))
+    Matrix(zippedContents)
+  }
+
+  def map[B : Numeric](f: A => B): Matrix[B] = {
+    Matrix(contents.map(_.map(f)))
+  }
+
+  def transpose: Matrix[A] = {
+    assertIsSquare()
+    Matrix(contents.transpose)
+  }
+
+  def +(that: Matrix[A]): Matrix[A] = this.zipWith(that)(_ + _)
+
+  def -(that: Matrix[A]): Matrix[A] = this.zipWith(that)(_ - _)
+
+  def *(scalar: A): Matrix[A] = this.map(_ * scalar)
+
+  def *(that: Matrix[A]): Matrix[A] = {
+    assert(this.isComformableWith(that))
+    Matrix.tabulate(this.nRows, that.nColumns) { (r, c) =>
+      (this(r), that.transpose(c)).zipped.map(_ * _).sum
+    }
+  }
+}
+
+object Matrix {
+  def apply[A : Numeric](rows: Vector[A]*): Matrix[A] = Matrix(Vector(rows: _*))
+
+  def apply[A : Numeric](contents: Vector[Vector[A]]): Matrix[A] = new Matrix(contents)
+
+  def tabulate[A : Numeric](nRows: Int, nColumns: Int)(f: (Int, Int) => A): Matrix[A] = {
+    Matrix(Vector.tabulate(nRows, nColumns)(f))
+  }
+}
+

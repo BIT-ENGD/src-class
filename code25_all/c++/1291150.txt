@@ -1,0 +1,89 @@
+#include "stdafx.h"
+#include "boostUnitTest.h"
+
+#include "../pevFind/fileData.h" //Header file for tested code.
+#include "../pevFind/stringUtil.h" //convertUnicode()
+
+struct fileDataLoadingFixture
+{
+    std::vector<fileData> testSuiteCandidates;
+    fileDataLoadingFixture()
+    {
+        WIN32_FIND_DATA curFileData;
+        HANDLE fData = FindFirstFile(L"testFiles\\*", &curFileData);
+        if (fData == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("Failed to load file list!");
+        do {
+            if(boost::algorithm::equals(curFileData.cFileName, L".")) continue;
+            if(boost::algorithm::equals(curFileData.cFileName, L"..")) continue;
+            fileData theFile(curFileData, L".\\testFiles\\");
+            testSuiteCandidates.push_back(theFile);
+        } while (FindNextFile(fData, &curFileData));
+        FindClose(fData);
+    };
+};
+
+BOOST_FIXTURE_TEST_SUITE( fileDataTests, fileDataLoadingFixture )
+
+BOOST_AUTO_TEST_CASE( testPEData )
+{
+    std::vector<std::wstring> expectedResults;
+    expectedResults.push_back(L"a.cfexe");
+    expectedResults.push_back(L"b.cfexe");
+    //More files.... 
+    expectedResults.push_back(L"c.cfexe");
+    std::sort(expectedResults.begin(), expectedResults.end());
+    for (std::vector<fileData>::const_iterator it = testSuiteCandidates.begin(); it != testSuiteCandidates.end(); it++)
+    {
+        if (it->isPE())
+        {
+            std::wstring theFileString(it->getFileName().substr(it->getFileName().find_last_of(L'\\') + 1 ));
+            std::vector<std::wstring>::const_iterator target = std::lower_bound(expectedResults.begin(), expectedResults.end(), theFileString);
+            BOOST_REQUIRE_MESSAGE(*target == theFileString, std::string("The file ") + convertUnicode(theFileString) + " was unexpected." );
+            if (*target == theFileString)
+            {
+                expectedResults.erase(target);
+            }
+        }
+    }
+    BOOST_CHECK_MESSAGE(expectedResults.size() == 0, "Some expected results were not found." );
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_CASE( testPEData )
+{
+    std::vector<std::wstring> expectedResults;
+    expectedResults.push_back(L"blah.cfexe");
+    //files
+    expectedResults.push_back(L"tail.cfexe");
+    expectedResults.push_back(L"zip.cfexe");
+    std::vector<std::wstring> actualResults;
+    for(std::vector<fileData>::const_iterator it = testSuiteCandidates.begin(); it != testSuiteCandidates.end(); it++)
+    {
+        if (it->isPE()) actualResults.push_back(it->getFileName().substr(it->getFileName().find_last_of(L'\\') + 1 ));
+    }
+
+    std::sort(expectedResults.begin(), expectedResults.end());
+    std::sort(actualResults.begin(), actualResults.end());
+
+    std::vector<std::wstring> missed;
+    std::set_difference(expectedResults.begin(), expectedResults.end(), actualResults.begin(), actualResults.end(), std::back_inserter(missed));
+
+    std::vector<std::wstring> incorrect;
+    std::set_difference(actualResults.begin(), actualResults.end(), expectedResults.begin(), expectedResults.end(), std::back_inserter(incorrect));
+
+    for(std::vector<std::wstring>::const_iterator it = missed.begin(); it != missed.end(); it++)
+    {
+        BOOST_ERROR(std::string("The file ") + convertUnicode(*it) + " was expected but not returned.");
+    }
+
+    for(std::vector<std::wstring>::const_iterator it = incorrect.begin(); it != incorrect.end(); it++)
+    {
+        BOOST_ERROR(std::string("The file ") + convertUnicode(*it) + " was returned but not expected.");
+    }
+
+    BOOST_CHECK(true); //Suppress commandline "No assertions" warning
+
+}
+

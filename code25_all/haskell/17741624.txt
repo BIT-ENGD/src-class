@@ -1,0 +1,70 @@
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances #-}
+
+module STTest where
+
+import Data.Array.ST
+import Control.Monad.ST.Strict as S
+import Control.Monad.ST.Lazy as L
+
+-- ST monad arrays (unboxed in actual code)
+type Arr s a = STArray s Int a
+
+-- representing some algorithm that works on these STArrays
+data ArrGen s a = ArrGen (a -> S.ST s (Arr s a)) (Arr s a -> S.ST s ())
+
+-- class for some "generator"
+class Generator g a where
+  gen :: g -> a -> [a]
+
+instance Generator (ArrGen s a) a where
+  gen (ArrGen create apply) s = L.runST $ do
+    a <- strictToLazyST $ create s -- DOES NOT WORK
+    strictToLazyST $ apply a >> getElems a
+
+Couldn't match type `s' with `s1'
+  `s' is a rigid type variable bound by
+     the instance declaration at STTest.hs:20:28
+  `s1' is a rigid type variable bound by
+     a type expected by the context: L.ST s1 [a] at STTest.hs:21:33
+
+data Dummy
+create' :: a -> S.ST s (Arr s a)
+create' = undefined
+apply' :: Arr s a -> S.ST s [a]
+apply' = undefined
+
+instance Generator Dummy a where
+  gen _ s = L.runST $ do
+    a <- strictToLazyST $ create' s
+    strictToLazyST $ apply' a >> getElems a
+
+class (Integral a, Bits a, forall s. MArray (STUArray s) a (S.ST s)) => HasSTU a
+type AC a = (HasSTU a) => forall s. a -> S.ST s (STUArray s Int a)
+type AU a = (HasSTU a) => forall s. STUArray s Int a -> S.ST s ()
+type TX a = (HasSTU a) => a -> a -- or without the context
+data ArrayGen a = AG (AC a) (AU a) (TX a)
+
+instance (HasSTU a) => Generator (ArrayGen a) a [a] where
+  gens (AG c u p) s = fmap (fmap p) $ L.runST $ do
+    ar <- strictToLazyST $ (c s)
+    streamM $ strictToLazyST $ u ar >> getElems ar -- can't use getElems here!
+
+streamM :: (Applicative f) => f a -> f (Stream a))
+streamM = Cons <$> a <*> streamM a
+
+Could not deduce (MArray (STUArray s) a (S.ST s))
+  arising from a use of `getElems'
+from the context (HasSTU a)
+
+type AU a = (HasSTU a) => forall s. STUArray s Int a -> S.ST s [a]
+
+class (Integral a, Bits a, forall s. MArray (STUArray s) a (S.ST s)) => HasSTU s a
+type AC a = (forall s. HasSTU s a) => a -> S.ST s (STUArray s Int a)
+...
+instance (forall s. HasSTU s a) => Generator (ArrayGen a) a [a] where
+  ...
+
+instance forall s. HasSTU s Word32 -- !!!
+
+Could not deduce (forall s. HasSTU s Word32)
+

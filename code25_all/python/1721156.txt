@@ -1,0 +1,100 @@
+Traceback (most recent call last):
+  File "/base/python_lib/versions/1/google/appengine/ext/webapp/__init__.py", line 507, in __call__
+    handler.get(*groups)
+  File "/base/data/home/apps/bulkloader160by2/1-5.337695659246114067/new_main.py", line 59, in get
+    transfer = _transfer_funds(src_key,dest_key,amt)
+  File "/base/data/home/apps/bulkloader160by2/1-5.337695659246114067/new_main.py", line 24, in _transfer_funds
+    return db.run_in_transaction(_tx)
+  File "/base/python_lib/versions/1/google/appengine/api/datastore.py", line 1885, in RunInTransaction
+    DEFAULT_TRANSACTION_RETRIES, function, *args, **kwargs)
+  File "/base/python_lib/versions/1/google/appengine/api/datastore.py", line 1982, in RunInTransactionCustomRetries
+    result = function(*args, **kwargs)
+  File "/base/data/home/apps/bulkloader160by2/1-5.337695659246114067/new_main.py", line 11, in _tx
+    account = db.get(src_key)
+  File "/base/python_lib/versions/1/google/appengine/ext/db/__init__.py", line 1178, in get
+    keys, multiple = datastore.NormalizeAndTypeCheckKeys(keys)
+  File "/base/python_lib/versions/1/google/appengine/api/datastore.py", line 136, in NormalizeAndTypeCheckKeys
+    keys, multiple = NormalizeAndTypeCheck(keys, (basestring, Entity, Key))
+  File "/base/python_lib/versions/1/google/appengine/api/datastore.py", line 115, in NormalizeAndTypeCheck
+    (types, arg, typename(arg)))
+BadArgumentError: Expected an instance or sequence of (<type 'basestring'>, <class 'google.appengine.api.datastore.Entity'>, <class 'google.appengine.api.datastore_types.Key'>); received None (a NoneType).
+
+#!/usr/bin/env python
+
+import wsgiref.handlers
+from google.appengine.ext import db
+from google.appengine.ext import webapp
+from google.appengine.ext.webapp import template
+from models import UserDetails
+
+def _transfer_funds(src_key,dest_key,amt):
+  def _tx():
+    account = db.get(src_key)
+    amount = float(amt)
+    if amount <= 100.0:
+      if account.balance < amount:
+        return None
+    account.balance -= amount
+    transfer = Transfer(
+        parent = account,
+        amount = -amount,
+        target = db.get(dest_key)
+    )
+    db.put([account, transfer])
+    return transfer
+  return db.run_in_transaction(_tx)  
+
+def _roll_forward(transfer):
+  def _tx():
+    dest_transfer = Transfer.get_by_key_name(str(transfer.key()), parent=transfer.target.key())
+    if not dest_transfer:
+      dest_transfer = Transfer(
+          parent = transfer.target.key(),
+          key_name = str(transfer.key()),
+          amount = -transfer.amount,
+          target = transfer.key().parent(),
+          other = transfer)
+      account = UserDetails.get(transfer.target.key())
+      account.balance -= transfer.amount
+      db.put([account, dest_transfer])
+      return dest_transfer
+  dest_transfer = db.run_in_transaction(_tx)
+  transfer.other = dest_transfer
+  transfer.put()
+  return True
+
+## Model class for Transfers / Transactions
+class Transfer(db.Model):
+  amount = db.FloatProperty(required=True)
+  target = db.ReferenceProperty(reference_class=UserDetails, required=True)
+  other = db.SelfReferenceProperty()
+  timestamp = db.DateTimeProperty(required=True, auto_now_add=True)
+
+class MyHandler(webapp.RequestHandler):
+    def get(self):
+        src_username = str(self.request.get('from_username'))
+        dest_username = str(self.request.get('to_username'))
+        amt = str(self.request.get('amount'))
+        src_key = db.GqlQuery('SELECT __key__ FROM UserDetails WHERE user_name = :uname', uname = src_username).get()
+        dest_key = db.GqlQuery('SELECT __key__ FROM UserDetails WHERE user_name = :uname', uname = dest_username).get()
+        transfer = _transfer_funds(src_key,dest_key,amt)
+        progress = _roll_forward(transfer)
+        srcUserDetails = UserDetails.gql('WHERE user_name = :uname', uname = src_username).fetch(1)
+        destUserDetails = UserDetails.gql('WHERE user_name = :uname', uname = dest_username).fetch(1)
+        values = {
+            'progress': progress,
+            'srcUser': srcUserDetails,
+            'destUser': destUserDetails
+        }
+        self.response.out.write(template.render('transactions.html', values))  
+    def post(self):
+        self.redirect('/transactions.html')
+
+def main():
+    app = webapp.WSGIApplication([
+        (r'.*',MyHandler)], debug=True)
+    wsgiref.handlers.CGIHandler().run(app)
+
+if __name__ == "__main__":
+    main()
+

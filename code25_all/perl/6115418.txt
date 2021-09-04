@@ -1,0 +1,102 @@
+print
+Tie
+STDOUT
+untie
+print
+PerlIO_*
+PerlIO_write
+PerlIO_puts
+PerlIO_printf
+h2xs -A -n IOTest
+cd IOTest
+
+IOTest.xs
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+#include "ppport.h"
+
+MODULE = IOTest PACKAGE = IOTest
+
+void
+oink ()
+    CODE:
+        PerlIO_puts(PerlIO_stdout(), "oink!\n");
+
+test.pl
+# Set up the include path to match the build directories
+BEGIN {
+    push @INC, './blib/lib/';
+    push @INC, './blib/arch/auto/IOTest';
+}
+
+use IOTest;
+
+# This package is just a set of hooks for tieing in to stdout
+{
+    # Lifted from the Test::Output module found here:
+    # http://search.cpan.org/~bdfoy/Test-Output-1.01/lib/Test/Output.pm
+    package OutputTie;
+
+    sub TIEHANDLE {
+      my $class = shift;
+      my $scalar = '';
+      my $obj = shift || \$scalar;
+      bless( $obj, $class);
+    }
+
+    sub PRINT {
+        my $self = shift;
+        $$self .= join(defined $, ? $, : '', @_);
+        $$self .= defined $\ ? $\ : '';
+    }
+
+    sub PRINTF {
+        my $self = shift;
+        my $fmt  = shift;
+        $$self .= sprintf $fmt, @_;
+    }
+
+    sub read {
+        my $self = shift;
+        my $data = $$self;
+        $$self = '';
+        return $data;
+    }
+}
+
+# Runs a sub, intercepts stdout and returns it as a string
+sub getStdOut (&) {
+    my $callback = shift;
+
+    select( ( select(STDOUT), $| = 1 )[0] );
+    my $out = tie *STDOUT, 'OutputTie';
+
+    $callback->();
+    my $stdout = $out->read;
+
+    undef $out;
+    untie *STDOUT;
+
+    return $stdout;
+}
+
+# This is the interesting part, the actual test:
+print "Pre-capture\n";
+my $output = getStdOut(sub {
+    print "before";
+    IOTest::oink();
+    print "after";
+});
+print "Captured StdOut:\n" . $output . "\nend\n";
+
+perl Makefile.PL
+make
+perl test.pl
+
+Pre-capture
+oink!
+Captured StdOut:
+beforeafter
+end
+

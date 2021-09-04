@@ -1,0 +1,109 @@
+void port_DataReceived(object sender, SerialDataReceivedEventArgs e)
+{
+
+byte[] buffer = new byte[port.ReadBufferSize];
+
+var count = 0;
+
+try
+{
+    count = port.Read(buffer, 0, buffer.Length);
+}
+catch (Exception ex)
+{
+    Console.Write(ex.ToString());
+}
+
+if (count == 0)
+    return;
+
+//Pass the data to the IDataCollector, if response != null an entire frame has been received
+
+
+var response = collector.Collect(buffer.GetSubByteArray(0, count));
+
+if (response != null)
+{
+    this.OnDataReceived(response);
+}
+
+    port = new SerialPort();
+
+    //Port configuration code here...
+
+    this.collector = dataCollector;
+
+    //Event handlers
+    port.DataReceived += new SerialDataReceivedEventHandler(port_DataReceived);
+    port.Open();
+
+Dispatcher.BeginInvoke(new Action(() =>
+{
+  var builder = new StringBuilder();
+  foreach (var r in data)
+  {
+      builder.AppendFormat("0x{0:X} ", r);
+  }
+
+
+  builder.Append("\n\n");
+
+  txtHexDump.AppendText(builder.ToString());
+
+  txtHexDump.ScrollToEnd();
+
+
+}),System.Windows.Threading.DispatcherPriority.ContextIdle);
+});
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        var server = new BackgroundWorker();
+        server.DoWork += new DoWorkEventHandler(server_DoWork);
+        server.RunWorkerAsync();
+
+        var port = new SerialPort();
+        port.PortName = "COM2";
+        port.Open();
+        string input = "";
+
+        Console.WriteLine("Client on COM2: {0}", Thread.CurrentThread.ManagedThreadId);
+        while (input != "/quit")
+        {
+            input = Console.ReadLine();
+            if (input != "/quit")
+            {
+                var data = ASCIIEncoding.ASCII.GetBytes(input);
+                port.Write(data, 0, data.Length);
+            }
+        }
+
+        port.Close();
+        port.Dispose();
+    }
+
+    static void server_DoWork(object sender, DoWorkEventArgs e)
+    {
+        Console.WriteLine("Listening on COM1: {0}", Thread.CurrentThread.ManagedThreadId);
+        var port = new SerialPort();
+        port.PortName = "COM1";
+        port.Open();
+
+        port.ReceivedBytesThreshold = 15;
+        port.DataReceived += new SerialDataReceivedEventHandler(port_DataReceived);
+    }
+
+    static void port_DataReceived(object sender, SerialDataReceivedEventArgs e)
+    {
+        var port = (SerialPort)sender;
+        int count = 0;
+        byte[] buffer = new byte[port.ReadBufferSize];
+        count = ((SerialPort)sender).Read(buffer, 0, buffer.Length);
+
+        string echo = ASCIIEncoding.ASCII.GetString(buffer,0,count);
+        Console.WriteLine("-->{1} {0}", echo, Thread.CurrentThread.ManagedThreadId);
+    }
+}
+

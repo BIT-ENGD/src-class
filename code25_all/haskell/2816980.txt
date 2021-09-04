@@ -1,0 +1,89 @@
+{--------------------------------------------------------------------------------
+   Test Grid.
+--------------------------------------------------------------------------------}
+
+module Main where
+
+import Graphics.UI.WX
+import Graphics.UI.WXCore hiding (Event)
+
+import Database.HDBC.Sqlite3 (connectSqlite3)
+import Database.HDBC
+
+
+main  
+  = start gui
+
+gui :: IO ()
+gui 
+  = do f <- frame [text := "Grid test", visible := False] 
+
+       -- grids
+       g <- gridCtrl f []
+       gridSetGridLineColour g (colorSystem Color3DFace)
+       gridSetCellHighlightColour g black
+       appendColumns g (movies) -- Here is error: 
+
+--        Couldn't match expected type `[String]'
+--       against inferred type `IO [[String]]'
+
+
+       --appendRows g (map show [1..length (tail movies)])
+       --mapM_ (setRow g) (zip [0..] (tail movies))
+       gridAutoSize g
+
+       -- layout
+       set f [layout := column 5 [fill (dynamic (widget g))]
+             ]       
+       focusOn g
+       set f [visible := True]  -- reduce flicker at startup.
+       return ()
+    where
+
+    movies = do 
+        conn <- connectSqlite3 "Spop.db"
+        r <- quickQuery' conn "SELECT id, title, year, description from Movie where id = 1" []
+        let myResult = map convRow r
+        return myResult
+
+setRow g (row,values)
+  = mapM_ (\(col,value) -> gridSetCellValue g row col value) (zip [0..] values)
+
+
+
+{--------------------------------------------------------------------------------
+   Library?f
+--------------------------------------------------------------------------------}
+
+gridCtrl :: Window a -> [Prop (Grid ())] -> IO (Grid ())
+gridCtrl parent props
+  = feed2 props 0 $
+    initialWindow $ \id rect -> \props flags ->
+    do g <- gridCreate parent id rect flags
+       gridCreateGrid g 0 0 0
+       set g props
+       return g
+
+appendColumns :: Grid a -> [String] -> IO ()
+appendColumns g []
+  = return ()
+appendColumns g labels
+  = do n <- gridGetNumberCols g
+       gridAppendCols g (length labels) True
+       mapM_ (\(i,label) -> gridSetColLabelValue g i label) (zip [n..] labels)
+
+appendRows :: Grid a -> [String] -> IO ()
+appendRows g []
+  = return ()
+appendRows g labels
+  = do n <- gridGetNumberRows g
+       gridAppendRows g (length labels) True
+       mapM_ (\(i,label) -> gridSetRowLabelValue g i label) (zip [n..] labels)
+
+convRow :: [SqlValue] -> [String]
+convRow [sqlId, sqlTitle, sqlYear, sqlDescription] = [intid, title, year, description]
+              where intid = (fromSql sqlId)::String
+                    title = (fromSql sqlTitle)::String
+                    year = (fromSql sqlYear)::String
+                    description = (fromSql sqlDescription)::String
+

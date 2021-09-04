@@ -1,0 +1,68 @@
+require 'neuralconvo' require 'xlua' 
+-- Load Dataset 
+print("--Loading Dataset") 
+dataset=neuralconvo.Dataset(neuralconvo.CornellMovieDiaogs("data/cornell_movie_diaogs"),
+{   loadFirst = options.dataset,
+    minWordFreq = options.minWordFreq 
+})
+
+--Build Model 
+model = neuralconvo.Seq2Seq(dataset.wordsCount, options.hiddenSize) model.goToken = dataset.goToken 
+model.eosToken=dataset.eosToken
+
+--Training Parameters 
+model.criterion=nn.SequencerCriterion(nn.ClassNLLCriterion()) 
+model.learningRaw =  options.learningRate 
+model.momentum = otions.momentum 
+local decayFactor = (options.minLR - options.learningRate)/options.saturateEpoch local minMeanError = nil
+
+--Enable Cuda 
+if options.cuda then    
+    require 'cutorch'   
+    require 'cunn' 
+elseif options.opencl then  
+    require 'cltorch'   
+    require 'clnn'
+    model:cl()
+end
+
+-- Train Model using backpropogation    
+for epoch = 1,options.maxEpoch do
+    local errors = torch.Tensor(dataset.examplesCount):fill(0)      
+    local timer=torch.timer()
+    local i=1
+    for examples in dataset:batches(options.batchSize) do                                                                                     
+            collectgarbage()
+            for _, example in ipairs(examples) do
+                    local input, target = unpack(examples) do
+                    if options.cuda then
+                        input = input:cuda()
+                        target = target:cuda()
+                    elseif options.opencl then
+                        input = input:cl()
+                        target = target:cl()
+                    end
+                    local err=model:train(input, target)
+                        if err ~= err then
+                            error("Invalid error! Exiting.")
+                        end
+                    errors[i] = err
+                    xlua.progress(i, dataset.examplesCount)
+                    i=i+1
+                    end             
+             end        
+             timer:stop()       
+--Save the model if not Improved        
+if minMeanError == nil or errors:mean() < minMeanError then
+                print("\n(Saving model...)")  
+                torch.save("data/model.t7",model)
+                minMeanError=errors:mean()      
+           end
+-- Update Learning Rate         
+    model.learningRate = model.learningRate + decayFactor       
+    model.learningRate = math.max(options.minLR,model.learningRate)         
+end     
+end
+
+   =============================================================     
+

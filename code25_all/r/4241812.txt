@@ -1,0 +1,59 @@
+##Note: Other programs are wrapped in R functions and system calls.
+#They each have their own licenses which may or may not allow the use suggested here
+#Programs used here:
+#STunnel: http://www.stunnel.org/; Provides an SSL tunnel but requires OpenSSL 
+#OpenSSL: http://www.openssl.org/; OpenSSL to actually provide SSL
+#   Note that these .dlls should be placed with the stunnel exe.
+#   Also note that libssl32.dll may need to be renamed from ssleay32.dll
+#Microsoft Visual C++ 2008 Redistributable (may be required for the SSL .dlls to work correctly)
+#Blat: http://www.blat.net; a public domain SMTP sending program
+#Getmail is free for non-commercial use. If you use it in a business environment, then a fee of $50 USD is payable to Tim Charron. 
+
+#Stunnel is a TSR, so it will need to be killed from the task manager if there is an issue.  If you are willing to install it as a service you may be able to tweak my code to start and stop the service.  
+#My current code does not create .conf file for stunnel the way a full version ought.  Check http://spampal.sanesecurity.com/manual_eng/servers/stunnel/stunnel.htm#sconfig21 to create the appropriate configuration file.
+
+#Set the config values as appropriate
+##Config##
+BLAT.loc <- "c:/Programming/R/Rmail/blat262/full/blat.exe"
+GetMail.loc <- "C:/Programming/R/RMail/getmail133/getmail.exe"
+stunnel.loc <- "C:/Programming/R/RMail/stunnel/stunnel-4.11.exe"
+
+#The set mail function assigns the username and password to be used as well as the smtp and pop3 servers it starts stunnel (and assumes that the stunnel.conf file is present and set correctly).
+setMail <- function(user,pw,SSL=FALSE,smtp="127.0.0.1:259",pop3="127.0.0.1:1109")
+{
+    if (SSL==TRUE)
+    {
+        print("Starting stunnel; you will need to kill this from the task-manager")
+        system(stunnel.loc,wait=FALSE)
+        Sys.sleep(2) #Give it time to start 
+    }
+    return(list(user=user,pw=pw,smtp=smtp,pop3=pop3,SSL=SSL))
+}
+
+#function to send mail, myMail is the resulting list from setMail
+sendmail <- function(myMail, to, subject, msg,VERBOSE=FALSE)
+{
+    writeLines(msg, "out.txt", sep = "\n", useBytes = FALSE)
+      targ <- paste(getwd(),"/out.txt",sep="")
+    call <- paste(BLAT.loc, ' "',targ,'" -subject "',subject,'" -to ',to," -u ",myMail$user," -pw ",myMail$pw, " -f ",myMail$user, " -debug -server ",myMail$smtp,sep="")
+    res <- system(call,intern=TRUE)
+    if (VERBOSE) {return(res)}
+}
+
+#function to get mail, myMail is the resulting list from setMail; it returns a list with one element that contains everything unparsed, another list provides the number of messages remaining on the server.
+getmail <- function(myMail,VERBOSE=FALSE)
+{      
+    unlink("MSG1.txt") #drop previous get
+    #download next message
+    call <- paste(GetMail.loc," -u ",myMail$user," -pw ",myMail$pw," -s ",strsplit(myMail$pop3,":")[[1]][1],
+        " -port ",strsplit(myMail$pop3,":")[[1]][2]," -n 1",sep="")
+    res <- system(call,intern=TRUE)
+    if (VERBOSE) {print(res)}
+    nmsgtxt <- res[grep("messages on the server.",res)]
+    nstart <- regexpr("There are",nmsgtxt)
+    nend <- regexpr("messages on the server.",nmsgtxt)
+    nmess <- as.numeric(substr(nmsgtxt,10,nend-1))-1
+      x <- readLines("MSG1.txt",-1)
+    return(list(message=x,remaining=nmess))
+}
+

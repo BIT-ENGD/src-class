@@ -1,0 +1,139 @@
+#define TRUE 1
+
+static char user_input = '\0'; 
+
+static char *cmd_argv[5]; // array of strings of command
+static int cmd_argc = 0; // # words of command
+
+static char buffer[50]; // input line buffer
+static int buffer_characters = 0;
+int jobs_list_size = 0;
+
+/* int pid; */
+int status;
+int jobs_list[50];
+
+int main(int argc, char **argv)
+{           
+    printf("[MYSHELL] $ ");
+
+    while (TRUE) {
+        user_input = getchar();
+        switch (user_input) {
+
+            case EOF:
+                exit(-1);
+
+            case '\n':
+                printf("[MYSHELL] $ ");
+                break;
+
+            default:
+                // parse input into cmd_argv - store # commands in cmd_argc
+                parse_input();
+
+                //check for zombie processes
+                check_zombies();
+
+                if(handle_commands() == 0)
+                    create_process();
+                    printf("\n[MYSHELL] $ ");
+
+        }
+    }
+    printf("\n[MYSHELL] $ ");
+    return 0;
+}
+
+void parse_input()
+{
+    // clears command line
+    while (cmd_argc != 0) {
+        cmd_argv[cmd_argc] = NULL;
+        cmd_argc--; 
+    }
+
+    buffer_characters = 0;
+
+    // get command line input
+    while ((user_input != '\n') && (buffer_characters < 50)) {
+        buffer[buffer_characters++] = user_input;
+        user_input = getchar();
+    }
+
+    // clear buffer
+    buffer[buffer_characters] = 0x00;
+
+    // populate cmd_argv - array of commands
+    char *buffer_pointer;
+    buffer_pointer = strtok(buffer, " ");
+
+    while (buffer_pointer != NULL) { 
+        cmd_argv[cmd_argc] = buffer_pointer;
+        buffer_pointer = strtok(NULL, " ");
+
+        //check for background process execution
+        if(strcmp(cmd_argv[cmd_argc], "&")==0){
+            printf("Started job %d\n", getpid());    
+            make_background_job();
+        }
+
+        cmd_argc++;
+    }
+}
+
+void make_background_job()
+{
+    int pid;
+    pid = fork();
+    fclose(stdin); // close child's stdin
+    fopen("/dev/null", "r"); // open a new stdin that is always empty
+
+    fprintf(stderr, "Child pid = %d\n", getpid());
+
+    //add pid to jobs list
+    jobs_list[jobs_list_size] = getpid();
+/*     printf("jobs list %d", *jobs_list[jobs_list_size]);         */
+    jobs_list_size++;
+
+    execvp(*cmd_argv,cmd_argv);
+
+    // this should never be reached, unless there is an error
+    fprintf (stderr, "unknown command: %s\n", cmd_argv[0]);     
+}
+
+void create_process()
+{   
+    pid_t pid;
+
+    pid = fork();
+    status = 0;
+
+    switch(pid){
+        case -1:
+            perror("[MYSHELL ] $ (fork)");
+            exit(EXIT_FAILURE);
+        case 0:            
+            make_background_job();
+            printf("\n\n----Just made background job in case 0 of create_process----\n\n");        
+            break;
+
+        default:
+            printf("\n\n----Default case of create_process----\n\n");
+            // parent process, waiting on child...
+            waitpid(pid, &status, 0);
+
+            if (status != 0) 
+                fprintf  (stderr, "error: %s exited with status code %d\n", cmd_argv[0], status);
+            else
+                break;
+    }
+}
+
+[MYSHELL] $ ./example.sh &
+Started job 15479
+Child pid = 15479
+Child pid = 15481
+Hello World
+Hello World
+

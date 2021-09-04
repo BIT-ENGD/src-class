@@ -1,0 +1,66 @@
+ Public Function RSS() As ActionResult
+
+        Dim blogTitle = "RiderDesign Blog"
+        Dim blogDescription = "The latest posts from RiderDesign"
+        Dim blogUrl = "http://riderdesign.com"
+        Dim postUrl = "http://riderdesign.com/Blog/Post/"
+
+        Dim blogItems = _postService.SelectPublishedPosts.ToList()
+        Dim postItems = New List(Of SyndicationItem)()
+        For Each item In blogItems
+            Dim post = New SyndicationItem()
+            post.Title = New TextSyndicationContent(item.PostTitle)
+            post.Summary = SyndicationContent.CreateHtmlContent(item.PostExcerpt)
+            post.LastUpdatedTime = CType(item.PostDateCreated, DateTime)
+            post.Content = SyndicationContent.CreateHtmlContent(item.PostText)
+            post.AddPermalink(New Uri(postUrl + item.PostId.ToString))
+            postItems.Add(post)
+        Next
+
+        Dim feed = New SyndicationFeed(blogTitle, blogDescription, New Uri(blogUrl), postItems) With { _
+         .Copyright = New TextSyndicationContent("Copyright " & DateTime.Now.Year.ToString() & " RiderDesign.com"), _
+         .Language = "en-US" _
+        }
+
+        Return New FeedResult(New Rss20FeedFormatter(feed))
+        'Return New FeedResult(New Atom10FeedFormatter(feed))
+    End Function
+
+    Public Class FeedResult
+    Inherits ActionResult
+    Public Property ContentEncoding() As Encoding
+
+    Public Property ContentType() As String
+
+    Private ReadOnly m_feed As SyndicationFeedFormatter
+    Public ReadOnly Property Feed() As SyndicationFeedFormatter
+        Get
+            Return m_feed
+        End Get
+    End Property
+
+    Public Sub New(ByVal feed As SyndicationFeedFormatter)
+        Me.m_feed = feed
+    End Sub
+
+    Public Overrides Sub ExecuteResult(ByVal context As ControllerContext)
+        If context Is Nothing Then
+            Throw New ArgumentNullException("context")
+        End If
+
+        Dim response As HttpResponseBase = context.HttpContext.Response
+        response.ContentType = If(Not String.IsNullOrEmpty(ContentType), ContentType, "application/rss+xml")
+
+        If ContentEncoding IsNot Nothing Then
+            response.ContentEncoding = ContentEncoding
+        End If
+
+        If m_feed IsNot Nothing Then
+            Using xmlWriter = New XmlTextWriter(response.Output)
+                xmlWriter.Formatting = Formatting.Indented
+                m_feed.WriteTo(xmlWriter)
+            End Using
+        End If
+    End Sub
+End Class
+

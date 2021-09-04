@@ -1,0 +1,71 @@
+from sqlalchemy import create_engine, Column, Integer, ForeignKey
+from sqlalchemy.orm import relation, scoped_session, sessionmaker, \
+         AttributeExtension
+from sqlalchemy.ext.declarative import declarative_base
+
+engine = create_engine('sqlite:///:memory:', echo=True)
+session = scoped_session(sessionmaker(bind=engine, autoflush=True))
+Base = declarative_base()
+Base.query = session.query_property()
+
+class ChildrenAttributeExtension(AttributeExtension):
+    active_history = True
+
+    def append(self, state, child, initiator):
+        parent = state.obj()
+        parent.sum_of_children += child.value
+        return child
+
+    def remove(self, state, child, initiator):
+        parent = state.obj()
+        parent.sum_of_children -= child.value
+
+    def set(self, state, child, oldchild, initiator):
+        print 'set called' # gets never printed
+        parent = state.obj()
+        parent.sum_of_children += -oldchild.value + child.value
+        return child
+
+
+class Child(Base):
+    __tablename__ = 'child'
+    id = Column(Integer, primary_key=True)
+    parent_id = Column(Integer, ForeignKey('parent.id'), nullable=False)
+    value = Column(Integer, nullable=False, default=0)
+
+
+class Parent(Base):
+    __tablename__ = 'parent'
+    id = Column(Integer, primary_key=True)
+    sum_of_children = Column(Integer, nullable=False, default=0)
+
+    children = relation('Child', backref='parent',
+            extension=ChildrenAttributeExtension())
+
+Base.metadata.create_all(engine)
+
+# Add a parent
+p = Parent()
+session.add(p)
+session.commit()
+
+p = Parent.query.first()
+assert p.sum_of_children == 0
+
+
+# Add a child
+c = Child(parent=p, value=5)
+session.add(c)
+session.commit()
+
+p = Parent.query.first()
+assert p.sum_of_children == 5
+
+# Change a child
+c = Child.query.first()
+c.value = 3
+session.commit()  # extension.set() doesn't get called
+
+p = Parent.query.first()
+assert p.sum_of_children == 3 # Assertion fails
+

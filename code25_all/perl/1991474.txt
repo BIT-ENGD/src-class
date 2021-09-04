@@ -1,0 +1,97 @@
+$SIGNAL = 0;
+        sub sigHandler{ 
+            #&logData("SIGNALED");
+            $SIGNAL++ ;
+        }
+        $SIG{"USR1"}=\&sigHandler;
+
+
+
+        # Create a new socket, on port 9999
+        my $PORT = 9999;
+        print ("opening connection on port $PORT");
+        $lsn = new IO::Socket::INET(Listen => 1, 
+                                    LocalPort => $PORT,
+                                    Reuse => 1,
+                                    Proto => 'tcp' );
+           #or die ("Couldn't start server: $!");
+
+
+
+        # Create an IO::Select handler
+        $sel = new IO::Select( $lsn );
+
+        # Close filehandles
+
+        close(STDIN); close(STDOUT);
+
+        warn "Server ready.  Waiting for connections . . .  on \n";
+
+
+        # Enter into while loop, listening to the handles that are available.
+        # this SHOULD be an infinite loop... I don't see why it would eval to false when 
+        # I send a signal to increment $SIGNAL by one.
+        while( @read_ready = $sel->can_read ) {
+            $MESSAGE = 0;
+            $fh  = $read_ready[0];
+
+                # Create a new socket
+                if($fh == $lsn) {
+                    $new = $lsn->accept;
+                    $sel->add($new);
+                    push( @data, fileno($new) . " has joined.");
+                    warn "Connection from " . $new->peerhost . ".\n";
+
+                }
+
+                # Handle connection
+                else {
+
+                    $input = <$fh>;
+                    chomp $input;
+                    warn "GOT INPUT '$input'\n";
+
+                    if($input eq "<policy-file-request/>"){
+                        $MESSAGE = 
+                            qq~<?xml version="1.0"?>
+                            <cross-domain-policy>
+                              <allow-access-from domain="*" to-ports="*"/>
+                            </cross-domain-policy>\0~;
+                        $SIGNAL++;
+                    }
+
+
+                    if ( $input eq '') {#disconnection notification by client
+
+                        warn "Disconnection from " . $new->peerhost . ".\n";                
+                        $sel->remove($fh);
+                        $fh->close;
+                    }
+                    if ( $input eq 'READY'){
+                        warn "CLIENT READY = 1\n";
+                        $CLIENT_READY = 1;
+                    }
+
+                }
+
+
+
+            # Write to the clients that are available
+            foreach $fh ( @write_ready = $sel->can_write(0) ) {
+                if($MESSAGE == 0){
+                    #set message here based on criteria
+                    $MESSAGE = "UPDATE";
+                }
+                warn "outside send if\n";
+                if($CLIENT_READY == 1 && $SIGNAL > 0){
+                    warn ("sending $MESSAGE to $fh\n");         
+                    $CLIENT_READY = 0;          
+                    $SIGNAL--;
+                    print $fh "$MESSAGE\0" or warn "can't send message to $fh";  
+                }             
+            }
+        }
+
+
+        warn "Server ended.\n";
+

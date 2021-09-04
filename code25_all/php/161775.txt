@@ -1,0 +1,130 @@
+<?php
+/**
+* Conn params
+*/
+
+$fromMboxServerPath = "{imap.from.server/notls/imap:143}";
+$fromMboxMailboxPath = "INBOX";
+$fromMboxMailAddress = "login";
+$fromMboxMailPass = "pass";
+
+
+$toMboxServerPath = "{imap.to.server/notls/imap:143}";
+$toMboxMailboxPath = "INBOX";
+$toMboxMailAddress = "login";
+$toMboxMailPass = "pass";
+
+$fromMboxConnStr = $fromMboxServerPath.$fromMboxMailboxPath;
+$toMboxConnStr = $toMboxServerPath.$toMboxMailboxPath;
+
+$fetchStartSeq = 1;
+$fetchEndSeq = 10;
+
+function myLog($str)
+{
+    echo "Log [".date('Y-m-d H:i:s')."]: $str\n";
+}
+
+myLog("Connecting to mailbox");
+
+function mboxConn($connstr,$addr,$pass)
+{
+    if(!($mbox = @imap_open($connstr, $addr, $pass)))
+    {
+        myLog("Error: ".imap_last_error());
+        die;
+    }
+    else
+    {
+        myLog("Connected to: $addr $connstr");
+        return $mbox;
+    }
+}
+
+function mboxCheck($mbox)
+{
+    if(!($mbox_data = imap_check($mbox)))
+    {
+       myLog("Error: ".imap_last_error());
+       die;   
+    }
+    else
+    {
+        myLog("Mailbox check ".$mbox_data->Mailbox." OK");
+        myLog($mbox_data->Nmsgs." messages present");
+        return $mbox_data->Nmsgs;
+    }
+}
+
+$fromMbox = mboxConn($fromMboxConnStr, $fromMboxMailAddress, $fromMboxMailPass);
+$toMbox = mboxConn($toMboxConnStr, $toMboxMailAddress, $toMboxMailPass);
+
+$fromMboxCount = mboxCheck($fromMbox);
+$toMboxCount = mboxCheck($toMbox);
+
+/**
+* Loop on mails
+*/
+
+$fetchStartUID = imap_uid($fromMbox,$fetchStartSeq);
+if ($fromMboxCount < $fetchEndSeq)
+{
+    $fetchEndSeq = $fromMboxCount;
+}
+$fetchEndUID = imap_uid($fromMbox,$fetchEndSeq);
+
+/**
+* Loop on mails
+*/
+
+myLog("Do stuff and backup from UID [$fetchStartUID] to UID [$fetchEndUID]");
+
+for ($i=$fetchStartSeq;$i<=$fetchEndSeq;$i++)
+{
+    $pfx = "Msg #$i : ";
+    $h = imap_header($fromMbox, $i);
+    $fh = imap_fetchheader($fromMbox, $i);
+    $fb = imap_body($fromMbox, $i);
+    $message = $fh.$fb;
+
+    $msgUID = imap_uid($fromMbox,$i);
+
+    $struct = imap_fetchstructure ($fromMbox, $i);
+
+    /**
+     * We do some logging
+     */
+
+    myLog($pfx."UID [".$msgUID."] SEQ [".imap_msgno($fromMbox,$msgUID)."] Flags: [". $h->Unseen . $h->Recent . $h->Deleted . $h->Answered . $h->Draft . $h->Flagged."]");
+    myLog($pfx."From: [". htmlspecialchars($h->fromaddress) . "] To: [".htmlspecialchars($h->toaddress)."]");
+    myLog($pfx."Subject: [$h->subject]");
+
+    /**
+     * Here you do whaterver you need with your email
+     */
+
+    /**
+     * Backup email
+     */
+    if (!($ret = imap_append($toMbox,$toMboxServerPath.$toMboxMailboxPath,$message))) 
+    {
+        myLog("Error: ".imap_last_error());
+        die;
+    }
+    else
+    {
+        myLog("everything ok, mail [$fetchStartUID:$fetchEndUID] downloaded and moved in $newMailboxNameMOVE");
+    }
+}
+
+/**
+* End
+*/
+
+imap_close($fromMbox);
+imap_close($toMbox);
+
+myLog("Connection closed");
+
+?>
+

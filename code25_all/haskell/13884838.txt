@@ -1,0 +1,83 @@
+data Amb m a = Cons (m a) (Amb m a) | Empty
+
+unpack
+Empty
+unpack :: (Monad m) => m (Amb m a) -> Amb m a                                                                                                                 
+unpack m = let first = join $ do (Cons x ys) <- m                                                                                                             
+                                 return x                                                                                                                     
+               rest =  do (Cons x ys) <- m                                                                                                                    
+                          return ys                                                                                                                           
+           in Cons first (unpack rest)   
+
+import Prelude hiding  (map, concat)                                                                                                                          
+import Control.Monad                                                                                                                                          
+import Control.Monad.Trans       
+
+data Amb m a = Cons (m a) (Amb m a) | Empty                                                                                                                   
+
+infixr 4 <:>                                                                                                                                                  
+(<:>) = Cons                                                                                                                                                  
+
+map :: Monad m => (a -> b) -> Amb m a -> Amb m b                                                                                                              
+map f (Cons m xs) = Cons y (map f xs)                                                                                                                         
+    where y = do a <- m                                                                                                                                       
+                 return $ f a                                                                                                                                 
+map f Empty = Empty                                                                                                                                           
+
+unpack :: m (Amb m a) -> Amb m a                                                                                                                              
+unpack m = undefined                                                                                                                                          
+
+
+concat :: (Monad m) => Amb m (Amb m a) -> Amb m a                                                                                                             
+concat (Cons m xs)  = (unpack m) `mplus` (concat xs)                                                                                                          
+concat  Empty = Empty                                                                                                                                         
+
+instance Monad m => Monad (Amb m) where                                                                                                                       
+    return x = Cons (return x) Empty                                                                                                                          
+    xs >>= f = let yss = map f xs                                                                                                                             
+               in concat yss                                                                                                                                  
+
+instance Monad m => MonadPlus (Amb m) where                                                                                                                   
+    mzero = Empty                                                                                                                                             
+    (Cons m xs) `mplus` ys = Cons m (xs `mplus` ys)                                                                                                           
+    Empty `mplus` ys = ys                                                                                                                                     
+
+instance MonadTrans Amb where                                                                                                                                 
+    lift m = Cons m Empty        
+
+State Int
+instance Show a => Show (Amb (State Int) a) where                                                                                                             
+    show m = (show .  toList) m                                                                                                                               
+
+
+toList :: Amb (State Int) a -> [a]                                                                                                                            
+toList Empty = []                                                                                                                                             
+toList (n `Cons` xs) = (runState n 0 : toList xs)                                                                                                             
+
+
+x = (list $ incr) >> (incr <:> incr <:> Empty)                                                                                                                
+y = (list $ incr) >> (incr <:> (incr >> incr) <:> Empty)                                                                                                      
+
+main = do                                                                                                                                                     
+  putStr $ show x -- | should be [2, 2]                                                                                                                       
+  putStr $ show y -- | should be [2, 3]   
+
+import Control.Monad                                                                                                                                          
+import Control.Monad.Logic                                                                                                                                    
+import Control.Monad.State                                                                                                                                    
+
+type LogicState = LogicT (State Int)                                                                                                                          
+
+
+incr :: State Int Int                                                                                                                                         
+incr = do i <- get                                                                                                                                            
+          put (i + 1)                                                                                                                                         
+          i' <- get                                                                                                                                           
+          return i'                                                                                                                                           
+
+incr' = lift incr                                                                                                                                             
+y =  incr' >> (incr' `mplus` incr')                                                                                                                           
+
+main = do                                                                                                                                                     
+  putStrLn $ show (fst $ runState (observeAllT y) 0)   -- | returns [2,3], not [2,2]                                                                                                       
+

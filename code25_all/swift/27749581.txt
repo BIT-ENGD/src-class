@@ -1,0 +1,64 @@
+openParentApplication
+handleWatchKitExtensionRequest
+MKDirectionsRequest
+reply
+openParentApplication
+WatchHelper
+var callback: (([NSObject : AnyObject]!) -> Void)?
+
+func handleWatchKitExtensionRequest(userInfo: [NSObject : AnyObject]!, reply: (([NSObject : AnyObject]!) -> Void)!) {
+    // Create results and callback object for this request
+    results = [NSObject: AnyObject]()
+    callback = reply
+    // Process request
+    if let op = userInfo["op"] as String? {
+        switch op {
+        case AppHelper.getStationDistanceOp:
+            if let uic = userInfo["uic"] as Int? {
+                if let transitType = userInfo["transit_type"] as Int? {
+                    let transportType: MKDirectionsTransportType = ((transitType == WTTripTransitType.Car.rawValue) ? .Automobile : .Walking)
+                    if let loc = DatabaseHelper.getStationLocationFromUIC(uic) {
+                        // The following API call is asynchronous, so results and reply contexts have to be saved to allow the callback to get called later
+                        LocationHelper.sharedInstance.delegate = self
+                        LocationHelper.sharedInstance.routeFromCurrentLocationToLocation(loc, withTransportType: transportType)
+                    }
+                }
+            }
+        case ... // Other switch cases here
+        default:
+            NSLog("Invalid operation specified: \(op)")
+        }
+    } else {
+        NSLog("No operation specified")
+    }
+}
+
+func didReceiveRouteToStation(distance: CLLocationDistance, expectedTime: NSTimeInterval) {
+    // Route information has been been received, archive it and notify caller
+    results!["results"] = ["distance": distance, "expectedTime": expectedTime]
+    // Invoke the callback function with the received results
+    callback!(results)
+}
+
+LocationHelper
+func routeFromCurrentLocationToLocation(destination: CLLocation, withTransportType transportType: MKDirectionsTransportType) {
+    // Calculate directions using MapKit
+    let currentLocation = MKMapItem.mapItemForCurrentLocation()
+    var request = MKDirectionsRequest()
+    request.setSource(currentLocation)
+    request.setDestination(MKMapItem(placemark: MKPlacemark(coordinate: destination.coordinate, addressDictionary: nil)))
+    request.requestsAlternateRoutes = false
+    request.transportType = transportType
+    let directions = MKDirections(request: request)
+    directions.calculateDirectionsWithCompletionHandler({ (response, error) -> Void in
+        // This is the MapKit directions calculation completion handler
+        // Problem is: execution never reaches this completion block when called from the Apple Watch app
+        if response != nil {
+            if response.routes.count > 0 {
+                self.delegate?.didReceiveRouteToStation?(response.routes[0].distance, expectedTime: response.routes[0].expectedTravelTime)
+            }
+        }
+    })
+}
+
+MKDirectionsRequest

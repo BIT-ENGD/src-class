@@ -1,0 +1,107 @@
+-- file : config.lua
+local module = {}
+
+module.SSID = {}  
+module.SSID["xxxxx xxxxxxx"] = "xxxxxxxxxxxxxxxxx"
+
+module.HOST = "mqtt.xxxxxxxxxxx.com"  
+module.PORT = 1883  
+module.ID = node.chipid()
+
+module.ENDPOINT = "nodemcu/"  
+return module  
+
+-- file: setup.lua
+local module = {}
+
+local function wifi_wait_ip()  
+  if wifi.sta.getip()== nil then
+    print("IP unavailable, Waiting...")
+  else
+    tmr.stop(1)
+    print("\n====================================")
+    print("ESP8266 mode is: " .. wifi.getmode())
+    print("MAC address is: " .. wifi.ap.getmac())
+    print("IP is "..wifi.sta.getip())
+    print("====================================")   
+    app.start()
+  end
+end
+
+local function wifi_start(list_aps)  
+    if list_aps then
+        for key,value in pairs(list_aps) do
+            if config.SSID and config.SSID[key] then
+                wifi.setmode(wifi.STATION);
+                wifi.sta.config(key,config.SSID[key])
+                wifi.sta.connect()
+                print("Connecting to " .. key .. " ...")
+                --config.SSID = nil  -- can save memory
+                tmr.alarm(1, 2500, 1, wifi_wait_ip)
+            end
+        end
+    else
+        print("Error getting AP list")
+    end
+end
+
+function module.start()  
+  print("Configuring Wifi ...")
+  wifi.setmode(wifi.STATION);
+  wifi.sta.getap(wifi_start)
+end
+
+return module  
+
+
+-- file : application.lua
+local module = {}  
+m = nil
+
+-- Sends a simple ping to the broker
+local function send_ping()  
+    m:publish(config.ENDPOINT .. "ping","id=" .. config.ID,0,0)
+end
+
+-- Sends my id to the broker for registration
+local function register_myself()  
+    m:subscribe(config.ENDPOINT .. config.ID,0,function(conn)
+        print("Successfully subscribed to data endpoint")
+    end)
+end
+
+local function mqtt_start()  
+    m = mqtt.Client(config.ID, 120)
+    -- register message callback beforehand
+    m:on("message", function(conn, topic, data) 
+      if data ~= nil then
+        print(topic .. ": " .. data)
+        -- do something, we have received a message
+      end
+    end)
+    -- Connect to broker
+    m:connect(config.HOST, config.PORT, 0, 1, function(con) 
+        register_myself()
+        -- And then pings each 1000 milliseconds
+        tmr.stop(6)
+        tmr.alarm(6, 1000, 1, send_ping)
+    end) 
+
+end
+
+function module.start()  
+  mqtt_start()
+end
+
+return module  
+
+
+
+-- file : test.lua
+app = require("application")  
+config = require("config")  
+setup = require("setup")
+
+setup.start()
+
+dofile("test.lua");

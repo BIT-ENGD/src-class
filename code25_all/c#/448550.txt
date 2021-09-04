@@ -1,0 +1,30 @@
+    internal static Mutex _lock = null;
+    /// <summary>Executes the specified <see cref="Func{FileStream, Object}" /> delegate on the filesystem copy of the <see cref="ServerState" />.
+    /// The work done on the file is wrapped in a lock statement to ensure there are no locking collisions caused by attempting to save and load
+    /// the file simultaneously from separate requests.
+    /// </summary>
+    /// <param name="action">The logic to be executed on the <see cref="ServerState" /> file.</param>
+    /// <returns>An object containing any result data returned by <param name="func" />.</returns>
+    private static Boolean InvokeOnFile(Func<FileStream, Object> func, out Object result)
+    {
+        var l = new Logger();
+        if (ServerState._lock.WaitOne(1500, false))
+        {
+            l.LogInformation("Got lock to read/write file-based server state.", (Int32)VipEvent.GotStateLock);
+            var fileStream = File.Open(ServerState.PATH, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);                
+            result = func.Invoke(fileStream);                
+            fileStream.Close();
+            fileStream.Dispose();
+            fileStream = null;
+            ServerState._lock.ReleaseMutex();
+            l.LogInformation("Released state file lock.", (Int32)VipEvent.ReleasedStateLock);
+            return true;
+        }
+        else
+        {
+            l.LogWarning("Could not get a lock to access the file-based server state.", (Int32)VipEvent.CouldNotGetStateLock);
+            result = null;
+            return false;
+        }
+    }
+

@@ -1,0 +1,61 @@
+    <netTcpBinding>
+ <binding name="ReliableDuplexBinding" closeTimeout="00:00:10"
+     openTimeout="00:00:10" receiveTimeout="00:00:30" sendTimeout="00:00:15"
+     maxBufferPoolSize="1048576" maxBufferSize="262144" maxReceivedMessageSize="262144">
+   <readerQuotas maxDepth="33" maxStringContentLength="100000" maxArrayLength="131072"
+      maxBytesPerRead="262144" maxNameTableCharCount="54000" />
+   <reliableSession inactivityTimeout="05:00:00" enabled="true" />
+   <security mode="None">
+    <transport>
+     <extendedProtectionPolicy policyEnforcement="Never" />
+    </transport>
+   </security>
+ </binding>
+</netTcpBinding>
+  <behaviors>
+   <serviceBehaviors>
+    <behavior name="DefaultServiceBehavior">
+     <serviceMetadata httpGetEnabled="false" />
+     <serviceDebug includeExceptionDetailInFaults="true" />
+    </behavior>
+   </serviceBehaviors>
+  </behaviors>
+<services>
+   <service behaviorConfiguration="DefaultServiceBehavior" name="Cad.Server.RccInboxService">
+    <endpoint address="RccInterface" binding="netTcpBinding" bindingConfiguration="ReliableDuplexBinding"
+     name="Cad.Server.RccInboxService" contract="Cad.Net.Wcf.Contracts.IRccUserInterface" />
+    <endpoint address="mex" binding="mexTcpBinding" contract="IMetadataExchange" name="Cad.Server.mex" />
+    <host>
+     <baseAddresses>
+      <add baseAddress="net.tcp://localhost:55555" />
+     </baseAddresses>
+     <timeouts closeTimeout="00:01:00" />
+    </host>
+   </service>
+  </services>
+
+Public Sub StartServiceHost()
+   'Publish the Wcf Service endpoint.
+   Try
+    shRccUserInterface = New ServiceHost(Me._RccInboxService)
+    AddHandler shRccUserInterface.Faulted, AddressOf OnChannelFaulted
+    AddHandler shRccUserInterface.Closed, AddressOf OnChannelClosed
+    AddHandler shRccUserInterface.Opened, AddressOf OnChannelOpened
+    AddHandler shRccUserInterface.Opening, AddressOf OnChannelOpening
+    AddHandler shRccUserInterface.UnknownMessageReceived, AddressOf OnUnknownMessageReceived
+
+    Me.bndRccUserInterface = New NetTcpBinding("ReliableDuplexBinding")
+    Dim ep As Description.ServiceEndpoint
+    With shRccUserInterface
+     ep = .AddServiceEndpoint(GetType(Cad.Net.Wcf.Contracts.IRccUserInterface), bndRccUserInterface, String.Empty)
+     RaiseEvent ShowUserMessageEvent(Me, "Opening Endpoint: " & ep.Address.ToString, UtaCommon.Interfaces.StatusListEntryType.Information)
+     .Open()
+    End With
+    Me.blnServiceHostOpen = True
+    RaiseEvent ServiceHostOpenEvent(Me)
+   Catch exWcf As Exception
+    log.Write_Error("RccGuiComm", "StartServiceHost()", exWcf)
+    RaiseEvent SendUtaEmailEvent("Wcf Problem", exWcf.ToString, System.Net.Mail.MailPriority.High)
+   End Try
+  End Sub
+

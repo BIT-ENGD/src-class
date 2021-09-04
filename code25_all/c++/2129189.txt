@@ -1,0 +1,100 @@
+-std=gnuc++0x
+#if (__cplusplus <= 199711L) && !defined(__GXX_EXPERIMENTAL_CXX0X__)
+   #error This requires c++0x
+#endif
+
+#include <unordered_set>
+#include <vector>
+#include <utility>
+#include <algorithm>
+
+class ObserverInterface {
+ public:
+   virtual ~ObserverInterface() {}
+
+   virtual void observedChanged() = 0;
+   virtual void observedGoingAway() = 0;
+};
+
+class Observed {
+ private:
+   typedef ::std::unordered_set<ObserverInterface *> obcontainer_t;
+
+ public:
+   Observed() {}
+   Observed(const Observed &) = delete;
+   const Observed &operator =(const Observed &b) = delete;
+   // g++ does not currently support defaulting the move constructor.
+   Observed(Observed &&b) : observers_(::std::move(b.observers_)) { }
+   // g++ does not currently support defaulting move assignment.
+   const Observed &operator =(Observed &&b) {
+      observers_ = ::std::move(b.observers_);
+      return *this;
+   }
+   virtual ~Observed() {
+      for (auto i(observers_.begin()); i != observers_.end(); ++i) {
+         (*i)->observedGoingAway();
+      }
+   }
+
+   void unObserve(ObserverInterface *v) {
+      auto loc(observers_.find(v));
+      if (loc != observers_.end()) {
+         observers_.erase(loc);
+      }
+   }
+
+   void changed() {
+      if (!observers_.empty()) {
+         // Copy observers_ to bector so unObserve works
+         ::std::vector<ObserverInterface *> tmp;
+         tmp.reserve(observers_.size());
+         tmp.assign(observers_.begin(), observers_.end());
+
+         for (auto i(tmp.begin()); i != tmp.end(); ++i) {
+            (*i)->observedChanged();
+         }
+      }
+   }
+
+ private:
+   obcontainer_t observers_;
+};
+
+class Observer : public ObserverInterface {
+ public:
+   Observer() {}
+   Observer(const Observer &) = delete;
+   const Observer &operator =(const Observer &b) = delete;
+   // g++ does not currently support defaulting the move constructor.
+   Observer(Observer &&b) : observed_(b.observed_) {
+      b.observed_ = 0;
+      return *this;
+   }
+   // g++ does not currently support defaulting move assignment.
+   const Observer &operator =(Observer &&b) {
+      observed_ = b.observed_;
+      b.observed_ = 0;
+      return *this;
+   }
+   virtual ~Observer() {
+      if (observed_) {
+         observed_->unObserve(this);
+         observed_ = 0;
+      }
+   }
+
+   virtual void observedChanged() {
+      doStuffWith(observed_);
+   }
+   virtual void observedGoingAway() {
+      observed_ = 0;
+   }
+
+ private:
+   Observed *observed_;
+
+   // Defined elsewhere
+   void doStuffWith(Observed *);
+};
+

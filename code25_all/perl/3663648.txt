@@ -1,0 +1,185 @@
+dups.pl . --killdups
+foreach $l (@l) {
+        @fields=split(/:--:/,$l,3);
+            if($last[0] eq $fields[0] && -f "$dir/$fields[2]" && -f "$dir/$last[2]") {
+            $dups++;
+            print "$dir/$fields[2] is a dup of $dir/$last[2]\n";
+            if($verbose==1) { print "    --- $fields[0]\n" }
+            if($killdups==1) {
+            print "Deleting $dir/$fields[2]\n";
+                unlink "$dir/$fields[2]";
+            }
+
+#!/usr/bin/perl
+
+# Usage: dups.pl [--killdups][--verbose] <path to directory>
+
+foreach $a (@ARGV) {
+    if($a=~/^--/) {
+        if ($a =~ /^--killdups/) { $killdups=1; }
+        if($a =~ /^--verbose/) { $verbose=1; }
+    } else { push (@dirs, $a) }
+}
+
+
+for $dir (@dirs) {
+    if(!opendir(D, $dir)) {
+    warn "$dir: $!";
+    next;
+    }
+
+    $dir=~s/\/$//;
+
+    @l=( );
+
+    while ($f=readdir(D)) {
+        $key="";
+        if($f =~ /\.eml$/) {
+            $key=readfile("$dir/$f");
+        $mtime=(stat($f))[9];
+        if($key ne "") {
+                push(@l, $_=sprintf "%s:--:%d:--:%s", $key, $mtime, $f);
+        } else {
+        print "$dir/$f: Not a VCARD?\n";
+        }
+        }
+    }
+    closedir(D);
+
+    @l=sort(@l);
+    $dups=0;
+    $last[0]=$last[1]=$last[2]="";
+    foreach $l (@l) {
+    @fields=split(/:--:/,$l,3);
+        if($last[0] eq $fields[0] && -f "$dir/$fields[2]" && -f "$dir/$last[2]") {
+        $dups++;
+        print "$dir/$fields[2] is a dup of $dir/$last[2]\n";
+        if($verbose==1) { print "    --- $fields[0]\n" }
+        if($killdups==1) {
+        print "Deleting $dir/$fields[2]\n";
+            unlink "$dir/$fields[2]";
+        }
+    } elsif ($last[0] eq $fields[0]) {
+        print "Strangeness -- $dir/$fields[2] dup of $dir/$last[2]??? -- [$fields[0]]\n";
+        } else {
+        if($verbose==1) {
+            print "$dir/$fields[2] is UNIQUE\n";
+            print "$fields[0]\n";
+        }
+            @last=@fields;
+        }
+    }
+    if($killdups==1) {
+    print "$dups duplicates removed.\n";
+    } else {
+    print "$dups duplicates detected.\n";
+    }
+}
+
+sub readfile {
+    local($f)=@_;
+    local($k, $l, @l, $begin=0, $wrap, $xfa, $fn, $em, $start, $end, $sum, $org, $tel);
+
+    $wrap=$org=$xfa=$fn=$em=$start=$end=$sum=$tel="";
+
+    open(F, $f) || warn "$f: $!\n";
+    @l=<F>;
+    close F;
+    foreach $l (@l) {
+    if($l=~/^BEGIN:VTIMEZONE/) { $TZ=1 }
+    elsif($begin==0 && $l=~/^Subject:\s*(.*)\s*$/) {
+        $sum=$1; }
+    elsif($begin==0 && $l=~/^BEGIN:VCARD/) { $begin=1; }
+    elsif($begin==1 && $l=~/^END:VCARD/) { $begin=0; }
+    elsif($l=~/^END:VTIMEZONE/) { $TZ=0 } # Ability to skip the timezone section
+    elsif($TZ==0 && $begin==0 && $l=~/^BEGIN:VEVENT/) { $begin=1; }
+    elsif($TZ==0 && $begin==1 && $l=~/^BEGIN:VEVENT/) { print STDERR "$f: WTF?\n" }
+    if($begin==1) {
+        if($start eq "" && $l=~/^DTSTART.*[\;\:]([\dT]+)/) {
+            $start=$1;
+            $start=~s/^\s+|\s+$//g;
+            $start=~s/://g;
+        } elsif($start eq "" && $l=~/^DTSTART.*[^\d](\d+T\d+)/) {
+            $start=$1;
+            $start=~s/^\s+|\s+$//g;
+            $start=~s/://g;
+        } elsif($end eq "" && $l=~/^DTEND.*[^\d](\d+T\d+)/) {
+            $end=$1;
+            $end=~s/^\s+|\s+$//g;
+            $end=~s/://g;
+        goto DTEND;
+        } elsif($end eq "" && $l=~/^DTEND.*[\;\:]([\dT]+)/) {
+            $end=$1;
+            $end=~s/^\s+|\s+$//g;
+            $end=~s/://g;
+        goto DTEND;
+        } elsif($org eq "" && $l=~/^ORG:(.*)$/) {
+            $org=$1;
+            $org=~s/^\s+|\s+$//g;
+            $org=~s/://g;
+        $wrap="org";
+        } elsif($sum eq "" && $l=~/^SUMMARY:(.*)$/) {
+            $sum=$1;
+            $sum=~s/^\s+|\s+$//g;
+            $sum=~s/://g;
+        } elsif(($wrap eq "tel" && $l=~/^([A-Z]*\;.*)/) ||
+        ($tel eq "" && $l=~/^(TEL\;.*)$/)) {
+        $tel.=$1;
+            $tel=~s/^\s+|\s+$//g;
+            $tel=~s/^[\r\n]//g;
+            $tel=~s/://g;
+        $wrap="tel";
+        } elsif(($wrap eq "org" && $l=~/^([A-Z]*\;.*)/) ||
+        ($org eq "" && $l=~/^ORG:\s*(.*)\s*$/)) {
+        $org.=$1;
+            $org=~s/^\s+|\s+$//g;
+            $org=~s/^[\r\n]//g;
+            $org=~s/://g;
+        $wrap="org";
+        } elsif(($wrap eq "fn" && $l=~/^([A-Z]*\;.*)/) ||
+        ($fn eq "" && $l=~/^FN:\s*(.*)\s*$/)) {
+        $fn.=$1;
+            $fn=~s/^\s+|\s+$//g;
+            $fn=~s/^[\r\n]//g;
+            $fn=~s/://g;
+        $wrap="fn";
+        } elsif(($wrap eq "em" && $l=~/^([A-Z]*\;.*)/) ||
+        ($em eq "" && $l=~/^EMAIL[:;]\s*(.*)\s*$/)) {
+        $em.=$1;
+            $em=~s/^\s+|\s+$//g;
+            $em=~s/^[\r\n]//g;
+            $em=~s/://g;
+        $wrap="em";
+        } elsif(($wrap eq "xfa" && $l=~/^([A-Z]*\;.*)/) || 
+        ($xfa eq "" && $l=~/^X-FILE-AS:\s*(.*)\s*$/)) {
+        $xfa.=$1;
+            $xfa=~s/^\s+|\s+$//g;
+            $xfa=~s/^[\r\n]//g;
+            $xfa=~s/://g;
+        $wrap="xfa";
+        } else {
+        $wrap="";
+        }
+        }
+    }
+DTEND:
+    if(($start eq "" || $end eq "") && ($fn eq "" && $em eq "" && $sum eq "" && $org eq "" && $tel eq "")) {
+    if($verbose eq 1) {
+        print "$f: \$start == [$start]\n";
+        print "$f: \$end == [$end]\n";
+        print "$f: \$sum == [$sum]\n";
+        print "$f: \$fn == [$fn]\n";
+        print "$f: \$em == [$em]\n";
+        print "$f: \$org == [$org]\n";
+        print "$f: \$tel == [$tel]\n";
+    }
+    return;
+    }
+    if($start ne "" || $end ne "") {
+        $k=$start."-".$end."-".$sum;
+    } else {
+    $k=$xfa."-".$fn."-".$em."-".$org."-".$tel;
+    }
+    return $k;
+}
+

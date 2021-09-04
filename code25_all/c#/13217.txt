@@ -1,0 +1,59 @@
+class RequestState
+{
+    public HttpWebRequest request;  // holds the request
+    public FileDialogFileInfo file; // store our file stream data
+
+    public RequestState( HttpWebRequest request, FileDialogFileInfo file )
+    {
+        this.request = request;
+        this.file = file;
+    }
+}
+
+private void UploadFile( FileDialogFileInfo file )
+{
+    UriBuilder ub = new UriBuilder( app.receiverURL );
+    ub.Query = string.Format( "filename={0}", file.Name );
+
+    // Open the selected file to read.
+    HttpWebRequest request = (HttpWebRequest)WebRequest.Create( ub.Uri );
+    request.Method = "POST";
+
+    RequestState state = new RequestState( request, file );
+    request.BeginGetRequestStream( new AsyncCallback( OnUploadReadCallback ), state );
+}
+
+private void OnUploadReadCallback( IAsyncResult asynchronousResult )
+{
+    RequestState state = (RequestState)asynchronousResult.AsyncState;
+    HttpWebRequest request = (HttpWebRequest)state.request;
+
+    Stream postStream = request.EndGetRequestStream( asynchronousResult );
+    PushData( state.file, postStream );
+    postStream.Close();
+
+    state.request.BeginGetResponse( new AsyncCallback( OnUploadResponseCallback ), state.request );
+}
+
+private void PushData( FileDialogFileInfo file, Stream output )
+{
+    byte[] buffer = new byte[ 4096 ];
+    int bytesRead = 0;
+
+    Stream input = file.OpenRead();
+    while( ( bytesRead = input.Read( buffer, 0, buffer.Length ) ) != 0 )
+    {
+        output.Write( buffer, 0, bytesRead );
+        bytesReadTotal += bytesRead;
+
+        App app = App.Current as App;
+        int totalPercentage = Convert.ToInt32( ( bytesReadTotal / app.totalBytesToUpload ) * 100 );
+
+        // enabling the following locks up my UI and browser
+        Dispatcher.BeginInvoke( () =>
+        {
+            this.ProgressBarWithPercentage.Percentage = totalPercentage;
+        } );
+    }
+}
+

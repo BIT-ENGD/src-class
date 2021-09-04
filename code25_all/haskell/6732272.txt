@@ -1,0 +1,54 @@
+import Text.Parsec
+import Text.Parsec.Combinator
+import Text.Parsec.Char
+import Data.Text (strip)
+
+newtype Statement = Statement [Atom]
+data Atom = Branch String [Atom] | Leaf String deriving Show
+
+trim str = reverse $ trim' (reverse $ trim' str)
+  where
+    trim' (' ':xs) = trim' xs
+    trim' str = str
+
+printStatement atoms = mapM_ printAtom atoms
+printAtom atom = loop 0 atom 
+  where
+    loop depth (Leaf str) = putStrLn $ (replicate depth ' ') ++ str
+    loop depth (Branch str atoms) = do 
+      putStrLn $ (replicate depth ' ') ++ str
+      mapM_ (loop (depth + 2)) atoms
+
+keywords :: [String]
+keywords = [
+  "select",
+  "update",
+  "delete",
+  "from",
+  "where"]
+
+keywordparser :: Parsec String u String
+keywordparser = try ((choice $ map string keywords) <?> "keywordparser")
+
+stuffparser :: Parsec String u String
+stuffparser = manyTill anyChar (eof <|> (lookAhead keywordparser >> return ()))
+
+statementparser = do
+  key <- keywordparser
+  stuff <- stuffparser
+  return $ Branch key [Leaf (trim stuff)]
+  <?> "statementparser"
+
+tp = parse (many statementparser) ""
+
+stuffparser :: Parsec String u String
+stuffparser = fmap concat $ manyTill somechars (eof <|> (lookAhead keywordparser >> return ()))
+  where
+    somechars = parens <|> fmap (\c -> [c]) anyChar
+    parens= between (char '(') (char ')') somechars
+
+> tp "select asdf(qwerty) from foo where 1"
+Left (line 1, column 14):
+unexpected "w"
+expecting ")"
+

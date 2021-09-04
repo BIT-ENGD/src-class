@@ -1,0 +1,73 @@
+object Main extends App {
+
+  implicit val system = ActorSystem()
+  import system.dispatcher
+  val log = Logging(system, getClass)
+  val ioBridge = IOExtension(system).ioBridge()
+  val httpClient = system.actorOf(Props(new HttpClient(ioBridge)))
+
+  val conduit = system.actorOf(
+    props = Props(new HttpConduit(httpClient, "localhost", 3000)),
+    name = "http-conduit"
+  )
+
+  val pipeline = HttpConduit.sendReceive(conduit)
+  val response = pipeline(
+    HttpRequest(
+      method = GET,
+      uri = "/output.cgi.xml"
+    )
+  )
+
+  response onComplete {
+    case Success(a) =>
+      log.info("Success: " + a)
+      system.shutdown()
+
+    case Failure(error) =>
+      log.error(error, "Failure")
+      system.shutdown()
+  }
+
+}
+
+response-chunk-aggregation-limit = 0
+object Main extends App {
+
+  implicit val system = ActorSystem()
+  import system.dispatcher
+  val log = Logging(system, getClass)
+  val ioBridge = IOExtension(system).ioBridge()
+  val httpClient = system.actorOf(Props(new HttpClient(ioBridge)))
+
+  actor(new Act {
+    httpClient ! Connect(new InetSocketAddress("localhost", 3000))
+
+    become {
+      case Connected(_) =>
+        log.info("connected")
+        sender ! HttpRequest(GET, "/output.cgi.xml")
+      case Closed(handle, reason) =>
+        log.info("closed: " + reason)
+        system.shutdown()
+      case ChunkedResponseStart(res) =>
+        log.info("start: " + res)
+      case MessageChunk(body, ext) =>
+        log.info("chunk: " + body)
+      case ChunkedMessageEnd(ext, trailer) =>
+        log.info("end: " + ext)
+      case m =>
+        log.info("received unknown message " + m)
+        system.shutdown()
+    }
+  })
+
+}
+
+closed: ProtocolError(Aggregated response entity greater than configured limit of 1048576 bytes)
+spray.can {
+  client {
+    response-chunk-aggregation-limit = 0
+  }
+}
+

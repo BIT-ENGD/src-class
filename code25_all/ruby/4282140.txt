@@ -1,0 +1,58 @@
+module RoleBasedControllerAuthorization
+
+  def self.included(base)
+    base.extend(AuthorizationClassMethods)
+  end
+
+  def authorization_filter
+    user = User.find(:first, 
+      :conditions => ["id = ?", session[:user_id]])
+
+    action_name = request.parameters[:action].to_sym
+    action_roles = self.class.access_list[action_name]
+
+    if action_roles.nil?
+      logger.error "You must provide a roles declaration\
+        or add skip_before_filter :authorization_filter to\
+        the beginning of #{self}."
+      redirect_to :controller => 'root', :action => 'index'
+      return false
+    elsif action_roles.include? user.role.name.to_sym
+      return true
+    else
+      logger.info "#{user.user_name} (role: #{user.role.name}) attempted to access\
+        #{self.class}##{action_name} without the proper permissions."
+      flash[:notice] = "Not authorized!"
+      redirect_to :controller => 'root', :action => 'index'
+      return false
+    end
+  end      
+end    
+
+module AuthorizationClassMethods
+  def self.extended(base)
+    class << base
+      @access_list = {}
+      attr_reader :access_list 
+    end
+  end
+
+  def roles(*roles)
+    @roles = roles 
+  end
+
+  def method_added(method)
+    logger.debug "#{caller[0].inspect}"
+    logger.debug "#{method.inspect}"
+    @access_list[method] = @roles  
+  end
+end
+
+ActionController::RoutingError (You have a nil object when you didn't expect it!
+You might have expected an instance of ActiveRecord::Base.
+The error occurred while evaluating nil.[]=):
+  app/security/role_based_controller_authorization.rb:66:in `method_added'
+  app/controllers/application_controller.rb:5:in `<class:ApplicationController>'
+  app/controllers/application_controller.rb:1:in `<top (required)>'
+  app/controllers/home_controller.rb:1:in `<top (required)>'
+

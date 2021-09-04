@@ -1,0 +1,63 @@
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-} 
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+module Mitsuba.Generic where
+import GHC.Generics
+import Data.Proxy
+
+class GFold f c b where
+    genericFold :: p c -> (forall e. c e => e -> b) -> f a -> b 
+
+instance GFold a c d => GFold (M1 x y a) c d where
+   genericFold p f (M1 x) = genericFold p f x
+
+instance ( GFold a c d
+         , GFold b c d
+         ) => GFold (a :+: b) c d where
+   genericFold p f = \case
+      L1 x -> genericFold (Proxy :: Proxy c) f x
+      R1 x -> genericFold (Proxy :: Proxy c) f x
+
+instance c a => GFold (K1 i a) c d where
+   genericFold p f (K1 x) = f x
+
+gfold :: (Generic a, GFold (Rep a) c d) 
+      => p c -> (forall e. c e => e -> d) -> a -> d
+gfold p h x = genericFold p h $ from x
+
+data Foo = I Int | D Double | B Bool
+   deriving(Generic)
+
+test :: String
+test = gfold (Proxy :: Proxy Show) show $ I 1
+
+gfold :: forall a c d. (Generic a, GFold (Rep a) c d) 
+      => (forall e. c e => e -> d) -> a -> d
+gfold h x = genericFold (Proxy :: Proxy c) h $ from x
+
+src/Generic.hs:39:8:
+Could not deduce (c0 Bool, c0 Double, c0 Int)
+  arising from a use of `gfold'
+In the expression: gfold show
+In the expression: gfold show $ I 1
+In an equation for `test': test = gfold show $ I 1
+
+src/Generic.hs:39:14:
+Could not deduce (Show e) arising from a use of `show'
+from the context (c0 e)
+  bound by a type expected by the context: (c0 e) => e -> String
+  at src/Mitsuba/Generic.hs:39:8-17
+Possible fix:
+  add (Show e) to the context of
+    a type expected by the context: (c0 e) => e -> String
+In the first argument of `gfold', namely `show'
+In the expression: gfold show
+In the expression: gfold show $ I 1
+

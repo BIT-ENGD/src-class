@@ -1,0 +1,568 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.IO;
+using System.Text;
+using System.Windows.Forms;
+using System.Media;
+using System.Resources;
+
+namespace EducationalSuite.Core.Plugins
+{
+    public delegate void RectangleItemClickedDelegate(Rectangle rect, int index);
+
+    public partial class GeoSafariItem : Control
+    {
+        protected List<Rectangle> lastFlashingItems = new List<Rectangle>();
+        protected int lastHeight = 0;
+
+        private Image imageFile = null;
+        protected List<Rectangle> hotspots = new List<Rectangle>();
+        protected Dictionary<int, string> textItems = new Dictionary<int, string>();
+        protected Dictionary<int, FileInfo> audioItems = new Dictionary<int, FileInfo>();
+        protected Rectangle lastRectangle;
+        protected int selectedIndex = 0;
+        protected int countItemsLeft = 6;
+        protected int countItemsRight = 6;
+        protected int imageOffsetTop = 0;
+        protected int imageOffsetBottom = 0;
+        protected bool paintHotSpots = false, colorSwitch = false, paintItemLabels = false;
+        protected Timer timer = new Timer();
+
+        public event RectangleItemClickedDelegate HotspotClick;
+        public event RectangleItemClickedDelegate QuestionItemClick;
+        public event RectangleItemClickedDelegate QuestionItemRightClick;
+
+        protected void OnHotspotClick(Rectangle rect, int index)
+        {
+            if (HotspotClick != null)
+            {
+                HotspotClick(this.RectangleToScreen(rect), index);
+            }
+        }
+
+        protected void OnQuestionItemRightClick(Rectangle rect, int index)
+        {
+            if (QuestionItemRightClick != null)
+            {
+                QuestionItemRightClick(this.RectangleToScreen(rect), index);
+            }
+        }
+
+        protected void OnQuestionItemClick(Rectangle rect, int index)
+        {
+            if (QuestionItemClick != null)
+            {
+                QuestionItemClick(this.RectangleToScreen(rect), index);
+            }
+        }
+
+        public GeoSafariItem()
+        {
+            this.imageFile = EducationalSuite.Core.Properties.Resources.singlepixel;
+
+            timer.Interval = 100;
+            timer.Tick += new EventHandler(timer_Tick);
+            timer.Enabled = true;
+
+            this.MouseUp += new MouseEventHandler(GeoSafariItem_MouseUp);
+
+            // Activates double buffering
+            SetStyle(ControlStyles.UserPaint, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint, true);
+            SetStyle(ControlStyles.DoubleBuffer, true);
+            SetStyle(ControlStyles.ResizeRedraw, true);
+
+            this.DoubleBuffered = true;
+
+            //InitializeComponent();
+        }
+
+        public void SetItemText(int index, string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                if (this.textItems.ContainsKey(index)) textItems.Remove(index);
+            }
+            else
+            {
+                this.textItems[index] = text;
+            }
+
+            if (PaintItemLabels)
+            {
+                this.Invalidate();
+            }
+        }
+
+
+        public string GetItemText(int index)
+        {
+            if (this.textItems.ContainsKey(index))
+            {
+                return this.textItems[index];
+            }
+            else
+            {
+                return string.Empty;
+            }
+        }
+
+        public void SetItemAudio(int index, FileInfo file)
+        {
+            if ((file == null) && !file.Exists)
+            {
+                if (this.audioItems.ContainsKey(index)) audioItems.Remove(index);
+            }
+            else
+            {
+                this.audioItems[index] = file;
+            }
+        }
+
+        public FileInfo GetItemAudio(int index)
+        {
+            if (this.audioItems.ContainsKey(index))
+            {
+                return this.audioItems[index];
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        #region Recording Regions
+        bool isRecording = false;
+        int recordingIndex = 0;
+        Point recordTopLeft = Point.Empty;
+        Point recordBottomRight = Point.Empty;
+        List<Rectangle> recordedRectangles = new List<Rectangle>();
+
+        public void StartRecording()
+        {
+            isRecording = true;
+            recordingIndex = 0;
+            selectedIndex = 0;
+            recordedRectangles.Clear();
+            this.MouseUp += new MouseEventHandler(GeoSafariItemRecord_MouseUp);
+
+            this.Invalidate();
+        }
+
+        public List<Rectangle> FinishRecording()
+        {
+            isRecording = false;
+            this.MouseUp -= new MouseEventHandler(GeoSafariItemRecord_MouseUp);
+            this.Invalidate();
+
+            this.Hotspots.Clear();
+            foreach (Rectangle r in recordedRectangles)
+            {
+                this.Hotspots.Add(r);
+            }
+
+            return recordedRectangles;
+        }
+
+        private void GeoSafariItemRecord_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (isRecording)
+            {
+                Rectangle size = SizeRect;
+                double ratio = (double)imageFile.Height / (double)size.Height;
+
+                if (recordTopLeft == Point.Empty)
+                {
+                    recordTopLeft = new Point(
+                        (int)(((double)e.Location.X - (double)size.Left) * ratio),
+                        (int)(((double)e.Location.Y - (double)size.Top) * ratio)
+                        );
+                }
+                else
+                {
+                    recordBottomRight = new Point(
+                       (int)(((double)e.Location.X - (double)size.Left) * ratio),
+                       (int)(((double)e.Location.Y - (double)size.Top) * ratio)
+                       );
+
+                    Rectangle r = new Rectangle(recordTopLeft,
+                        new Size(recordBottomRight.X - recordTopLeft.X, recordBottomRight.Y - recordTopLeft.Y));
+
+                    this.recordedRectangles.Add(r);
+                    recordingIndex++;
+                    selectedIndex++;
+
+                    recordTopLeft = Point.Empty;
+                    recordBottomRight = Point.Empty;
+                }
+            }
+            this.Invalidate();
+        }
+        #endregion
+
+        void timer_Tick(object sender, EventArgs e)
+        {
+            colorSwitch = !colorSwitch;
+
+            if (lastRectangle.Width > 0)
+            {
+                this.Invalidate(lastRectangle);
+            }
+            else
+            {
+                this.Invalidate();
+            }
+        }
+
+        private Rectangle SizeRect
+        {
+            get
+            {
+                int rw, rh,
+                cw = (this.Width - 42),
+                ch = (this.Height - 2),
+                ox = 21,
+                oy = 1;
+
+                rw = cw;
+                rh = ch;
+
+                double imageRatio = (double)imageFile.Width / (double)imageFile.Height;
+                double controlRatio = (double)cw / (double)ch;
+
+                if (controlRatio > imageRatio)
+                {
+                    rw = (int)Math.Round((double)rh * imageRatio);
+                    ox += Math.Abs(rw - cw) / 2;
+                }
+                else if (controlRatio < imageRatio)
+                {
+                    rh = (int)Math.Round((double)rw / imageRatio);
+                    oy += Math.Abs(rh - ch) / 2;
+                }
+
+                return new Rectangle(ox, oy, rw, rh);
+            }
+        }
+
+        void GeoSafariItem_MouseUp(object sender, MouseEventArgs e)
+        {
+            Rectangle size = SizeRect;
+            for (int i = 0; i < hotspots.Count; i++)
+            {
+                Rectangle hotspot = hotspots[i];
+                double ratio = (double)size.Height / (double)imageFile.Height;
+                Rectangle adjustedRectange = new Rectangle(
+                    size.Left + (int)(hotspot.X * ratio),
+                    size.Top + (int)(hotspot.Y * ratio),
+                    (int)(hotspot.Width * ratio),
+                    (int)(hotspot.Height * ratio));
+
+                if (adjustedRectange.Contains(e.Location))
+                {
+                    OnHotspotClick(hotspot, i);
+                    return;
+                }
+            }
+
+            for (int i = 0; i < lastFlashingItems.Count; i++)
+            {
+                if (lastFlashingItems[i].Contains(e.Location))
+                {
+                    if (e.Button == MouseButtons.Right)
+                        OnQuestionItemRightClick(lastFlashingItems[i], i);
+                    else
+                        OnQuestionItemClick(lastFlashingItems[i], i);
+
+                    return;
+                }
+            }
+        }
+
+        public List<Rectangle> Hotspots
+        {
+            get { return hotspots; }
+        }
+
+        public Image ImageFile
+        {
+            get { return imageFile; }
+            set
+            {
+                imageFile = value;
+                lastFlashingItems.Clear();
+                this.Invalidate();
+            }
+        }
+
+        public int SelectedIndex
+        {
+            get { return selectedIndex; }
+            set { selectedIndex = value; this.Invalidate(); }
+        }
+
+        public int CountItemsLeft
+        {
+            get { return countItemsLeft; }
+            set
+            {
+                countItemsLeft = value;
+                lastFlashingItems.Clear();
+                this.Invalidate();
+            }
+        }
+
+        public int CountItemsRight
+        {
+            get { return countItemsRight; }
+            set
+            {
+                countItemsRight = value;
+                lastFlashingItems.Clear();
+                this.Invalidate();
+            }
+        }
+
+        public int ImageOffsetTop
+        {
+            get { return imageOffsetTop; }
+            set
+            {
+                imageOffsetTop = value;
+                lastFlashingItems.Clear();
+                this.Invalidate();
+            }
+        }
+
+        public int ImageOffsetBottom
+        {
+            get { return imageOffsetBottom; }
+            set
+            {
+                imageOffsetBottom = value;
+                lastFlashingItems.Clear();
+                this.Invalidate();
+            }
+        }
+
+        public bool PaintHotSpots
+        {
+            get { return paintHotSpots; }
+            set { paintHotSpots = value; this.Invalidate(); }
+        }
+
+        public bool PaintItemLabels
+        {
+            get { return paintItemLabels; }
+            set { paintItemLabels = value; this.Invalidate(); }
+        }
+
+        protected override void OnPaint(PaintEventArgs pe)
+        {
+            Graphics g = pe.Graphics;
+
+            string itemText;
+            SizeF sizeItemText;
+            double topOffset = imageOffsetTop;
+            double bottomOffset = imageOffsetBottom;
+            double topOffsetPct = (double)topOffset / (double)imageFile.Height;
+            double bottomOffsetPct = (double)bottomOffset / (double)imageFile.Height;
+
+            Rectangle size = SizeRect;
+
+            SolidBrush brush = new SolidBrush(this.BackColor);
+            g.FillRectangle(brush, 0, 0, this.Width - 1, this.Height - 1);
+
+            g.FillRectangle(Brushes.Ivory, size.X - 25, size.Y, size.Width + 50, size.Height);
+            g.DrawRectangle(Pens.DarkKhaki, size.X - 25, size.Y - 1, size.Width + 50, size.Height + 1);
+            g.DrawImage(imageFile, size.X, size.Y, size.Width, size.Height);
+
+
+            Rectangle rect, rectItemText;
+            Brush selectedColor = (colorSwitch ? Brushes.Crimson : Brushes.Red);
+            topOffset = topOffsetPct * size.Height;
+            bottomOffset = bottomOffsetPct * size.Height;
+            int tmpHeight = (size.Height - (int)topOffset - (int)bottomOffset) / countItemsLeft;
+            if (size.Height != this.lastHeight || this.lastFlashingItems.Count == 0)
+            {
+                lastHeight = size.Height;
+                lastFlashingItems.Clear();
+
+                int actualIndex = 0;
+                for (int i = 0; i < countItemsLeft; i++)
+                {
+                    int yy = size.Y + (tmpHeight * i) + (int)topOffset;
+                    int xx = size.X - 18;
+                    rect = new Rectangle(xx, yy, 16, 8);
+                    this.lastFlashingItems.Add(rect);
+
+                    g.FillRectangle((actualIndex == selectedIndex ? selectedColor : Brushes.Khaki), rect);
+                    g.DrawRectangle(Pens.DarkKhaki, rect);
+
+                    if (actualIndex == selectedIndex)
+                    {
+                        lastRectangle = rect;
+                    }
+
+                    itemText = this.GetItemText(actualIndex);
+                    if (PaintItemLabels && !string.IsNullOrEmpty(itemText))
+                    {
+                        // Draw Text next to each notch
+                        sizeItemText = g.MeasureString(itemText, this.Font);
+
+                        int xxx = size.X + 10;
+                        rectItemText = new Rectangle(xxx, yy, Convert.ToInt32(sizeItemText.Width), Convert.ToInt32(sizeItemText.Height));
+                        PaintHotspot(g, Color.White, rectItemText, 200);
+
+                        g.DrawString(itemText, this.Font, Brushes.Black, (float)xxx, (float)yy);
+                    }
+
+                    actualIndex++;
+                }
+
+                tmpHeight = (size.Height - (int)topOffset - (int)bottomOffset) / countItemsRight;
+                for (int i = 0; i < countItemsRight; i++)
+                {
+                    int yy = size.Y + (tmpHeight * i) + (int)topOffset;
+                    int xx = size.X + size.Width + 2;
+                    rect = new Rectangle(xx, yy, 16, 8);
+                    this.lastFlashingItems.Add(rect);
+
+                    g.FillRectangle((actualIndex == selectedIndex ? selectedColor : Brushes.Khaki), rect);
+                    g.DrawRectangle(Pens.DarkKhaki, rect);
+
+                    if (actualIndex == selectedIndex)
+                    {
+                        lastRectangle = rect;
+                    }
+
+                    itemText = this.GetItemText(actualIndex);
+                    if (PaintItemLabels && !string.IsNullOrEmpty(itemText))
+                    {
+                        // Draw Text next to each notch
+                        sizeItemText = g.MeasureString(itemText, this.Font);
+
+                        int xxx = size.X + size.Width - 10 - Convert.ToInt32(sizeItemText.Width);
+                        rectItemText = new Rectangle(xxx, yy, Convert.ToInt32(sizeItemText.Width), Convert.ToInt32(sizeItemText.Height));
+                        PaintHotspot(g, Color.White, rectItemText, 200);
+
+                        g.DrawString(itemText, this.Font, Brushes.Black, (float)xxx, (float)yy);
+                    }
+                    actualIndex++;
+                }
+            }
+            else
+            {
+                lastHeight = size.Height;
+                for (int i = 0; i < lastFlashingItems.Count; i++)
+                {
+                    g.FillRectangle((i == selectedIndex ? selectedColor : Brushes.Khaki), lastFlashingItems[i]);
+                    g.DrawRectangle(Pens.DarkKhaki, lastFlashingItems[i]);
+
+                    if (i == selectedIndex)
+                    {
+                        lastRectangle = lastFlashingItems[i];
+                    }
+                }
+
+                if (PaintItemLabels)
+                {
+                    int actualIndex = 0;
+                    for (int i = 0; i < countItemsLeft; i++)
+                    {
+                        itemText = this.GetItemText(actualIndex);
+                        if (!string.IsNullOrEmpty(itemText))
+                        {
+                            int yy = size.Y + (tmpHeight * i) + (int)topOffset;
+                            // Draw Text next to each notch
+                            sizeItemText = g.MeasureString(itemText, this.Font);
+
+                            int xxx = size.X + 10;
+                            rectItemText = new Rectangle(xxx, yy, Convert.ToInt32(sizeItemText.Width), Convert.ToInt32(sizeItemText.Height));
+                            PaintHotspot(g, Color.White, rectItemText, 200);
+
+                            g.DrawString(itemText, this.Font, Brushes.Black, (float)xxx, (float)yy);
+                        }
+
+                        actualIndex++;
+                    }
+
+                    tmpHeight = (size.Height - (int)topOffset - (int)bottomOffset) / countItemsRight;
+                    for (int i = 0; i < countItemsRight; i++)
+                    {
+                        itemText = this.GetItemText(actualIndex);
+                        if (!string.IsNullOrEmpty(itemText))
+                        {
+                            int yy = size.Y + (tmpHeight * i) + (int)topOffset;
+                            // Draw Text next to each notch
+                            sizeItemText = g.MeasureString(itemText, this.Font);
+
+                            int xxx = size.X + size.Width - 10 - Convert.ToInt32(sizeItemText.Width);
+                            rectItemText = new Rectangle(xxx, yy, Convert.ToInt32(sizeItemText.Width), Convert.ToInt32(sizeItemText.Height));
+                            PaintHotspot(g, Color.White, rectItemText, 200);
+
+                            g.DrawString(itemText, this.Font, Brushes.Black, (float)xxx, (float)yy);
+                        }
+                        actualIndex++;
+                    }
+                }
+            }
+
+            // Calling the base class OnPaint
+            base.OnPaint(pe);
+
+            if (this.isRecording)
+            {
+                for (int i = 0; i < this.recordedRectangles.Count; i++)
+                {
+                    rect = recordedRectangles[i];
+                    double ratio = (double)size.Height / (double)imageFile.Height;
+                    Rectangle adjustedRectange = new Rectangle(
+                        size.Left + (int)(rect.X * ratio),
+                        size.Top + (int)(rect.Y * ratio),
+                        (int)(rect.Width * ratio),
+                        (int)(rect.Height * ratio));
+
+                    PaintHotspot(g, Color.LightBlue, adjustedRectange, (i + 1).ToString());
+                }
+            }
+            else if (this.paintHotSpots)
+            {
+                for (int i = 0; i < hotspots.Count; i++)
+                {
+                    Rectangle hotspot = hotspots[i];
+                    double ratio = (double)size.Height / (double)imageFile.Height;
+                    Rectangle adjustedRectange = new Rectangle(
+                        size.Left + (int)(hotspot.X * ratio),
+                        size.Top + (int)(hotspot.Y * ratio),
+                        (int)(hotspot.Width * ratio),
+                        (int)(hotspot.Height * ratio));
+
+                    PaintHotspot(g, Color.LightGreen, adjustedRectange, (i + 1).ToString());
+                }
+            }
+        }
+
+        protected virtual void PaintHotspot(Graphics g, Color c, Rectangle hotspot, int alpha)
+        {
+            PaintHotspot(g, c, hotspot, alpha, null);
+        }
+
+        protected virtual void PaintHotspot(Graphics g, Color c, Rectangle hotspot, string txt)
+        {
+            PaintHotspot(g, c, hotspot, 100, txt);
+        }
+
+        protected virtual void PaintHotspot(Graphics g, Color c, Rectangle hotspot, int alpha, string txt)
+        {
+            SolidBrush brush = new SolidBrush(Color.FromArgb(alpha, c));
+            g.FillRectangle(brush, hotspot);
+            if (!string.IsNullOrEmpty(txt))
+                g.DrawString(txt, this.Font, Brushes.DarkGreen, hotspot.Location);
+        }
+    }
+}
+

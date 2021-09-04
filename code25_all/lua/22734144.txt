@@ -1,0 +1,159 @@
+local function snapToGrid(t)
+    modHalf = t.x % t.width
+    if modHalf > t.width/2 then
+        t.x = t.x + (t.width-modHalf)
+    end
+    if modHalf < t.width/2 then 
+        t.x = t.x - modHalf
+    end
+    modHalfY = t.y % t.height
+    if modHalfY > t.height/2 then
+        t.y = t.y + (t.height-modHalfY)
+    end
+    if modHalfY < t.height/2 then 
+        t.y = t.y - modHalfY
+    end
+    display.getCurrentStage():setFocus( nil )
+    t.isFocus = false
+    return true
+end
+
+function rotatePiece(target)
+    if target.rotation == 270 then
+        target.rotation = 0
+    else
+        target.rotation = target.rotation + 90
+    end
+end
+
+local function dragBody(event)
+    local target = event.target
+    local phase = event.phase
+    local halfWidth = target.width/2
+    local halfHeight = target.height/2
+    --get tileX and tileY relative to tile centre
+    local tileX = event.x-target.x
+    local tileY = event.y-target.y
+    local modHalf = ""
+    local snap = 15
+
+    if phase == "began" then
+        -- Make target the top-most object
+        display.getCurrentStage():setFocus( target )
+
+        -- Spurious events can be sent to the target, e.g. the user presses 
+        -- elsewhere on the screen and then moves the finger over the target.
+        -- To prevent this, we add this flag. Only when it's true will "move"
+        -- events be sent to the target.
+        target.isFocus = true
+
+        -- Store initial position
+        target.x0 = event.x - target.x
+        target.y0 = event.y - target.y
+    elseif target.isFocus then
+        if phase == "moved" then
+            -- Make object move (we subtract target.x0,target.y0 so that moves are
+            -- relative to initial grab point, rather than object "snapping").
+            target.x = event.x - target.x0
+            target.y = event.y - target.y0
+            if target.x > display.contentWidth - (target.width/2) then target.x = display.contentWidth - (target.width/2) end
+            if target.y > display.contentHeight - (target.height/2) then target.y = display.contentHeight - (target.height/2) end
+            if target.x < 0 + (target.width/2) then target.x = 0 + (target.width/2) end
+            if target.y < 0 + (target.height/2) then target.y = 0 + (target.height/2) end
+            modHalf = target.x % target.width
+            if modHalf < snap then
+                target.x = target.x - modHalf 
+            end
+            if modHalf > ((target.width) - snap) then 
+                target.x = target.x + ((target.width)-modHalf)
+            end
+            modHalfY = target.y % target.height
+            if modHalfY < snap then
+                target.y    = target.y - modHalfY 
+            end
+            if modHalfY > ((target.height) - snap) then 
+                target.y = target.y + ((target.height)-modHalfY)
+            end
+            hasMoved = true
+            return true
+        elseif phase == "ended" then
+            if hasMoved then 
+                hasMoved = false
+                snapToGrid(target)
+                --tile has moved
+                examine(target)
+
+                return true
+            else
+                --rotate piece
+                    rotatePiece(target)
+                    display.getCurrentStage():setFocus( nil )
+                    target.isFocus = false
+                    --tile has rotated
+                    examine(target)
+                    return true
+            end
+        end
+    end
+
+    -- Important to return true. This tells the system that the event
+    -- should not be propagated to listeners of any objects underneath.
+    return true
+end
+
+local onTouch = function(event)
+    if event.phase == "began" then
+        local tile = {}
+        img = display.newRect(event.x,event.y,100,100)
+        img:addEventListener( "touch", dragBody )
+        snapToGrid(img)
+
+        --top right corner and top middle solid 
+        topRight = {16,-16,16,50,50,50,50,-16}
+        --top left and left middle solid 
+        topLeft = {-16,-16,-16,-50,50,-50,50,-16}
+        --bottom right and right middle solid 
+        bottomRight = {16,16,16,50,-50,50,-50,16}
+        --bottom left and bottom middle solid 
+        bottomLeft = {-16,16,-16,-50,-50,-50,-50,16}
+
+        physics.addBody( img, "static",
+            {shape=topRight},
+            {shape=topLeft},
+            {shape=bottomLeft},
+            {shape=bottomRight}
+        )
+
+        --new tile created
+        examine(img)
+
+        return true
+    end
+end
+
+
+function examine(img)
+    print("--------------------------------------------------")
+    if img ~= nil then
+        print("X: "..img.x..", Y: "..img.y)
+    end
+    print("--------------------------------------------------")
+end
+
+local img
+local physics = require( "physics" )
+physics.setDrawMode( "hybrid" )
+
+--draw gridlines
+for i = 49, display.contentHeight, 100 do
+    local line = display.newLine(0,i,display.contentWidth,i)
+    local line2 = display.newLine(0,i+2,display.contentWidth,i+2)
+end
+for i = 49, display.contentWidth, 100 do
+    local line = display.newLine(i,0,i,display.contentHeight )
+    local line2 = display.newLine(i+2,0,i+2,display.contentHeight )
+end
+--init
+physics.start()
+Runtime:addEventListener("touch", onTouch)
+

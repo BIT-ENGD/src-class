@@ -1,0 +1,67 @@
+Private _DataSource As PagedDataSource
+Public Property DataSource() As PagedDataSource
+    Get
+        If Not IsNothing(Session("DataSource")) Then
+            _DataSource = Session("DataSource")
+            Return _DataSource
+        End If
+        Return Nothing
+    End Get
+    Set(ByVal value As PagedDataSource)
+        _DataSource = value
+        If Not IsNothing(value) Then
+            Session("DataSource") = value
+        Else
+            Session("DataSource") = Nothing
+        End If
+    End Set
+End Property
+
+Private PagedData As PagedDataSource
+
+Private Function GetData() As DataTable
+    Dim DT As New DataTable
+    Dim CategoryID As Integer = -1
+    If IsNothing(ddlCategories.SelectedValue) OrElse Not Integer.TryParse  (ddlCategories.SelectedValue, CategoryID) Then
+        CategoryID = -1
+    End If
+
+    Dim myConnection As New SqlConnection(ConfigurationManager.ConnectionStrings("ConnectionString").ConnectionString)
+    Dim myAdapter As New SqlDataAdapter
+
+    myAdapter = New SqlDataAdapter("SearchResources", myConnection)
+    myAdapter.SelectCommand.CommandType = CommandType.StoredProcedure
+
+    If SearchText <> String.Empty Then
+        trFiltered.Visible = True
+    End If
+
+    With myAdapter.SelectCommand.Parameters
+        .AddWithValue("@CategoryID", CategoryID)
+        .AddWithValue("@SearchText", SearchText)
+        .AddWithValue("@CompanyID", CompanyID)
+    End With
+
+    If Not Security.IsSiteAdmin Then
+        myAdapter.SelectCommand.Parameters.AddWithValue("@UserIsAdmin", 0)
+        myAdapter.SelectCommand.Parameters.AddWithValue("@FTPUserID", Security.GetUserID(Context.User.Identity.Name))
+    Else
+        myAdapter.SelectCommand.Parameters.AddWithValue("@UserIsAdmin", 1)
+    End If
+
+    Try
+        myAdapter.Fill(DT)
+    Catch ex As Exception
+        ErrorLog.LogError(ex.Message, ex.StackTrace, HttpContext.Current.User.Identity.Name, HttpContext.Current.Request.Url.ToString)
+        HttpContext.Current.Response.Redirect("~/error.aspx", False)
+        Return Nothing
+    End Try
+    Return DT
+End Function
+
+Protected Sub ReloadData()
+    CurrentPage = 0
+    CheckFilters()
+    BindData()
+End Sub
+

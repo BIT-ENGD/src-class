@@ -1,0 +1,87 @@
+<ServiceContract(
+    CallbackContract:=GetType(INotifyCallback),
+    SessionMode:=SessionMode.Required)>
+Public Interface INotifyService
+    <OperationContract()>
+    Sub Notify(ByVal what As String)
+
+    <OperationContract()>
+    Sub Subscribe()
+
+    <OperationContract()>
+    Sub Unsubscribe()
+
+End Interface
+
+Public Interface INotifyCallback
+    <OperationContract(IsOneWay:=True)>
+    Sub OnNotify(ByVal what As String)
+End Interface
+
+<ServiceBehavior(
+    ConcurrencyMode:=ConcurrencyMode.Single,
+    InstanceContextMode:=InstanceContextMode.PerCall)>
+Public Class NotifyService
+    Implements INotifyService
+
+    Private _callbacks As New List(Of INotifyCallback)
+
+    Public Sub Notify(ByVal what As String) Implements INotifyService.Notify
+        For Each callback As INotifyCallback In _callbacks
+            callback.OnNotify(what)
+        Next
+    End Sub
+
+    Public Sub Subscribe() Implements INotifyService.Subscribe
+        Dim client As INotifyCallback = OperationContext.Current.GetCallbackChannel(Of INotifyCallback)()
+        If Not _callbacks.Contains(client) Then
+            _callbacks.Add(client)
+        End If
+    End Sub
+
+    Public Sub Unsubscribe() Implements INotifyService.Unsubscribe
+        Dim client As INotifyCallback = OperationContext.Current.GetCallbackChannel(Of INotifyCallback)()
+        If _callbacks.Contains(client) Then
+            _callbacks.Remove(client)
+        End If
+    End Sub
+End Class
+
+Public Class frmServer
+    Private _host As ServiceHost
+    Private _notifier As NotifyService.NotifyService
+
+    Public Sub go() Handles Me.Load
+        _host = New ServiceHost(GetType(NotifyService.NotifyService), New Uri("net.tcp://localhost:10000"))
+        _host.AddServiceEndpoint(GetType(NotifyService.INotifyService), New NetTcpBinding, "NotifyService")
+        _host.Description.Behaviors.Add(New ServiceMetadataBehavior)
+        _host.AddServiceEndpoint(GetType(IMetadataExchange), MetadataExchangeBindings.CreateMexTcpBinding, "mex")
+        _host.Open()
+        _notifier = New NotifyService.NotifyService
+    End Sub
+
+    Private Sub send() Handles Button1.Click
+        _notifier.Notify("Foo")
+    End Sub
+End Class
+
+<CallbackBehavior(
+    ConcurrencyMode:=ConcurrencyMode.Single,
+    UseSynchronizationContext:=False)>
+Public Class frmClient
+    Implements NotifyGateway.INotifyServiceCallback
+
+    Private _service As NotifyGateway.NotifyServiceClient = Nothing
+
+    Public Sub OnNotify(ByVal what As String) Implements NotifyGateway.INotifyServiceCallback.OnNotify
+        MsgBox(what)
+    End Sub
+
+    Public Sub go() Handles Button1.Click
+        _service = New NotifyGateway.NotifyServiceClient(New InstanceContext(Me), New NetTcpBinding, New EndpointAddress("net.tcp://localhost:10000/NotifyService"))
+        _service.Open()
+        _service.Subscribe()
+    End Sub
+End Class
+
+_callbacks

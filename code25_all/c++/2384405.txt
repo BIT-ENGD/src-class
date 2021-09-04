@@ -1,0 +1,128 @@
+// Sphere material definition:
+ka    = 0.9;
+kd    = 1.0;
+ks    = 0.3;
+exp   = 1.0;
+color = rgb(1.0, 1.0, 0.98);
+
+// Sphere material definition:
+ka    = 0.9;
+kd    = 1.0;
+ks    = 0.3;
+exp   = 20.0;                  // only changed exp
+color = rgb(1.0, 1.0, 0.98);
+
+// Sphere material definition:
+ka    = 0.9;
+kd    = 1.0;
+ks    = 0.1;                  // only changes here
+exp   = 0.1;                  // and here
+color = rgb(1.0, 1.0, 0.98);
+
+namespace {
+    const float floatmax = std::numeric_limits<float>::max();
+}
+
+rgb
+RayCast::trace ( const Ray& ray ) const
+{
+    HitRecord rec(scene_ptr_);
+    float tmax = floatmax;
+    float tmin = 0.0;
+
+    if ( scene_ptr_->shapes.hit(ray,tmin,tmax,rec) )
+    {
+        rec.ray = ray;
+        return rec.material_ptr->shade(rec);
+    }
+
+    return scene_ptr_->bgcolor;
+}
+
+rgb
+Phong::shade ( HitRecord& hitrec ) const
+{
+    Vector wo = - hitrec.ray.dir();
+
+    rgb L = ambient_brdf_ptr_->rho(hitrec,wo) *
+        hitrec.scene_ptr->ambient_ptr->L(hitrec);
+
+    int num_lights = hitrec.scene_ptr->lights.size();
+
+    for (int i = 0; i < num_lights; ++i)
+    {
+        Vector wi     = hitrec.scene_ptr->lights[i]->get_direction(hitrec);
+        float  ndotwi = dot(hitrec.normal, wi);
+
+        if ( ndotwi > 0.0 )
+        {
+            L += ( diffuse_brdf_ptr_->f (hitrec, wo, wi)  +
+                   specular_brdf_ptr_->f(hitrec, wo, wi)
+                 ) * hitrec.scene_ptr->lights[i]->L(hitrec) * ndotwi;
+        }
+    }
+
+    return L;
+}
+
+namespace {
+    const rgb black(0.0,0.0,0.0);
+}
+
+rgb
+Specular::f ( const HitRecord& hitrec, const Vector& wo, const Vector& wi ) const
+{
+    rgb L(0,0,0);
+    float ndotwi = dot(hitrec.normal, wi);
+
+    Vector r = -wi + 2.0 * hitrec.normal * ndotwi;
+    float rdotwo = dot(r, wo);
+
+    // reflection detected
+    if ( rdotwo > 0.0 )
+        L = ks_ * pow(rdotwo, exp_);
+
+    return L;
+}
+
+rgb
+Specular::rho ( const HitRecord& hitrec, const Vector& wo ) const
+{
+    return black;
+}
+
+bool
+Sphere::hit ( const Ray& ray, interval_t tmin, interval_t tmax, HitRecord& hitrec ) const
+{
+    Vector org = ray.origin() - center_;
+    Vector dir = ray.dir();
+    float a = dot(dir, dir);
+    float b = dot(dir, org) * 2;
+    float c = dot(org, org) - pow(radius_, 2);
+    float discriminant = pow(b,2) - 4*a*c;
+
+    if ( discriminant > 0 )
+    {
+        discriminant = sqrt(discriminant);
+        double t = ( -b - discriminant ) / ( 2*a );
+
+        if ( t < tmin )
+            t = ( -b + discriminant ) / ( 2*a );
+
+        if ( t > tmin and t < tmax )
+        {
+            // hit detected
+            hitrec.t            = t;
+            hitrec.hit          = true;
+            hitrec.normal       = unify( t*ray.dir() + org );
+            hitrec.material_ptr = material_ptr_;
+            hitrec.hitpoint     = ray.origin() + t * ray.dir();
+            hitrec.ray          = ray;
+
+            return true;
+        }
+    }
+
+    return false;
+}
+

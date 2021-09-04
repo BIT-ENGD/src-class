@@ -1,0 +1,211 @@
+unsafeRead
+unsafeWrite
+Data.Vector.Unboxed.Mutable
+{-# LANGUAGE BangPatterns #-}
+module Test where
+
+import Control.Monad ( mapM_ )
+import Data.Vector.Unboxed ( Vector, Unbox )
+import Data.Vector.Unboxed.Mutable ( MVector )
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed.Mutable as UM
+import Data.Word ( Word )
+import Data.Bits ( shiftL, shiftR, xor )
+
+prng :: Word -> Word
+prng w = w' where
+    !w1 = w  `xor` (w  `shiftL` 13)
+    !w2 = w1 `xor` (w1 `shiftR` 7)
+    !w' = w2 `xor` (w2 `shiftL` 17)
+
+mkVect :: Word -> Vector Double
+mkVect = U.force . U.map fromIntegral . U.fromList . take 100 . iterate prng
+
+foldV :: (Unbox a, Unbox b) 
+      => (a -> b -> a) -- componentwise function to fold
+      -> Vector a      -- initial accumulator value
+      -> [Vector b]    -- data vectors
+      -> Vector a      -- final accumulator value
+foldV fn accum vs = U.modify (\x -> mapM_ (liftV fn x) vs) accum where
+    liftV f acc = fV where
+        fV v = go 0 where
+            n = min (U.length v) (UM.length acc)
+            go i | i < n     = step >> go (i + 1)
+                 | otherwise = return ()
+                 where
+                     step = {-# SCC "fV_step" #-} do
+                         a <- {-# SCC "fV_read"  #-} UM.unsafeRead acc i
+                         b <- {-# SCC "fV_index" #-} U.unsafeIndexM v i
+                         {-# SCC "fV_write" #-} UM.unsafeWrite acc i $! {-# SCC "fV_apply" #-} f a b
+
+kahan :: [Vector Double] -> Vector Double
+kahan [] = U.singleton 0.0
+kahan (v:vs) = fst . U.unzip $ foldV kahanStep acc vs where
+    acc = U.map (\z -> (z, 0.0)) v
+
+kahanStep :: (Double, Double) -> Double -> (Double, Double)
+kahanStep (s, c) x = (s', c') where
+    !y  = x - c
+    !s' = s + y
+    !c' = (s' - s) - y
+{-# NOINLINE kahanStep #-}
+
+zero :: U.Vector Double
+zero = U.replicate 100 0.0
+
+myLoop n = kahan $ map mkVect [1..n]
+
+main = print $ myLoop 100000
+
+ghc -o Test_hs --make -fforce-recomp -O3 -fllvm -optlo-O3 -msse2 -main-is Test.main Test.hs
+
+time ./Test_hs
+real    0m1.948s
+user    0m1.936s
+sys     0m0.008s
+
+16,710,594,992 bytes allocated in the heap
+      33,047,064 bytes copied during GC
+          35,464 bytes maximum residency (1 sample(s))
+          23,888 bytes maximum slop
+               1 MB total memory in use (0 MB lost due to fragmentation)
+
+  Generation 0: 31907 collections,     0 parallel,  0.28s,  0.27s elapsed
+  Generation 1:     1 collections,     0 parallel,  0.00s,  0.00s elapsed
+
+  INIT  time    0.00s  (  0.00s elapsed)
+  MUT   time   24.73s  ( 24.74s elapsed)
+  GC    time    0.28s  (  0.27s elapsed)
+  RP    time    0.00s  (  0.00s elapsed)
+  PROF  time    0.00s  (  0.00s elapsed)
+  EXIT  time    0.00s  (  0.00s elapsed)
+  Total time   25.01s  ( 25.02s elapsed)
+
+  %GC time       1.1%  (1.1% elapsed)
+
+  Alloc rate    675,607,179 bytes per MUT second
+
+  Productivity  98.9% of total user, 98.9% of total elapsed
+
+    Thu Feb 23 02:42 2012 Time and Allocation Profiling Report  (Final)
+
+       Test_hs +RTS -s -p -RTS
+
+    total time  =       24.60 secs   (1230 ticks @ 20 ms)
+    total alloc = 8,608,188,392 bytes  (excludes profiling overheads)
+
+COST CENTRE                    MODULE               %time %alloc
+
+fV_write                       Test                  31.1   26.0
+fV_read                        Test                  27.2   23.2
+mkVect                         Test                  12.3   27.2
+fV_step                        Test                  11.7    0.0
+foldV                          Test                   5.9    5.7
+fV_index                       Test                   5.2    9.3
+kahanStep                      Test                   3.3    6.5
+prng                           Test                   2.2    1.8
+
+
+                                                                                               individual    inherited
+COST CENTRE              MODULE                                               no.    entries  %time %alloc   %time %alloc
+
+MAIN                     MAIN                                                   1           0   0.0    0.0   100.0  100.0
+ CAF:main1               Test                                                 339           1   0.0    0.0     0.0    0.0
+  main                   Test                                                 346           1   0.0    0.0     0.0    0.0
+ CAF:main2               Test                                                 338           1   0.0    0.0   100.0  100.0
+  main                   Test                                                 347           0   0.0    0.0   100.0  100.0
+   myLoop                Test                                                 348           1   0.2    0.2   100.0  100.0
+    mkVect               Test                                                 350      400000  12.3   27.2    14.5   29.0
+     prng                Test                                                 351     9900000   2.2    1.8     2.2    1.8
+    kahan                Test                                                 349         102   0.0    0.0    85.4   70.7
+     foldV               Test                                                 359           1   5.9    5.7    85.4   70.7
+      fV_step            Test                                                 360     9999900  11.7    0.0    79.5   65.1
+       fV_write          Test                                                 367    19999800  31.1   26.0    35.4   32.5
+        fV_apply         Test                                                 368     9999900   1.0    0.0     4.3    6.5
+         kahanStep       Test                                                 369     9999900   3.3    6.5     3.3    6.5
+       fV_index          Test                                                 366     9999900   5.2    9.3     5.2    9.3
+       fV_read           Test                                                 361     9999900  27.2   23.2    27.2   23.2
+ CAF:lvl19_r3ei          Test                                                 337           1   0.0    0.0     0.0    0.0
+  kahan                  Test                                                 358           0   0.0    0.0     0.0    0.0
+ CAF:poly_$dPrimMonad3_r3eg Test                                                 336           1   0.0    0.0     0.0    0.0
+  kahan                  Test                                                 357           0   0.0    0.0     0.0    0.0
+ CAF:$dMVector2_r3ee     Test                                                 335           1   0.0    0.0     0.0    0.0
+ CAF:$dVector1_r3ec      Test                                                 334           1   0.0    0.0     0.0    0.0
+ CAF:poly_$dMonad_r3ea   Test                                                 333           1   0.0    0.0     0.0    0.0
+ CAF:$dMVector1_r3e2     Test                                                 330           1   0.0    0.0     0.0    0.0
+ CAF:poly_$dPrimMonad2_r3e0 Test                                                 328           1   0.0    0.0     0.0    0.0
+  foldV                  Test                                                 365           0   0.0    0.0     0.0    0.0
+ CAF:lvl11_r3dM          Test                                                 322           1   0.0    0.0     0.0    0.0
+  kahan                  Test                                                 354           0   0.0    0.0     0.0    0.0
+ CAF:lvl10_r3dK          Test                                                 321           1   0.0    0.0     0.0    0.0
+  kahan                  Test                                                 355           0   0.0    0.0     0.0    0.0
+ CAF:$dMVector_r3dI      Test                                                 320           1   0.0    0.0     0.0    0.0
+  kahan                  Test                                                 356           0   0.0    0.0     0.0    0.0
+ CAF                     GHC.Float                                            297           1   0.0    0.0     0.0    0.0
+ CAF                     GHC.IO.Handle.FD                                     256           2   0.0    0.0     0.0    0.0
+ CAF                     GHC.IO.Encoding.Iconv                                214           2   0.0    0.0     0.0    0.0
+ CAF                     GHC.Conc.Signal                                      211           1   0.0    0.0     0.0    0.0
+ CAF                     Data.Vector.Generic                                  182           1   0.0    0.0     0.0    0.0
+ CAF                     Data.Vector.Unboxed                                  174           2   0.0    0.0     0.0    0.0
+
+#include <stdint.h>
+#include <stdio.h>
+
+
+#define VDIM    100
+#define VNUM    100000
+
+
+
+uint64_t prng (uint64_t w) {
+    w ^= w << 13;
+    w ^= w >> 7;
+    w ^= w << 17;
+    return w;
+};
+
+void kahanStep (double *s, double *c, double x) {
+    double y, t;
+    y  = x - *c;
+    t  = *s + y;
+    *c = (t - *s) - y;
+    *s = t;
+}
+
+void kahan(double s[], double c[]) {
+    for (int i = 1; i <= VNUM; i++) {
+        uint64_t w = i;
+        for (int j = 0; j < VDIM; j++) {
+                kahanStep(&s[j], &c[j], w);
+                w = prng(w);
+        }
+    }
+};
+
+
+int main (int argc, char* argv[]) {
+    double acc[VDIM], err[VDIM];
+    for (int i = 0; i < VDIM; i++) {
+        acc[i] = err[i] = 0.0;
+    };
+    kahan(acc, err);
+    printf("[ ");
+    for (int i = 0; i < VDIM; i++) {
+        printf("%g ", acc[i]);
+    };
+    printf("]\n");
+};
+
+>llvm-gcc -o Test_c -O3 -msse2 -std=c99 test.c
+
+>time ./Test_c
+real    0m0.096s
+user    0m0.088s
+sys     0m0.004s
+
+kahanStep
+kahanStep
+unsafeRead
+unsafeWrite
+Data.Vector.Unboxed
+vector

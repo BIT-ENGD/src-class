@@ -1,0 +1,114 @@
+$_GET:
+Array
+(
+    [mode] => profile
+    [username] => hachque
+    [domain] => roket-enterprises.com
+)
+$_POST:
+Array
+(
+    [openid_assoc_handle] => {HMAC-SHA1}{4b00d7b2}{vo1FEQ==}
+    [openid_identity] => http://www.roket-enterprises.com/openaccount/openid:hachque
+    [openid_mode] => check_authentication
+    [openid_response_nonce] => 2009-11-16T04:40:18Zrrz8R4
+    [openid_return_to] => http://openiddirectory.com:80/openidauth/id/c/finish_auth.php?nonce=adCevd6T
+    [openid_sig] => SgFE5iT9IGd5EftkrZ72mgCHiLk=
+    [openid_signed] => assoc_handle,identity,mode,response_nonce,return_to,signed,sreg.email,sreg.fullname,sreg.nickname
+    [openid_sreg_email] => jrhodes@roket-enterprises.com
+    [openid_sreg_fullname] => James Rhodes
+    [openid_sreg_nickname] => jrhodes
+)
+
+  Content-Type: text/plain;
+  Content-Length: 675;
+  openid.mode=id_res&openid.assoc_handle=%7BHMAC-SHA1%7D%7B4b00d7b2%7D%7Bvo1FEQ%3D%3D%7D&openid.identity=http%3A%2F%2Fwww.roket-enterprises.com%2Fopenaccount%2Fopenid%3Ahachque&openid.response_nonce=2009-11-16T04%3A40%3A18Zrrz8R4&openid.return_to=http%3A%2F%2Fopeniddirectory.com%3A80%2Fopenidauth%2Fid%2Fc%2Ffinish_auth.php%3Fnonce%3DadCevd6T&openid.signed=assoc_handle%2Cidentity%2Cmode%2Cresponse_nonce%2Creturn_to%2Csigned%2Csreg.email%2Csreg.fullname%2Csreg.nickname&openid.sreg_email=jrhodes%40roket-enterprises.com&openid.sreg_fullname=James+Rhodes&openid.sreg_nickname=jrhodes&openid.sig=MGVhMmQ1Mzg4ZWFlMWY1OWVlYjlmZmY0Njc3OTc5YWIzMjM3NGFjMQ%3D%3D&openid.is_valid=true;
+
+        // Retrieve the OpenID information from the $_REQUEST data
+        // I'm not sure whether it's possible that this data might
+        // come in on the $_GET parameter instead of $_POST, so that's
+        // what it uses $_REQUEST.
+
+        $assoc_handle = $_REQUEST['openid_assoc_handle'];
+        $sig = $_REQUEST['openid_sig'];
+        $signed = $_REQUEST['openid_signed'];
+
+        // The method for returning data is via the headers outputted
+        // by the webserver.  Create an array that stores the headers
+        // to be returned.
+
+        $keys = array(
+            'openid.mode' => 'id_res',
+            'openid.assoc_handle' => $_REQUEST['openid_assoc_handle'],
+            'openid.identity' => $_REQUEST['openid_identity'],
+            'openid.response_nonce' => $_REQUEST['openid_response_nonce'],
+            'openid.return_to' => $_REQUEST['openid_return_to'],
+            'openid.signed' => $_REQUEST['openid_signed'],
+            'openid.sreg_email' => $_REQUEST['openid_sreg_email'],
+            'openid.sreg_fullname' => $_REQUEST['openid_sreg_fullname'],
+            'openid.sreg_nickname' => $_REQUEST['openid_sreg_nickname']
+            //'openid_mode' => 'id_res'
+        );
+
+        // The server may request that we invalidate the user's session
+        // via $_REQUEST['openid_invalidate_handle'].  In this case we
+        // will clear the session data (you may need to change this
+        // depending on how you implement the session).  After doing so
+        // we continue and tell the server we did via a variable
+
+        if (strlen($_REQUEST['openid_invalidate_handle']) > 0)
+        {
+            // Reset the session
+            session_unset();
+            session_name('openid_server');
+            session_start();
+
+            // Set the header we need to return
+            $keys['openid.invalidate_handle'] = $_REQUEST['openid_invalidate_handle'];
+        }
+
+        // We need to validate the signature now.  This constructs a token_contents
+        // for signing the data.  The signing key is returned as openid.sig
+        // and is generated with base64(HMAC(secret(assoc_handle), token_contents)
+
+        $token_contents = '';
+        foreach (explode(',', $signed) as $param) {
+            $post = preg_replace('/\./', '_', $param);
+            $token_contents .= sprintf("%s:%s\n", $param, $_REQUEST['openid_' . $post]);
+        }
+
+        // Generate our openid.sig and add it to the list of keys to
+        // return.
+
+        $keys['openid.sig'] = base64_encode(hash_hmac('sha1',$token_contents,$assoc_handle));
+
+        // Add the data that we are sharing (via SReg) to the headers.
+        // For now this is fixed data (see action_authorization.php).
+        //$keys["sreg.fullname"] = 'James Rhodes';
+        //$keys["sreg.nickname"] = 'jrhodes';
+        //$keys["sreg.email"] = 'jrhodes@roket-enterprises.com';
+
+        // Just accept the request for now..
+        // phpMyID does some kind of secret-shared-key thing
+        // here to determine whether it is valid.  I'm not
+        // quite sure how that process works yet, so we are just
+        // going to say go ahead.
+        $keys["openid.is_valid"] = "true";
+
+        // We need to format the $keys array into POST format
+        $keys_post = "";
+        $keys_post_first = true;
+        foreach ($keys as $name => $value)
+        {
+            if ($keys_post_first)
+                $keys_post_first = false;
+            else
+                $keys_post .= "&";
+            $keys_post .= urlencode($name) . "=" . urlencode($value);
+        }
+
+        // Now output the POST data
+        header('Content-Type: application/x-www-form-urlencoded');
+        header('Content-Length: ' . strlen($keys_post));
+        header($keys_post);
+

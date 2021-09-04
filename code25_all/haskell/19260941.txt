@@ -1,0 +1,267 @@
+#! /usr/bin/env python2.7
+import random
+import re
+import cPickle
+
+class Markov:
+    def __init__(self, filenames):
+        self.filenames = filenames
+        self.cache = self.train(self.readfiles())
+        picklefd = open("dump", "w")
+        cPickle.dump(self.cache, picklefd)
+    print "Built a db of length "+str(len(self.cache))
+        picklefd.close()
+
+    def train(self, text):
+        splitted = text.split(' ')
+        print "Total of %d splitted words" % (len(splitted))
+        cache = {}
+        for i in xrange(len(splitted)-2):
+            pair = (splitted[i], splitted[i+1])
+            followup = splitted[i+2]
+            if pair in cache:
+                if followup not in cache[pair]:
+                    cache[pair][followup] = 1
+                else:
+                    cache[pair][followup] += 1
+            else:
+                cache[pair] = {followup: 1}
+        return cache
+
+    def readfiles(self):
+        data = ""
+        for filename in self.filenames:
+            fd = open(filename)
+            data += fd.read()
+            fd.close()
+        return data
+
+Markov(["76.txt"])
+
+{-# LANGUAGE BangPatterns,DeriveGeneric #-}
+
+import GHC.Generics (Generic)
+
+import Data.List (foldl')
+import Data.Hashable
+
+import qualified Data.Map as M
+
+import qualified Data.HashMap.Strict as HM
+import qualified Data.ByteString.Char8 as B
+
+import qualified Data.HashTable.IO as HT
+
+--Using this instead of tuples yielded a 5~10% speedup
+data StringTuple = STP !B.ByteString !B.ByteString deriving(Ord,Eq,Generic)
+instance Hashable StringTuple
+
+type Database3 = M.Map StringTuple (M.Map B.ByteString Int)
+type DatabaseHM = HM.HashMap StringTuple (HM.HashMap B.ByteString Int)
+type DatabaseHT = HT.BasicHashTable StringTuple DatabaseInnerHT
+type DatabaseInnerHT = (HT.BasicHashTable B.ByteString Int)
+
+train4 :: [B.ByteString] -> Database3
+train4 words = foldl' update M.empty (zip3 words (drop 1 words) (drop 2 words))
+    where update m (x,y,z) = M.insertWith' (inc z) (STP x y) (M.singleton z 1) m
+          inc k _ = M.insertWith' (+) k 1
+
+trainHM2 :: [B.ByteString] -> DatabaseHM
+trainHM2 words = trainHM2G words HM.empty
+    where 
+    trainHM2G (x:y:[]) !hm = hm
+    trainHM2G (x:y:z:rem) !hm = trainHM2G (y:z:rem) (HM.insertWith (inc z) (STP x y) (HM.singleton z 1) hm)
+            where inc k _ = HM.insertWith (+) k 1
+
+
+trainHT :: [B.ByteString] -> IO (DatabaseHT)
+trainHT words = do 
+ hm <- HT.new 
+
+ trainHT' words hm 
+ where 
+  trainHT' (x:y:[]) !hm = return hm
+  trainHT' (x:y:z:rem) !hm = do
+   let pair = STP x y
+   inCache <- HT.lookup hm pair
+   case inCache of
+    Nothing -> do
+     htN <- HT.new :: IO (DatabaseInnerHT)
+     HT.insert htN z $! 1
+     HT.insert hm pair $! htN
+    Just ht -> do
+     cvM <- HT.lookup ht z
+     case cvM of
+      Nothing -> HT.insert ht z 1
+      Just cv -> HT.insert ht z $! (cv+1)
+   trainHT' (y:z:rem) hm
+
+main = do contents <- B.readFile "76.txt"
+      let bcont = B.split ' ' $ contents
+      print $ length bcont
+      let db = train4 $ bcont
+      print $ "Built a DB of " ++ show (M.size db) ++ " words" 
+      --let db = trainHM2 $ bcont
+      --print $ "Built a DB of " ++ show (HM.size db) ++ " words"         
+      --db <- trainHT $ (bcont)
+      --print $ "Built a DB" 
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <unordered_map>
+#include <tuple>
+
+/*
+ Hash stuff here
+ Taken from https://stackoverflow.com/a/7111460/314327
+*/
+size_t hash_combiner(size_t left, size_t right) //replacable
+{ return left^right;}
+
+template<int index, class...types>
+struct hash_impl {
+    size_t operator()(size_t a, const std::tuple<types...>& t) const {
+        typedef typename std::tuple_element<index, std::tuple<types...>>::type nexttype;
+        hash_impl<index-1, types...> next;
+        size_t b = std::hash<nexttype>()(std::get<index>(t));
+        return next(hash_combiner(a, b), t); 
+    }
+};
+template<class...types>
+struct hash_impl<0, types...> {
+    size_t operator()(size_t a, const std::tuple<types...>& t) const {
+        typedef typename std::tuple_element<0, std::tuple<types...>>::type nexttype;
+        size_t b = std::hash<nexttype>()(std::get<0>(t));
+        return hash_combiner(a, b); 
+    }
+};
+
+namespace std {
+    template<class...types>
+    struct hash<std::tuple<types...>> {
+        size_t operator()(const std::tuple<types...>& t) {
+            const size_t begin = std::tuple_size<std::tuple<types...>>::value-1;
+            return hash_impl<begin, types...>()(1, t); //1 should be some largervalue
+        }
+    };
+}
+
+/*
+ Hash stuff end
+*/
+
+using namespace std;
+
+/*
+ Split, from https://stackoverflow.com/a/236803/314327
+*/
+vector<string> &split(const string &s, char delim, vector<string> &elems) {
+ stringstream ss(s);
+ string item;
+ while (getline(ss, item, delim)) {
+ elems.push_back(item);
+ }
+ return elems;
+}
+
+vector<string> split(const string &s, char delim) {
+ vector<string> elems;
+ split(s, delim, elems);
+ return elems;
+}
+/*
+ Split end
+*/
+
+typedef tuple<string,string> STP;
+
+unordered_map< STP,unordered_map< string,int > > train(vector<string> &words)
+{
+ unordered_map< STP,unordered_map< string,int > > cache; 
+
+ for(int i=0;i<words.size()-2;i++)
+ {
+  STP tup = make_tuple(words[i],words[i+1]);
+  auto it = cache.find(tup);
+  if(it!=cache.end())
+  {
+   auto it2 = it->second.find(words[i+2]);
+   if(it2!=it->second.end())
+   {
+    it2->second += 1;
+   }
+   else
+    it->second[words[i+2]] = 1;
+  }
+  else
+  {    
+   unordered_map< string,int > cacheInner;
+   cacheInner[words[i+2]] = 1;
+   cache[tup] = cacheInner;
+  }
+ }
+
+ return cache;
+}
+
+int main()
+{
+ ifstream ifs("76.txt");
+ stringstream buf;
+ buf << ifs.rdbuf();
+ string contents(buf.str());
+
+ auto words = split(contents,' '); 
+ cout << words.size(); 
+
+ auto wordCache = train(words);
+
+ cout << "\nHashtable count " << wordCache.size();
+
+ cout << "\n";
+ return 0;
+}
+
+$ g++ -O3 -fpermissive -std=c++0x cpptest.cpp -o cpptest
+$ /usr/bin/time -f "%E" ./cpptest
+1255153
+
+Hashtable count 64442
+0:01.02
+
+$ /usr/bin/time -f "%E" ./pytest.py 
+Total of 1255153 splitted words
+Built a db of length 64442
+0:02.62
+
+$ ghc -fllvm -O2 -rtsopts -fforce-recomp -funbox-strict-fields hasktest.hs -o hasktest
+[1 of 1] Compiling Main             ( hasktest.hs, hasktest.o )
+Linking hasktest ...
+$ /usr/bin/time -f "%E" ./hasktest
+1255153
+"Built a DB of 64442 words"
+0:06.35
+
+$ /usr/bin/time -f "%E" ./hasktest
+1255153
+"Built a DB of 64442 words"
+0:04.23
+
+$ /usr/bin/time -f "%E" ./hasktest
+1255153
+"Built a DB"
+0:10.42
+
+0:06.06
+0:05.69
+
+0:04.17
+
+0:02.11
+
+60MBs
+125MBs
+409MBs
+40MBs

@@ -1,0 +1,75 @@
+public class ComparePerformance {
+     private static final String NGINX_VALIDATE_URL = "http://localhost/";
+     private static final String JAVA_VALIDATE_URL = "http://localhost/token-java";
+     private RestTemplate restTemplate;
+
+    public ComparePerformance() {
+        restTemplate = new RestTemplate();
+    }
+
+    public long getTimeValidateNginx() {
+        return getTimeValidate(NGINX_VALIDATE_URL);
+    }
+
+    public long getTimeValidateJava() {
+        return getTimeValidate(JAVA_VALIDATE_URL);
+    }
+
+    private long getTimeValidate(String url) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("Authorization", getToken());
+        headers.setContentType(MediaType.APPLICATION_JSON_UTF8);
+        HttpEntity<String> entity = new HttpEntity<>("parameters", headers);
+        long startTime = System.nanoTime();
+        for (int i = 0; i < 10; i++) {
+            restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+        }
+        long endTime = System.nanoTime();
+        return endTime - startTime;
+    }
+
+    private String getToken() {
+        return "Bearer xxxx";
+    }
+
+    public static void main(String[] args) {
+        ComparePerformance cp = new ComparePerformance();
+        long timeNginx = cp.getTimeValidateNginx() / 1_000_000;
+        long timeJava = cp.getTimeValidateJava() / 1_000_000;
+
+        LogUtil.log(Level.INFO, cp.getClass(),
+            "%nNginx validate time: %dms%n" +
+                    "Java validate time: %dms", timeNginx, timeJava);
+}
+
+location / {
+    access_by_lua '
+        local jwt = require("nginx-jwt")
+        jwt.auth()
+    ';
+    proxy_pass http://localhost; 
+}
+
+location /token-java {
+    proxy_pass http://localhost/token-java
+}
+
+public Map<String, Object> parseToken(String JWTToken) throws InvalidJwtException {
+
+    Key verificationKey = new HmacKey(secretKey.getBytes());
+    JwtConsumer secondPassJwtConsumer = new JwtConsumerBuilder()
+            .setExpectedIssuer(officialIssuer)
+            .setSkipDefaultAudienceValidation()
+            .setVerificationKey(verificationKey)
+            .setRequireExpirationTime()
+            .setAllowedClockSkewInSeconds(30)
+            .setRequireSubject()
+            .build();
+    JwtClaims jwtClaims = secondPassJwtConsumer.processToClaims(JWTToken);
+
+    return jwtClaims.getClaimsMap();
+}
+
+Nginx validate time: 9037ms
+Java validate time: 57ms
+

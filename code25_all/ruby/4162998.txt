@@ -1,0 +1,48 @@
+module RoutingFilter
+  class Country < Filter
+
+    countries_pattern ||= %r(^/(?i)([a-zA-Z]{2})(?=/|$))
+
+    def around_recognize(path, env, &block)
+      country = "#{extract_segment!(countries_pattern, path)}".upcase
+      yield(path, env).tap do |params|
+        params[:shop] = SHOPS.fetch(country.to_sym) || DEFAULT_SHOP
+      end
+    end
+
+    def around_generate(params, &block)
+      puts params
+      shop = params.delete(:shop)
+      yield.tap do |result|
+        prepend_segment!(result, shop[:country_code]) if shop
+      end
+    end
+  end
+end
+
+module RoutingFilter
+  class Pagination < Filter
+    PAGINATION_SEGMENT = %r(/page/([\d]+)/?$)
+
+    def around_recognize(path, env, &block)
+      page = extract_segment!(PAGINATION_SEGMENT, path)
+      yield(path, env).tap do |params|
+        params[:page] = page.to_i if page
+      end
+    end
+
+    def around_generate(params, &block)
+      page = params.delete(:page)
+      yield.tap do |result|
+        append_segment!(result, "page/#{page}") if append_page?(page)
+      end
+    end
+
+    protected
+
+      def append_page?(page)
+        page && page.to_i != 1
+      end
+  end
+end
+

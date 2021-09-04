@@ -1,0 +1,91 @@
+    #!/usr/bin/perl
+use xSV;
+use Net::LDAP;
+use Term::ReadKey;
+# use strict;
+
+$debug_on = 1;  # This will enable some debugging messages.
+
+if (defined($ARGV[0])) {
+    $input = $ARGV[0];
+} else {
+    print "No input file specified!  Assuming MKSGroupsoutput.txt...\n";
+    $input = "MKSGroupsoutput.txt";
+}
+
+if (defined($ARGV[1])) { 
+    $output = $ARGV[1];
+} else {
+    $output = $input . ".csv";
+}
+
+open GROUPS, "< $input" or die "ERROR: Can't open input file: '$input'\n";
+
+print "INPUT: $input\nOUTPUT: $output\n";
+
+sub debug {
+    if ($debug_on == 1) {
+        print "@_";
+    }
+}
+
+my $csv = Text::xSV->new(
+    filename => $output,
+    header   => [
+    "AccountName", 
+    "LastName", 
+    "FirstName", 
+    "EEID", 
+    "SYSGenericAcct", 
+    "Notes", 
+    "AccessLevel", 
+    "AccessCapability", 
+    "Owner/Manager",
+    "Description", 
+    "Created", 
+    "Status", 
+    "LastStatusChange", 
+    "LastPwdChange", 
+    "DataSource"
+    ],
+  );
+$csv->print_header();
+
+my ($inputname, $fname, $lname, @name, $uname, $pwordinput, $pword, $domain, $line, $ldap, $bindstring, $root, $pword, $base_dn);
+#User driven input to connect to LDAP.  ReadMode 2 keeps password hidden, the reset back to 0.
+print "Please enter your Full Name: ";
+$inputname = <STDIN>;
+print "Please enter your password: ";
+ReadMode 2;
+$pwordinput = <STDIN>;
+ReadMode 0;
+
+#Builds the LDAP CN value from user input. Trims \n off user input values
+$inputname = substr($inputname,0,-1);
+@name = split(' ', $inputname);
+$fname = ucfirst(@name[0]);
+$lname = ucfirst(@name[1]);
+$pword = substr($pwordinput,0,-1);
+$uname = $lname ."\\, " . $fname;
+$bindstring = "CN=" . $uname . ",OU=User,DC=hq,DC=name,DC=com";
+
+#LDAP Connection parameters
+$base_dn = "OU=User,DC=hq,DC=name,DC=com";
+$ldap = Net::LDAP->new('ldap://local', onerror =>'die');
+$ldap->bind($bindstring, password => $pword); #Sometimes the BIND fails (1 out of 10 times)
+$root = $ldap->root_dse;
+
+#Parses text file
+while ($line = <GROUPS>) {
+    chomp($line);
+    if ($line =~ m/^  user  .*/) {
+        $line =~ s/^  user.\s//;
+        my ($searchoutput, $user, @entries, $entry, $href, $strDomain, $strUsername, $strDN, $arrSplitResponse, $strLName, $strFName, $strUserType);
+        $user = $line;
+        $user = "mailNickname: " . $user;
+        $searchoutput = $ldap->search(filter=>$user,base=>$base_dn); # ERROR HERE
+        @entries = $searchoutput->entries;
+        foreach $entry ( @entries ) {
+            print "DN: ", $entry->dn, "\n"; #NEVER ENTERS THIS LOOP
+        }
+

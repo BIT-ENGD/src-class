@@ -1,0 +1,53 @@
+data Sprite = Sprite { spriteImage :: Image
+                     , spritePosition :: Position
+                     } deriving (Show, Eq)
+
+spriteBatch :: [Sprite] -> [(TextureObject, [Sprite])]
+spriteBatch = (map f) . toList . (groupedBy (imageTexture . spriteImage))
+    where f (t, s) = (t, s)
+
+offset = plusPtr nullPtr
+
+renderSprites :: [Sprite] -> IO ()
+renderSprites l = (flip mapM_) (spriteBatch l) $ \(t, sps) -> do
+        textureBinding Texture2D $= Just t
+        let l = concat $ map sprToList sps
+        vbo <- vboOfList ((length l)*4) l
+        displayVbo vbo $ fromIntegral $ length sps
+    where
+        sprToList :: Sprite -> [GLfloat]
+        sprToList (Sprite (Image _ (TexCoord2 u0 v0) (TexCoord2 u1 v1) (Size w h) _) (Position x y)) = 
+            [fromIntegral x, fromIntegral y, u0, v0
+            ,fromIntegral (x+w), fromIntegral y, u1, v0
+            ,fromIntegral (x+w), fromIntegral (y+h), u1, v1
+            ,fromIntegral x, fromIntegral (y+h), u0, v1
+            ]
+
+vboOfList :: Int -> [GLfloat] -> IO BufferObject
+vboOfList size elems = do
+    let ptrsize = toEnum $ size * 4
+        arrayType = ElementArrayBuffer
+    (array:_) <- genObjectNames 1
+    bindBuffer arrayType $= Just array
+    arr <- newListArray (0, size - 1) elems
+    withStorableArray arr $ \ptr -> bufferData arrayType $= (ptrsize, ptr, StaticDraw)
+    bindBuffer ArrayBuffer $= Nothing
+    return array
+
+displayVbo buff size = do
+    let stride = 2*(2*4)
+        vxDesc = VertexArrayDescriptor 2 Float stride $ offset 0
+        texCoo = VertexArrayDescriptor 2 Float stride $ offset 8
+    bindBuffer ArrayBuffer $= Just buff
+
+    arrayPointer VertexArray $= vxDesc
+    arrayPointer TextureCoordArray $= texCoo
+
+    clientState VertexArray $= Enabled
+    clientState TextureCoordArray $= Enabled
+
+    drawArrays Quads 0 size
+    bindBuffer ArrayBuffer $= Nothing
+
+vertex
+Sprites

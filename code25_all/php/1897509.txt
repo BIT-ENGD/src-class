@@ -1,0 +1,507 @@
+PHP Fatal error:  Uncaught exception 'Zend_Application_Bootstrap_Exception' with message 'Circular resource dependency detected' in /opt/local/lib/php/Zend/Application/Bootstrap/BootstrapAbstract.php:656
+Stack trace:
+#0 /opt/local/lib/php/Zend/Application/Bootstrap/BootstrapAbstract.php(623): Zend_Application_Bootstrap_BootstrapAbstract->_executeResource('modules')
+#1 /opt/local/lib/php/Zend/Application/Bootstrap/BootstrapAbstract.php(580): Zend_Application_Bootstrap_BootstrapAbstract->_bootstrap('modules')
+#2 /Library/WebServer/Documents/doctrine-dev/library/APP/Doctrine/Application/Resource/Doctrine.php(36): Zend_Application_Bootstrap_BootstrapAbstract->bootstrap('modules')
+#3 /opt/local/lib/php/Zend/Application/Bootstrap/BootstrapAbstract.php(708): APP_Doctrine_Application_Resource_Doctrine->__construct(Array)
+#4 /opt/local/lib/php/Zend/Application/Bootstrap/BootstrapAbstract.php(349): Zend_Application_Bootstrap_BootstrapAbstract->_loadPluginResource('doctrine', Array)
+#5 /opt/local/lib/php/Zend/Application/Bootstrap/Bootstra in /opt/local/lib/php/Zend/Application/Bootstrap/BootstrapAbstract.php on line 656
+
+$this->getBootstrap()->bootstrap('modules')
+$bootstrap->bootstrap('modules')
+$bootstrap->bootstrap('doctrine')
+<resources>
+    <frontController>
+        <controllerDirectory><zf:const zf:name="APPLICATION_PATH" />/controllers</controllerDirectory>
+        <moduleDirectory><zf:const zf:name="APPLICATION_PATH" />/modules</moduleDirectory>
+        <moduleControllerDirectoryName value="controllers" />
+    </frontController>
+    <modules prefixModuleName="Mod" configFilename="module.xml">
+        <enabledModules>
+            <default />
+            <doctrinetest />
+            <cms>
+                <myOption value="Test Option Value" />
+            </cms>
+            <menu somevar="menu" />
+            <article somevar="article" />
+        </enabledModules>
+    </modules>
+    <doctrine>
+        <connections>
+            <default dsn="mysql://#####:#####@localhost/#####">
+              <attributes useNativeEnum="1" />
+            </default>
+        </connections>
+        <attributes>
+          <autoAccessorOverride value="1" />
+          <autoloadTableClasses value="1" />
+          <modelLoading value="MODEL_LOADING_PEAR" />
+        </attributes>
+        <directoryNames>
+            <sql value="data/sql" />
+            <fixtures value="data/fixtures" />
+            <migrations value="data/migrations" />
+            <yaml value="configs/schemas" />
+            <models value="models" />
+        </directoryNames>
+    </doctrine>
+</resources>
+
+<?php
+
+class APP_Doctrine_Application_Resource_Doctrine extends Zend_Application_Resource_ResourceAbstract
+{
+    protected $_manager = null;
+    protected $_modules = array();
+    protected $_attributes = null;
+    protected $_connections = array();
+    protected $_defaultConnection = null;
+    protected $_directoryNames = null;
+    protected $_inflectors = array();
+
+
+
+    public function __construct($options = null)
+    {
+
+        parent::__construct($options);
+        $bootstrap = $this->getBootstrap();       
+
+
+        $autoloader = $bootstrap->getApplication()->getAutoloader();
+
+        $autoloader->pushAutoloader(array('Doctrine_Core', 'autoload'), 'Doctrine');
+        spl_autoload_register(array('Doctrine_Core', 'modelsAutoload'));
+
+        $manager = $this->getManager();
+        $manager->setAttribute('bootstrap', $bootstrap);
+
+        // default module uses the application bootstrap unless overridden!
+        $modules = array('default' => $bootstrap);
+
+        if(!isset($options['useModules']) || 
+          (isset($options['useModules']) && (boolean) $options['useModules']))
+        {
+            $moduleBootstraps = $bootstrap->bootstrap('modules')->getResource('modules');   
+            $modules = array_merge($modules, $moduleBootstraps->getArrayCopy()); 
+        }                               
+
+        $this->setModules($modules); // configure the modules
+        $this->_loadModels(); // load all the models for Doctrine
+    }
+
+    public function init()
+    {
+        return $this->getManager();
+    }
+
+    public function setConnections(array $connections)
+    {
+        $manager = $this->getManager();
+
+        foreach($connections as $name => $config)
+        {
+            if(isset($config['dsn']))
+            {
+              $conn = $manager->connection($config['dsn'], $name);        
+            }
+
+            if(isset($config['attributes']) && isset($conn))
+            {
+              $this->setAttributes($config['attributes'], $conn);    
+            }
+        }
+
+        return $this;
+    }
+
+    public function setAttributes(array $attributes, Doctrine_Configurable $object = null)
+    {
+        if($object === null)
+        {
+            $object = $this->getManager();
+        }
+
+        foreach($attributes as $name => $value)
+        {
+            $object->setAttribute(
+              $this->doctrineConstant($name, 'attr'),
+              $this->doctrineConstant($value)
+            );
+        }
+
+        return $this;
+    }
+
+    public function setModules(array $modules)
+    {
+        //$this->_modules = $modules;
+
+        foreach($modules as $name => $bootstrap)
+        {
+            $this->_modules[$name] = $this->_configureModuleOptions($bootstrap);
+        }
+
+        return $this;
+    }
+
+    public function setDirectoryNames(array $directoryNames)
+    {
+        $this->_directoryNames = $directoryNames;
+
+        return $this;
+    }
+
+    public function getDirectoryNames()
+    {
+        return $this->_directoryNames;
+    }
+
+    public function getDirectoryName($key)
+    {
+        if(isset($this->_directoryNames[$key]))
+        {
+            return $this->_directoryNames[$key];
+        }
+
+        return null;
+    }
+
+    public function getModuleOptions($module = null)
+    {
+         if($module === null)
+         {
+             return $this->_modules;
+         }
+
+         if(isset($this->_modules[$module]))
+         {
+             return $this->_modules[$module];
+         }
+
+         return null;
+    }
+
+    public function doctrineConstant($value, $prefix = '')
+    {  
+        if($prefix !== '')
+        {
+            $prefix .= '_';
+        }
+
+        $const = $this->_getConstantInflector()->filter(array(
+          'prefix'=>$prefix, 
+          'key' => $value
+        ));
+
+        $const = constant($const);
+        return $const !== null ? $const : $value;
+    }
+
+    /**
+     * getManager
+     * @return Doctrine_Manager
+     */
+    public function getManager()
+    {
+        if(!$this->_manager)
+        {
+            $this->_manager = Doctrine_Manager::getInstance();
+        }
+
+        return $this->_manager;
+    }
+
+    protected function _getConstantInflector()
+    {
+        if(!isset($this->_inflectors['constant']))
+        {
+            $callback = new Zend_Filter_Callback(array('callback'=>'ucfirst'));
+            $this->_inflectors['constant'] = new Zend_Filter_Inflector(
+              'Doctrine_Core::#prefix#key', 
+               array(
+                  ':prefix' => array($callback, 'Word_CamelCaseToUnderscore', 'StringToUpper'),
+                  ':key' => array('Word_SeparatorToCamelCase', 'Word_CamelCaseToUnderscore', 'StringToUpper')
+               ), null, '#');
+        }
+
+        return $this->_inflectors['constant'];
+    }
+
+    protected function _configureModuleOptions(Zend_Application_Bootstrap_BootstrapAbstract $bootstrap)
+    {
+        $coreBootstrapClass = get_class($this->getBootstrap());
+
+        if(get_class($bootstrap) === $coreBootstrapClass)
+        {
+            // handled differently
+            $resourceLoader = $bootstrap->bootstrap('DefaultAutoloader')->getResource('DefaultAutoloader');
+            $moduleName = $resourceLoader->getNamespace();
+        }
+        else
+        {
+            // handle a module bootstrap
+            $resourceLoader = $bootstrap->getResourceLoader();
+            $moduleName = $bootstrap->getModuleName();
+        }
+
+        $resourceTypes = $resourceLoader->getResourceTypes();
+        $modelResource = isset($resourceTypes['model']) 
+          ? $resourceTypes['model'] 
+          : array('path'=>'models', 'namespace'=>'Model');
+
+        $modulePath = $resourceLoader->getBasePath();
+
+        $classPrefix = $modelResource['namespace'];
+        $modelsPath = $modelResource['path'];
+
+        $doctrineOptions = array(
+            'generateBaseClasses'=>TRUE,
+            'generateTableClasses'=>TRUE,
+            'baseClassPrefix'=>'Base_',
+            'baseClassesDirectory'=> NULL,
+            'baseTableClassName'=>'Doctrine_Table',
+            'generateAccessors' => true,
+            'classPrefix'=>"{$classPrefix}_",
+            'classPrefixFiles'=>FALSE,
+            'pearStyle'=>TRUE,
+            'suffix'=>'.php',
+            'phpDocPackage'=> $moduleName,
+            'phpDocSubpackage'=>'Models',
+        );
+
+        $doctrineConfig = array(
+            'data_fixtures_path' => "$modulePath/{$this->getDirectoryName('fixtures')}",
+            'models_path' => "$modelsPath",
+            'migrations_path' => "$modulePath/{$this->getDirectoryName('migrations')}",
+            'yaml_schema_path' => "$modulePath/{$this->getDirectoryName('yaml')}",
+            'sql_path' => "$modulePath/{$this->getDirectoryName('sql')}",
+            'generate_models_options' => $doctrineOptions 
+        );
+
+        return $doctrineConfig;
+    }
+
+    protected function _loadModels()
+    {
+        $moduleOptions = $this->getModuleOptions();
+
+        foreach($moduleOptions as $module => $options)
+        {
+            Doctrine_Core::loadModels(
+              $options['models_path'], 
+              Doctrine_Core::MODEL_LOADING_PEAR, 
+              $options['generate_models_options']['classPrefix']
+            );
+        }
+
+        return $this;
+    }
+}
+
+<?php
+class APP_Application_Resource_Modules extends Zend_Application_Resource_Modules
+{
+    protected $_prefixModuleNames = false;
+    protected $_moduleNamePrefix = null;
+    protected $_defaultModulePrefix = 'Mod';
+    protected $_configFileName = 'module.xml';
+    protected $_enabledModules = null;
+
+    public function __construct($options = null)
+    {
+        if(isset($options['prefixModuleName']))
+        {
+            if(($prefix = APP_Toolkit::literalize($options['prefixModuleName']))
+                !== false)
+            {
+                $this->_prefixModuleNames = true;
+                $this->_moduleNamePrefix = is_string($prefix)
+                    ? $prefix
+                    : $this->_defaultModulePrefix;
+            }
+        }
+
+        if(isset($options['configFileName']))
+        {
+            $this->_configFileName = $options['configFileName'];
+        }
+
+
+        parent::__construct($options);
+    }
+
+    protected function _mergeModuleConfigs(array $applicationConfig)
+    {
+       $cacheManager = $this->_getCacheManager();
+
+        if(isset($applicationConfig['resources']['modules']['enabledModules']))
+        {
+            $applicationModulesOptions = &$applicationConfig['resources']['modules'];
+            $enabledModules = &$applicationModulesOptions['enabledModules'];
+
+            $front = $this->getBootstrap()->getResource('frontcontroller');
+
+            foreach($enabledModules as $moduleName => $moduleOptions)
+            {
+
+                // cache testing
+                // note cache keys for modules are prefixed if prefix is enabled @see _formatModuleName
+                if(!$cacheManager->test('config', $this->_formatModuleName($moduleName)))
+                {
+
+                    $configPath = $front->getModuleDirectory($moduleName).'/configs/'.$this->getConfigFilename();
+
+                    if(file_exists($configPath))
+                    {
+                        if(strpos($configPath, ".xml") === false)
+                        {
+                            throw new Exception(__CLASS__." is only compatible with XML configuration files.");
+                        }
+
+                        $config = new Zend_Config_Xml($configPath);
+                        $enabledModules[$moduleName] = array_merge((array) $moduleOptions, $config->toArray());
+
+                        //$this->setOptions($options);
+                        $cacheManager->save('config', $enabledModules[$moduleName], $this->_formatModuleName($moduleName));
+                    }
+                }
+                else
+                {
+                    $options = $cacheManager->load('config', $this->_formatModuleName($moduleName));
+                    $enabledModules[$moduleName] = array_merge((array) $enabledModules[$moduleName], $options);
+                }
+            }
+        }
+
+        return $applicationConfig;
+    }
+
+    public function init()
+    {
+        /**
+         * @var Zend_Application_Bootstrap_BoostrapAbstract
+         */
+
+        $bootstrap = $this->getBootstrap();
+
+        if(!$bootstrap->hasResource('frontController'))
+        {
+            $bootstrap->bootstrap('frontController');
+        }
+
+        $front = $bootstrap->getResource('frontController');
+
+        $applicationConfig = $this->_mergeModuleConfigs($bootstrap->getOptions());
+        $bootstrap->setOptions($applicationConfig);
+
+        parent::init();
+
+
+        return $this->_bootstraps;
+
+    }
+
+    /**
+     * Format a module name to the module class prefix
+     *
+     * @param  string $name
+     * @return string
+     */
+    protected function _formatModuleName($name)
+    {
+
+        $name = strtolower($name);
+        $name = str_replace(array('-', '.'), ' ', $name);
+        $name = ucwords($name);
+        $name = str_replace(' ', '', $name);
+        $options = $this->getOptions();
+
+        if($this->prefixEnabled())
+        {
+            $name = $this->getModuleNamePrefix().$name;
+
+        }
+
+        return $name;
+    }
+
+    protected function _getCacheManager()
+    {
+        $bootstrap = $this->getBootstrap();
+
+        if(!$bootstrap->hasResource('cacheManager'))
+        {
+            $bootstrap->bootstrap('cacheManager');
+        }
+
+        return $bootstrap->getResource('cacheManager');
+    }
+
+    public function prefixEnabled()
+    {
+        return $this->_prefixModuleNames;
+    }
+
+    public function getModuleNamePrefix()
+    {
+        return $this->_moduleNamePrefix;
+    }
+
+    public function getConfigFilename()
+    {
+        return $this->_configFileName;
+    }
+
+    public function setEnabledModules($modules)
+    {
+        $this->_enabledModules = (array) $modules;
+    }
+
+    public function getEnabledModules($controllerDirectories = null)
+    {
+        if($controllerDirectories instanceof Zend_Controller_Front)
+        {
+            $controllerDirectories = $controllerDirectories->getControllerDirectory();
+        }
+
+        if(is_array($controllerDirectories))
+        {
+            $options = $this->getOptions();
+
+            $enabledModules = isset($options['enabledModules'])
+                ? (array) $options['enabledModules']
+                : array();
+
+            $this->_enabledModules =  array_intersect_key($controllerDirectories, $enabledModules);
+
+        }
+        elseif(null !== $controllerDirectories)
+        {
+            throw new InvalidArgumentException('Argument must be an instance of
+                Zend_Controller_Front or an array mathing the format of the
+                return value of Zend_Controller_Front::getControllerDirectory().'
+            );
+        }
+
+        return $this->_enabledModules;
+    }
+
+    public function setPrefixModuleName($value)
+    {
+       $this->_prefixModuleNames = APP_Toolkit::literalize($value);
+    }
+}
+
+<?php
+
+class APP_Application_Module_Bootstrap extends Zend_Application_Module_Bootstrap
+{
+    public function _initResourceLoader()
+    {
+        $loader = $this->getResourceLoader();
+        $loader->addResourceType('actionhelper', 'helpers', 'Action_Helper');
+    }
+}
+

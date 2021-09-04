@@ -1,0 +1,195 @@
+    -----------------------------------------------------------------------------------------
+    --
+    -- level1.lua
+    --
+    -----------------------------------------------------------------------------------------
+
+    local storyboard = require( "storyboard" )
+    local scene = storyboard.newScene()
+
+    -- include Corona's "physics" library
+    local physics = require "physics"
+    physics.start(); physics.pause()
+
+    --------------------------------------------
+    -- Sounds
+    local shakeSound = audio.loadSound ("shake.mp3")
+
+    -- Display, metrics stuff
+    local centerX = display.contentWidth / 2
+    local centerY = display.contentHeight / 2
+
+    -- forward declarations and other locals
+    local screenW, screenH, halfW = display.contentWidth, display.contentHeight, display.contentWidth*0.5
+
+    -----------------------------------------------------------------------------------------
+    -- BEGINNING OF YOUR IMPLEMENTATION
+    --
+    -- NOTE: Code outside of listener functions (below) will only be executed once,
+    --       unless storyboard.removeScene() is called.
+    --
+    -----------------------------------------------------------------------------------------
+
+
+    -- Text parameters
+    local labelx = 50
+    local x = 220
+    local y = 95
+    local fontSize = 24
+
+    local frameUpdate = false                   -- used to update our Text Color (once per frame)
+
+    local xglabel = display.newText( "gravity x = ", labelx, y, native.systemFont, fontSize )
+    xglabel:setTextColor(255,255,255)
+
+
+
+
+    local textMessage = function( str, location, scrTime, size, color, font )
+
+        local x, t
+
+        size = tonumber(size) or 24
+        color = color or {255, 255, 255}
+        font = font or "Helvetica"
+
+        -- Determine where to position the text on the screen
+        if "string" == type(location) then
+            if "Top" == location then
+                x = display.contentHeight/4
+            elseif "Bottom" == location then
+                x = (display.contentHeight/4)*3
+            else
+                -- Assume middle location
+                x = display.contentHeight/2
+            end
+        else
+            -- Assume it's a number -- default to Middle if not
+            x = tonumber(location) or display.contentHeight/2
+        end
+
+        scrTime = (tonumber(scrTime) or 3) * 1000       -- default to 3 seconds (3000) if no time given
+
+        t = display.newText(str, 0, 0, font, size )
+        t.x = display.contentWidth/2
+        t.y = x
+        t:setTextColor( color[1], color[2], color[3] )
+
+        -- Time of 0 = keeps on screen forever (unless removed by calling routine)
+        --
+        if scrTime ~= 0 then
+
+            -- Function called after screen delay to fade out and remove text message object
+            local textMsgTimerEnd = function()
+                transition.to( t, {time = 500, alpha = 0},
+                    function() t.removeSelf() end )
+            end
+
+            -- Keep the message on the screen for the specified time delay
+            timer.performWithDelay( scrTime, textMsgTimerEnd )
+        end
+
+        return t        -- return our text object in case it's needed
+
+    end -- textMessage()
+
+
+
+
+    -- Called when the scene's view does not exist:
+    function scene:createScene( event )
+        local group = self.view
+
+        -- create a grey rectangle as the backdrop
+        local background = display.newRect( 0, 0, screenW, screenH )
+        background:setFillColor( 128 )
+
+        -- make a crate (off-screen), position it, and rotate slightly
+        local crate = display.newImage('crate.png') --display.newImageRect( "crate.png", 90, 90 )
+        crate.x = centerX
+        crate.y = centerY
+        crate.rotation = 15
+
+        -- add physics to the crate
+        physics.addBody( crate, { density=1.0, friction=0.3, bounce=0.3 } )
+
+        -- create a grass object and add physics (with custom shape)
+        local grass = display.newImageRect( "grass.png", screenW, 82 )
+        grass:setReferencePoint( display.BottomLeftReferencePoint )
+        grass.x, grass.y = 0, display.contentHeight
+
+        -- define a shape that's slightly shorter than image bounds (set draw mode to "hybrid" or "debug" to see)
+        local grassShape = { -halfW,-34, halfW,-34, halfW,34, -halfW,34 }
+        physics.addBody( grass, "static", { friction=0.3, shape=grassShape } )
+
+        -- all display objects must be inserted into group
+        group:insert( background )
+        group:insert( grass)
+        group:insert( crate )
+    end
+
+    -- Called immediately after scene has moved onscreen:
+    function scene:enterScene( event )
+        local group = self.view
+
+        physics.start()
+
+    end
+
+    -- Called when scene is about to move offscreen:
+    function scene:exitScene( event )
+        local group = self.view
+
+        physics.stop()
+
+    end
+
+    -- If scene's view is removed, scene:destroyScene() will be called just prior to:
+    function scene:destroyScene( event )
+        local group = self.view
+
+        package.loaded[physics] = nil
+        physics = nil
+    end
+
+    -- Accelerometer
+    local function onAccelerate( event )
+
+
+        -- Move our object based on the accelerator values  --
+        textMessage( tostring(centerX + (centerX * event.xGravity)), "naosei", 0.5, 12, {255, 255, 0} )
+        crate.x = centerX + (centerX * event.xGravity)
+        crate.y = centerY + (centerY * event.yGravity * -1)
+
+        -- sound beep if Shake'n
+        if event.isShake == true then
+        textMessage( "Shake!", "Top", 3, 52, {255, 255, 0} )
+            audio.play( shakeSound )
+        end
+    end
+
+    -----------------------------------------------------------------------------------------
+    -- END OF YOUR IMPLEMENTATION
+    -----------------------------------------------------------------------------------------
+    -- Add runtime listeners
+    Runtime:addEventListener ("accelerometer", onAccelerate);
+
+    -- Add scene listeners
+    -- "createScene" event is dispatched if scene's view does not exist
+    scene:addEventListener( "createScene", scene )
+
+    -- "enterScene" event is dispatched whenever scene transition has finished
+    scene:addEventListener( "enterScene", scene )
+
+    -- "exitScene" event is dispatched whenever before next scene's transition begins
+    scene:addEventListener( "exitScene", scene )
+
+    -- "destroyScene" event is dispatched before view is unloaded, which can be
+    -- automatically unloaded in low memory situations, or explicitly via a call to
+    -- storyboard.purgeScene() or storyboard.removeScene().
+    scene:addEventListener( "destroyScene", scene )
+
+    -----------------------------------------------------------------------------------------
+
+    return scene
+

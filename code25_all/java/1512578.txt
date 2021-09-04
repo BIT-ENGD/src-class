@@ -1,0 +1,156 @@
+  java SocketAcceptor RESPONDER 25002 25003
+  java SocketAcceptor INITIATOR 25003 25002
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+
+
+public class SocketAcceptor implements Runnable{
+
+    private final Thread internalThread;
+    private final ServerSocketChannel ssc;
+private final boolean responder;
+private final int remotePort;
+
+
+public SocketAcceptor(int port, boolean responder, int remotePort) throws IOException{
+    this.responder = responder;
+    this.remotePort = remotePort;
+
+    ssc = ServerSocketChannel.open();
+    ssc.socket().bind(new InetSocketAddress("localhost", port));
+
+    internalThread = new Thread(this);
+    internalThread.start();
+}
+
+
+@Override
+public void run() {
+
+    while (true){
+
+        try{
+            //Wait for a new connection 
+            SocketChannel sc = ssc.accept();
+
+            if (responder){
+                //If we are a responder, make a connection back immediately
+                InetSocketAddress addr = new InetSocketAddress(sc.socket().getInetAddress(), remotePort);
+                SocketChannel.open(addr);
+            }
+
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+    }
+}
+
+
+public static void main(String[] args) throws Exception{
+    if (args.length != 3){
+        System.out.println("Syntax: java Main <RESPONDER/INITIATOR> <ownPort> <remotePort>");
+        System.exit(1);
+    }
+
+    boolean responder = args[0].equals("RESPONDER");
+    int ownPort = Integer.parseInt(args[1]);
+    int remotePort = Integer.parseInt(args[2]);
+
+    if (responder){
+        SocketAcceptor sa = new SocketAcceptor(ownPort, true, remotePort);  
+
+    }else{
+        SocketAcceptor sa = new SocketAcceptor(ownPort, false, 0);
+    }
+
+    //Wait for 5 seconds, to give the human a chance to start both processes
+    Thread.sleep(5000);
+
+
+    if(!responder){
+        //The initiator starts the show by making a connection to the other process
+        InetSocketAddress addr = new InetSocketAddress("localhost", remotePort);
+        SocketChannel.open(addr);
+    }
+}   
+
+  A starts listening on a ServerSocketChannel port 25002
+  B starts listening on a ServerSocketChannel port 25003
+  B creates a connection to A on "localhost"/25002 using SocketChannel.open(...)
+  A accepts the connection
+  A determines the InetAddress of the incomming connection from B = 127.0.0.1
+  A tries to open a connection to 127.0.0.1/25003 using SocketChannel.open(..), but instead crashes
+
+#
+# A fatal error has been detected by the Java Runtime Environment:
+#
+#  EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x6d9011fd, pid=6988, tid=7576
+#
+# JRE version: 6.0_16-b01
+# Java VM: Java HotSpot(TM) Client VM (14.2-b01 mixed mode, sharing windows-x86 )
+# Problematic frame:
+# V  [jvm.dll+0x1011fd]
+#
+# If you would like to submit a bug report, please visit:
+#   http://java.sun.com/webapps/bugreport/crash.jsp
+#
+
+---------------  T H R E A D  ---------------
+
+Current thread (0x04421400):  JavaThread "pool-1-thread-1" [_thread_in_vm, id=7576, stack(0x03ef0000,0x03f40000)]
+
+siginfo: ExceptionCode=0xc0000005, reading address 0x00000000
+
+Registers:
+EAX=0x00000000, EBX=0x04421400, ECX=0x00000006, EDX=0x6da53028
+ESP=0x03f3f714, EBP=0x03f3f730, ESI=0x00000000, EDI=0x2c016740
+EIP=0x6d9011fd, EFLAGS=0x00010246
+
+Top of Stack: (sp=0x03f3f714)
+0x03f3f714:   2c016740 04421510 03f3f800 04421400
+0x03f3f724:   00000000 03f3fb2c 6d9ee000 03f3f768
+0x03f3f734:   6d617feb 04421400 00000000 00000000
+0x03f3f744:   00000010 03f3f758 04421400 2749dfd0
+0x03f3f754:   2749dfd8 01b89518 01baee28 01b89510
+0x03f3f764:   01b89518 03f3f7a8 6d6325a0 00000000
+0x03f3f774:   03f3f800 000061ab 03f3f788 03f3f7a4
+0x03f3f784:   00000000 00000006 00000008 04421400 
+
+Instructions: (pc=0x6d9011fd)
+0x6d9011ed:   8d 4d f0 e8 db d7 07 00 8b 75 10 85 f6 8b 45 0c
+0x6d9011fd:   8b 10 7c 50 8b 45 14 85 c0 7c 49 8b 7a 08 8d 0c 
+
+
+Stack: [0x03ef0000,0x03f40000],  sp=0x03f3f714,  free space=317k
+Native frames: (J=compiled Java code, j=interpreted, Vv=VM code, C=native code)
+V  [jvm.dll+0x1011fd]
+C  [net.dll+0x7feb]
+C  [nio.dll+0x25a0]
+j  sun.nio.ch.Net.connect(Ljava/io/FileDescriptor;Ljava/net/InetAddress;II)I+0
+j  sun.nio.ch.SocketChannelImpl.connect(Ljava/net/SocketAddress;)Z+162
+j  java.nio.channels.SocketChannel.open(Ljava/net/SocketAddress;)Ljava/nio/channels/SocketChannel;+6
+j  PeerClientConnection.connect(Ljava/net/InetSocketAddress;)V+2
+j  PeerClientConnection$1.run()V+8
+j  java.util.concurrent.Executors$RunnableAdapter.call()Ljava/lang/Object;+4
+j  java.util.concurrent.FutureTask$Sync.innerRun()V+30
+j  java.util.concurrent.FutureTask.run()V+4
+j  java.util.concurrent.ThreadPoolExecutor$Worker.runTask(Ljava/lang/Runnable;)V+59
+j  java.util.concurrent.ThreadPoolExecutor$Worker.run()V+28
+j  java.lang.Thread.run()V+11
+v  ~StubRoutines::call_stub
+V  [jvm.dll+0xecf9c]
+V  [jvm.dll+0x1741e1]
+V  [jvm.dll+0xed167]
+V  [jvm.dll+0xed1dd]
+V  [jvm.dll+0x116290]
+V  [jvm.dll+0x1d0424]
+V  [jvm.dll+0x173e5c]
+C  [msvcr71.dll+0x9565]
+C  [kernel32.dll+0x4d0e9]
+C  [ntdll.dll+0x419bb]
+C  [ntdll.dll+0x4198e]
+

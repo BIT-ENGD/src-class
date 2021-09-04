@@ -1,0 +1,81 @@
+Friend Function WriteData(ByVal Keyboard As GSeriesKeyboard, ByVal Data() As Byte) As Integer
+   Dim BytesWritten As Integer = Data.Length
+   Dim Success As Boolean = Win32.WriteFile(Keyboard.ExternalIOHandle, Data, Data.Length, BytesWritten, Nothing)
+   Dim ErrorCode As Integer = GetLastError()
+   Return ErrorCode
+End Function
+
+<DllImport("kernel32.dll", SetlastError:=True)> Friend Shared Function WriteFile( _
+    ByVal File As SafeFileHandle, _
+    ByVal Buffer() As Byte, _
+    ByVal NumberOfBytesToWrite As Integer, _
+    ByRef NumberOfBytesWritten As Integer, _
+    ByRef Overlapped As System.Threading.NativeOverlapped) As <MarshalAs(UnmanagedType.Bool)> Boolean
+End Function
+
+    Friend Function OpenInterface(ByVal KeyboardPath As String) As SafeFileHandle
+
+        Dim SecurityData As New SECURITY_ATTRIBUTES()
+        Dim security As New DirectorySecurity()
+        Dim DescriptorBinary As Byte() = security.GetSecurityDescriptorBinaryForm()
+        Dim SecurityDescriptorPtr As IntPtr = Marshal.AllocHGlobal(DescriptorBinary.Length)
+
+        SecurityData.nLength = Marshal.SizeOf(SecurityData)
+        Marshal.Copy(DescriptorBinary, 0, SecurityDescriptorPtr, DescriptorBinary.Length)
+        SecurityData.lpSecurityDescriptor = SecurityDescriptorPtr
+
+        Dim Handle As SafeFileHandle = Win32.CreateFile(KeyboardPath, GENERIC_READ Or GENERIC_WRITE, _
+                                                        FILE_SHARE_READ Or FILE_SHARE_WRITE, SecurityData, _
+                                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0)
+
+        If Handle.IsInvalid Then
+            Dim ErrorInfo As New ComponentModel.Win32Exception()
+            Debug.Print("Failed to get device IO handle: " & ErrorInfo.Message)
+        End If
+
+        Return Handle
+    End Function
+
+    Friend Overridable Function BitmapToLcdFormat(ByVal SourceBitmap As Bitmap) As Byte()
+        'Base class is for the generic B&W 160x43 LCD.  Override for G19 if I ever get my hands on one
+        Dim Data As Byte() = New Byte(991) {}
+        ' USBTrace says 992 bytes
+        Dim Image(640 * 48) As Byte 'Temp array for image conversion.  Adds additional 5 lines of unused pixels to avoid an out-of-bounds error
+        Dim BitmapData As BitmapData = SourceBitmap.LockBits(New Rectangle(0, 0, 160, 43), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb)
+        Marshal.Copy(BitmapData.Scan0, Image, 0, (640 * 43))
+
+        Data(0) = &H3 'Set-LCD
+        Dim output As Integer = 32 'First byte of image data starts at byte 32; 960 bytes of image data
+        Dim ImageOffset As Integer = 0
+        For Row As Integer = 0 To 5
+            For Column As Integer = 0 To (SourceBitmap.Width << 2) - 1 Step 4
+
+                Dim r As Integer = _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 0) And &H80) >> 7) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 1) And &H80) >> 6) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 2) And &H80) >> 5) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 3) And &H80) >> 4) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 4) And &H80) >> 3) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 5) And &H80) >> 2) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 6) And &H80) >> 1) Or _
+                ((Image(ImageOffset + Column + BitmapData.Stride * 7) And &H80) >> 0)
+
+                Data(output) = CByte(r)
+
+                output += 1
+            Next
+            ImageOffset += BitmapData.Stride * 8
+        Next
+        SourceBitmap.UnlockBits(BitmapData)
+        Return Data
+    End Function
+
+(Logitech G15)
+    HardwareInterface.WriteData(Me, New Byte() {2, 0, 0, 0, 0, 0, 0})
+
+(Logitech G510)
+    HardwareInterface.WriteData(Me, New Byte() {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+
+(Both; the one that works)
+    HardwareInterface.WriteData(Me, BitmapToLcdFormat(NewImage)) 'Build 992-byte LCD-format bitmap from source iumage
+

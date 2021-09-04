@@ -1,0 +1,127 @@
+Dim pEnumVar As IEnumVersionInfo, value As Varient 
+
+Dim pEnumVar As System.Collections.IEnumerator, value As Object  'I also tried value as String
+
+value = pEnumVar.Next
+
+value = pEnumVar.Current 'and I tried this value = pEnumVar.MoveNext
+
+        Dim pLayer As ILayer
+        Dim pGrpLayer As IGroupLayer
+
+        Dim pStdTableColl As IStandaloneTableCollection
+        Dim pStdTable As IStandaloneTable = Nothing
+        Dim pTable As ITable = Nothing
+        Dim pTableSort As ITableSort
+        Dim pTblSortLyrs As ITableSort
+        Dim pRowLyrs As IRow
+        Dim pDataStat As IDataStatistics
+        Dim pCursor As ICursor
+        Dim pLyrCursor As ICursor
+        Dim pQf As IQueryFilter
+
+        Dim lngFldLayerName As Long
+        Dim lngFldPath As Long
+        Dim lngFldGroupOrder As Long
+        Dim lngFldGroupName As Long
+        Dim lngFldGroupTOCOrder As Long
+        Dim lngFldGroupVis As Long
+        Dim i As Integer
+
+        Dim strLayerName As String
+        Dim strPath As String
+        Dim lngGroupTOCOrder As Long
+        Dim blnGroupVis As Boolean
+
+        Dim pEnumVar As IEnumVersionInfo, value As Object ' <<<<<<<<<<<<<<<<<<
+
+        Dim pODGSLyr As New ODGSLayer
+
+        'Start
+        'Find the Layer Files metadata table
+        pStdTableColl = m_pMap
+        For i = 0 To pStdTableColl.StandaloneTableCount - 1
+            pStdTable = pStdTableColl.StandaloneTable(i)
+            If pStdTable.Name = "ODGSLAYERS" Then
+                pTable = pStdTable
+                lngFldLayerName = pTable.FindField("LAYERNAME")
+                lngFldPath = pTable.FindField("PATH")
+                lngFldGroupOrder = pTable.FindField("GROUPORDER")
+                lngFldGroupName = pTable.FindField("GROUPNAME")
+                lngFldGroupTOCOrder = pTable.FindField("GROUPTOCORDER")
+                lngFldGroupVis = pTable.FindField("GROUPVISABLE")
+            End If
+        Next i
+
+        If pStdTable Is Nothing Then
+            Exit Sub
+        End If
+
+        'Sort the Table
+        pTableSort = New TableSort
+        With pTableSort
+            .Fields = "GROUPTOCORDER, GROUPNAME"
+            .Ascending("GROUPTOCORDER") = True
+            .Ascending("GROUPNAME") = True
+            .QueryFilter = Nothing
+            .Table = pTable
+        End With
+        pTableSort.Sort(Nothing)
+
+        pCursor = pTableSort.Rows
+
+        'Find Unique Values in the Table
+        pDataStat = New DataStatistics
+        pDataStat.Field = "GROUPNAME"
+        pDataStat.Cursor = pCursor
+
+        pEnumVar = pDataStat.UniqueValues
+        value = pEnumVar.Current ' <<<<<<<<<<<<<<<<<<<<<<<<<<
+
+        Do Until IsDBNull(value)
+            'Now resort the table based upon the layer order in the group
+            pQf = New QueryFilter
+            pQf.WhereClause = "[GROUPNAME] = '" & value & "'"
+            pLyrCursor = pTable.Search(pQf, False)
+            pTblSortLyrs = New TableSort
+            With pTblSortLyrs
+                .Fields = "GROUPORDER"
+                .Ascending("GROUPORDER") = True
+                .QueryFilter = pQf
+                .Table = pTable
+            End With
+            pTblSortLyrs.Sort(Nothing)
+
+            'Get the newly sorted rows and create the new Group and Layers inside the Group
+            pLyrCursor = pTblSortLyrs.Rows
+            pRowLyrs = pLyrCursor.NextRow
+
+            'Create the new Group
+            lngGroupTOCOrder = pRowLyrs.Value(lngFldGroupTOCOrder)
+            blnGroupVis = pRowLyrs.Value(lngFldGroupVis)
+
+            pGrpLayer = New GroupLayer
+            pGrpLayer.Visible = blnGroupVis
+            pGrpLayer.Expanded = False
+            pGrpLayer.Name = pRowLyrs.Value(lngFldGroupName)
+
+            'Add layers to the new Group
+            Do Until pRowLyrs Is Nothing
+                strLayerName = pRowLyrs.Value(lngFldLayerName)
+                strPath = pRowLyrs.Value(lngFldPath)
+
+                pODGSLyr = New ODGSLayer
+                pLayer = pODGSLyr.LoadLayer(strPath, strLayerName)
+                pGrpLayer.Add(pLayer)
+                pRowLyrs = pLyrCursor.NextRow
+            Loop
+
+            'Add the Group layer to the map
+            m_pMap.AddLayer(pGrpLayer)
+            m_pMap.MoveLayer(pGrpLayer, lngGroupTOCOrder)
+
+            '        Debug.Print "value - " & value & vbTab & "GroupVis = " & blnGroupVis
+            value = pEnumVar.Current ' <<<<<<<<<<<<<<<<<<
+
+        Loop
+

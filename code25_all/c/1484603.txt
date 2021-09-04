@@ -1,0 +1,184 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <dirent.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
+
+
+// SOME PROGRAM CONSTANTS
+
+#define CHILD_QUANTITY 5
+#define FIFO_FILE "/tmp/printer.fifo"
+#define STRING_TO_PRINT "hola mundo como estas!!!!"
+#define DELAY_TIME 2 // two seconds
+
+// SOME GLOBAL VARIABLES
+int fdfifo, next_printer = 0, next_char = 0;
+pid_t printers[CHILD_QUANTITY];
+
+
+
+void process_call_printer(int sig) {
+    char char_to_print;
+
+    if (read(fdfifo, &char_to_print, sizeof(char)) == -1) {
+        perror(__FUNCTION__);
+    }
+        // print the char
+    printf("[%d] -> %c\n", getpid(), char_to_print);
+
+
+    // alert the parent process about it
+    kill(getppid(), SIGUSR2);
+
+    // just wait for another signal
+    while(1) {
+        pause();
+    }   
+
+}
+
+void process_call_hub(int sig) {
+    pid_t printer;
+    if (next_char < strlen(STRING_TO_PRINT)) {
+        if (write(fdfifo, &STRING_TO_PRINT[next_char], sizeof(char)) == -1) {
+            perror(__FUNCTION__);
+        }
+        alarm(DELAY_TIME);
+
+        if (next_printer >= CHILD_QUANTITY) {
+            next_printer = 0;
+        }
+
+        printer = printers[next_printer];   
+        next_printer++;
+        next_char++;
+        printf("sending char %c to the printer %d\n", STRING_TO_PRINT[next_char - 1], next_printer - 1);
+        kill(printer, SIGUSR1);
+    }
+    else {
+        kill(getpid(), SIGQUIT);
+    }
+
+}
+
+void process_callback(int sig) {
+//  alarm(0);
+    printf("a callback function call\n");
+//  kill(getpid(), SIGALRM);
+
+//  while(1) {
+//      pause();
+//  }
+}
+
+void system_shutdown(int sig) {
+    printf("SIGQUIT recived...terminating\n");
+
+    if (unlink(FIFO_FILE) == -1) {
+        perror(__FUNCTION__);
+    }
+
+    close(fdfifo);
+}
+
+
+int main(void) {
+    pid_t pid;
+
+    int i;
+
+    if (mkfifo(FIFO_FILE, 0777) == -1) {
+        perror("pipe()");
+        return -1;
+    }
+
+    fdfifo = open(FIFO_FILE, O_RDWR, 0777);
+
+    if (fdfifo == -1) {
+        perror("open()");
+        return -2;
+    }
+
+
+    for (i = 0; i < CHILD_QUANTITY; i++) {
+        pid = fork();
+        printers[i] = pid;
+
+        switch(pid) {
+            case -1:
+                perror("Error\n");
+            break;
+            case 0:
+                // printer
+                signal(SIGUSR1, process_call_printer);
+                while(1) {
+                    pause();
+                }
+
+            break;
+            default:
+                // hub
+                // do nothing.. we will figure out later...
+            break;
+        }
+
+    }
+
+    signal(SIGALRM, process_call_hub);
+    signal(SIGQUIT, system_shutdown);
+    signal(SIGUSR2, process_callback);
+
+    alarm(DELAY_TIME);
+
+    while(1) {
+        pause();
+    }
+
+
+} 
+
+gabriel@GaboMac:20090918$ ./threaded_printer 
+sending char h to the printer 0
+[1397] -> h
+a callback function call
+sending char o to the printer 1
+[1398] -> o
+a callback function call
+sending char l to the printer 2
+[1399] -> l
+a callback function call
+sending char a to the printer 3
+[1400] -> a
+a callback function call
+sending char   to the printer 4
+[1401] ->  
+a callback function call
+sending char m to the printer 0
+sending char u to the printer 1
+sending char n to the printer 2
+sending char d to the printer 3
+sending char o to the printer 4
+sending char   to the printer 0
+sending char c to the printer 1
+sending char o to the printer 2
+sending char m to the printer 3
+sending char o to the printer 4
+sending char   to the printer 0
+sending char e to the printer 1
+sending char s to the printer 2
+sending char t to the printer 3
+sending char a to the printer 4
+sending char s to the printer 0
+sending char ! to the printer 1
+sending char ! to the printer 2
+sending char ! to the printer 3
+sending char ! to the printer 4
+SIGQUIT recived...terminating
+

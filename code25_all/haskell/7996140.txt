@@ -1,0 +1,112 @@
+{-# LANGUAGE OverloadedStrings, ExtendedDefaultRules #-}
+
+-- https://github.com/mailrank/aeson/blob/master/examples/Demo.hs
+-- cabal install aeson
+-- cabal install mongoDb
+
+import Data.Aeson
+import qualified Data.Aeson.Types as T
+
+import Data.Attoparsec (parse, Result(..))
+import Data.Attoparsec.Number (Number(..))
+import qualified Data.Text as Text
+import Control.Applicative ((<$>))
+import Control.Monad (mzero)
+import qualified Data.ByteString.Char8 as BS
+-- Aeson's "encode" to JSON generates lazy bytestrings
+import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.CompactString as CS
+
+import Database.MongoDB
+import Data.Bson
+import qualified Data.Bson as Bson
+import qualified Data.Vector
+
+import GHC.Int
+
+-- Is there a better way to convert between string representations?
+csToTxt :: UString -> Text.Text
+csToTxt cs = Text.pack $ CS.unpack cs
+
+bsToTxt :: BS.ByteString -> Text.Text
+bsToTxt bs = Text.pack $ BS.unpack bs
+
+fieldToPair :: Field -> T.Pair
+fieldToPair f = key .= val
+        where key = csToTxt $ label f
+              val = toJSON (value f)
+
+instance ToJSON Field where
+    toJSON f = object [fieldToPair f]
+
+-- Is this what I'm supposed to do? Just go through and map everything?
+instance ToJSON Data.Bson.Value where
+    toJSON (Float f) = T.Number $ D f
+    toJSON (Bson.String s) = T.String $ csToTxt s
+    toJSON (Bson.Array xs) = T.Array $ Data.Vector.fromList (map toJSON xs)
+    toJSON (Doc fs) = object $ map fieldToPair fs
+    toJSON (Uuid (UUID bs)) = T.String $ bsToTxt bs
+    toJSON (Bson.Bool b) = T.Bool b
+    toJSON (Int32 i) = T.Number (I (fromIntegral i))
+    toJSON (Int64 i) = T.Number (I (fromIntegral i))
+
+    toJSON (ObjId (Oid w32 w64)) = T.String "look up GHC.Word.Word32 and GHC.Word.Word64"
+    toJSON (UTC time) = T.String "look up Data.Time.Clock.UTC.UTCTime"
+
+    toJSON (Md5 m) = T.Null
+    toJSON (UserDef u) = T.Null
+    toJSON (Bin b) = T.Null
+    toJSON (Fun f) = T.Null
+    toJSON Bson.Null = T.Null
+    toJSON (RegEx r) = T.Null
+    toJSON (JavaScr j) = T.Null
+    toJSON (Sym s) = T.Null
+    toJSON (Stamp s) = T.Null
+    toJSON (MinMax mm) = T.Null
+
+-- Data.Bson.Value and T.Value for reference
+-- data Data.Bson.Value
+--   = Float Double
+--   | Data.Bson.String UString
+--   | Doc Document
+--   | Data.Bson.Array [Data.Bson.Value]
+--   | Bin Binary
+--   | Fun Function
+--   | Uuid UUID
+--   | Md5 MD5
+--   | UserDef UserDefined
+--   | ObjId ObjectId
+--   | Data.Bson.Bool Bool
+--   | UTC time-1.2.0.3:Data.Time.Clock.UTC.UTCTime
+--   | Data.Bson.Null
+--   | RegEx Regex
+--   | JavaScr Javascript
+--   | Sym Symbol
+--   | Int32 GHC.Int.Int32
+--   | Int64 GHC.Int.Int64
+--   | Stamp MongoStamp
+--   | MinMax MinMaxKey
+
+-- data T.Value
+--   = Object Object
+--   | T.Array Array
+--   | T.String Text.Text
+--   | Number Data.Attoparsec.Number.Number
+--   | T.Bool !Bool
+--   | T.Null
+
+main ::IO ()
+main = do
+    putStrLn $ "testing again: " ++ BSL.unpack (encode ["Hello", "I", "am", "angry"])
+
+    let field = "key" =: "value"
+    print field
+    print $ label field
+    putStrLn $ CS.unpack $ label field
+
+    putStrLn $ show "asdf"
+
+    -- Getting close
+    putStrLn $ "testing again: " ++ BSL.unpack (encode ["hello" =: "world", "num" =: 10.05, "num2" =: 5, "sub" =: ["doc","charlie"], "bool" =: False])
+    putStrLn $ "testing again: " ++ BSL.unpack (encode ["hello" =: "world", "sub" =: ["one" =: 1, "two" =: 2]])
+

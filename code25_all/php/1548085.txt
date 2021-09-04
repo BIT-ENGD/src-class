@@ -1,0 +1,116 @@
+class RevisionsController extends AppController {
+    var $name = "Revisions";
+    var $helpers = array('Diff');
+
+    /**
+     * View a list of existing revisions.
+     * Displays the changes between revisions with the
+     * Diff helper.
+     */
+    function view($seriesId = null) {
+        if ((!$seriesId && empty($this->data))) {
+            $this->Session->setFlash('That Series does not exist', true, array('class' =>
+                'error'));
+            $this->redirect('/');
+        }
+
+        $revisions = $this->Revision->find('all', array('conditions' => array('Revision.series_id' =>
+            $seriesId), 'order' => 'revision desc', 'contain' => false));
+        $this->set('revisions', $revisions);
+    }
+
+    /**
+     * Create a new revision by editing the most recent one.
+     * This seems very messy.
+     */
+    function edit($seriesId = null) {
+        if ((!$seriesId && empty($this->data))) {
+            $this->Session->setFlash('That Series does not exist', true, array('class' =>
+                'error'));
+            $this->redirect('/');
+        }
+
+        if (empty($this->data)) {
+            $latest = $this->Revision->find('first', array('conditions' => array('is_latest' =>
+                1, 'series_id' => $seriesId)));
+            $this->data['Revision']['description'] = $latest['Revision']['description'];
+        } else {
+            $this->data['Revision']['revision'] = $this->Revision->getNext($seriesId);
+            $this->data['Revision']['series_id'] = $seriesId;
+            $this->Revision->create();
+            if ($this->Revision->save($this->data)) {
+                $this->Revision->setLatest($this->Revision->id, $seriesId);
+
+                $this->Session->setFlash('The edit has been saved.', true, array('class' =>
+                    'success'));
+                $this->redirect(array('controller' => 'series', 'action' => 'view', $seriesId));
+            }
+        }
+
+        $this->set('seriesId', $seriesId);
+    }
+
+
+    /**
+     * Creates a new revision using data from a previous one.
+     * Currently clones the previous revision rather than
+     * just linking it. May need to be changed.
+     */
+    function rollback($seriesId = null, $revision = null) {
+        if (!$seriesId || !$revision) {
+            $this->redirect('/');
+        }
+
+        $this->data = $this->Revision->find('first', array('conditions' => array('Revision.series_id' =>
+            $seriesId, 'Revision.revision' => $revision), 'contain' => false));
+
+        $this->data['Revision']['revision'] = $this->Revision->getNext($seriesId);
+        $this->data['Revision']['is_rollback'] = 1;
+        $this->data['Revision']['rollback_rev'] = $revision;
+        unset($this->data['Revision']['id']);
+        $this->Revision->create();
+        if ($this->Revision->save($this->data)) {
+            $this->Revision->setLatest($this->Revision->id, $seriesId);
+
+            $this->Session->setFlash('The rollback has been saved.', true, array('class' =>
+                'success'));
+            $this->redirect(array('controller' => 'series', 'action' => 'view', $seriesId));
+        }
+    }
+
+}
+
+class Revision extends AppModel {
+
+    var $name = 'Revision';
+
+    var $belongsTo = array('Series' => array('counterCache' => true));
+    var $actsAs = array('Containable');
+
+    function getCurrent($seriesId = null) {
+        if (!$seriesId)
+            return false;
+
+        $series = $this->Series->find('first', array('conditions' => array('Series.id' =>
+            $seriesId), 'contain' => false));
+        return $series['Series']['revision_count'];
+    }
+
+    function getNext($seriesId = null) {
+        if (!$seriesId)
+            return false;
+
+        $revision = $this->getCurrent($seriesId);
+        return $revision + 1;
+    }
+
+    function setLatest($id, $seriesId = null) {
+        $this->updateAll(array('Revision.is_latest' => 0), array('Revision.series_id' =>
+            $seriesId));
+
+        $this->id = $id;
+        $this->saveField('is_latest', 1);
+    }
+
+}
+

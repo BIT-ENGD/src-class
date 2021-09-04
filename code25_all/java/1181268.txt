@@ -1,0 +1,76 @@
+public final class WiaAuthorizationStrategy implements
+        IAuthorizationStrategy,
+        IUnauthorizedComponentInstantiationListener {
+
+    private RealmPolicy roleManager;
+    private static WiaAuthorizationStrategy instance;
+
+    private WiaAuthorizationStrategy() {
+        roleManager = RealmPolicy.getInstance();
+    }
+
+    public static WiaAuthorizationStrategy getInstance() {
+        if(instance == null)
+            instance = new WiaAuthorizationStrategy();
+        return instance;
+    }
+
+    public boolean isInstantiationAuthorized(Class componentClass) {
+
+        if (ProtectedPage.class.isAssignableFrom(componentClass)) {
+            if (WiaSession.get().getUser() == null) {
+                return false;
+            }
+            if(!roleManager.isAuthorized(WiaSession.get().getUser().getRole(), componentClass.getName()))//WiaSession.get().isAuthenticated();
+            {
+                WiaSession.get().setAccess(false);
+                return false;
+            }
+            else
+                return true;
+        }
+
+        return true;
+    }
+
+    public void onUnauthorizedInstantiation(Component component) {
+        throw new RestartResponseAtInterceptPageException(
+                Login.class);
+    }
+
+    public boolean isActionAuthorized(Component component, Action action) {
+        //System.out.println("Name:" + component.getClass().getName() + "\n Action:" + action.getName() + "\nUser:" + WiaSession.get().getUser());
+        if (action.equals(Component.RENDER)) {
+            if (roleManager.containClass(component.getClass().getName()))
+             {
+                if (WiaSession.get().getUser() != null) {
+                    if(!roleManager.isAuthorized(WiaSession.get().getUser().getRole(), component.getClass().getName()))
+                    {
+                        WiaSession.get().setAccess(false);
+                        return false;
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+public abstract class ProtectedPage extends WebPage {
+
+    public ProtectedPage() {
+
+    protected void verifyAccess() {
+// Redirect to Login page on invalid access.
+        if (!isUserLoggedIn()) {
+            throw new RestartResponseAtInterceptPageException(Login.class);
+        }
+    }
+
+    protected boolean isUserLoggedIn() {
+        return ((WiaSession) getSession()).isAuthenticated();
+    }
+}
+

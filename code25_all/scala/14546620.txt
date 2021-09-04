@@ -1,0 +1,39 @@
+sealed trait Item
+case class Marble() extends Item
+case class Book() extends Item
+
+sealed trait Container[Item]
+case object Pouch extends Container[Marble]
+case object Shelf extends Container[Book]
+
+// Map(classOf[Marble] -> Pouch, classOf[Book] -> Shelf)
+val itemToContainer = typeParamMap[Container[_], Item](Pouch, Shelf)
+
+object Macros {
+  def getTag[T](implicit ttag: ru.TypeTag[T]) = ttag
+
+  def getBaseParam(child: ru.Type, base: ru.Symbol, paramBase: ru.Symbol) =
+    child.baseType(base)
+      .find(_.baseClasses.contains(paramBase))
+      .get
+      .typeSymbol
+      .asClass // TODO how to get java.lang.Class from here?
+
+  def typeParamMapImpl[B, P](c: Context)(children: c.Expr[B]*)(baseTag: c.Expr[ru.WeakTypeTag[B]], paramTag: c.Expr[ru.WeakTypeTag[P]]) = {
+    import c.universe._
+
+    val getTagTree = Select(Ident(newTermName("Macros")), "getTag")
+    val typeTags = c.Expr[List[ru.TypeTag[_]]](Apply(reify(List).tree, children.map( t =>
+      c.Expr(TypeApply(getTagTree, List(t.tree))).tree
+    ).toList))
+
+    reify {
+      typeTags.splice.map { child =>
+        getBaseParam(child.tpe, baseTag.splice.tpe.typeSymbol, paramTag.splice.tpe.typeSymbol) -> child.tpe
+      }.toMap
+    }
+  }
+
+  def typeParamMap[B, P](children: B*)(implicit baseTag: ru.WeakTypeTag[B], paramTag: ru.WeakTypeTag[P]) = macro Macros.typeParamMapImpl[B, P]
+}
+

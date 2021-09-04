@@ -1,0 +1,47 @@
+import           Exception (tryIO)
+
+...
+
+runOnFileName :: String -> IO (String)
+runOnFileName inp = do
+   res <- sanitizeSource inp
+   case res of
+       Just (code, _, _, _)    -> return $ ppr code
+       Nothing                 -> return ""
+
+sanitizeSourceString :: String -> String -> IO (String)
+sanitizeSourceString fn contents = do
+  tmpdir <- getTemporaryDirectory
+  let tmp = tmpdir </> fn ++ ".hs"
+  exists <- doesFileExist tmp
+  unless exists $ writeFile tmp $ contents
+  runOnFileName tmp
+
+
+sanitizeSource :: String -> IO (Maybe RenamedSource)
+sanitizeSource inp =  do 
+      runGhc (Just libdir) $ do
+        dflags <- getSessionDynFlags
+        let dflags' = foldl xopt_set dflags
+                            [Opt_Cpp, Opt_ImplicitPrelude, Opt_MagicHash]
+        setSessionDynFlags dflags
+        target <- guessTarget inp Nothing
+        setTargets [target]
+        load LoadAllTargets
+        modSum <- getModSummary $ mkModuleName "Main"
+        p <- parseModule modSum
+        t <- typecheckModule p
+        d <- desugarModule t
+        return $ renamedSource d
+
+
+
+... in my handler...
+eitherSan <- liftIO $ tryIO $ sanitizeSourceString (T.unpack uuid) (fromMaybe "" content)
+let sanitized = case eitherSan of
+    Left _ -> ""
+    Right r -> r
+
+ A web handler threw an exception. Details Parse error: naked expression at top level
+
+tryIO

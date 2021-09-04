@@ -1,0 +1,76 @@
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h> 
+#include <errno.h>
+#include <stdio.h>
+#include <signal.h>
+#include <string.h>
+
+#define BAUDRATE B115200
+#define MODEMDEVICE "/dev/ttyS2"
+#define _POSIX_SOURCE 1 /* POSIX compliant source */
+#define FALSE 0
+#define TRUE 1
+
+
+__sighandler_t sighandle(int signum, __sighandler_t h) { 
+    fprintf(stderr, "BREAK DETECTED\n"); 
+    signal(SIGINT, (__sighandler_t) sighandle); 
+    return SIG_IGN; 
+}
+volatile int STOP=FALSE; 
+
+int    main()
+{
+    int fd,c, res;
+    struct termios oldtio,newtio;
+    char buf[255];
+    pid_t  pid; 
+    signal(SIGINT, (__sighandler_t) sighandle);
+
+    fd = open(MODEMDEVICE, O_RDWR | O_NOCTTY ); 
+    if (fd <0) {perror(MODEMDEVICE); return (-1); }
+
+
+    tcgetattr(fd,&oldtio); /* save current port settings */
+
+    memset(&newtio, 0,sizeof(newtio));
+    newtio.c_cflag |= BAUDRATE | CRTSCTS | CS8 | CLOCAL | CREAD | BRKINT;
+    newtio.c_iflag &= ~IGNBRK ;
+    newtio.c_oflag = 0;
+
+    /* set input mode (non-canonical, no echo,...) */
+    newtio.c_lflag = 0;
+
+    newtio.c_cc[VTIME]    = 0;   /* inter-character timer unused */
+    newtio.c_cc[VMIN]     = 1;   /* blocking read until 5 chars received */
+
+    tcflush(fd, TCIFLUSH);
+    tcsetattr(fd,TCSANOW,&newtio);
+
+    if( ioctl(fd, TIOCSCTTY, 1) <0 )
+    {
+        printf("Error number: %d\n", errno);
+    }
+   if ( tcsetpgrp(fd, tcgetpgrp(0) ) < 0 )
+   {
+   syslog(LOG_PERROR,"tcsetpgrp failed: %d " ,errno);
+   syslog(LOG_PERROR,"EBADF is %d " ,EBADF);    
+   syslog(LOG_PERROR,"EINVAL is %d " ,EINVAL);
+   syslog(LOG_PERROR,"ENOTTY is %d " ,ENOTTY);    
+   syslog(LOG_PERROR,"EPERM is %d " ,EPERM);  
+   }
+    while (STOP==FALSE) {       /* loop for input */
+        res = read(fd,buf,255);   /* returns after 5 chars have been input */
+        buf[res]=0;               /* so we can printf... */
+
+        printf(":%s:%d\n", buf, res);
+        if (buf[0]=='z') {STOP=TRUE;}
+    }
+    tcsetattr(fd,TCSANOW,&oldtio);
+    return 0;
+}
+

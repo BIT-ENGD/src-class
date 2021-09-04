@@ -1,0 +1,68 @@
+from django import http
+from django.core import serializers
+from django.core.paginator import Paginator, InvalidPage, EmptyPage
+from django.core.exceptions import FieldError
+
+from metaward import models
+
+from django.db import models as django_models
+
+mimetypes = {
+    "json" : "application/json",
+    "xml"  : "application/xml",
+#    "yaml" : "text/yaml",
+}
+FIELDERROR = 1
+
+class Error(django_models.Model) :
+    code = django_models.IntegerField()
+    msg = django_models.CharField()
+
+def serialize(format, objects) :
+    response = http.HttpResponse(mimetype=mimetypes[format])
+    serialized = serializers.serialize(format, objects, stream=response)
+    return response
+
+def get(request, model) :
+    args = dict()
+    for k in request.GET :
+        args[str(k)] = str(request.GET.get(k))
+
+    format = args.pop("format", None)
+    if format not in mimetypes.keys() :
+        format = "xml"
+
+    try :
+        page = int(args.pop('page', '1'))
+    except ValueError :
+        page = 1
+
+    try :
+        result = model.objects.filter(**args)
+    except FieldError, why :
+        return serialize(format, [Error(code=FIELDERROR, msg=why)])
+
+    paginator = Paginator(result, 100)
+
+    try :
+        paged = paginator.page(page)
+    except (EmptyPage, InvalidPage) :
+        paged = paginator.page(paginator.num_pages)
+
+    return serialize(format, paged.object_list)
+
+def award(request) :
+    return get(request, models.Award)
+
+def alias(request) :
+    return get(request, models.Alias)
+
+def user(request) :
+    return get(request, models.User)
+
+urlpatterns += patterns('',
+    url(r'^api/v2/award', api.award, name="api-award"),
+    url(r'^api/v2/alias', api.alias, name="api-alias"),
+    url(r'^api/v2/user', api.user, name="api-user"),
+)
+

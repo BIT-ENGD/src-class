@@ -1,0 +1,122 @@
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
+    UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"PhotoCell" forIndexPath:indexPath];
+    UIImageView *photoImageView = (UIImageView *)[cell viewWithTag:1];
+    ...
+    ImageDownloaderCompletionBlock completion = ^(UIImage *image, NSError *error) {                                  
+        if (image) {
+            photoImageView.image = image;
+        } else {
+            NSLog(@"%s: Error: %@", __PRETTY_FUNCTION__,
+                  [error localizedDescription]);
+        }
+    };
+    ...
+    UIImage *image = [_currentImageDownloader image];                                 /
+
+    if (image) {
+        photoImageView.image = image;
+    } else {
+        NSURL *URL = [NSURL URLWithString: _photoInfos[_selectedItemIndex][@"url_sq"]];
+        [_currentImageDownloader downloadImageAtURL:URL completion:completion];
+    }
+
+    return cell;
+}
+
+import UIKit
+
+var gPhotoData:Array<Dictionary<String,AnyObject>>?
+var gDownloaders:NSMutableArray = NSMutableArray()
+var currentImageDownloader:ImageDownloader?
+var gSelectedItemIndex:Int?
+
+
+class ViewController: UIViewController {
+
+    @IBOutlet weak var collectionView: UICollectionView!
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        fetchFlickrPhotoWithSearchString("Ric");
+    }
+
+    // -----------------------------------------------------------------------------------------------------
+    // MARK: -
+
+
+    func fetchFlickrPhotoWithSearchString(searchString:String) {
+
+        let url = getURLForString("Ric")
+
+        let task = NSURLSession.sharedSession().dataTaskWithURL(url) {(data, response, error) in
+            if let httpRes = response as? NSHTTPURLResponse {
+                if httpRes.statusCode == 200 {
+                    let string = stringByRemovingFlickrJavaScriptFromData(data)
+                    let data = string.dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: true)
+                    let JSON: AnyObject? = NSJSONSerialization.JSONObjectWithData(data!, options: .AllowFragments, error: nil)
+
+                    let rawDataDict = JSON as Dictionary<String,AnyObject>!
+                    let photos: AnyObject? = rawDataDict["photos"]
+                    gPhotoData = (photos!["photo"] as Array<Dictionary<String,AnyObject>>)
+
+                    let myCount = (gPhotoData!.count - 1)
+
+                    for index in 0...myCount {
+                        let smirf = gPhotoData![index]
+                        let downloader:ImageDownloader = ImageDownloader(dict: smirf)
+                        gDownloaders.addObject(downloader)
+                    }
+
+                    dispatch_async(dispatch_get_main_queue(), {
+                     // ...do something.
+                    })
+
+                }
+            }
+        }
+
+        task.resume()
+
+    }
+
+    // -----------------------------------------------------------------------------------------------------
+    // MARK: - Action Methods
+
+    @IBAction func exitAction(sender: AnyObject) {
+        exit(0)
+    }
+
+}
+
+// =======================================================================================================================
+
+extension ViewController: UICollectionViewDataSource {
+
+    // Note: callback from a different .swift function; not shown.
+
+    class func completion(image:UIImage) ->Void {
+        // ...update ivars, etc.
+        collectionView.reloadData()
+    }
+
+    // -----------------------------------------------------------------------------------------------------
+
+    func collectionView(collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return 5
+    }
+
+    // -----------------------------------------------------------------------------------------------------
+
+    func collectionView(collectionView: UICollectionView, cellForItemAtIndexPath indexPath: NSIndexPath) -> UICollectionViewCell {
+        let cell: AnyObject = collectionView.dequeueReusableCellWithReuseIdentifier("photoCell", forIndexPath:indexPath)
+        let photoImageView = cell.viewWithTag!(1) as UIImageView
+
+        gSelectedItemIndex = indexPath.item;
+
+        // ...do stuff....
+
+        return cell as UICollectionViewCell
+
+    }
+}
+

@@ -1,0 +1,163 @@
+  public OleDbConnection baglan()
+{
+    OleDbConnection baglanti = new OleDbConnection("Provider=Microsoft.Jet.OleDb.4.0;Data Source=" + Server.MapPath("~/App_Data/manisaweb.mdb"));
+    baglanti.Open();
+    return (baglanti);
+}
+   //********************************************************************
+//Sql Sorgu Çalıştırma
+public int cmd(string sqlcumle)
+{
+    OleDbConnection baglan = this.baglan();
+    OleDbCommand sorgu = new OleDbCommand(sqlcumle, baglan);
+    int sonuc = 0;
+
+    try
+    {
+        sonuc = sorgu.ExecuteNonQuery();
+    }
+    catch (OleDbException ex)
+    {
+        throw new Exception(ex.Message + " (" + sqlcumle + ")");
+    }
+    finally
+    {
+        sorgu.Connection.Close();
+    }
+    return (sonuc);
+}
+//********************************************************************
+//Kayıt Sayısı Bulma
+public string GetDataCell(string sql)
+{
+    DataTable table = GetDataTable(sql);
+    if (table.Rows.Count == 0)
+        return null;
+    return table.Rows[0][0].ToString();
+}
+
+//Kayıt Çekme
+public DataRow GetDataRow(string sql)
+{
+    DataTable table = GetDataTable(sql);
+    if (table.Rows.Count == 0) return null;
+    return table.Rows[0];
+
+}
+
+//DataTable ye veri çekme
+public DataTable GetDataTable(string sql)
+{
+    OleDbConnection baglan = this.baglan();
+    OleDbDataAdapter adapter = new OleDbDataAdapter(sql, baglan);
+    DataTable dt = new DataTable();
+
+    try
+    {
+        adapter.Fill(dt);
+
+    }
+    catch (OleDbException ex)
+    {
+        throw new Exception(ex.Message + " (" + sql + ")");
+    }
+    finally
+    {
+        adapter.Dispose();
+        baglan.Close();
+    }
+    return dt;
+}
+
+//Datasete veri çekme
+public DataSet GetDataSet(string sql)
+{
+    OleDbConnection baglan = this.baglan();
+    OleDbDataAdapter adapter = new OleDbDataAdapter(sql, baglan);
+    DataSet ds = new DataSet();
+    try
+    {
+        adapter.Fill(ds);
+    }
+    catch (OleDbException ex)
+    {
+        throw new Exception(ex.Message + " (" + sql + ")");
+    }
+    finally
+    {
+        ds.Dispose();
+        adapter.Dispose();
+        baglan.Close();
+    }
+    return ds;
+}
+
+public void Istatistik()
+{
+
+
+    string IpAdres = Request.ServerVariables["REMOTE_ADDR"].ToString();//Ip Adresini alıyoruz.
+    string Tarih = DateTime.Now.ToShortDateString();
+    lblOnlineZiyaretci.Text = Application["OnlineUsers"].ToString();//Online ziyaretçi
+
+    //Ogüne Ait Hit Bilgi Güncelleme
+    DataRow drHit = GetDataRow("Select * from SayacHit Where Tarih='" + Tarih + "'");
+    if (drHit == null)
+    {
+        //Bugüne ait kayıt yoksa bugunün ilk siftahını yap
+        cmd("Insert into SayacHit(Tarih,Tekil,Cogul) values('" + Tarih + "',1,1)");
+    }
+    else
+    {
+
+        string SayfaAdi = Page.ToString().Replace("_aspx", ".aspx").Remove(0, 4); //Sayfa adını alıyoruz.
+        if (SayfaAdi == "default.aspx")//Güncelleme işlemini sadece anasayfadaysa yapıyoruz
+        {
+            //Bugüne ait kayıt varsa Çoğulu 1 artırıyoruz.
+            cmd("Update SayacHit set Cogul=Cogul+1 Where Tarih='" + Tarih + "'");
+        }
+
+        //Tekil artımı için önce Ip kontrolü yapıyoruz.
+        DataRow drIpKontrol = GetDataRow("select * from SayacIp Where Ip='" + IpAdres + "'");
+        if (drIpKontrol == null)
+        { //Eğer ip yoksa tekilide artırabiliriz. Ip kayıtlı ise artırma işlemi yapmıyoruz.
+            cmd("Update SayacHit set Tekil=Tekil+1 Where Tarih='" + Tarih + "'");
+        }
+    }
+
+
+    //Giren Kişinin IP sini Kaydetme
+    DataRow drIp = GetDataRow("Select * from SayacIp Where Ip='" + IpAdres + "'");
+    if (drIp == null)
+    {
+        cmd("Insert into SayacIp(Ip,Tarih) values('" + IpAdres + "','" + Tarih + "')");
+    }
+
+
+    //Ekrana Bilgileri Yazdırabiliriz
+    DataRow drSonuc = GetDataRow("Select * from SayacHit Where Tarih='" + Tarih + "'");
+    lblBugunTop.Text = drSonuc["Cogul"].ToString();
+    //lblBugunTekil.Text = drSonuc["Tekil"].ToString();
+    //Dün Bilgilerini Çekme
+    //DataRow drDun = GetDataRow("Select * from SayacHit Where Tarih='" + DateTime.Now.AddDays(-1).ToShortDateString() + "'");
+    DataRow drGenel = GetDataRow("Select SUM(Tekil) as Toplam from SayacHit");
+    //if (drDun != null)
+    //{
+    //    lblDunTop.Text = drDun["Tekil"].ToString();
+    //}
+    //else
+    //{
+    //    lblDunTop.Text = "0";
+    //}
+
+    lblGenelTop.Text = drGenel["Toplam"].ToString();
+    lblIPAdresi.Text = IpAdres;
+}
+
+    db veri = new db();
+
+    rptNews.DataSource = veri.GetDataTable("select top 5 KullaniciAdiSoyadi,Ozet,Baslik,Tarih,IcerikID,Icerik from Icerik a inner join Kullanici d on a.KullaniciID=d.KullaniciID where KategoriID = 1 and Durum = 1 Order by IcerikID Desc ");
+    rptNews.DataBind();
+    rptArticle.DataSource = veri.GetDataTable("select top 5 Ozet,Baslik,Tarih,IcerikID,Icerik from Icerik where KategoriID = 2 and Durum = 1 Order by IcerikID Desc ");
+    rptArticle.DataBind();
+

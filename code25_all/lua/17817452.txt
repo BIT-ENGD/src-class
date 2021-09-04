@@ -1,0 +1,197 @@
+#include<cstdio>
+#include<ala_lua.h>
+
+extern"C"{
+    void __stdcall Sleep(unsigned long);
+};
+
+
+
+int main(){
+    lua_State*L=luaL_newstate();
+    luaL_openlibs(L);
+    luaA_libs(L);
+
+    lua_State*T=lua_newthread(L);
+    luaL_loadfile(T,"c:/clua.lua");
+    co_resume(T);
+
+    do{
+        Sleep(1);
+    }while(co_update());
+
+    lua_close(L);
+
+    gets(new char[1]);
+    return 0;
+};
+
+#ifndef ALA_LUA_H
+#define ALA_LUA_H
+
+#include<ala_lua_co.h>
+
+void luaA_libs(lua_State*);
+
+static int luaA_sleep(lua_State*handle){
+    co_sleep(handle,lua_tointeger(handle,1));
+    return 0;
+};
+
+static int luaA_rthread(lua_State*handle){
+    if(lua_isthread(handle,1)){
+        co_resume(lua_tothread(handle,1));
+    };
+    return 0;
+};
+
+static int luaA_mthread(lua_State*handle){
+    if(lua_isfunction(handle,1)){
+        lua_State*thread=lua_newthread(handle);
+
+        lua_pushvalue(handle,1);
+        lua_xmove(handle,thread,1);
+
+        return 1;
+    };
+    return 0;
+};
+
+void luaA_libs(lua_State*handle){
+    lua_register(handle,"mthread",luaA_mthread);
+    lua_register(handle,"rthread",luaA_rthread);
+    lua_register(handle,"sleep",luaA_sleep);
+};
+
+#endif
+
+#ifndef ALA_LUA_CO_H
+#define ALA_LUA_CO_H
+
+#include<vector>
+#include<time.h>
+#include<stdio.h>
+#include<cstring>
+#include<lua.hpp>
+
+std::vector<lua_State*>co_threads;
+std::vector<time_t*>co_threads_delay;
+
+static const size_t CO_NPOS=-1;
+
+bool co_update();
+size_t co_new(lua_State*);
+size_t co_get(lua_State*);
+void co_resume(lua_State*);
+void co_report(lua_State*);
+void co_rem(lua_State*,size_t);
+void co_sleep(lua_State*,time_t);
+void co_remifdead(lua_State*,size_t);
+
+
+
+void co_remifdead(lua_State*handle,size_t index=CO_NPOS){
+    switch(lua_status(handle)){
+        case LUA_OK:{
+            if(lua_gettop(handle)==0)co_rem(handle,index);
+            return;
+        };
+        case LUA_ERRRUN:{
+            co_rem(handle,index);
+            return;
+        };
+    };
+};
+
+void co_rem(lua_State*handle,size_t index=CO_NPOS){
+    if(index==CO_NPOS){
+        index=co_get(handle);
+    };
+    if(index!=CO_NPOS){
+        co_threads.erase(co_threads.begin()+index);
+        delete[]co_threads_delay[index];
+        co_threads_delay.erase(co_threads_delay.begin()+index);
+    };
+};
+
+bool co_update(){
+    if(co_threads.empty())return false;
+    size_t i=co_threads.size();
+    while(i>0){
+        --i;
+
+        lua_State*handle=co_threads[i];
+        if(lua_status(handle)==LUA_YIELD){
+            if(*co_threads_delay[i]<=clock()){
+                lua_resume(handle,NULL,0);//here maybe
+                co_remifdead(handle,i);
+            };
+        }else{
+            co_remifdead(handle,i);
+        };
+    };
+    return!co_threads.empty();
+};
+
+void co_resume(lua_State*handle){
+    switch(lua_status(handle)){
+        case LUA_YIELD:{
+            lua_resume(handle,NULL,0);
+            co_remifdead(handle);
+            return;
+        };
+        case LUA_OK:{
+            if(lua_gettop(handle)!=0){
+                size_t index=co_new(handle);
+                lua_resume(handle,NULL,0);//here maybe
+                co_remifdead(handle,index);
+                return;
+            }else{return;};
+        };
+        default:{return;};
+    };
+};
+
+void co_sleep(lua_State*handle,time_t slp){
+    size_t index=co_get(handle);
+    if(index!=CO_NPOS){
+        *co_threads_delay[index]=slp+clock();
+        lua_yield(co_threads[index],0);
+    };
+};
+
+void co_report(lua_State*handle){
+    if(lua_status(handle)==LUA_ERRRUN){
+        const char*error=lua_tostring(handle,-1);
+        #ifdef ALA_LUA_ERRLOG
+            FILE*file=fopen(ALA_LUA_ERRLOG,"a");
+                fputs(error,file);
+            fclose(file);
+        #else
+            puts(error);
+        #endif
+        lua_pop(handle,-1);
+    };
+};
+
+size_t co_get(lua_State*handle){
+    if(co_threads.empty())return CO_NPOS;
+    const size_t l=co_threads.size();
+    for(size_t i=0;i<l;++i){
+        if(co_threads[i]==handle)return i;
+    };
+    return CO_NPOS;
+};
+
+size_t co_new(lua_State*handle){
+    if(lua_status(handle)==LUA_OK&&lua_gettop(handle)!=0){
+        time_t*tm=new time_t[1];
+        co_threads.push_back(handle);
+        co_threads_delay.push_back(tm);
+        return co_threads.size()-1;
+    };
+    return CO_NPOS;
+};
+
+#endif
+

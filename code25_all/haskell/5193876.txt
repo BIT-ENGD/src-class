@@ -1,0 +1,69 @@
+import Control.Monad.Cont
+...
+getCC :: MonadCont m => m (m a)
+getCC = callCC (\c -> let x = c x in return x)
+
+getCC' :: MonadCont m => a -> m (a, a -> m b)
+getCC' x0 = callCC (\c -> let f x = c (x, f) in return (x0, f))
+
+import Control.Monad.Cont
+
+getCC' :: MonadCont m => a -> m (a, a -> m b)
+getCC' x0 = callCC (\c -> let f x = c (x, f) in return (x0, f))
+
+main :: IO ()
+main = (`runContT` return) $ do
+    (x, loopBack) <- getCC' 0
+    lift (print x)
+    when (x < 10) (loopBack (x + 1))
+    lift (putStrLn "finish")
+
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, UndecidableInstances #-}
+
+import Control.Monad.Cont
+import Control.Monad.Writer
+
+getCC :: MonadCont m => m (m a)
+getCC = callCC (\c -> let x = c x in return x)
+
+getCC' :: MonadCont m => a -> m (a, a -> m b)
+getCC' x0 = callCC (\c -> let f x = c (x, f) in return (x0, f))
+
+-- a simple monad transformer stack involving MonadCont and MonadWriter
+type APP= WriterT [String] (ContT () IO)
+
+runAPP :: APP a -> IO ()
+runAPP a= runContT (runWriterT a) process
+      where process (_,w)= do
+               putStrLn $ unlines w
+               return ()
+
+driver :: Int -> APP ()
+driver k = do
+   tell [ "The quick brown fox ..." ]
+   (x,loop) <- getCC' 0
+   collect x
+   when (x<k) $ loop (x+1) 
+
+collect :: Int -> APP ()
+collect n= tell [ (show n) ] 
+
+main :: IO ()
+main = do
+   runAPP $ driver 4
+
+The quick brown fox ...
+4
+
+--replace in the above example
+type APP= ContT () (WriterT [String] IO)
+...
+runAPP a = do
+    (_,w) <- runWriterT $ runContT a (return . const ())
+    putStrLn $ unlines w
+
+instance (MonadWriter w m) => MonadWriter w (ContT r m) where
+  tell = lift . tell
+  listen = undefined
+  pass = undefined
+

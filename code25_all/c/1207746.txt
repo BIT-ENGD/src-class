@@ -1,0 +1,201 @@
+eth0
+eth1
+eth1
+eth1
+setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, device, sizeof(device))
+getsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, (void *)buffer, &opt_length)
+setsockopt
+SO_BINDTODEVICE
+SO_RCVTIMEO
+SO_BROADCAST
+could not set SO_BINDTODEVICE (Operation not permitted)"
+
+SO_BINDTODEVICE set
+./mc-test: could not get SO_BINDTODEVICE (Protocol not available)
+
+/* SO_BINDTODEVICE test */ 
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <errno.h>
+
+#define MC_IP "192.168.7.2"
+#define MC_PORT (54321)
+#define MY_PORT (54321)
+#define MY_DEVICE "eth1"
+
+#define BUFFERSIZE (1000)
+
+/* global variables */
+int sock;
+struct sockaddr_in MC_addr;
+struct sockaddr_in my_addr;
+char buffer[BUFFERSIZE];
+
+int main(int argc, char *argv[]) 
+{
+  unsigned int echolen, clientlen;
+  int rc, n;
+  char opt_buffer[1000];
+  struct protoent *udp_protoent;
+  struct timeval receive_timeout;
+  int optval;
+  socklen_t opt_length;
+
+  /* Create the UDP socket */
+  if ((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
+  {
+    printf ("%s: failed to create UDP socket (%s) \n",
+        argv[0], strerror(errno));
+    exit (EXIT_FAILURE);
+  }
+  printf ("UDP socket created\n");
+
+  /* set the recvfrom timeout value */
+  receive_timeout.tv_sec = 5;
+  receive_timeout.tv_usec = 0;
+  rc=setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout,
+                sizeof(receive_timeout));
+  if (rc != 0) 
+  {
+     printf ("%s: could not set SO_RCVTIMEO (%s)\n",
+        argv[0], strerror(errno));
+     exit (EXIT_FAILURE);
+  }
+  printf ("set timeout to\ntime [s]: %d\ntime [ms]: %d\n", receive_timeout.tv_sec, receive_timeout.tv_usec);
+  /* verify the recvfrom timeout value */
+  rc=getsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, &opt_length);
+  if (rc != 0) 
+  {
+     printf ("%s: could not get socket options (%s)\n",
+        argv[0], strerror(errno));
+     exit (EXIT_FAILURE);
+  }
+  printf ("timeout value\ntime [s]: %d\ntime [ms]: %d\n", receive_timeout.tv_sec, receive_timeout.tv_usec);
+
+  /* allow broadcast messages for the socket */
+  int true = 1;
+  rc=setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &true, sizeof(true));
+  if (rc != 0) 
+  {
+     printf ("%s: could not set SO_BROADCAST (%s)\n",
+        argv[0], strerror(errno));
+     exit (EXIT_FAILURE);
+  }
+  printf ("set SO_BROADCAST\n");
+  /* verify SO_BROADCAST setting */
+  rc=getsockopt(sock, SOL_SOCKET, SO_BROADCAST, &optval, &opt_length);
+  if (optval != 0) 
+  {
+    printf("SO_BROADCAST is enabled\n");
+  }
+
+  /* bind the socket to one network device */
+  const char device[] = MY_DEVICE;
+  rc=setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, device, sizeof(device));
+  if (rc != 0) 
+  {
+     printf ("%s: could not set SO_BINDTODEVICE (%s)\n",
+        argv[0], strerror(errno));
+     exit (EXIT_FAILURE);
+  }
+  printf ("SO_BINDTODEVICE set\n");
+  /* verify SO_BINDTODEVICE setting */
+  rc = getsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, (void *)buffer, &opt_length);
+  if (rc != 0) 
+  {
+     printf ("%s: could not get SO_BINDTODEVICE (%s)\n",
+        argv[0], strerror(errno));
+     exit (EXIT_FAILURE);
+  }
+  if (rc == 0) 
+  {
+    printf("SO_BINDTODEVICE is: %s\n", buffer);
+  }
+
+
+  /* Construct the server sockaddr_in structure */
+  memset(&MC_addr, 0, sizeof(MC_addr));     /* Clear struct */
+  MC_addr.sin_family = AF_INET;         /* Internet/IP */
+  MC_addr.sin_addr.s_addr = inet_addr(MC_IP);   /* IP address */
+  MC_addr.sin_port = htons(MC_PORT);        /* server port */
+
+  /* bind my own Port */
+  my_addr.sin_family = AF_INET;
+  my_addr.sin_addr.s_addr = INADDR_ANY; /* INADDR_ANY all local addresses */
+  my_addr.sin_port = htons(MY_PORT);
+  rc = bind (sock, (struct sockaddr *) &my_addr, sizeof(my_addr));
+  if (rc < 0) 
+  {
+     printf ("%s: could not bind port (%s)\n",
+        argv[0], strerror(errno));
+     exit (EXIT_FAILURE);
+  }
+  printf ("port bound\n");
+
+  /* identify mc */
+  buffer[0] = (char)1;
+  buffer[1] = (char)0;
+  send_data (buffer, 2);  
+  printf ("sent command: %d\n", (char)buffer[0]);
+
+  rc=receive_data(buffer);
+  printf ("%d bytes received\n", rc);
+  buffer[rc] = (char)0; /* string end symbol */
+  printf ("%d - %s\n", (int)(char)buffer[0], &buffer[1]);
+
+  close(sock);
+  printf ("socket closed\n");
+
+  exit(0);
+}
+
+/* send data to the MC *****************************************************/
+/* buffer points to the bytes to send */
+/* buf_length is the number of bytes to send */
+/* returns allways 0 */
+int send_data( char *buffer, int buf_length )
+{
+  int rc;
+
+  rc = sendto (sock, buffer, buf_length, 0,
+                 (struct sockaddr *) &MC_addr,
+                 sizeof(MC_addr));
+  if (rc < 0) 
+  {
+    printf ("could not send data\n");
+    close (sock);
+    exit (EXIT_FAILURE);
+  }
+  return(0);
+}
+
+/* receive data from the MC *****************************************************/
+/* buffer points to the memory for the received data */
+/* max BUFFERSIZE bytes can be received */
+/* returns number of bytes received */
+int receive_data(char *buffer)
+{
+  int rc, MC_addr_length;
+
+  MC_addr_length = sizeof(MC_addr);
+  rc = recvfrom (sock, buffer, BUFFERSIZE, 0,
+                 (struct sockaddr *) &MC_addr,
+                 &MC_addr_length);
+  if (rc < 0) 
+  {
+    printf ("could not receive data\n");
+    close (sock);
+    exit (EXIT_FAILURE);
+  }
+  return(rc);
+}
+

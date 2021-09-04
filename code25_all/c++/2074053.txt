@@ -1,0 +1,195 @@
+// handlePathChange() is called whenever the URI changes
+
+void MVCApplication::handlePathChange()
+{
+ // Right now I'm iterating a list (O(N) runtime)
+ RoutesListType::iterator iter = routes.begin(); 
+
+ // If there are no routes then something is wrong
+ if ( iter == routes.end() )
+ {
+  log("Error") << "No routes found";
+  return;
+ }
+
+ bool pageFound = false;
+
+ // iterate until a route matches or until the routes end
+ while ( iter != routes.end() ) 
+ {
+  if ( matches(*iter) )
+  {
+   pageFound = true;
+   break;
+  }
+
+  iter++;
+ }
+
+ // If a page is not found then log it
+ if (!pageFound)
+  log("Error") << "404, page at url " << internalPath() << " not found";
+}
+
+bool MVCApplication::matches(Route &r)
+{
+ log("Notice") << "Matching route pattern " << r.getPattern() + " to url " << internalPath();
+
+  // gets the URI
+ const string url = internalPath();
+
+ char_separator<char> urlSep("/");
+ char_separator<char> patternSep("[]/");
+
+ boost::tokenizer<boost::char_separator<char> > patternTokens(r.getPattern(), patternSep);
+ tokenizer<char_separator<char> > urlTokens(url, urlSep);
+
+ int pos = 1;
+
+ bool actionFound = false;
+
+ Route::RouteDefaultsType &defaults = r.getDefaults(); // unordered_set<string, string>
+ ControllerMapType &controllers = getControllers(); // unordered_set<string, shared_ptr<Controller> >
+
+ ControllerType currentController; // shared_ptr<Controller>
+ Controller::ActionType action; // boost::function that returns a view
+
+ for (tokenizer<char_separator<char> >::iterator pattern_iter = patternTokens.begin(), url_iter = urlTokens.begin(); pattern_iter != patternTokens.end(); ++pattern_iter, pos++)
+ {
+  if ( url_iter == urlTokens.end() ) // If the number of URI tokens is lower then route tokens seek default values
+  {
+   if ( *pattern_iter == "Controller" || pos == 1) // Map controller to default
+   {
+    if ( defaults.find(*pattern_iter) != defaults.end() )
+     currentController = controllers[defaults[*pattern_iter]];
+    else
+    {
+     log("Error") << "No default controller found";
+
+     return false;
+    }
+   }
+   else if ( *pattern_iter == "Action" ) // Map action to default
+   {
+    Route::RouteDefaultsType::const_iterator iter = defaults.find(*pattern_iter);
+    if ( iter != defaults.end() )
+    {
+     if ( currentController->getActions().find(iter->second) != currentController->getActions().end() )
+     {
+      action = currentController->getActions()[iter->second];
+      actionFound = true;
+     }
+    }
+   }
+   // Checks whether the hard-coded value in the route is an action or a parameter 
+   else
+   {
+    Route::RouteDefaultsType::const_iterator iter = defaults.find(*pattern_iter);
+    // Search for a static action eg. /[Controller]/edit/
+    if ( currentController->getActions().find(iter->second) != currentController->getActions().end() ) 
+    {
+     action = currentController->getActions()[iter->second];
+     actionFound = true;
+    }
+    else // Maps parameters to defualt values
+    {
+     boost::unordered_map<string, string>::const_iterator iter = defaults.find(*pattern_iter);
+     if ( iter != defaults.end() )
+      currentController->addParameter(*pattern_iter, iter->second);
+    }
+   }
+  }
+  else // Match non-default values
+  {
+   if ( *pattern_iter == "Controller" || pos == 1) // Match controller
+   {
+    if ( getControllers().find(*url_iter) != getControllers().end() )
+     currentController = controllers[*url_iter];
+    else
+     return false;
+   }
+   else if ( *pattern_iter == "Action" ) // Match action
+   {
+    if ( currentController->getActions().find(*url_iter) != currentController->getActions().end() )
+    {
+     action = currentController->getActions()[*url_iter];
+     actionFound = true;
+    }
+   }
+   // Checks whether the hard-coded value in the route is an action or a parameter
+   else 
+   {
+
+    if ( currentController->getActions().find(*url_iter) != currentController->getActions().end() )
+    {
+     action = currentController->getActions()[*url_iter];
+     actionFound = true;
+    }
+    else // If not, as a parameter
+     currentController->addParameter(*pattern_iter, *url_iter);
+   }
+
+   ++url_iter;
+  }
+ }
+// If controller action found show view
+ if ( actionFound )
+ {
+  if ( currentView )
+   root()->removeWidget(currentView);
+
+  currentView = action(); // Perform action
+  root()->addWidget(currentView);
+ }
+ else
+ {
+  log("Error") << "No action found";
+  return false;
+ }
+
+ return true;
+}
+
+foreach route:
+  if the route matches then: break.
+
+  if number of url tokens < number of route pattern tokens then:
+    if pattern token == "Controller" or it is the first token then:
+      if the default controller exists then:
+        assign it as the current controller.
+      else:
+        return false
+    else if pattern token == "Action" then:
+        if the default action exists in the current controller then:
+          assign it as the current action.
+          set actionFound to true.
+    else:
+        if the hard-coded action in the routes exists in the current controller then:
+          assign it as the current action.
+          set actionFound to true.
+        else:
+          if a default value for this parameter exists:
+            add a parameter with a default value and route token as name to the current controller.
+  else:
+    if pattern token == "Controller" or it is the first token then:
+      if the url token matches a controller name then:
+        assign it as the current controller.
+      else:
+        return false
+    else if pattern token == "Action" then:
+      if the url token matches an action name inside the current controller then:
+        assign it as the current action.
+        set actionFound to true.
+    else:
+        if the hard-coded action in the uri token exists in the current controller then:
+          assign it as the current action.
+          set actionFound to true.
+        else:
+            add a parameter with a uri token as value and route token as name to the current controller.
+
+if actionFound == true then:
+  perform controller action.
+  render view.
+
+return actionFound
+

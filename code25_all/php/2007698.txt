@@ -1,0 +1,149 @@
+<?php 
+
+error_reporting(E_ALL);
+echo "test";
+// enter gmail username below e.g.--> $m_username = "yourusername";
+$m_username = "username";
+
+// enter gmail password below e.g.--> $m_password = "yourpword";
+$m_password = "password";
+
+// Enter the mail server to connect to
+$server = '{imap.gmail.com:993/imap/ssl/novalidate-cert}INBOX';
+
+// enter the number of unread messages you want to display from mailbox or 
+//enter 0 to display all unread messages e.g.--> $m_acs = 0; 
+$m_acs = 10; 
+
+// How far back in time do you want to search for unread messages - one month = 0 , two weeks = 1, one week = 2, three days = 3,
+// one day = 4, six hours = 5 or one hour = 6 e.g.--> $m_t = 6;
+$m_t = 2;
+
+//----------->Nothing More to edit below
+//open mailbox
+$m_mail = imap_open ($server, $m_username . "@gmail.com", $m_password)
+
+// or throw an error
+or die("ERROR: " . imap_last_error());
+
+// unix time gone by
+$m_gunixtp = array(2592000, 1209600, 604800, 259200, 86400, 21600, 3600);
+
+// Date to start search
+$m_gdmy = date('d-M-Y', time() - $m_gunixtp[$m_t]); 
+
+//search mailbox for unread messages since $m_t date 
+$m_search=imap_search ($m_mail, 'ALL');
+
+
+
+// Order results starting from newest message
+rsort($m_search);
+
+//if m_acs > 0 then limit results
+if($m_acs > 0){ 
+array_splice($m_search, $m_acs);
+} 
+
+$read = $_GET[read];
+if ($read) {
+   function get_mime_type(&$structure) {
+   $primary_mime_type = array("TEXT", "MULTIPART","MESSAGE", "APPLICATION", "AUDIO","IMAGE", "VIDEO", "OTHER");
+   if($structure->subtype) {
+    return $primary_mime_type[(int) $structure->type] . '/' .$structure->subtype;
+   }
+    return "TEXT/PLAIN";
+   }
+   function get_part($stream, $msg_number, $mime_type, $structure = false,$part_number    = false) {
+
+    if(!$structure) {
+        $structure = imap_fetchstructure($stream, $msg_number);
+    }
+    if($structure) {
+        if($mime_type == get_mime_type($structure)) {
+            if(!$part_number) {
+                $part_number = "1";
+            }
+            $text = imap_fetchbody($stream, $msg_number, $part_number);
+            if($structure->encoding == 3) {
+                return imap_base64($text);
+            } else if($structure->encoding == 4) {
+                return imap_qprint($text);
+            } else {
+            return $text;
+        }
+    }
+
+        if($structure->type == 1) /* multipart */ {
+        while(list($index, $sub_structure) = each($structure->parts)) {
+            if($part_number) {
+                $prefix = $part_number . '.';
+            }
+            $data = get_part($stream, $msg_number, $mime_type, $sub_structure,$prefix .    ($index + 1));
+            if($data) {
+                return $data;
+            }
+        } // END OF WHILE
+        } // END OF MULTIPART
+    } // END OF STRUTURE
+    return false;
+   } // END OF FUNCTION
+
+      // GET TEXT BODY
+   $dataTxt = get_part($m_mail, $read, "TEXT/PLAIN");
+
+   // GET HTML BODY
+   $dataHtml = get_part($m_mail, $read, "TEXT/HTML");
+
+   if ($dataHtml != "") {
+       $msgBody = $dataHtml;
+    $mailformat = "html";
+   } else {
+    $msgBody = ereg_replace("\n","<br>",$dataTxt);
+    $mailformat = "text";
+   }
+
+      if ($mailformat == "text") {
+    echo "<html><head><title>Messagebody</title></head><body    bgcolor=\"white\">$msgBody</body></html>";
+   } else {
+    echo $msgBody; // It contains all HTML HEADER tags so we don't have to make them.
+   }
+   exit;
+}
+
+//loop it 
+foreach ($m_search as $what_ever) { 
+
+//get imap header info for obj thang 
+$obj_thang = imap_headerinfo($m_mail, $what_ever);
+
+//get body info for obj thang 
+$obj_thangs = imap_body($m_mail, $what_ever);
+
+//Then spit it out below.........if you dont swallow 
+echo "<div align=center><br /><font face=Arial size=2 color=#800000>Message ID# " . $what_ever . "</font>
+
+<table bgcolor=#D3D3D3 width=700 border=1 bordercolor=#000000 cellpadding=0 cellspacing=0>
+<tr>
+<td><table width=100% border=0>
+<tr>
+<td><table width=100% border=0>
+<tr>
+<td bgcolor=#F8F8FF><font face=Arial size=2 color=#800000>Date:</font> <font face=Arial size=2 color=#000000>" . date("F j, Y, g:i a", $obj_thang->udate) . "</font></td>
+<td bgcolor=#F8F8FF><font face=Arial size=2 color=#800000>From:</font> <font face=Arial size=2 color=#000000>" . $obj_thang->fromaddress . "</font></td>
+<td bgcolor=#F8F8FF><font face=Arial size=2 color=#800000>To:</font> <font face=Arial size=2 color=#000000>" . $obj_thang->toaddress . " </font></td>
+</tr>
+<tr>
+</table>
+</td>
+</tr><tr><td bgcolor=#F8F8FF><font face=Arial size=2 color=#800000>Subject:</font> <font face=Arial size=2 color=#000000>" . $obj_thang->Subject . "</font></td></tr><tr>
+</tr>
+</table></td>
+</tr>
+</table></font><br /></div></body>";
+
+} echo "<div align=center><font face=Arial size=4 color=#800000><b>" . $m_empty . "</b></font></div>";
+//close mailbox
+imap_close($m_mail);
+?>
+

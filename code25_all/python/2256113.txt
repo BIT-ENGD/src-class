@@ -1,0 +1,271 @@
+from socket import *
+from threading import *
+import thread
+import time
+from struct import pack,unpack
+from networklingo import *
+#from exception import *
+
+HOST = '192.168.0.105'
+PORT = 21567
+BUFFSIZE = 1024
+ADDR = (HOST,PORT)
+
+lock = thread.allocate_lock()
+
+class TronClient:
+
+    def __init__(self,control=None):
+        self.tcpSock = socket(AF_INET,SOCK_STREAM)
+        #self.tcpSock.settimeout(.2)
+        self.recvBuff = []
+
+    def connect(self):
+        self.tcpSock.connect(ADDR)
+        self.clientUID = self.tcpSock.recv(BUFFSIZE)
+        print 'My clientUID is ', self.clientUID
+        t = Thread(target = self.receiveFromSrv())
+        t.setDaemon(1)
+        t.start()
+        print 'going to main loop'
+        self.mainLoop()
+        #t = Thread(target = self.mainLoop())
+        #t.setName('mainLoop')
+        #t.setDaemon(1)
+        #t.start()
+
+    def receiveFromSrv(self):
+        RECIEVING = 1
+        while RECIEVING:
+            #print 'Attempting to retrieve more data'
+            #lock.acquire()
+            #print 'Lock Aquired in recieveFromSrv'
+
+            #try:
+            data = self.tcpSock.recv(BUFFSIZE)
+            #except socket.timeout,e:
+                    #print 'Error recieving data, ',e
+                    #continue
+            #print data
+            if not data: continue
+
+            header = data[:6]
+            msgType,msgLength,clientID = unpack("hhh",header)
+            print msgType
+            print msgLength
+            print clientID,'\n'
+
+            msg = data[6:]
+
+            while len(msg) < msgLength:
+                data = self.tcpSock.recv(BUFFSIZE)
+                dataLen = len(data)
+
+                if dataLen <= msgLength:
+                    msg += data
+                else:
+                    remLen = msgLength-len(data) #we just need to retrieve first bit of data to complete msg 
+                    msg += data[:remLen]
+                    self.recvBuff.append(data[remLen:])
+
+            print msg
+            #else:
+                #lock.release()
+            #    print 'lock release in receiveFromSrv'
+                #time.sleep(2)
+            #RECIEVING = 0
+
+    def disconnect(self,data=''):
+        self.send(DISCONNECT_REQUEST,data)
+        #self.tcpSock.close()
+
+    def send(self,msgType,msg):
+        header = pack("hhh",msgType,len(msg),self.clientUID)
+        msg = header+msg
+        self.tcpSock.send(msg)
+
+    def mainLoop(self):
+        while 1:
+            try:
+                #lock.acquire()
+                #print 'lock aquired in mainLoop'
+                data = raw_input('> ')
+            except EOFError:            # enter key hit without any data (blank line) so ignore and continue
+                continue                
+
+            #if not data or data == '':  # no valid data so just continue
+            #    continue
+
+            if data=='exit':            # client wants to disconnect, so send request to server
+                self.disconnect()
+                break
+            else:
+                self.send(TRON_CHAT,data)
+
+            #lock.release()
+            #print 'lock released in main loop'
+            #self.recieveFromSrv()
+            #data = self.tcpSock.recv(BUFFSIZE)
+            #t = Thread(target = self.receiveFromSrv())
+            #t.setDaemon(1)
+            #t.start()
+
+
+
+if __name__ == "__main__":
+    cli = TronClient()
+    cli.connect()
+    #t = Thread(target = cli.connect())
+    #t.setName('connect')
+    #t.setDaemon(1)
+    #t.start()
+
+from socket import *
+from threading import *
+import thread
+from controller import *
+from networklingo import *
+from struct import pack,unpack
+
+HOST = ''
+PORT = 21567
+BUFSIZE = 1024
+ADDR = (HOST,PORT)
+
+nclntlock = thread.allocate_lock()
+
+class TronServer:
+
+    def __init__(self,maxConnect=4,control=None):
+        self.servSock = socket(AF_INET,SOCK_STREAM)
+
+        # ensure that you can restart server quickly when it terminates
+        self.servSock.setsockopt(SOL_SOCKET,SO_REUSEADDR,1)
+
+        self.servSock.bind(ADDR)
+        self.servSock.listen(maxConnect)
+
+        # keep track of number of connected clients
+        self.clientsConnected = 0
+
+        # give each client a unique identfier for this run of server
+        self.clientUID = 0
+
+        # list of all clients to cycle through for sending
+        self.allClients = {}
+
+        # keep track of threads
+        self.cliThreads = {}
+
+        #reference back to controller
+        self.controller = control
+
+        self.recvBuff = []
+
+    def removeClient(self,clientID,addr):
+        if clientID in self.allClients.keys():
+            self.allClients[clientID].close()
+            print "Disconnected from", addr
+            nclntlock.acquire()
+            self.clientsConnected -= 1
+            nclntlock.release()
+            del self.allClients[clientID]
+        else:
+            print 'ClientID is not valid'
+
+    def recieve(self,clientsock,addr):
+        RECIEVING = 1
+
+        # loop serving the new client
+        while RECIEVING: # while PLAYING???
+            try:
+                data = clientsock.recv(BUFSIZE)
+            except:
+                RECIEVING = 0
+                continue
+
+#            if not data: break  #no data was recieved
+
+            if data != '':
+                print 'Recieved msg from client: ',data
+
+                header = data[:6]
+                msgType,msgLength,clientID = unpack("hhh",header)
+                print msgType
+                print msgLength
+                print clientID,'\n'
+
+                if msgType == DISCONNECT_REQUEST:               #handle disconnect request
+                    self.removeClient(clientID,addr)
+                else:                                           #pass message type and message off to controller
+
+                    msg = data[6:]
+
+                    while len(msg) < msgLength:
+                        data = self.tcpSock.recv(BUFSIZE)
+                        dataLen = len(data)
+
+                        if dataLen <= msgLength:
+                            msg += data
+                        else:
+                            remLen = msgLength-len(data) #we just need to retrieve first bit of data to complete msg 
+                            msg += data[:remLen]
+                            self.recvBuff.append(data[remLen:])
+
+                    print msg       
+            # echo back the same data you just recieved
+            #clientsock.sendall(data)
+                    self.send(TRON_CHAT,msg,-1) #send to client 0
+
+
+        for k in self.allClients.keys():
+            if self.allClients[k] == clientsock:
+                self.removeClient(k,addr)
+                print 'deleted after hard exit from clientID ', k
+                #self.cliThreads[k].join()
+                #del self.cliThreads[k]
+                # then tell controller to delete player with k
+                break
+
+    def send(self,msgType,msg,clientID=-1):
+        header = pack("hhh",msgType,len(msg),clientID)
+        msg = header+msg
+
+        if clientID in self.allClients:
+            self.allClients[clientID].send(msg)
+        elif clientID==ALL_PLAYERS:
+            for k in self.allClients.keys():
+                self.allClients[k].send(msg)
+
+
+    def mainLoop(self):
+        global nclntlock
+
+        try:
+            while self.controller != None and self.controller.state == WAITING:
+                print 'awaiting connections'
+                clientsock, caddy = self.servSock.accept()
+
+                nclntlock.acquire()                         
+                self.clientsConnected += 1
+                nclntlock.release()
+                print 'Client ',self.clientUID,' connected from:',caddy
+                clientsock.setblocking(0)
+                clientsock.send(str(self.clientUID))
+                self.allClients[self.clientUID] = clientsock
+                t = Thread(target = self.recieve, args = [clientsock,caddy])
+                t.setName('recieve-' + str(self.clientUID))
+                self.cliThreads[self.clientUID] = t
+                self.clientUID += 1
+                # t.setDaemon(1)
+                t.start()
+        finally:
+            self.servSock.close()
+
+if __name__ == "__main__":
+    serv = TronServer(control = LocalController(nPlayers = 3, fWidth = 70, fHeight = 10))
+    t = Thread(target = serv.mainLoop())
+    t.setName('mainLoop')
+#   t.setDaemon(1)
+    t.start()
+

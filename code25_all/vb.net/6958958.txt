@@ -1,0 +1,141 @@
+ Imports System.Net.Sockets
+Imports System.Threading
+Imports System.Net
+
+Public Class TCPServer
+    Private mPort As Integer
+    Public Event IncomingMessage(ByVal Message As String, ByVal IP As String)
+    'This signals threadpool threads to stop...
+    Private mStopServer As ManualResetEvent
+    Private mListener As TcpListener
+    Public Sub New(ByVal Port As Integer)
+        mPort = Port
+        Start()
+
+    End Sub
+
+    Public Sub Start()
+        Try
+            If mListener Is Nothing Then
+                mListener = New TcpListener(IPAddress.Any, mPort)
+            End If
+
+            mListener.Start()
+            AcceptClients()
+            mStopServer = New ManualResetEvent(False)
+        Catch ex As Exception
+            ExceptionHandling.LogError(ex)
+        End Try
+
+    End Sub
+
+    Private Sub AcceptClients()
+        Try
+            Dim result As IAsyncResult = mListener.BeginAcceptTcpClient(AddressOf HandleAsyncConnection, mListener)
+        Catch ex As Exception
+            ExceptionHandling.LogError(ex)
+        End Try
+
+    End Sub
+
+    Dim so As New Object
+    Public Sub StopListening()
+        Try
+            mStopServer.Set()
+            mListener.Stop()
+        Catch ex As Exception
+            ExceptionHandling.LogError(ex)
+        End Try
+
+    End Sub
+
+
+    Private Sub HandleAsyncConnection(ByVal result As IAsyncResult)
+        Try
+
+
+            If Not mStopServer.WaitOne(0) Then
+                Dim listener As TcpListener = DirectCast(result.AsyncState, TcpListener)
+                If listener Is Nothing Then Exit Sub
+                Dim client As TcpClient = listener.EndAcceptTcpClient(result)
+                Trace.WriteLine("Connected to new client")
+                ThreadPool.QueueUserWorkItem(New WaitCallback(AddressOf ProcessClient), client)
+                AcceptClients()
+
+            End If
+        Catch ex As Exception
+            ExceptionHandling.LogError(ex)
+
+        End Try
+    End Sub
+
+
+
+    Private Sub ProcessClient(ByVal client As Object)
+
+        Dim newClient As TcpClient = DirectCast(client, TcpClient)
+
+
+        Try
+            ' Buffer for reading data
+            Dim bytes As Byte() = New Byte(32 * 1024) {}
+            Dim clientData As New System.Text.StringBuilder()
+
+
+            Using ns As NetworkStream = newClient.GetStream()
+                ' set initial read timeout to 1 minute to allow for connection
+                ns.ReadTimeout = 60000
+                ' Loop to receive all the data sent by the client.
+                Dim bytesRead As Integer = 0
+                Do
+                    ' read the data
+                    Try
+                        If mStopServer.WaitOne(0) Then Exit Sub
+
+                        bytesRead = ns.Read(bytes, 0, bytes.Length)
+                        If bytesRead > 0 Then
+                            clientData.Append(System.Text.Encoding.UTF8.GetString(bytes, 0, bytesRead))
+                            ' decrease read timeout to 1 second now that data is coming in
+                            ns.ReadTimeout = 1000
+                        End If
+
+                    Catch ioe As IO.IOException
+                        Trace.WriteLine(ioe.ToString)
+                        bytesRead = 0
+                        Dim bError() As Byte = Error400()
+                        ns.Write(bError, 0, bError.Length)
+
+                    End Try
+
+                Loop While ns.DataAvailable
+                ForwardData(clientData.ToString, newClient.Client.RemoteEndPoint.ToString)
+                'Trace.Write(clientData.ToString())
+                'Acknowledge success
+                bytes = Ack200()
+                ns.Write(bytes, 0, bytes.Length)
+            End Using
+
+        Catch ex As Exception
+            ExceptionHandling.LogError(ex)
+
+        Finally
+            ' stop talking to client
+            If newClient IsNot Nothing Then
+                newClient.Close()
+            End If
+        End Try
+    End Sub
+
+    Private Sub ForwardData(ByVal Data As String, ByVal IP As String)
+        RaiseEvent IncomingMessage(Data, IP)
+    End Sub
+    Public Function Ack200() As Byte()
+        Return System.Text.Encoding.UTF8.GetBytes("Okay")
+    End Function
+
+    Public Function Error400() As Byte()
+        Return System.Text.Encoding.UTF8.GetBytes("Error")
+    End Function
+
+End Class
+

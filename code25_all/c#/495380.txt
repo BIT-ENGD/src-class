@@ -1,0 +1,268 @@
+Bounds
+WindowState
+Bounds
+Bounds
+Screen.AllScreens.Any(ø => ø.Bounds.IntersectsWith(Bounds))
+MdiParent.Controls.OfType<MdiClient>().First().ClientRectangle.IntersectsWith(Bounds)
+Location = new Point();
+WindowState
+WindowState
+FormWindowState.Normal
+Bounds
+RestoreBounds
+public sealed class PersistentFormHandler
+{
+    /// <summary>The form identifier in storage.</summary>
+    public string Name { get; private set; }
+
+
+    /// <summary>Gets and sets the window state. (int instead of enum so that it can be in a BI layer, and not require a reference to WinForms)</summary>
+    public int WindowState { get; set; }
+
+
+    /// <summary>Gets and sets the window bounds. (X, Y, Width and Height)</summary>
+    public Rectangle WindowBounds { get; set; }
+
+
+    /// <summary>Dictionary for other values.</summary>
+    private readonly Dictionary<string, Binary> otherValues;
+
+
+    /// <summary>
+    /// Instantiates new persistent form handler.
+    /// </summary>
+    /// <param name="windowType">The <see cref="Type.FullName"/> will be used as <see cref="Name"/>.</param>
+    /// <param name="defaultWindowState">Default state of the window.</param>
+    /// <param name="defaultWindowBounds">Default bounds of the window.</param>
+    public PersistentFormHandler(Type windowType, int defaultWindowState, Rectangle defaultWindowBounds)
+        : this(windowType, null, defaultWindowState, defaultWindowBounds) { }
+
+    /// <summary>
+    /// Instantiates new persistent form handler.
+    /// </summary>
+    /// <param name="windowType">The <see cref="Type.FullName"/> will be used as base <see cref="Name"/>.</param>
+    /// <param name="id">Use this if you need to separate windows of same type. Will be appended to <see cref="Name"/>.</param>
+    /// <param name="defaultWindowState">Default state of the window.</param>
+    /// <param name="defaultWindowBounds">Default bounds of the window.</param>
+    public PersistentFormHandler(Type windowType, string id, int defaultWindowState, Rectangle defaultWindowBounds)
+    {
+        Name = string.IsNullOrEmpty(id) 
+            ? windowType.FullName 
+            : windowType.FullName + ":" + id;
+
+        WindowState = defaultWindowState;
+        WindowBounds = defaultWindowBounds;
+
+        otherValues = new Dictionary<string, Binary>();
+    }
+
+
+    /// <summary>
+    /// Looks for previously stored values in database.
+    /// </summary>
+    /// <returns>False if no previously stored values were found.</returns>
+    public bool Load()
+    {
+        // See Note 1
+    }
+
+    /// <summary>
+    /// Stores all values in database
+    /// </summary>
+    public void Save()
+    {
+        // See Note 2
+    }
+
+    /// <summary>
+    /// Adds the given <paramref key="value"/> to the collection of values that will be
+    /// stored in database on <see cref="Save"/>.
+    /// </summary>
+    /// <typeparam key="T">Type of object.</typeparam>
+    /// <param name="key">The key you want to use for this value.</param>
+    /// <param name="value">The value to store.</param>
+    public void Set<T>(string key, T value)
+    {
+        // Create memory stream
+        using (var s = new MemoryStream())
+        {
+            // Serialize value into binary form
+            var b = new BinaryFormatter();
+            b.Serialize(s, value);
+
+            // Store in dictionary
+            otherValues[key] = new Binary(s.ToArray());
+        }
+    }
+
+    /// <summary>
+    /// Same as <see cref="Get{T}(string,T)"/>, but uses default(<typeparamref name="T"/>) as fallback value.
+    /// </summary>
+    /// <typeparam name="T">Type of object</typeparam>
+    /// <param name="key">The key used on <see cref="Set{T}"/>.</param>
+    /// <returns>The stored object, or the default(<typeparamref name="T"/>) object if something went wrong.</returns>
+    public T Get<T>(string key)
+    {
+        return Get(key, default(T));
+    }
+
+    /// <summary>
+    /// Gets the value identified by the given <paramref name="key"/>.
+    /// </summary>
+    /// <typeparam name="T">Type of object</typeparam>
+    /// <param name="key">The key used on <see cref="Set{T}"/>.</param>
+    /// <param name="fallback">Value to return if the given <paramref name="key"/> could not be found.
+    /// In other words, if you haven't used <see cref="Set{T}"/> yet.</param>
+    /// <returns>The stored object, or the <paramref name="fallback"/> object if something went wrong.</returns>
+    public T Get<T>(string key, T fallback)
+    {
+        // If we have a value with this key
+        if (otherValues.ContainsKey(key))
+        {
+            // Create memory stream and fill with binary version of value
+            using (var s = new MemoryStream(otherValues[key].ToArray()))
+            {
+                try
+                {
+                    // Deserialize, cast and return.
+                    var b = new BinaryFormatter();
+                    return (T)b.Deserialize(s);
+                }
+                catch (InvalidCastException)
+                {
+                    // T is not what it should have been
+                    // (Code changed perhaps?)
+                }
+                catch (SerializationException)
+                {
+                    // Something went wrong during Deserialization
+                }
+            }
+        }
+
+        // Else return fallback
+        return fallback;
+    }
+}
+
+WindowState
+WindowBounds
+Window
+Id
+Name
+MachineName
+Environment.MachineName
+UserId
+WindowState
+X
+Y
+Height
+Width
+WindowState
+X
+Y
+Height
+Width
+WindowValues
+WindowId
+Key
+String
+Value
+Binary
+Window
+WindowValues
+// Should have been abstract, but that makes the the designer crash at the moment...
+public class PersistentFormBase : Form
+{
+    private PersistentFormHandler PersistenceHandler { get; set; }
+
+    private bool handlerReady;
+
+    protected PersistentFormBase()
+    {
+        // Prevents designer from crashing
+        if (LicenseManager.UsageMode != LicenseUsageMode.Designtime)
+        {
+            Load += persistentFormLoad;
+            FormClosing += persistentFormFormClosing;
+        }
+    }
+
+    protected event EventHandler<EventArgs> ValuesLoaded;
+    protected event EventHandler<EventArgs> StoringValues;
+
+    protected void StoreValue<T>(string key, T value)
+    {
+        if (!handlerReady)
+            throw new InvalidOperationException();
+        PersistenceHandler.Set(key, value);
+    }
+
+    protected T GetValue<T>(string key)
+    {
+        if (!handlerReady)
+            throw new InvalidOperationException();
+        return PersistenceHandler.Get<T>(key);
+    }
+
+    protected T GetValue<T>(string key, T fallback)
+    {
+        if (!handlerReady)
+            throw new InvalidOperationException();
+        return PersistenceHandler.Get(key, fallback);
+    }
+
+    private void persistentFormLoad(object sender, EventArgs e)
+    {
+        // Create PersistenceHandler and load values from it
+        PersistenceHandler = new PersistentFormHandler(GetType(), (int) FormWindowState.Normal, Bounds);
+        PersistenceHandler.Load();
+        handlerReady = true;
+
+        // Set size and location
+        Bounds = PersistenceHandler.WindowBounds;
+
+        // Check if we have an MdiParent
+        if(MdiParent == null)
+        {
+            // If we don't, make sure we are on screen
+            if (!Screen.AllScreens.Any(ø => ø.Bounds.IntersectsWith(Bounds)))
+                Location = new Point();
+        }
+        else
+        {
+            // If we do, make sure we are visible within the MdiClient area
+            var c = MdiParent.Controls.OfType<MdiClient>().FirstOrDefault();
+            if(c != null && !c.ClientRectangle.IntersectsWith(Bounds))
+                Location = new Point();
+        }
+
+        // Set state
+        WindowState = Enum.IsDefined(typeof (FormWindowState), PersistenceHandler.WindowState) ? (FormWindowState) PersistenceHandler.WindowState : FormWindowState.Normal;
+
+        // Notify that values are loaded and ready for getting.
+        var handler = ValuesLoaded;
+        if (handler != null)
+            handler(this, EventArgs.Empty);
+    }
+
+    private void persistentFormFormClosing(object sender, FormClosingEventArgs e)
+    {
+        // Set common things
+        PersistenceHandler.WindowState = (int) WindowState;
+        PersistenceHandler.WindowBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+
+        // Notify that values will be stored now, so time to store values.
+        var handler = StoringValues;
+        if (handler != null)
+            handler(this, EventArgs.Empty);
+
+        // Save values
+        PersistenceHandler.Save();
+    }
+}
+
+ValuesLoaded
+StoringValues
+GetValue
+StoreValue

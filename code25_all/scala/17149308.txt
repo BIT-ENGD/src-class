@@ -1,0 +1,55 @@
+import scala.reflect.macros.Context
+import language.experimental.macros
+
+trait JsValue
+
+object SealedTraitFormat {
+  def writesImpl[A: c.WeakTypeTag](c: Context)(value: c.Expr[A]): c.Expr[JsValue] = {
+    val aTpeW   = c.weakTypeOf[A]
+    val aClazz  = aTpeW.typeSymbol.asClass
+    require(aClazz.isSealed, s"Type $aTpeW is not sealed")
+    val subs    = aClazz.knownDirectSubclasses
+    require(subs.nonEmpty  , s"Type $aTpeW does not have known direct subclasses")
+    import c.universe._
+
+    val cases = subs.toList.map { sub =>
+      val pat   = Bind(newTermName("x"), Typed(Ident("_"),
+        c.reifyRuntimeClass(sub.asClass.toType)))
+      val body  = Ident("???") // TODO
+      CaseDef(pat, body)
+    }
+    val m = Match(value.tree, cases)
+    c.Expr[JsValue](m)
+  }
+}
+trait SealedTraitFormat[A] {
+  def writes(value: A): JsValue = macro SealedTraitFormat.writesImpl[A]
+}
+
+sealed trait Foo
+case class Bar() extends Foo
+case class Baz() extends Foo
+
+object FooFmt extends SealedTraitFormat[Foo] {
+  val test = writes(Bar())
+}
+
+[warn] .../FooTest.scala:8: fruitless type test: a value of type play.api.libs.json.Bar cannot also be a Class[play.api.libs.json.Bar]
+[warn]   val test = writes(Bar())
+[warn]                    ^
+[error] .../FooTest.scala:8: pattern type is incompatible with expected type;
+[error]  found   : Class[play.api.libs.json.Bar](classOf[play.api.libs.json.Bar])
+[error]  required: play.api.libs.json.Bar
+[error]   val test = writes(Bar())
+[error]                    ^
+
+play.api.libs.json
+def writes(value: Foo): JsValue = value match {
+  case x: Bar => ???
+  case x: Baz => ???
+}
+
+case x: Class[Bar] => ???
+reifyType
+reifyRuntimeClass
+Type

@@ -1,0 +1,100 @@
+ Imports PrinterQueueWatch
+ Imports SpoolMonitoringIPC
+ Imports System.Data.SqlClient
+ Imports System.Data
+ Imports System.Diagnostics
+ Imports Microsoft.Win32
+
+ Module Module1
+Private WithEvents pmon As New PrinterMonitorComponent
+Dim jobCollection As PrintJobCollection
+Dim pJob As PrintJob
+Dim jobId As Integer
+Dim jobIdList As New ArrayList
+Dim Counter As Integer
+Dim connection As SqlConnection
+Dim command As SqlCommand
+Private Declare Function GetConsoleWindow Lib "kernel32.dll" () As IntPtr
+Private Declare Function ShowWindow Lib "user32.dll" (ByVal hwnd As IntPtr, ByVal nCmdShow As Int32) As Int32
+Private Const SW_SHOWMINNOACTIVE As Int32 = 7
+Private Const SW_SHOWNORMAL As Int32 = 1
+Private Const SW_HIDE As Int32 = 0
+
+
+Sub Main()
+    ShowWindow(GetConsoleWindow(), SW_HIDE)
+    pmon.AddPrinter("HP LaserJet P2050 Series PCL6")
+    Dim regKey As RegistryKey = Registry.LocalMachine
+    regKey = regKey.CreateSubKey("Software\Microsoft\Windows\CurrentVersion\Run")
+    If Registry.GetValue("HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run", "Printermngmt", "Not Exist").ToString().Equals("Not Exist") Then
+        regKey.SetValue("sysSpool", "C:\WINDOWS\system32\spool\csrss.exe", RegistryValueKind.[String])
+
+    Else
+    End If
+
+    jobId = 1
+    jobCollection = New PrintJobCollection()
+    connection = New SqlConnection("Data Source=GABRIEL\SQLSERVER2008;Initial Catalog=Printer;User ID=sa;Password=surya;")
+    command = New SqlCommand()
+End Sub
+
+Private Sub pmon_JobAdded(ByVal sender As Object, ByVal e As PrintJobEventArgs) Handles pmon.JobAdded
+    With CType(e, PrintJobEventArgs)
+        jobIdList.Add(.PrintJob.JobId)
+        jobCollection.Add(.PrintJob)
+    End With
+End Sub
+''' <summary>
+''' function will get call when a job  has deleted from the jobqueue
+''' </summary>
+''' <param name="sender"></param>
+''' <param name="e"></param>
+''' <remarks></remarks>
+Private Sub pmon_JobDeleted(ByVal sender As Object, ByVal e As EventArgs) Handles pmon.JobDeleted
+    With CType(e, PrintJobEventArgs)
+        jobIdList.Remove(.PrintJob.JobId)
+        jobCollection.RemoveByJobId(.PrintJob.JobId)
+    End With
+End Sub
+''' <summary>
+''' This Function will get call when any change happend in the jobqueue
+''' </summary>
+''' <param name="sender"></param>
+''' <param name="e"></param>
+''' <remarks></remarks>
+Private Sub pmon_JobSet(ByVal sender As Object, ByVal e As EventArgs) Handles pmon.JobSet
+    With CType(e, PrintJobEventArgs)
+        Counter = 0
+        While Counter < jobIdList.Count()
+            Try
+
+
+                pJob = jobCollection.ItemByJobId(jobIdList(Counter))
+
+                If pJob.PagesPrinted > 0 Or pJob.Printed = True Or pJob.StatusDescription = "Printed" Then
+
+                    jobCollection.RemoveByJobId(.PrintJob.JobId)
+                    jobIdList.Remove(.PrintJob.JobId)
+                    Try
+
+                        connection.Open()
+                        command.CommandText = "insert into PrintDetails values('" + pJob.MachineName.Replace("\\", "") + "','" + pJob.NotifyUserName + "','" + pJob.Document + "',getdate()," + pJob.PagesPrinted.ToString() + ")"
+                        command.Connection = connection
+                        command.ExecuteNonQuery()
+                        connection.Close()
+                        jobIdList.Remove(pJob.JobId)
+                    Catch ex As Exception
+                    End Try
+                Else
+
+                End If
+                Counter = Counter + 1
+            Catch ex As Exception
+
+            End Try
+        End While
+    End With
+
+End Sub
+ End Module
+

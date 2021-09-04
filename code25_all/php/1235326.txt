@@ -1,0 +1,47 @@
+hook_cron
+/admin/reports/status/run-cron
+<?php
+function foo_cron() {
+    // Find users who have not received the new member letter, 
+    // and send them a welcome email
+
+    // Get users who have not recd a message, as per the profile value setting
+    $pending_count_sql = "SELECT COUNT(*) FROM {profile_values} v 
+     WHERE (v.value = 0) AND (v.fid = 7)"; //fid 7 is the profile field for profile_intro_email_sent
+    if (db_result(db_query($pending_count_sql))) { 
+        // Load the message template, since we 
+        // know we have users to feed into it.
+        $email_template_file    =   "/home/foo/public_html/drupal/" . 
+                                    drupal_get_path('module', 'foo') . 
+                                    "/emails/foo-new-member-email-template.txt";
+        $email_template_data    = file_get_contents($email_template_file);
+        fclose($email_template_fh);
+        //We'll just pull the uid, since we have to run user_load anyway
+        $query = "SELECT v.uid FROM {profile_values} v 
+        WHERE (v.value = 0) AND (v.fid = 7)";    
+        $result = db_query(($query));
+        // Loop through the uids, loading profiles so as to access string replacement variables
+        while ($item = db_fetch_object($result)) {
+            $new_member = user_load($item->uid);
+            $translation_key = array(
+                // ... code that generates the string replacement array ...
+                );
+            // Compose the email component of the message, and send to user
+            $email_text = t($email_template_data, $translation_key);
+            $language = user_preferred_language($new_member);  // use member's language preference
+            $params['subject'] = 'New Member Benefits - Welcome to FOO!';
+            $params['content-type'] = 'text/plain; charset=UTF-8; format=flowed;';
+            $params['content'] = $email_text;
+            drupal_mail('foo', 'welcome_letter', $new_member->mail, $language, $params, 'webmaster@foo.org');
+            // Mark the user's profile to indicate that the message was sent
+            $change = array(
+                // Rebuild all of the profile fields in this category, 
+                // since they'll be deleted otherwise
+                'profile_first_name' => $new_member->profile_first_name,
+                'profile_last_name' => $new_member->profile_last_name,
+                'profile_intro_email_sent' => 1);
+            profile_save_profile($change, $new_member, "Membership Data");
+        }
+    }
+}
+

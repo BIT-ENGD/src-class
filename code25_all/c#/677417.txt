@@ -1,0 +1,140 @@
+<%@ Control Language="C#" AutoEventWireup="true" CodeFile="EnquiryList.ascx.cs" Inherits="includes_EnquiryList"%>
+<div class="EnquiryForm" runat="server">
+
+    <asp:GridView ID="gridMain" 
+        runat="server" 
+        PageSize="20"
+        Width="390"
+        GridLines="None" 
+        CssClass="gridview" 
+        AllowPaging="True"
+        AllowSorting="True" 
+        CellPadding="0" 
+        AutoGenerateColumns="False"
+        OnPageIndexChanging="gridMain_PageIndexChanging"
+        OnRowCommand="gridMain_RowCommand"
+        DataSourceID="ldsGridMain">
+
+        <Columns>
+
+             <asp:TemplateField>
+                <ItemTemplate>
+
+                    <%# Eval("Id") %>
+                    <asp:Button Text="Bekräfta" ID="apa" runat="server" CommandArgument='<%# Eval("Id") %>' CommandName="Buy" class="enquiryBtn"/>
+
+                </ItemTemplate>
+             </asp:TemplateField>
+
+
+        </Columns>
+
+    </asp:GridView>
+
+    <asp:LinqDataSource ID="ldsGridMain" runat="server" OnSelecting="ldsGridMain_Selecting" OnSelected="ldsGridMain_Selected"/>
+
+</div>
+
+using System;
+using System.Web.UI.WebControls;
+using System.Web.UI;
+using Offerta.Presentation;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+
+public partial class includes_EnquiryList : System.Web.UI.UserControl
+{
+
+    protected Boolean IsAuthenticatedSupplier { get; set; }
+
+    protected Boolean ShowSimilarEnquiriesLink { get; set; }
+
+    protected int totalRows = 0;
+
+    protected LinqDataSourceSelectEventArgs selectArgs;
+
+    protected Supplier supplier;
+
+    protected IQueryable<Enquiry> enquiries;
+
+    protected string errorMessage;
+
+    protected void Page_Load(object sender, EventArgs e)
+    {
+        IsAuthenticatedSupplier = false;
+        Auth auth = new Auth();
+        if (auth.IsAuthenticated)
+        {
+            IsAuthenticatedSupplier = auth.ClientTypeId == ClientMethods.CLIENT_TYPE_SUPPLIER;
+            if (IsAuthenticatedSupplier)
+            {
+                supplier = (Supplier)auth.Client;
+            }
+        }
+    }
+
+
+    public void Bind(IQueryable<Enquiry> enquiries)
+    {
+        this.enquiries = enquiries;
+        gridMain.DataBind();
+    }
+
+    protected void ldsGridMain_Selecting(object sender, LinqDataSourceSelectEventArgs e)
+    {
+        selectArgs = e;
+        e.Result = (new EnquiryListController()).List(enquiries, supplier);
+    }
+
+    protected void ldsGridMain_Selected(object sender, LinqDataSourceStatusEventArgs e)
+    {
+        totalRows = selectArgs.Arguments.TotalRowCount;
+    }
+
+    protected void gridMain_PageIndexChanging(object sender, GridViewPageEventArgs e)
+    {
+        gridMain.PageIndex = e.NewPageIndex;
+        gridMain.DataBind();
+    }
+
+    protected void gridMain_RowCommand(object sender, GridViewCommandEventArgs e)
+    {
+    //never gets here?
+    switch (e.CommandName.ToString())
+        {
+            case "Buy":
+                PurchaseEnquiry(e.CommandArgument.ToString());
+                break;
+        }
+    }
+
+    protected void PurchaseEnquiry(string enquiryId)
+    {
+        try
+        {
+            Enquiry enquiry = EnquiryMethods.Get(new Guid(enquiryId));
+            Order order = OrderMethods.Purchase(supplier, enquiry);
+            Response.Redirect((new UrlFactory()).GetSupplierEnquiryMessageUrl(order.Id.ToString()), true);
+        }
+        catch (Exception e)
+        {
+            errorMessage = e.Message;        
+        }
+    }
+
+}
+
+using System;
+
+public partial class SupplierInbox : System.Web.UI.Page
+{
+
+    protected void Page_Load(object sender, EventArgs e)
+    {
+        (new Auth()).RequireClientOfType(ClientMethods.CLIENT_TYPE_SUPPLIER);
+        ucEnquiryList.Bind(EnquiryMethods.BuildQuery(new EnquiryQuery()));
+    }
+
+}
+

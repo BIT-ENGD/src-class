@@ -1,0 +1,79 @@
+import psycopg2
+from getpass import getpass
+
+# ouch, global variable, ooh well, it's just a simple script eh
+CURSOR = None
+
+def get_cursor():
+    """Create database connection and return standard cursor."""
+
+    global CURSOR
+
+    if not CURSOR:
+        # try to connect and get a cursor
+        try:
+            # first try the bog standard way: db postgres, user postgres and local socket
+            conn = psycopg2.connect(database='postgres', user='postgres')
+        except psycopg2.OperationalError:
+            # maybe user pgsql?
+            conn = psycopg2.connect(database='postgres', user='pgsql')
+        except psycopg2.OperationalError:
+            # maybe it was postgres, but on localhost? prolly need password then
+            conn = psycopg2.connect(database='postgres', user='postgres', host='localhost', password=getpass())
+        except psycopg2.OperationalError:
+            # or maybe it was pgsql and on localhost
+            conn = psycopg2.connect(database='postgres', user='pgsql', host='localhost', password=getpass())
+
+        # allright, nothing blew up, so we have a connection
+        # now make a cursor
+        CURSOR = conn.cursor()
+
+    # return existing or new cursor
+    return CURSOR
+
+import psycopg2
+from getpass import getpass
+import sys
+
+class UnableToConnectError(Exception):
+    pass
+
+class Cursor:
+    """Cursor singleton factory?"""
+
+    def __init__(self):
+        self.CURSOR = None
+
+    def __call__(self):
+        if self.CURSOR is None:
+            # try to connect and get a cursor
+            attempts = [
+                    {'database': 'postgres', 'user': 'postgres'},
+                    {'database': 'postgres', 'user': 'pgsql'},
+                    {'database': 'postgres', 'user': 'postgres', 'host': 'localhost', 'password': None},
+                    {'database': 'postgres', 'user': 'pgsql', 'host': 'localhost', 'password': None},
+                    ]
+
+            for attempt in attempts:
+                if 'password' in attempt:
+                    attempt['password'] = getpass(stream=sys.stderr) # tty and stderr are default in 2.6, but 2.5 uses sys.stdout, which I don't want
+                try:
+                    conn = psycopg2.connect(**attempt)
+
+                    attempt.pop('password', None)
+                    sys.stderr.write("Succesfully connected using: %s\n\n" % attempt)
+
+                    break # no exception raised, we have a connection, break out of for loop
+                except psycopg2.OperationalError:
+                    pass
+            else:
+                raise UnableToConnectError("Unable to connect: exhausted standard permutations of connection dsn.")
+
+            # allright, nothing blew up, so we have a connection
+            # now make a cursor
+            self.CURSOR = conn.cursor()
+
+        # return existing or new cursor
+        return self.CURSOR
+get_cursor = Cursor()
+

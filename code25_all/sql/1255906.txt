@@ -1,0 +1,44 @@
+SELECT TBL_ADDRESSBOOKADDRESSES.* FROM TBL_ADDRESSBOOKADDRESSES 
+INNER JOIN TBL_CAMPAIGNS
+ON TBL_ADDRESSBOOKADDRESSES.adds_ABMId = TBL_CAMPAIGNS.campaign_AddressBook
+WHERE TBL_CAMPAIGNS.campaign_Status = 1
+
+CREATE PROCEDURE web.SERVER_create_email_recipients
+AS
+BEGIN TRY
+  --sets (n) campaigns ready for transfer of emails to mailing list
+      UPDATE TOP(1) TBL_CAMPAIGNS
+  SET TBL_CAMPAIGNS.campaign_Status = 1
+  WHERE TBL_CAMPAIGNS.campaign_Status = 0
+
+  --finds above marked campaigns, retreives addresses then copies them to     TBL_CAMPAIGNRECIPIENTS ready for auto mailout
+  INSERT TBL_CAMPAIGNRECIPIENTS (recip_CampaignId, recip_Email, recip_Forename, recip_Surname, recip_adds_Key)
+  SELECT C.Campaign_AddressBook, ABA.adds_Email, ABA.adds_RecipientForename,     ABA.adds_RecipientSurname, ABA.adds_Key
+  FROM TBL_ADDRESSBOOKADDRESSES ABA
+  JOIN TBL_CAMPAIGNS C ON ABA.adds_ABMId = C.campaign_AddressBook
+  WHERE C.campaign_Status = 1
+
+  --checks that above emails have been copied across and then sets the campaigns status accordingly
+  UPDATE C
+  SET C.campaign_Status = 2
+  From TBL_CAMPAIGNS C
+  JOIN TBL_ADDRESSBOOKADDRESSES  aba
+  ON aba.adds_ABMId = C.campaign_AddressBook
+  JOIN TBL_CAMPAIGNRECIPIENTS r on aba.adds_Key = r.recip_adds_Key
+  WHERE C.campaign_Status = 1
+
+END TRY
+BEGIN CATCH
+  -- Whoops, there was an error
+  IF @@TRANCOUNT > 0
+     ROLLBACK
+
+  -- Raise an error with the details of the exception
+  DECLARE @ErrMsg nvarchar(4000), @ErrSeverity int
+  SELECT @ErrMsg = ERROR_MESSAGE(),
+         @ErrSeverity = ERROR_SEVERITY()
+
+  --throws out error to logs?
+  RAISERROR(@ErrMsg, @ErrSeverity, 1)
+END CATCH
+

@@ -1,0 +1,1 @@
+sprintf(buffer, format, value)

@@ -1,0 +1,116 @@
+typedef struct tagTMatrix
+{
+   int   Id;
+   int   NumColumns;
+   int   NumRows;
+   double*  aData;
+} TMatrix;
+
+[StructLayout(LayoutKind.Sequential)]
+unsafe public struct TMatrix
+{
+public Int32 id;
+public Int32 NumCols;
+public Int32 NumRows;
+public Int32 NumPlanes;
+public IntPtr aData;
+};
+
+
+
+[DllImport("kernel32.dll")]
+internal static extern IntPtr LoadLibrary(String dllname);
+[DllImport("kernel32.dll")]
+internal static extern IntPtr GetProcAddress(IntPtr hModule, String 
+procname);
+
+unsafe internal delegate void FillMatrices(IntPtr mats, long num);
+
+[DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")] // Saw this 
+mentioned somewhere
+static extern void CopyMemory(IntPtr dest, IntPtr[] src, int cb);
+
+unsafe private void butTest_Click(object sender, EventArgs e)
+{
+    IntPtr library = LoadLibrary("TestDLL.dll");
+    IntPtr procaddr = GetProcAddress(library, "FillMatrices");
+    FillMatrices fm = 
+(FillMatrices)Marshal.GetDelegateForFunctionPointer(procaddr, 
+typeof(FillMatrices));
+    TMatrix[] mats = new TMatrix[2];
+    mats[0]=new TMatrix();
+    mats[1]=new TMatrix();
+    mats[0].id=1;
+    mats[0].NumCols=2;mats[0].NumRows=1;mats[0].NumPlanes=0;
+    mats[0].aData = Marshal.AllocHGlobal(sizeof(double) * 2);
+    double [] array=new double[2];
+    array[0]=12.5;array[1]=2.3;
+    fixed (double* a = array)
+{
+IntPtr intPtr = new IntPtr((void*)a);
+mats[1].aData = Marshal.AllocHGlobal(sizeof(double) * 2);
+//mats[1].aData = 13;
+mats[1].aData = intPtr;
+mats[1].id = 2;
+mats[1].NumCols = 1; mats[1].NumRows = 2; mats[1].NumPlanes = 0;
+}
+IntPtr[] ptrs = new IntPtr[2];
+int total=0;
+for (int i = 0; i < ptrs.Length; i++)
+{
+total = total + sizeof(IntPtr) * (4 + mats[i].NumCols * mats[i].NumRows);
+ptrs[i] = 
+Marshal.AllocHGlobal(sizeof(IntPtr)*(4+mats[i].NumCols*mats[i].NumRows));
+}
+Marshal.StructureToPtr(mats[0], ptrs[0], false);
+Marshal.StructureToPtr(mats[1], ptrs[1], false);
+//_list.test_list =
+IntPtr pointer=Marshal.AllocHGlobal(total);
+CopyMemory(pointer, ptrs, 2 * IntPtr.Size);
+//TMatrix m1=new TMatrix();
+//mats[0].aData = 10;// new double[20];
+//TMatrix m2 = new TMatrix();
+// mats[1].aData = 20;// new double[9];
+//Marshal.StructureToPtr(m2, p1, false);
+//mats.Add(m2);
+//Marshal.StructureToPtr(mats, p1, false);
+//IntPtr p2=Marshal.AllocHGlobal(270);
+//Marshal.StructureToPtr(mats.ToArray(),p2,false);
+fm(pointer,2);
+// Now I want to get back this data ???
+}
+
+
+// C++ function
+extern "C" void FillMatrices(TMatrix** mats, int matcount)
+{
+ FILE* fp=fopen("C:\\mats.txt","w+");
+ fprintf(fp,"Number of matrices = %d\n",matcount);
+ fflush(fp);
+ for(int i=0;i<matcount;++i)
+ {
+  TMatrix* m=mats[i];
+  fprintf(fp,"id = %d rows %d cols %d \n",m->Id,m->NumRows,m->NumColumns);
+  fflush(fp);
+
+  for(int j=0;j<m->NumRows;++j)
+  {
+   fprintf(fp,"%d ",j);
+   fflush(fp);
+   for(int k=0;k<m->NumColumns;++k)
+   {
+    fprintf(fp,"%f ", m->aData[k*m->NumRows+j]);
+    // modify the data - it should be available back in C#
+    m->aData[k*m->NumRows+j]=k;
+    fflush(fp);
+   }
+   fprintf(fp,"\n");
+   fflush(fp);
+  }
+  fprintf(fp,"--------------------------\n");
+
+  fflush(fp);
+ }
+ fclose(fp);
+}
+

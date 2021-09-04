@@ -1,0 +1,146 @@
+Future[Report]
+Executors.newFixedThreadPool()
+List[Future[Report]]
+ExecutorService.invokeAll()
+Report
+Report
+Report
+call
+Callable
+Worker
+Actor
+CountDownLatch
+jobsQueue
+workers
+loop
+@tailrec def loop
+package multi_worker
+
+import scala.actors.Actor
+import java.util.concurrent.CountDownLatch
+
+object MultiWorker {
+  private val megabyte = 1024 * 1024
+  private val runtime = Runtime.getRuntime
+}
+
+class MultiWorker[A, B](jobs: List[A],
+                        actorCount: Int)(process: (A) => B) {
+  import MultiWorker._
+
+  sealed abstract class Message
+
+  // Dispatcher -> Worker: Run this job and report results
+  case class Process(job: A) extends Message
+
+  // Worker -> Dispatcher: Result of processing
+  case class ReportResult(id: Int, result: B) extends Message
+
+  // Worker -> Dispatcher: I need work -- send me a job
+  case class SendJob(id: Int) extends Message
+
+  // Worker -> Dispatcher: I have stopped as requested
+  case class Stopped(id: Int) extends Message
+
+  // Dispatcher -> Worker: Stop working -- all jobs done
+  case class StopWorking extends Message
+
+  /**
+   * A simple logger that can be sent text messages that will be written to the
+   * console. Used so that messages from the actors do not step on each other.
+   */
+  object Logger
+  extends Actor {
+    def act() {
+      loop {
+        react {
+          case text: String => println(text)
+          case StopWorking => exit()
+        }
+      }
+    }
+  }
+  Logger.start()
+
+  /**
+   * A worker actor that will process jobs and return results to the
+   * dispatcher.
+   */
+  class Worker(id: Int)
+  extends Actor{
+    def act() {
+      // Ask the dispatcher for an initial job
+      dispatcher ! SendJob(id)
+
+      loop {
+        react {
+          case Process(job) =>
+            val startTime = System.nanoTime
+            dispatcher ! ReportResult(id, process(job))
+
+            val endTime = System.nanoTime
+            val totalMemory = (runtime.totalMemory / megabyte)
+            val usedMemory = totalMemory - (runtime.freeMemory / megabyte)
+            val message = "Finished job " + job + " in " +
+              ((endTime - startTime) / 1000000000.0) +
+              " seconds using " + usedMemory +
+              "MB out of total " + totalMemory + "MB"
+            Logger ! message
+
+            dispatcher ! SendJob(id)
+
+          case StopWorking =>
+            dispatcher ! Stopped(id)
+            exit()
+        }
+      }
+    }
+  }
+
+  val latch = new CountDownLatch(1)
+  var res = List.empty[B]
+
+  /**
+   * The job dispatcher that sends jobs to the worker until the job queue
+   * (jobs: TraversableOnce[A]) is empty. It then tells the workers to
+   * stop working and returns the List[B] results to the caller.
+   */
+  val dispatcher = new Actor {
+    def act() {
+      var jobQueue = jobs
+      var workers = (0 until actorCount).map(id => (id, new Worker(id))).toMap
+      workers.values.foreach(_.start())
+
+      loop {
+        react {
+          case ReportResult(id, result) =>
+            res = result :: res
+            if (jobQueue.isEmpty && workers.isEmpty) {
+              latch.countDown()
+              exit()
+            }
+
+          case SendJob(id) =>
+            if (!jobQueue.isEmpty) {
+              workers(id) ! Process(jobQueue.head)
+              jobQueue = jobQueue.tail
+            }
+
+          case Stopped(id) =>
+            workers = workers - id
+        }
+      }
+    }
+  }
+  dispatcher.start()
+
+  /**
+   * Get the results of the processing -- wait for the dispatcher to finish
+   * before returning.
+   */
+  def results: List[B] = {
+    latch.await()
+    res
+  }
+}
+

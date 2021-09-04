@@ -1,0 +1,57 @@
+module Main where
+
+import Happstack.Server
+
+import Control.Concurrent
+import Control.Monad.IO.Class ( liftIO )
+import Control.Monad
+
+main :: IO ()
+main = do
+  counter <- (newMVar 0) :: IO (MVar Integer)
+
+  simpleHTTP nullConf $ countResponses counter (app counter)
+
+countResponses :: MVar Integer -> ServerPart Response -> ServerPart Response
+countResponses counter r = do
+  resp <- r
+  liftIO $ putStrLn $ show resp
+  -- TODO: Does not work, response code always 200
+  if rsCode resp == 200
+    then liftIO $ (putMVar counter . (+) 1) =<< takeMVar counter
+    else liftIO $ putStrLn $ "Unknown code: " ++ (show $ rsCode resp)
+  return resp
+
+app counter = do
+  c <- liftIO $ readMVar counter
+
+  msum
+    [ dir "error" $ notFound $ toResponse $ "NOT HERE"
+    , ok $ toResponse $ "Hello, World! " ++ (show c)
+    ]
+
+notFound
+Response -> Response
+mapServerPartT
+runWebT
+appFilterToResp
+simpleHttp''
+-- Use this instead of simpleHTTP
+withMetrics :: (ToMessage a) => MVar Integer -> Conf -> ServerPartT IO a -> IO ()
+withMetrics counter conf hs =
+    Listen.listen conf (\req -> (simpleHTTP'' (mapServerPartT id hs) req) >>=
+                                runValidator (fromMaybe return (validator conf)) >>=
+                                countResponses counter)
+
+logMessage x = logM "Happstack.Server.AccessLog.Combined" INFO x
+
+withMetrics :: (ToMessage a) => Conf -> ServerPartT IO a -> IO ()
+withMetrics conf hs =
+    Listen.listen conf $ \req -> do
+      startTime     <- liftIO $ getCurrentTime
+      resp          <- simpleHTTP'' (mapServerPartT id hs) req
+      validatedResp <- runValidator (fromMaybe return (validator conf)) resp
+      endTime       <- liftIO $ getCurrentTime
+      logMessage $ rqUri req ++ " " ++ show (diffUTCTime endTime startTime)
+      return validatedResp
+

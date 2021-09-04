@@ -1,0 +1,194 @@
+class Terrain
+{
+public:
+Terrain(const char* fileName);
+~Terrain();
+void Update(int x, int y);
+void Render(LPDIRECT3DDEVICE9 Device);
+
+private:
+float* Data;
+int Width;
+int TileWidth;
+bool isRendering;
+bool isSwapping;
+std::vector<Chunk*> RenderChunks;
+};
+
+Terrain::Terrain(const char* fileName)
+{
+std::fstream File(fileName, std::ios::in | std::ios::binary);
+
+File.seekg(0, std::ios::end);
+int Length = File.tellg();
+File.seekg(0, std::ios::beg);
+
+int w = (int)sqrt((float)Length/4.0)-1;
+Data = new float[Length / 4];
+File.read((char*)Data, Length);
+File.close();
+
+Width = w;
+int dataWidth = w+1;
+
+TileWidth = w/16;
+for (int y=0; y<TileWidth; y++)
+{
+    for (int x=0; x<TileWidth; x++)
+    {
+        Chunk* c = new Chunk(x*16, y*16, 16, 512, Data);
+        RenderChunks.push_back(c);
+    }
+}
+}
+
+void Terrain::Render(LPDIRECT3DDEVICE9 Device)
+{
+for (unsigned int i=0; i<RenderChunks.size(); ++i)
+{
+    RenderChunks[i]->Render(Device);
+}
+}
+Chunk::Chunk(int cX, int cY, int cW, int dW, float* Data):
+    Pos(cX, 0, cY)
+{
+Heights = new float[(cW + 1) * (cW + 1)];
+ParentH = Data;
+ParentOffset = cX + cY*dW;
+ParentW = dW;
+Width = cW + 1;
+
+for (int y=0; y<Width; ++y)
+{
+    memcpy(Heights + y*Width, Data + cX + (y+cY)*dW, sizeof(float)*Width);
+}
+
+Vertices = NULL;
+Calculate(16, 16, 16, 16, 16);
+}
+void Chunk::Calculate(int L, int lod_L, int lod_R, int lod_U, int lod_D)
+{
+Detail = L;
+if (Vertices) delete[] Vertices;
+
+Vertices    = new Vertex[(Width-1)*(Width-1)*6/(L*L)];
+Count       = (Width-1)*(Width-1)*2/(L*L);
+
+float Height = 100.0f;
+for (int y=0; y<Width-1; y += L)
+{
+    for (int x=0; x<Width-1; x += L)
+    {
+        Vertex* thisQuad = Vertices + (y/L)*((Width-1)/L)*6 + (x/L)*6;
+        float heights[4] = {
+            Heights[(x    ) + (y    )*Width] * Height,
+            Heights[(x    ) + (y + L)*Width] * Height,
+            Heights[(x + L) + (y    )*Width] * Height,
+            Heights[(x + L) + (y + L)*Width] * Height};
+
+        float bonus[8] = {
+            heights[0],
+            heights[2],
+            heights[0],
+            heights[2],
+            heights[1],
+            heights[3],
+            heights[1],
+            heights[3]};
+        if (Pos.z + y > 0)
+        {
+            bonus[0] = ParentH[((int)Pos.x + x    ) + ((int)Pos.z + y - L)*ParentW] * Height;
+            bonus[1] = ParentH[((int)Pos.x + x + L) + ((int)Pos.z + y - L)*ParentW] * Height;   
+        }
+        if (Pos.x + x > 0)
+        {
+            bonus[2] = ParentH[((int)Pos.x + x - L) + ((int)Pos.z + y    )*ParentW] * Height;
+            bonus[4] = ParentH[((int)Pos.x + x - L) + ((int)Pos.z + y + L)*ParentW] * Height;
+        }
+        if (Pos.x + x < ParentW-L-L)
+        {
+            bonus[3] = ParentH[((int)Pos.x + x+L+L) + ((int)Pos.z + y    )*ParentW] * Height;
+            bonus[5] = ParentH[((int)Pos.x + x+L+L) + ((int)Pos.z + y + L)*ParentW] * Height;
+        }
+        if (Pos.z + y < ParentW-L-L)
+        {
+            bonus[6] = ParentH[((int)Pos.x + x    ) + ((int)Pos.z + y+L+L)*ParentW] * Height;
+            bonus[7] = ParentH[((int)Pos.x + x + L) + ((int)Pos.z + y+L+L)*ParentW] * Height;
+        }
+
+        if (x == 0 && lod_L>L)
+        {
+            heights[0] = lerp(
+                Heights[(x    ) + (((y    )/lod_L)*lod_L        )*Width], 
+                Heights[(x    ) + (((y    )/lod_L)*lod_L + lod_L)*Width], 
+                (float)((y  ) % lod_L) / (float)lod_L) * Height;
+
+            heights[1] = lerp(
+                Heights[(x    ) + (((y + L)/lod_L)*lod_L        )*Width],
+                Heights[(x    ) + (((y + L)/lod_L)*lod_L + lod_L)*Width],
+                (float)((y+L) % lod_L) / (float)lod_L) * Height;
+        }
+        if (x >= Width-2 && lod_R>L)
+        {
+            heights[2] = lerp(
+                Heights[(x + L) + (((y    )/lod_R)*lod_R        )*Width], 
+                Heights[(x + L) + (((y    )/lod_R)*lod_R + lod_R)*Width], 
+                (float)((y  ) % lod_R) / (float)lod_R) * Height;
+
+            heights[3] = lerp(
+                Heights[(x + L) + (((y + L)/lod_R)*lod_R        )*Width],
+                Heights[(x + L) + (((y + L)/lod_R)*lod_R + lod_R)*Width],
+                (float)((y+L) % lod_R) / (float)lod_R) * Height;
+        }//*/
+        if (y == 0 && lod_U>L)
+        {
+            heights[0] = lerp(
+                Heights[(((x    )/lod_U)*lod_U        ) + (y    )*Width],
+                Heights[(((x    )/lod_U)*lod_U + lod_U) + (y    )*Width],
+                (float)((x  ) % lod_U) / (float)lod_U) * Height;
+
+            heights[2] = lerp(
+                Heights[(((x + L)/lod_U)*lod_U        ) + (y    )*Width],
+                Heights[(((x + L)/lod_U)*lod_U + lod_U) + (y    )*Width],
+                (float)((x+L) % lod_U) / (float)lod_U) * Height;
+        }
+        if (y >= Width-2 && lod_D>L)
+        {
+            heights[1] = lerp(
+                Heights[(((x    )/lod_D)*lod_D        ) + (y + L)*Width],
+                Heights[(((x    )/lod_D)*lod_D + lod_D) + (y + L)*Width],
+                (float)((x  ) % lod_D) / (float)lod_D) * Height;
+
+            heights[3] = lerp(
+                Heights[(((x + L)/lod_D)*lod_D        ) + (y + L)*Width],
+                Heights[(((x + L)/lod_D)*lod_D + lod_D) + (y + L)*Width],
+                (float)((x+L) % lod_D) / (float)lod_D) * Height;
+        }//*/
+
+        D3DXVECTOR3 fake(0,0,0);
+        Vertex p1(D3DXVECTOR3(x,     heights[0], y    ) + Pos, CalcNormal(bonus[2], heights[2], bonus[0], heights[1]));
+        Vertex p2(D3DXVECTOR3(x,     heights[1], y + L) + Pos, CalcNormal(bonus[4], heights[3], heights[0], bonus[6]));
+        Vertex p3(D3DXVECTOR3(x + L, heights[2], y    ) + Pos, CalcNormal(heights[0], bonus[3], bonus[1], heights[3]));
+        Vertex p4(D3DXVECTOR3(x + L, heights[3], y + L) + Pos, CalcNormal(heights[1], bonus[5], heights[2], bonus[7]));
+
+        thisQuad[0] = p1;
+        thisQuad[1] = p2;
+        thisQuad[2] = p3;
+
+        thisQuad[3] = p3;
+        thisQuad[4] = p2;
+        thisQuad[5] = p4;
+    }
+}
+}
+void Chunk::Render(LPDIRECT3DDEVICE9 Device)
+{
+Device->SetFVF(D3DFVF_XYZ | D3DFVF_NORMAL);
+
+Device->DrawPrimitiveUP(
+    D3DPT_TRIANGLELIST,
+    Count,
+    Vertices,
+    sizeof(Vertex));
+}
+

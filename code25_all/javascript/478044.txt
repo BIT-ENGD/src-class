@@ -1,0 +1,949 @@
+<?php
+header('Content-Type: text/html;charset=utf-8');
+header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
+header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
+header("Cache-Control: no-store, no-cache, must-revalidate");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+session_start();
+$_SESSION['playerid'] = "";
+echo("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"); ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+    <head>
+        <title>ajax test</title>
+        <meta http-equiv="pragma" content="no-cache" />
+        <meta http-equiv="expires" content="-1" />
+        <meta name="robots" content="index, follow" />
+        <meta name="audience" content="all" />
+        <meta http-equiv="content-language" content="en" />
+        <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+        <script type="text/javascript">
+
+
+        //vars
+        var presstime = 300; //howlong a button should be hold down for 1 event fire
+        var ajaxivtime = 500; //interval at which doAjax is executed, unless a manual request has been send within this time
+        var keypressivtime = 50; //interval at which the keypress fire event is fired
+
+        //init vars
+        var keysdown = []; //array for what keys are down at a specific moment
+        var cobjects = []; //array for all canvas objects
+        var oldpress = 0;
+        var ajaxrestime = 0;
+        var latency = 0;
+
+        //functions
+        function isset() {
+            var a = arguments;
+            var l = a.length;
+            var i = 0;
+            if (l === 0) { 
+                return false;
+            }
+            while (i != l) {
+                if (typeof(a[i]) == 'undefined' || a[i] === null) { 
+                    return false; 
+                } else {
+                    i++;
+                }
+            }
+            return true;
+        }
+
+        function keycheck(e) {
+            var keynum;
+            if (window.event) { //IE
+                keynum = e.keyCode;
+            }
+            else if (e.which) { // Netscape // FireFox // Opera
+                keynum = e.which;
+            }
+            if (keysdown.indexOf(keynum) == -1) {
+                keysdown.push(keynum);
+            }
+            return true;
+        }
+
+        function updateLatency(oldLatencyTime) {
+            var curtime = new Date();
+            curtime = curtime.getTime();
+            if (oldLatencyTime !== 0) {
+                latency = curtime - oldLatencyTime;
+                document.title = "Latency: " + latency + "ms";
+            }
+            return true;
+        }
+
+        function setAjaxResTime() {
+            var curtime = new Date();
+            ajaxrestime = curtime.getTime();
+            return true;
+        }
+
+        function getAjaxResTimeDiff() {
+            var curtime = new Date();
+            curtime = curtime.getTime();
+            return curtime - ajaxrestime;
+        }
+
+        function setOldPress() {
+            var curtime = new Date();
+            oldpress = curtime.getTime();
+            return true;
+        }
+
+        function getPressTimeDiff() {
+            var curtime = new Date();
+            curtime = curtime.getTime();
+            return curtime - oldpress;
+        }
+
+        function searchcobjects(canvasid) {
+            indexes = cobjects.length - 1;
+            i = 0;
+            while (i <= indexes) {
+                if (cobjects[i][0] == canvasid) {
+                    return i;
+                }
+                i++;
+            }
+            return -1;
+        }
+
+        function getCurX(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return -1;
+            }
+            return cobjects[key][2];
+        }
+
+        function getCurY(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return -1;
+            }
+            return cobjects[key][3];
+        }
+
+        function getTarX(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return -1;
+            }
+            return cobjects[key][4];
+        }
+
+        function getTarY(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return -1;
+            }
+            return cobjects[key][5];
+        }
+
+        function getStepCoords(cur, tar, step) {
+            var curX = cur[0];
+            var curY = cur[1];
+            var tarX = tar[0];
+            var tarY = tar[1];
+            var xmultiplier;
+            var ymultiplier;
+            var xdiff;
+            var ydiff;
+            if ((tarX > curX)&&(tarY == curY)) {
+                xmultiplier = 1;
+                ymultiplier = 0;
+            }
+            else if ((tarX < curX)&&(tarY == curY)) {
+                xmultiplier = -1;
+                ymultiplier = 0;
+            }
+            else if ((tarY > curY)&&(tarX == curX)) {
+                xmultiplier = 0;
+                ymultiplier = 1;
+            }
+            else if ((tarY < curY)&&(tarX == curX)) {
+                xmultiplier = 0;
+                ymultiplier = -1;
+            }
+            else if ((tarX > curX)&&(tarY > curY)) {
+                xdiff = tarX - curX;
+                ydiff = tarY - curY;
+                xmultiplier = xdiff / (xdiff + ydiff);
+                ymultiplier = ydiff / (xdiff + ydiff);
+            }
+            else if ((tarX < curX)&&(tarY < curY)) {
+                xdiff = curX - tarX;
+                ydiff = curY - tarY;
+                xmultiplier = -(xdiff / (xdiff + ydiff));
+                ymultiplier = -(ydiff / (xdiff + ydiff));
+            }
+            else if ((tarX > curX)&&(tarY < curY)) {
+                xdiff = tarX - curX;
+                ydiff = curY - tarY;
+                xmultiplier = xdiff / (xdiff + ydiff);
+                ymultiplier = -(ydiff / (xdiff + ydiff));
+            }
+            else if ((tarX < curX)&&(tarY > curY)) {
+                xdiff = curX - tarX;
+                ydiff = tarY - curY;
+                xmultiplier = -(xdiff / (xdiff + ydiff));
+                ymultiplier = ydiff / (xdiff + ydiff);
+            }
+            var newx = curX + Math.round(step * xmultiplier);
+            var newy = curY + Math.round(step * ymultiplier);
+            return [newx, newy];
+        }
+
+        function updateTarX(canvasid, x) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][4] = x;
+            }
+            return true;
+        }
+
+        function updateTarY(canvasid, y) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][5] = y;
+            }
+            return true;
+        }
+
+        function updateCurX(canvasid, x) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][2] = x;
+            }
+            return true;
+        }
+
+        function updateCurY(canvasid, y) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][3] = y;
+            }
+            return true;
+        }
+
+        function updateTarAngle(canvasid, angle) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][8] = angle;
+            }
+            return true;
+        }
+
+        function updateCurAngle(canvasid, angle) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][7] = angle;
+            }
+            return true;
+        }
+
+        function getCurAngle(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return -1;
+            }
+            return cobjects[key][7];
+        }
+
+        function getTarAngle(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return -1;
+            }
+            return cobjects[key][8];
+        }
+
+        function isMoving(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else if (cobjects[key][2] == 1) {
+                return true;
+            }
+            return false;
+        }
+
+        function isRotating(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else if (cobjects[key][6] == 1) {
+                return true;
+            }
+            return false;
+        }
+
+        function startRotating(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][6] = 1;
+            }
+            return true;
+        }
+
+        function stopRotating(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][6] = 0;
+            }
+            return true;
+        }
+
+        function startMoving(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][3] = 1;
+            }
+            return true;
+        }
+
+        function stopMoving(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][4] = 0;
+            }
+            return true;
+        }
+
+        function drawSprite(ctx, angle, img, centerX, centerY) {
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(angle);
+            ctx.drawImage(img, -(img.width / 2), -(img.height / 2));
+            ctx.restore();
+            return true;
+        }
+
+        function rotate(ctx, canvas, angle, img) {
+            var rotation = Math.PI * angle / 180;
+            var max = Math.max(img.width, img.height);
+            ctx.clearRect(0, 0, max, max);
+            drawSprite(ctx, rotation, img, max / 2, max / 2);
+            return true;
+        }
+
+        function draw(canvasid, imgfile, angle, left, top) {    
+            var canvas = document.createElement('canvas');
+            document.body.appendChild(canvas);
+            canvas.id = canvasid;
+            var ctx = canvas.getContext('2d');
+            var img = new Image();
+            canvas.appendChild(img);
+            img.id = canvas.id + "imgid";
+            img.onload = function() {
+                var max = Math.max(img.width, img.height);
+                canvas.width = canvas.height = max;
+                canvas.style.width = canvas.style.height = max + "px";
+                canvas.style.position = "absolute";
+                canvas.style.left = left + "px";
+                canvas.style.top = top + "px";
+                drawSprite(ctx, 0, img, max / 2, max / 2);
+                if ((isset(angle))&&(angle !== 0)) {
+                    rotate(ctx, canvas, angle, img);
+                }
+            };
+            img.src = imgfile;
+            return true;
+        }
+
+        function execMoving(canvasid) {
+            var el = typeof canvasid == 'string' ? document.getElementById(canvasid) : canvasid;
+            var curX = getCurX(canvasid);
+            var curY = getCurY(canvasid);
+            var tarX = getTarX(canvasid);
+            var tarY = getTarY(canvasid);
+
+            //calculate how often we have to do this in order to determine delay and step later
+            var i = 0;
+            var loopdone = false;
+            var step = 5;
+            var loopcurX = curX;
+            var loopcurY = curY;
+            var loopcoords;
+            var loopxdiff;
+            var loopydiff;
+            while (!(loopdone)) {
+                i++;
+                loopcoords = getStepCoords([loopcurX, loopcurY], [tarX, tarY], step);
+                loopxdiff = Math.max(tarX, loopcoords[0]) - Math.min(tarX, loopcoords[0]);
+                loopydiff = Math.max(tarY, loopcoords[1]) - Math.min(tarY, loopcoords[1]);
+                if ((loopxdiff <= step)&&(loopydiff <= step)) {
+                    loopdone = true;
+                }
+                else {
+                    loopcurX = loopcoords[0];
+                    loopcurY = loopcoords[1];
+                }
+            }
+
+            var delay = 0;
+            step = 0;
+            var multiplier = 0;
+            var stepextra = 5;
+            var time;
+            if (presstime > latency) { time = presstime - latency; } else { time = presstime; }
+            while (delay < 1) {
+                multiplier++;
+                step = stepextra * multiplier;
+                delay = Math.round((time) / (i / multiplier));
+            }
+            if (delay > 10) { delay = 10; } //ceil delay
+
+            var coords = getStepCoords([curX, curY], [tarX, tarY], step);
+            var xPos = coords[0];
+            var yPos = coords[1];
+            el.style.left = xPos + 'px';
+            el.style.top = yPos + 'px';
+            updateCurX(canvasid, xPos);
+            updateCurY(canvasid, yPos);
+            var xdiff = Math.max(tarX, xPos) - Math.min(tarX, xPos);
+            var ydiff = Math.max(tarY, yPos) - Math.min(tarY, yPos);
+            if ((xdiff <= step)&&(ydiff <= step)) {
+                stopMoving(canvasid);
+            }
+            else {
+                setTimeout(function() { execMoving(canvasid); }, delay);
+            }
+            return true;
+        }
+
+        function execRotation(canvasid) {
+            var curAngle = getCurAngle(canvasid);
+            var tarAngle = getTarAngle(canvasid);
+
+            //calcAngles
+            var tarAngleCalc;
+            var curAngleCalc;
+            var calcDiff;
+            if (tarAngle > 360) { tarAngleCalc = tarAngle - 360; } else if (tarAngle < 0) { tarAngleCalc = tarAngle + 360; } else { tarAngleCalc = tarAngle; }
+            if (curAngle > 360) { curAngleCalc = curAngle - 360; } else if (curAngle < 0) { curAngleCalc = curAngle + 360; } else { curAngleCalc = curAngle; }
+
+            //calcDiff
+            if ((tarAngleCalc > 180)&&(curAngleCalc < 180)&&(Math.max(tarAngleCalc, curAngleCalc) - Math.min(tarAngleCalc, curAngleCalc) > 180)) {
+                tarAngleCalc = tarAngleCalc - 360;
+                calcDiff = Math.max(tarAngleCalc, curAngleCalc) - Math.min(tarAngleCalc, curAngleCalc);
+            }
+            else if ((curAngleCalc > 180)&&(tarAngleCalc < 180)&&(Math.max(tarAngleCalc, curAngleCalc) - Math.min(tarAngleCalc, curAngleCalc) > 180)) {
+                curAngleCalc = curAngleCalc - 360;
+                calcDiff = Math.max(tarAngleCalc, curAngleCalc) - Math.min(tarAngleCalc, curAngleCalc);
+            }
+            else {
+                calcDiff = Math.max(tarAngleCalc, curAngleCalc) - Math.min(tarAngleCalc, curAngleCalc);
+            }
+
+            //calculate rotation speed
+            var changeAngle = 0;
+            var rotspeed = 0;
+            var time;
+            if (presstime > latency) { time = presstime - latency; } else { time = presstime; }
+            while (rotspeed < 1) {
+                changeAngle++;
+                rotspeed = Math.round(time / (calcDiff / changeAngle));
+            }
+
+            //rotate
+            var angle;
+            if ((tarAngle > curAngle)&&(tarAngle - curAngle > 180)) {
+                angle = curAngle - changeAngle;
+            }
+            else if (tarAngle > curAngle) {
+                angle = curAngle + changeAngle;
+            }
+            else if ((tarAngle < curAngle)&&(curAngle - tarAngle > 180)) {
+                angle = curAngle + changeAngle;
+            }
+            else if (tarAngle < curAngle) {
+                angle = curAngle - changeAngle;
+            }
+            if (angle > 360) { angle = angle - 360; } else if (angle < 0) { angle = angle + 360; }
+            var canvas = document.getElementById(canvasid);
+            var ctx = canvas.getContext('2d');
+            var img = document.getElementById(canvasid + "imgid");
+            rotate(ctx, canvas, angle, img);
+            updateCurAngle(canvasid, angle);
+            if (getCurAngle(canvasid) != getTarAngle(canvasid)) {
+                setTimeout(function() {
+                    execRotation(canvasid);
+                }, rotspeed);
+            }
+            else {
+                stopRotating(canvasid);
+            }
+            return true;
+        }
+
+        function keydown(e) {
+            var keynum;
+            if (window.event) { // Internet Explorer
+                keynum = window.event.keyCode;
+            }
+            else if (e.which) { // Netscape, Firefox and Opera
+                keynum = e.which;
+            }
+            if (keysdown.indexOf(keynum) == -1) {
+                keysdown.push(keynum);
+            }
+            return true;
+        }
+
+        function keyup(e) {
+            var keynum;
+            if (window.event) { // Internet Explorer
+                keynum = window.event.keyCode;
+            }
+            else if (e.which) { // Netscape, Firefox and Opera
+                keynum = e.which;
+            }
+            key = keysdown.indexOf(keynum);
+            if (key != -1) {
+                keysdown.splice(key);
+            }
+            return true;
+        }
+
+        function isDown(keynum) {
+            if (keysdown.indexOf(keynum) == -1) {
+                return false;
+            }
+            return true;
+        }
+
+        function ajaxHandle1(explode) { //move existing canvas object
+            var canvasid = explode[1];
+            var x = parseFloat(explode[2]);
+            var y = parseFloat(explode[3]);
+            if ((getCurX(canvasid) != x)||(getCurY(canvasid) != y)) {
+                if (isMoving(canvasid)) {
+                    updateTarX(canvasid, x);
+                    updateTarY(canvasid, y);
+                }
+                else {
+                    updateTarX(canvasid, x);
+                    updateTarY(canvasid, y);
+                    startMoving(canvasid);
+                    execMoving(canvasid);
+                }
+            }
+            return true;
+        }
+
+        function ajaxHandle2(explode) { //create new canvas object
+            var canvasid = explode[1];
+            var imgfile = explode[2];
+            var x = parseFloat(explode[3]);
+            var y = parseFloat(explode[4]);
+            var angle = parseFloat(explode[5]);
+            var rotation = Math.PI * angle / 180;
+            draw(canvasid, imgfile, rotation);
+            cobjects.push([canvasid, 0, x, y, x, y, 0, angle, angle]); //register canvas object - [canvasid, moving, curX, curY, tarX, tarY, rotating, curAngle, tarAngle]
+        }
+
+        function ajaxHandle3(explode) { //rotate existing canvas object
+            var canvasid = explode[1];
+            var angle = parseFloat(explode[2]);
+            if (getCurAngle(canvasid) != angle) { //if the new angle is different
+                if (isRotating(canvasid)) {
+                    updateTarAngle(canvasid, angle);
+                }
+                else {
+                    updateTarAngle(canvasid, angle);
+                    startRotating(canvasid);
+                    execRotation(canvasid);
+                }
+            }
+        }
+
+        function handleAjaxResponse(response) {
+            var commands = response.split("@");
+            var command;
+            var explode;
+            var type;
+            for (var i = 0; i < commands.length; i++) { // loop every handler command to execute it's type of action, commands are separated by an @ character
+                command = commands[i];
+                explode = command.split("#"); // explode the attributes of this command, separated by an # character
+                type = parseFloat(explode[0]);
+                if (type == 1) { //move existing canvas object
+                    ajaxHandle1(explode);
+                }
+                else if (type == 2) { //create new canvas object
+                    ajaxHandle2(explode);
+                }
+                else if (type == 3) { //rotate existing canvas object
+                    ajaxHandle3(explode);
+                }
+            }
+            return true;
+        }
+
+        function doAjax(get) {
+            var oldLatencyTime = new Date();
+            oldLatencyTime = oldLatencyTime.getTime();
+            if (!(isset(get))) {
+                get = "";
+            }
+            if ((getAjaxResTimeDiff() < ajaxivtime)&&(get === "")) {
+                return false;
+            }
+            var xmlHttpReq = false;
+            try { // Firefox, Opera 8.0+ and Safari
+                xmlHttpReq = new XMLHttpRequest();
+            }
+            catch (e) { // Internet Explorer
+                try {
+                    xmlHttpReq = new ActiveXObject("Msxml2.XMLHTTP");
+                }
+                catch (e) {
+                    try {
+                        xmlHttpReq = new ActiveXObject("Microsoft.XMLHTTP");
+                    }
+                    catch (e) {
+                        alert("Your browser does not support AJAX. Please use an AJAX compatible browser.");
+                        return false;
+                    }
+                }
+            }
+            xmlHttpReq.open('GET', 'handler.php' + get, true);
+            xmlHttpReq.onreadystatechange = function() {
+                if (xmlHttpReq.readyState == 4) {
+                    updateLatency(oldLatencyTime);
+                    var response = xmlHttpReq.responseText;
+                    if ((isset(response))&&(response !== "")) {
+                        handleAjaxResponse(response);
+                    }
+                }
+            };
+            xmlHttpReq.send(null);
+            return true;
+        }
+
+        function keyinput() { //keycodes: 87 = w, 68 = d, 65 = a
+            if (getPressTimeDiff() > presstime) {
+                if ((isDown(87))&&(isDown(68))&&(!(isDown(65)))) {
+                    setOldPress();
+                    doAjax("?move=f&rotate=r");
+                }
+                else if ((isDown(87))&&(isDown(65))&&(!(isDown(68)))) {
+                    setOldPress();
+                    doAjax("?move=f&rotate=l");
+                }
+                else if ((isDown(87))&&(!(isDown(68)))&&(!(isDown(65)))) {
+                    setOldPress();
+                    doAjax("?move=f");
+                }
+                else if ((isDown(68))&&(!(isDown(65)))) {
+                    setOldPress();
+                    doAjax("?rotate=r");
+                }
+                else if ((isDown(65))&&(!(isDown(68)))) {
+                    setOldPress();
+                    doAjax("?rotate=l");
+                }
+            }
+            return true;
+        }
+
+        //init intervals
+        var iv_ajax = setInterval(function() { doAjax(); }, ajaxivtime); //ajax handler interval
+        var iv_keypress = setInterval(function() { keyinput(); }, keypressivtime); //keypress fire interval
+
+        //register event handlers
+        document.onkeydown = function(event) { keydown(event); };
+        document.onkeyup = function(event) { keyup(event); };
+        document.onkeypress = function(event) { keycheck(event); };
+        </script>
+    </head>
+    <body style="background-color: white;"><div style="position: absolute; top: 300px; left: 300px;">W: accelerate.<br />A: rotate left.<br />D: rotate right.</div></body>
+</html>
+
+<?php
+header('Content-Type: text/html;charset=utf-8');
+header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
+header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
+header("Cache-Control: no-store, no-cache, must-revalidate");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+session_start();
+$_SESSION['playerid'] = "";
+echo("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"); ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+    <head>
+        <title>ajax test</title>
+        <meta http-equiv="pragma" content="no-cache" />
+        <meta http-equiv="expires" content="-1" />
+        <meta name="robots" content="index, follow" />
+        <meta name="audience" content="all" />
+        <meta http-equiv="content-language" content="en" />
+        <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+        <script type="text/javascript">     
+        //vars
+        var keypressivtime = 50; //interval at which keyinput is handled
+        var presstime = 150; //howlong a button should be hold down for 1 event fire
+
+        //init
+        var cobjects = []; //array for all canvas objects
+        var keysdown = []; //array for what keys are down at a specific moment
+        var oldpress = 0; //press init
+        var latency = 0; //client side
+
+        //functions
+        function isset() {
+            var a = arguments;
+            var l = a.length;
+            var i = 0;
+            if (l === 0) { 
+                return false;
+            }
+            while (i != l) {
+                if (typeof(a[i]) == 'undefined' || a[i] === null) { 
+                    return false; 
+                } else {
+                    i++;
+                }
+            }
+            return true;
+        }
+
+        function getStepCoords(cur, tar, step) {
+            var curX = cur[0];
+            var curY = cur[1];
+            var tarX = tar[0];
+            var tarY = tar[1];
+            var xmultiplier;
+            var ymultiplier;
+            var xdiff;
+            var ydiff;
+            if ((tarX > curX)&&(tarY == curY)) {
+                xmultiplier = 1;
+                ymultiplier = 0;
+            }
+            else if ((tarX < curX)&&(tarY == curY)) {
+                xmultiplier = -1;
+                ymultiplier = 0;
+            }
+            else if ((tarY > curY)&&(tarX == curX)) {
+                xmultiplier = 0;
+                ymultiplier = 1;
+            }
+            else if ((tarY < curY)&&(tarX == curX)) {
+                xmultiplier = 0;
+                ymultiplier = -1;
+            }
+            else if ((tarX > curX)&&(tarY > curY)) {
+                xdiff = tarX - curX;
+                ydiff = tarY - curY;
+                xmultiplier = xdiff / (xdiff + ydiff);
+                ymultiplier = ydiff / (xdiff + ydiff);
+            }
+            else if ((tarX < curX)&&(tarY < curY)) {
+                xdiff = curX - tarX;
+                ydiff = curY - tarY;
+                xmultiplier = -(xdiff / (xdiff + ydiff));
+                ymultiplier = -(ydiff / (xdiff + ydiff));
+            }
+            else if ((tarX > curX)&&(tarY < curY)) {
+                xdiff = tarX - curX;
+                ydiff = curY - tarY;
+                xmultiplier = xdiff / (xdiff + ydiff);
+                ymultiplier = -(ydiff / (xdiff + ydiff));
+            }
+            else if ((tarX < curX)&&(tarY > curY)) {
+                xdiff = curX - tarX;
+                ydiff = tarY - curY;
+                xmultiplier = -(xdiff / (xdiff + ydiff));
+                ymultiplier = ydiff / (xdiff + ydiff);
+            }
+            var newx = curX + Math.round(step * xmultiplier);
+            var newy = curY + Math.round(step * ymultiplier);
+            return [newx, newy];
+        }
+
+        function drawSprite(ctx, angle, img, centerX, centerY) {
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(angle);
+            ctx.drawImage(img, -(img.width / 2), -(img.height / 2));
+            ctx.restore();
+            return true;
+        }
+
+        function rotate(ctx, canvas, angle, img) {
+            var rotation = Math.PI * angle / 180;
+            var max = Math.max(img.width, img.height);
+            ctx.clearRect(0, 0, max, max);
+            drawSprite(ctx, rotation, img, max / 2, max / 2);
+            return true;
+        }
+
+        function searchcobjects(canvasid) {
+            indexes = cobjects.length - 1;
+            i = 0;
+            while (i <= indexes) {
+                if (cobjects[i][0] == canvasid) {
+                    return i;
+                }
+                i++;
+            }
+            return -1;
+        }
+
+        function isMoving(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else if (cobjects[key][1] == 1) {
+                return true;
+            }
+            return false;
+        }
+
+        function isRotating(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else if (cobjects[key][6] == 1) {
+                return true;
+            }
+            return false;
+        }
+
+        function startRotating(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][6] = 1;
+            }
+            return true;
+        }
+
+        function stopRotating(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][6] = 0;
+            }
+            return true;
+        }
+
+        function startMoving(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][1] = 1;
+            }
+            return true;
+        }
+
+        function stopMoving(canvasid) {
+            var key = searchcobjects(canvasid);
+            if (key == -1) {
+                return false;
+            }
+            else {
+                cobjects[key][1] = 0;
+            }
+            return true;
+        }
+
+        function stepxy(steppixels, angle) { //steppixels is the total amount of pixels to be shared between x and y depending on the angle
+            var xmultiplier;
+            if ((angle < 0)||(angle > 360)) {
+                return false;
+            }
+            else if ((angle === 0)||(angle == 360)) {
+                xmultiplier = 0;
+                ymultiplier = -1;
+            }
+            else if ((angle > 0)&&(angle < 91)) {
+                xmultiplier = angle / 90;
+                ymultiplier = -(1 - (angle / 90));
+            }
+            else if ((angle > 90)&&(angle < 181)) {
+                xmultiplier = 1 - ((angle - 90) / 90);
+                ymultiplier = (angle - 90) / 90;
+            }
+            else if ((angle > 180)&&(angle < 271)) {
+                xmultiplier = -((angle - 180) / 90);
+                ymultiplier = 1 - ((angle - 180) / 90);
+            }
+            else if ((angle > 270)&&(angle < 361)) {
+                xmultiplier = -(1 - ((angle - 270) / 90));
+                ymultiplier = -((angle - 270) / 90);
+            }
+            else {
+                return false;
+            }
+            var xstep = Math.round(steppixels * xmultiplier);
+            var ystep = Math.round(steppixels * ymultiplier);
+            var arr = [xstep, ystep];
+            return arr;
+        }
+
+        function getPressTimeDiff() {
+            var curtime = new Date();
+            curtime = curtime.getTime();
+            return curtime - oldpress;
+        }
+
+        function setOldPress() {
+            var curtime = new Date();
+            oldpress = curtime.getTime();
+            return true;
+        }
+
+        function isDown(keynum) {
+            if (keysdown.indexOf(keynum) == -1) {
+                return false;
+            }
+            return true;
+

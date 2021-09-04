@@ -1,0 +1,117 @@
+worker_processes  1;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+
+    keepalive_timeout  65;
+
+    lua_shared_dict ip_status 1m;
+
+    server {
+        listen       9080;
+        server_name  localhost;
+        location ~ .* {
+            rewrite_by_lua_file src/ip_check.lua;
+        }
+    }
+}
+
+-- redis configuration
+local redis_host                = "127.0.0.1"
+local redis_port                = 6379  -- connection timeouts for redis in ms.
+local redis_max_idle_timeout    = 10000
+local redis_pool_size           = 2     --  don't set this too high!
+local redis_timeout             = 200
+
+-- check a set with this key for blacklist entries
+local redis_key         = ngx.var.remote_addr
+local ip_status         = ngx.shared.ip_status
+local status_unblocked  = "0"
+local status_blocked    = "1"
+-- cache lookups for this many seconds
+local cache_ttl         = 1800
+
+local redirect_host             = "http://192.168.12.103:8080/Spring4MVCHelloWorld1"
+local header_ip_status_key      = "Ip-Status"
+-- value of the header to be sent when the client ip address is blocked
+local header_ip_status_value    = "block"
+local add_header                = status_unblocked
+
+-- lookup the value in the cache
+local cache_result = ip_status:get(redis_key)
+if cache_result then
+  if cache_result == status_blocked then
+    add_header = status_blocked
+  end
+else
+  -- lookup against redis
+  local resty = require "resty.redis"
+  local redis = resty:new()
+  redis:set_timeout(redis_timeout)
+
+  local connected, err = redis:connect(redis_host, redis_port)
+  if not connected then
+    ngx.log(ngx.ERR, "ip_check: could not connect to redis @"..redis_host..":"..redis_port.." - "..err)
+  else
+    ngx.log(ngx.ALERT, "ip_check: found connect to redis @"..redis_host..":"..redis_port.." - successful")
+
+    local result, err = redis:get(redis_key)
+    if not result then
+      ngx.log(ngx.ERR, "ip_check: lookup failed for "..ngx.var.remote_addr.." - "..err)
+    else
+      if result == status_blocked then
+        add_header = status_blocked
+      end
+
+      -- cache the result from redis
+      ip_status:set(ip, add_header, cache_ttl)
+    end
+
+    redis:set_keepalive(redis_max_idle_timeout, redis_pool_size)
+  end
+end
+
+ngx.log(ngx.ALERT, "ip_check: "..header_ip_status_key.." of "..ngx.var.remote_addr.." is "..add_header)
+if add_header == status_blocked then
+    ngx.header[header_ip_status_key] = header_ip_status_value
+    ngx.req.set_header(header_ip_status_key, header_ip_status_value)
+end
+
+ngx.redirect(redirect_host..ngx.var.request_uri)
+
+Host:"localhost:9080"
+User-Agent:"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:46.0) Gecko/20100101 Firefox/46.0"
+Accept:"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+Accept-Language:"en-US,en;q=0.5"
+Accept-Encoding:"gzip, deflate"
+Connection:"keep-alive"
+
+Connection:"keep-alive"
+Content-Length:"166"
+Content-Type:"text/html"
+Date:"Thu, 05 May 2016 08:06:33 GMT"
+Location:"http://192.168.12.103:8080/Spring4MVCHelloWorld1/hello"
+Server:"openresty/1.9.7.2"
+ip-status:"block"
+
+Host:"192.168.12.103:8080"
+User-Agent:"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:46.0) Gecko/20100101 Firefox/46.0"
+Accept:"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+Accept-Language:"en-US,en;q=0.5"
+Accept-Encoding:"gzip, deflate"
+Cookie:"JSESSIONID=4834843FE0E76170E429028E096A66E5"
+Connection:"keep-alive"
+
+Content-Language:"en-US"
+Content-Length:"166"
+Content-Type:"text/html;charset=UTF-8"
+Date:"Thu, 05 May 2016 08:06:33 GMT"
+Server:"Apache-Coyote/1.1"
+

@@ -1,0 +1,32 @@
+location ~ ^/shorten.json/(?<url>.*)$ {
+    content_by_lua '
+      local cjson = require "cjson"
+      local parser = require "redis.parser"
+      local id = 1234
+      local url = ngx.var.url
+      local sUrl = "http://" .. ngx.var.host .. "/" .. id
+      ngx.location.capture("/storenew",
+        { args = { id = "/"..tostring(id), url = url } }
+      )
+      ngx.header.content_type = "application/json; charset=utf-8"
+      ngx.say(cjson.encode({ shortUrl = sUrl }))
+    ';
+  }
+
+location ~ ^/storenew$ {
+    internal;
+
+    redis2_query select 0;
+    set_unescape_uri $id $arg_id;
+    set_unescape_uri $url $arg_url;
+    redis2_query set $id $url;
+    redis2_query expire $id 1209600;
+
+    redis2_query select 5;
+    redis2_query incr count;
+
+    redis2_pass 127.0.0.1:6379;
+  }
+
+http://example.com/shorten.json/https%3A%2F%2Ffacebook.com
+

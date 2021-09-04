@@ -1,0 +1,42 @@
+COMPARE_EXCHANGE_PTR
+void push_request(struct request * volatile * root, struct request * request)
+{
+    assert(request);
+
+    do {
+        request->next = *root;
+    } while(COMPARE_EXCHANGE_PTR(root, request, request->next) != request->next);
+}
+
+struct request * pop_request(struct request * volatile * root)
+{
+    struct request * volatile * p;
+    struct request * request;
+
+    do {
+        p = root;
+        while(*p && (*p)->next) p = &(*p)->next; // <- loops here
+        request = *p;
+    } while(COMPARE_EXCHANGE_PTR(p, NULL, request) != request);
+
+     assert(request->next == NULL);
+
+     return request;
+}
+
+push_request
+// device->requests is defined as struct request * volatile requests;
+struct request * request = malloc(sizeof(struct request));
+if(request) {
+    // fill out request fields
+    push_request(&device->requests, request);
+    sem_post(device->request_sem);
+}
+
+if(sem_wait_timeout(device->request_sem, timeout) == sem_success) {
+    struct request * request = pop_request(&device->requests);
+    // handle request
+    free(request);
+}
+
+pop_request

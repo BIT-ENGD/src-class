@@ -1,0 +1,88 @@
+genex $ POr [PConcat [PEscape( DoPa 1) 'd'], PConcat [PEscape (DoPa 2) 'd']]
+
+{-# LANGUAGE RecordWildCards, NamedFieldPuns #-}
+import qualified Data.Text as T
+import qualified Control.Monad.Stream as Stream
+import Text.Regex.TDFA.Pattern
+import Control.Monad.State
+import Control.Applicative
+
+genex = Stream.toList . run
+
+maxRepeat :: Int
+maxRepeat = 3
+
+each = foldl1 (<|>) . map return
+
+run :: Pattern -> Stream.Stream T.Text
+run p = case p of
+    PBound low high p -> do
+        n <- each [low..maybe (low+maxRepeat) id high]
+        fmap T.concat . sequence $ replicate n (run p) 
+    PConcat ps -> fmap T.concat . Stream.suspended . sequence $ map run ps
+    POr xs -> foldl1 mplus $ map run xs
+    PEscape {..} -> case getPatternChar of
+        'd' -> chars $ ['0'..'9']
+        'w' -> chars $ ['0'..'9'] ++ '_' : ['a'..'z'] ++ ['A'..'Z']
+        ch  -> isChar ch
+    _      -> error $ show p
+    where
+    isChar = return . T.singleton
+    chars = each . map T.singleton
+
+| POr ps                -> Seq.concat (List.map run ps)
+| PConcat ps            -> (sequence (List.map (run >> Seq.concat) ps))
+| PBound (low,high,p)   -> 
+
+open System
+
+/// Used to track elements of the pattern that accept characters or are anchors
+type DoPa = DoPa of int
+
+/// Pattern is the type returned by the regular expression parser.
+/// This is consumed by the CorePattern module and the tender leaves
+/// are nibbled by the TNFA module.
+type Pattern = PEmpty
+             | POr     of Pattern list                  // flattened by starTrans
+             | PConcat of Pattern list                  // flattened by starTrans
+             | PBound  of int * (int option) * Pattern  // eliminated by starTrans
+             | PEscape of DoPa * char                   // Backslashed Character
+
+let maxRepeat = 3
+
+let maybe deflt f opt = 
+    match opt with
+    | None -> deflt
+    | Some v -> f v
+
+/// Cartesian production
+/// try in F# interactive: sequence [[1;2];[3;4]];;
+let rec sequence = function 
+  | []      -> Seq.singleton [] 
+  | (l::ls) -> seq { for x in l do for xs in sequence ls do yield (x::xs) } 
+
+
+
+let from'space'to'tilda     =  [' '..'~'] |> List.ofSeq
+let numbers                 =  ['0'..'9'] |> List.ofSeq
+let numbers'and'alphas      =  (['0'..'9'] @ '_' :: ['a'..'z'] @ ['A'..'Z']) |> List.ofSeq
+let whites                  =  ['\009'; '\010'; '\012'; '\013'; '\032' ] |> List.ofSeq
+
+let rec run (p:Pattern) : seq<char list> =
+    let chars chs = seq { yield [for s in chs -> s] }
+    match p with
+    | POr ps                -> Seq.concat (List.map run ps)
+    | PConcat ps            -> (sequence (List.map (run >> Seq.concat) ps))
+    | PBound (low,high,p)   -> 
+        let ns = seq {low .. maybe (low + maxRepeat) id high}
+        Seq.concat (seq { for n in ns do yield  sequence (List.replicate n (((run >> Seq.concat)  p))) })
+        // Seq.concat (seq { for n in ns do yield     ((List.replicate n (run p)) |> Seq.concat |> List.ofSeq |> sequence)})
+        //((List.replicate low (run p)) |> Seq.concat |> List.ofSeq |> sequence)
+        // PConcat [ for n in ns -> p] |> run
+    | PEscape(_, ch)  -> 
+        match ch with
+        | 'd' -> chars numbers
+        | 'w' -> chars numbers'and'alphas
+        | ch  -> chars [ch]
+    | _                     -> Seq.empty
+

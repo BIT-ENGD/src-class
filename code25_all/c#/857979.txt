@@ -1,0 +1,196 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.IO;
+
+namespace GedcomReader
+{
+
+    class Gedcom
+    {
+        private string GedcomText = "";
+
+
+        public struct INDI
+        {
+            public string ID;
+            public string Name;
+            public string Sex;
+            public string BDay;
+            public bool Dead;
+        }
+        public struct FAM
+        {
+            public string FamID;
+            public string Type;
+            public string IndiID;
+        }
+
+        public List<INDI> Individuals = new List<INDI>();
+        public List<FAM> Families = new List<FAM>();
+
+
+        public Gedcom(string fileName)
+        {
+            using (StreamReader SR = new StreamReader(fileName))
+            {
+                GedcomText = SR.ReadToEnd();
+            }
+            ReadGedcom();
+
+        }
+
+        private void ReadGedcom()
+        {
+            string[] Nodes = GedcomText.Replace("0 @", "\u0646").Split('\u0646');
+            foreach (string Node in Nodes)
+            {
+                string[] SubNode = Node.Replace("\r\n", "\r").Split('\r');
+                if (SubNode[0].Contains("INDI"))
+                {
+                    Individuals.Add(ExtractINDI(SubNode));
+
+                }
+                else if (SubNode[0].Contains("FAM"))
+                {
+                    Families.Add(ExtractFAM(SubNode));
+                }
+            }
+        }
+
+        private FAM ExtractFAM(string[] Node)
+        {
+            string sFID = Node[0].Replace("@ FAM", "");
+            string sID = "";
+            string sType = "";
+            foreach (string Line in Node)
+            {
+                // If node is HUSB
+                if (Line.Contains("1 HUSB "))
+                {
+                    sType = "PAR";
+                    sID = Line.Replace("1 HUSB ", "").Replace("@", "").Trim();
+                }
+                //If node for Wife
+                else if (Line.Contains("1 WIFE "))
+                {
+                    sType = "PAR";
+                    sID = Line.Replace("1 WIFE ", "").Replace("@", "").Trim();
+                }
+                //if node for multi children
+                else if (Line.Contains("1 CHIL "))
+                {
+                    sType = "CHIL";
+                    sID = Line.Replace("1 CHIL ", "").Replace("@", "");
+                }
+            }
+            FAM Fam = new FAM();
+            Fam.FamID = sFID;
+            Fam.Type = sType;
+            Fam.IndiID = sID;
+
+            return Fam;
+        }
+        private INDI ExtractINDI(string[] Node)
+        {
+
+            //If a individual is found
+            INDI I = new INDI();
+            if (Node[0].Contains("INDI"))
+            {
+                //Create new Structure
+
+                //Add the ID number and remove extra formating
+                I.ID = Node[0].Replace("@", "").Replace(" INDI", "").Trim();
+                //Find the name remove extra formating for last name
+                I.Name = Node[FindIndexinArray(Node, "NAME")].Replace("1 NAME", "").Replace("/", "").Trim();
+                //Find Sex and remove extra formating
+                I.Sex = Node[FindIndexinArray(Node, "SEX")].Replace("1 SEX ", "").Trim();
+
+                //Deterine if there is a brithday -1 means no
+                if (FindIndexinArray(Node, "1 BIRT ") != -1)
+                {
+                    // add birthday to Struct 
+                    I.BDay = Node[FindIndexinArray(Node, "1 BIRT ") + 1].Replace("2 DATE ", "").Trim();
+                }
+
+                // deterimin if there is a death tag will return -1 if not found
+                if (FindIndexinArray(Node, "1 DEAT ") != -1)
+                {
+                    //convert Y or N to true or false ( defaults to False so no need to change unless Y is found.
+                    if (Node[FindIndexinArray(Node, "1 DEAT ")].Replace("1 DEAT ", "").Trim() == "Y")
+                    {
+                        //set death
+                        I.Dead = true;
+                    }
+                }
+
+            }
+            return I;
+        }
+        private int FindIndexinArray(string[] Arr, string search)
+        {
+            int Val = -1;
+            for (int i = 0; i < Arr.Length; i++)
+            {
+                if (Arr[i].Contains(search))
+                {
+                    Val = i;
+                }
+            }
+            return Val;
+        }
+    }
+}
+
+using System;
+using System.Windows.Forms;
+using GedcomReader;
+
+namespace WindowsFormsApplication1
+{
+    public partial class Form1 : Form
+    {
+        public Form1()
+        {
+            InitializeComponent();
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            string path = @"C:\mostrecent.ged";
+            string outpath = @"C:\gedcom.txt";
+            Gedcom GD = new Gedcom(path);
+
+            GraphvizWriter GVW = new GraphvizWriter("Family Tree");
+            foreach(Gedcom.INDI I in GD.Individuals)
+            {
+                string color = "pink";
+                if (I.Sex == "M")
+                {
+                    color = "blue";
+                }
+                GVW.ListNode(I.ID, I.Name, "filled", color, "circle");
+
+                if (I.ID == "ind23800")
+                {MessageBox.Show("stop");}
+                //"ind23800" [ label="Sarah Mandley",shape="circle",style="filled",color="pink" ];
+            }
+            foreach (Gedcom.FAM F in GD.Families)
+            {
+
+                if (F.Type == "par")
+                {
+                    GVW.ConnNode(F.FamID, F.IndiID);
+                }
+                else if (F.Type =="chil")
+                {
+                    GVW.ConnNode(F.IndiID, F.FamID);
+                }
+            }
+           string x =  GVW.SB.ToString();
+            GVW.SaveFile(outpath);
+            MessageBox.Show("done");
+        }
+    }
+

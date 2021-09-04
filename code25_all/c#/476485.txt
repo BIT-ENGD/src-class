@@ -1,0 +1,129 @@
+    public partial class Form1 : Form
+{
+    [DllImport("coredll")]
+    extern static IntPtr GetDC(IntPtr hwnd);
+
+    EGLDisplay myDisplay;
+    EGLSurface mySurface;
+    EGLContext myContext;
+
+    public Form1()
+    {
+        InitializeComponent();
+        myDisplay = egl.GetDisplay(new EGLNativeDisplayType(this));
+
+        int major, minor;
+        egl.Initialize(myDisplay, out major, out minor);
+
+        EGLConfig[] configs = new EGLConfig[10];
+        int[] attribList = new int[] 
+        { 
+            egl.EGL_RED_SIZE, 5, 
+            egl.EGL_GREEN_SIZE, 6, 
+            egl.EGL_BLUE_SIZE, 5, 
+            egl.EGL_DEPTH_SIZE, 16 , 
+            egl.EGL_SURFACE_TYPE, egl.EGL_WINDOW_BIT,
+            egl.EGL_STENCIL_SIZE, egl.EGL_DONT_CARE,
+            egl.EGL_NONE, egl.EGL_NONE 
+        };
+
+        int numConfig;
+        if (!egl.ChooseConfig(myDisplay, attribList, configs, configs.Length, out numConfig) || numConfig < 1)
+            throw new InvalidOperationException("Unable to choose config.");
+
+        EGLConfig config = configs[0];
+        mySurface = egl.CreateWindowSurface(myDisplay, config, Handle, null);
+        myContext = egl.CreateContext(myDisplay, config, EGLContext.None, null);
+
+        egl.MakeCurrent(myDisplay, mySurface, mySurface, myContext);
+        gl.ClearColor(0, 0, 0, 0);
+        InitGL();
+    }
+
+    void InitGL()
+    {
+        gl.ShadeModel(gl.GL_SMOOTH);
+        gl.ClearColor(0.0f, 0.0f, 0.0f, 0.5f);
+        gl.BlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
+        gl.Hint(gl.GL_PERSPECTIVE_CORRECTION_HINT, gl.GL_NICEST);
+    }
+
+    public unsafe void DrawGLScene()
+    {
+        gl.MatrixMode(gl.GL_PROJECTION);
+        gl.LoadIdentity();
+        gl.Orthof(0, ClientSize.Width, ClientSize.Height, 0, 0, 1);
+        gl.Disable(gl.GL_DEPTH_TEST);
+
+        gl.MatrixMode(gl.GL_MODELVIEW);
+        gl.LoadIdentity();
+
+        Texture myImage;
+        Bitmap Image = new Bitmap(@"\Storage Card\Texture.jpg");
+        using (MemoryStream ms = new MemoryStream())
+        {
+            Image.Save(ms, System.Drawing.Imaging.ImageFormat.Bmp);
+            myImage = Texture.LoadStream(ms, false);
+        }
+
+        float[] rectangle = new float[] {
+                0, 0,
+                myImage.Width, 0,
+                0,  myImage.Height,
+                myImage.Width,  myImage.Height
+            };
+
+        float[] texturePosition = new float[] {
+                0, 0,
+                myImage.Width, 0,
+                0,  myImage.Height,
+                myImage.Width,  myImage.Height
+            };
+
+        //Bind texture
+        gl.BindTexture(gl.GL_TEXTURE_2D, myImage.Name);
+        gl.TexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR);
+        gl.TexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR);
+        gl.EnableClientState(gl.GL_TEXTURE_COORD_ARRAY);
+        gl.EnableClientState(gl.GL_VERTEX_ARRAY);
+
+        //draw square and texture it.
+        fixed (float* rectanglePointer = &rectangle[0], positionPointer = &texturePosition[0])
+        {
+            gl.TexCoordPointer(2, gl.GL_FLOAT, 0, (IntPtr)positionPointer);
+            gl.VertexPointer(2, gl.GL_FLOAT, 0, (IntPtr)rectanglePointer);
+            gl.DrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
+        }
+
+        gl.DisableClientState(gl.GL_TEXTURE_COORD_ARRAY);
+        gl.DisableClientState(gl.GL_VERTEX_ARRAY);
+
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        gl.Clear(gl.GL_COLOR_BUFFER_BIT);
+
+        DrawGLScene();
+        egl.SwapBuffers(myDisplay, mySurface);
+        gl.Clear(gl.GL_COLOR_BUFFER_BIT);
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!egl.DestroySurface(myDisplay, mySurface))
+            throw new Exception("Error while destroying surface.");
+        if (!egl.DestroyContext(myDisplay, myContext))
+            throw new Exception("Error while destroying context.");
+        if (!egl.Terminate(myDisplay))
+            throw new Exception("Error while terminating display.");
+        base.OnClosing(e);
+    }
+}
+

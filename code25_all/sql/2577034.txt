@@ -1,0 +1,49 @@
+{ISQL 2.10.06E (SE-DOS16M protected mode) pawns table optimization - 
+ once-daily, before start of business, procedure}
+
+ unload to "U:\UNL\ACTIVES.UNL"
+    select * from pawns where pawns.status = "A"
+  order by pawns.cust_name, pawns.trx_date;
+
+ unload to "U:\UNL\INACTIVE.UNL"
+    select * from pawns
+     where pawns.status <> "A"
+       and pawns.trx_date >= (today - 365)
+  order by pawns.cust_name, pawns.trx_date desc;
+
+ unload to "U:\UNL\HISTORIC.UNL"
+    select * from pawns
+     where pawns.status <> "A"
+       and pawns.trx_date < (today - 365)
+  order by pawns.trx_date desc;
+
+ drop table pawns;
+
+ create table pawns
+ (
+     trx_num serial,
+     cust_name char(30),
+     status char(1),
+     trx_date date,
+ . . . ) in "S:\PAWNSHOP.DBS\PAWNS";
+
+ load from "U:\UNL\ACTIVES.UNL" insert into pawns;         {500:600 nrows avg.}
+ load from "U:\UNL\INACTIVE.UNL" insert into pawns;        {6500:7000 nrows avg.}
+ load from "U:\UNL\HISTORIC.UNL" insert into dss:historic; {>500K nrows}
+
+ create cluster index pa_cust_idx on pawns (cust_name);
+
+ {this groups each customers pawns together, actives in
+  oldest trx_date order first, then inactive pawns within the last year in most 
+  recent trx_date order. inactives older than 1 year are loaded into historic 
+  table in a separate database, on a separate hard disk. historic table 
+  optimization is done on a weekly basis for DSS queries.}
+
+ create unique index pa_trx_num_idx on pawns (trx_num);
+ create index pa_trx_date_idx on pawns (trx_date);
+ create index pa_status_idx on pawns (status);
+
+ {grant statements...}
+
+ update statistics;
+

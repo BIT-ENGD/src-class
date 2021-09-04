@@ -1,0 +1,170 @@
+Public Shared WithEvents np As NewProcess
+
+Private Sub Form1_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+        Try
+            np = New NewProcess
+            AddHandler np.InstallFinished, AddressOf np_InstallFinished
+            AddHandler np.InstallStarted, AddressOf np_InstallStarted
+        Catch ex As Exception
+
+        End Try
+
+    End Sub
+
+Protected Sub np_InstallFinished(ByVal Description As String, ByVal ExitCode As Integer)
+    InstallInProcess = False
+
+    If Not Description = Nothing Then
+        If Not ExitCode = Nothing Then
+            AddLog(String.Format("Completed install of {0} ({1}).", Description, ExitCode))
+        Else
+            AddLog(String.Format("Completed install of {0}.", Description))
+        End If
+    End If
+    RefreshButtons()
+    UpdateListofApps()
+    np.Dispose()
+End Sub
+
+Protected Sub np_InstallStarted(ByVal Description As String)
+    InstallInProcess = True
+
+    If Not Description = Nothing Then AddLog(String.Format("Started the install of {0}.", Description))
+End Sub
+
+Public Class NewProcess
+    Dim ProcessName As String
+    Dim ProcessVisibile As Boolean
+    Dim Arguments As String
+    Dim WaitforExit As Boolean
+    Dim Description As String
+    Dim ShellExecute As Boolean
+    Dim EC As Integer = Nothing 'Exit Code
+    Private IsBusy As Boolean = Nothing
+    Dim th As Threading.Thread
+
+    Public Event InstallFinished(ByVal Description As String, ByVal ExitCode As Integer)
+
+    Public Event InstallStarted(ByVal Description As String)
+
+    Public Function Busy() As Boolean
+        If IsBusy = Nothing Then Return False
+        Return IsBusy
+    End Function
+
+    Public Function ExitCode() As Integer
+        Return EC
+    End Function
+
+    Public Function ProcessDescription() As String
+        Return Description
+    End Function
+
+    ''' <summary>
+    ''' Starts a new multithreaded process.
+    ''' </summary>
+    ''' <param name="path">Path of the File to run</param>
+    ''' <param name="Visible">Should application be visible?</param>
+    ''' <param name="Arg">Arguments</param>
+    ''' <param name="WaitforExit">Wait for application to exit?</param>
+    ''' <param name="Description">Description that will show up in logs</param>
+    ''' <remarks>Starts a new multithreaded process.</remarks>
+    Public Sub StartProcess(ByVal path As String, ByVal Visible As Boolean, Optional ByVal Arg As String = Nothing, Optional ByVal WaitforExit As Boolean = False, Optional ByVal Description As String = Nothing)
+
+        Try
+            Me.ProcessName = path
+            Me.ProcessVisibile = Visible
+            If Arguments = Nothing Then Me.Arguments = Arg
+            Me.Description = Description
+            Me.WaitforExit = WaitforExit
+
+            If IsBusy And WaitforExit Then
+                MessageBox.Show("Another install is already in process, please wait for previous install to finish.", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                Exit Sub
+            End If
+
+            If Not fn_FileExists(ProcessName) Then
+                MessageBox.Show("Could not find file " & ProcessName & ".", "Could not start process because file is missing.", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                Exit Sub
+            End If
+
+            th = New Threading.Thread(AddressOf NewThread)
+
+            With th
+                .IsBackground = True
+                If Not Description Is Nothing Then .Name = Description
+                .Start()
+            End With
+        Catch ex As Exception
+
+        End Try
+    End Sub
+
+    Private Sub NewThread()
+        Dim p As Process
+
+        Try
+            p = New Process
+
+            With p
+                .EnableRaisingEvents = True
+                .StartInfo.Arguments = Arguments
+                .StartInfo.FileName = ProcessName
+                .StartInfo.CreateNoWindow = ProcessVisibile
+            End With
+
+            If ProcessVisibile Then
+                p.StartInfo.WindowStyle = ProcessWindowStyle.Normal
+            Else
+                p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden
+            End If
+
+            p.Start()
+            IsBusy = True
+            RaiseEvent InstallStarted(Description)
+
+            If WaitforExit Then
+                Do While p.HasExited = False
+                    Threading.Thread.Sleep(500)
+                Loop
+                IsBusy = False
+                RaiseEvent InstallFinished(Description, p.ExitCode)
+            End If
+
+            EC = p.ExitCode  
+
+        Catch ex As Exception
+
+        End Try
+    End Sub
+
+    Public Sub Dispose()
+        ProcessName = Nothing
+        ProcessVisibile = Nothing
+        Arguments = Nothing
+        WaitforExit = Nothing
+        Description = Nothing
+        EC = Nothing
+        InstallInProcess = Nothing
+        th.Join()
+        MemoryManagement.FlushMemory()
+    End Sub
+
+End Class
+
+Sub AddLog(ByVal s As String)
+    Try
+
+        s = String.Format("[{0}] {1}", TimeOfDay.ToShortTimeString, s)
+
+        Form1.tbLogs.AppendText(s & vbCrLf)
+
+        Using st As New StreamWriter(LogFilePath, True)
+            st.WriteLine(s)
+            st.Flush()
+        End Using
+
+    Catch ex As Exception
+    End Try
+End Sub
+

@@ -1,0 +1,74 @@
+FFmpeg version git-c280040, Copyright (c) 2000-2010 the FFmpeg developers
+  built on Mar  3 2010 15:40:46 with gcc 4.4.1
+  configuration: --enable-libfaac --enable-gpl --enable-nonfree --enable-version3 --enable-postproc --enable-pthreads --enable-debug=3 --enable-shared
+  libavutil     50.10. 0 / 50.10. 0
+  libavcodec    52.55. 0 / 52.55. 0
+  libavformat   52.54. 0 / 52.54. 0
+  libavdevice   52. 2. 0 / 52. 2. 0
+  libswscale     0.10. 0 /  0.10. 0
+  libpostproc   51. 2. 0 / 51. 2. 0
+
+#include <stdio.h>
+#include <libavcodec/avcodec.h>
+
+void EncodeTest(int sampleRate, int channels, int audioBitrate,
+    uint8_t *audioData, size_t audioSize)
+{
+    AVCodecContext  *audioCodec;
+    AVCodec *codec;
+    uint8_t *buf;
+    int bufSize, frameBytes;
+
+    avcodec_register_all();
+
+    //Set up audio encoder
+    codec = avcodec_find_encoder(CODEC_ID_AAC);
+    if (codec == NULL) return;
+    audioCodec = avcodec_alloc_context();
+    audioCodec->bit_rate = audioBitrate;
+    audioCodec->sample_fmt = SAMPLE_FMT_S16;
+    audioCodec->sample_rate = sampleRate;
+    audioCodec->channels = channels;
+    audioCodec->profile = FF_PROFILE_AAC_MAIN;
+    audioCodec->time_base = (AVRational){1, sampleRate};
+    audioCodec->codec_type = CODEC_TYPE_AUDIO;
+    if (avcodec_open(audioCodec, codec) < 0) return;
+
+    bufSize = FF_MIN_BUFFER_SIZE * 10;
+    buf = (uint8_t *)malloc(bufSize);
+    if (buf == NULL) return;
+
+    frameBytes = audioCodec->frame_size * audioCodec->channels * 2;
+    while (audioSize >= frameBytes)
+    {
+        int packetSize;
+
+        packetSize = avcodec_encode_audio(audioCodec, buf, bufSize, (short *)audioData);
+        printf("encoder returned %d bytes of data\n", packetSize);
+        audioData += frameBytes;
+        audioSize -= frameBytes;
+    }
+}
+
+int main()
+{
+    FILE *stream = fopen("audio.pcm", "rb");
+    size_t size;
+    uint8_t *buf;
+
+    if (stream == NULL)
+    {
+        printf("Unable to open file\n");
+        return 1;
+    }
+
+    fseek(stream, 0, SEEK_END);
+    size = ftell(stream);
+    fseek(stream, 0, SEEK_SET);
+    buf = (uint8_t *)malloc(size);
+    fread(buf, sizeof(uint8_t), size, stream);
+    fclose(stream);
+
+    EncodeTest(32000, 2, 448000, buf, size);
+}
+

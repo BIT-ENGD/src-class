@@ -1,0 +1,162 @@
+// Geometry.h includes definitions of PI, TWO_PI, etc., as
+// well as the prototypes for the public functions
+#include "Geometry.h"
+
+namespace {
+    // Number of entries in the sin/cos lookup table
+    const int SinTableCount = 512;
+
+    // Angle covered by each table entry
+    const float SinTableDelta = TWO_PI / (float)SinTableCount;
+
+    // Lookup table for Sin() results
+    float SinTable[SinTableCount];
+
+    // This object initializes the contents of the SinTable array exactly once
+    class SinTableInitializer {
+    public:
+        SinTableInitializer() {
+            for (int i = 0; i < SinTableCount; ++i) {
+                SinTable[i] = sinf((float)i * SinTableDelta);
+            }
+        }
+    };
+    static SinTableInitializer sinTableInitializer;
+
+    // Number of entries in the atan lookup table
+    const int AtanTableCount = 512;
+
+    // Interval covered by each Atan table entry
+    const float AtanTableDelta = 1.0f / (float)AtanTableCount;
+
+    // Lookup table for Atan() results
+    float AtanTable[AtanTableCount];
+
+    // This object initializes the contents of the AtanTable array exactly once
+    class AtanTableInitializer {
+    public:
+        AtanTableInitializer() {
+            for (int i = 0; i < AtanTableCount; ++i) {
+                AtanTable[i] = atanf((float)i * AtanTableDelta);
+            }
+        }
+    };
+    static AtanTableInitializer atanTableInitializer;
+
+    // Lookup result in table.
+    // Preconditions: y > 0, x > 0, y < x
+    static float AtanLookup2(float y, float x) {
+        assert(y > 0.0f);
+        assert(x > 0.0f);
+        assert(y < x);
+
+        const float ratio = y / x;
+        const int index = (int)(ratio / AtanTableDelta);
+        return AtanTable[index];    
+    }
+
+}
+
+float Sin(float angle) {
+    // If angle is negative, reflect around X-axis and negate result
+    bool mustNegateResult = false;
+    if (angle < 0.0f) {
+        mustNegateResult = true;
+        angle = -angle;
+    }
+
+    // Normalize angle so that it is in the interval (0.0, PI)
+    while (angle >= TWO_PI) {
+        angle -= TWO_PI;
+    }
+
+    const int index = (int)(angle / SinTableDelta);
+    const float result = SinTable[index];
+
+    return mustNegateResult? (-result) : result;
+}
+
+float Cos(float angle) {
+    return Sin(angle + PI_2);
+}
+
+float Atan2(float y, float x) {
+    // Handle x == 0 or x == -0
+    // (See atan2(3) for specification of sign-bit handling.)
+    if (x == 0.0f) {
+        if (y > 0.0f) {
+            return PI_2;
+        }
+        else if (y < 0.0f) {
+            return -PI_2;
+        }
+        else if (signbit(x)) {
+            return signbit(y)? -PI : PI;
+        }
+        else {
+            return signbit(y)? -0.0f : 0.0f;
+        }
+    }
+
+    // Handle y == 0, x != 0
+    if (y == 0.0f) {
+        return (x > 0.0f)? 0.0f : PI;
+    }
+
+    // Handle y == x
+    if (y == x) {
+        return (x > 0.0f)? PI_4 : -(3.0f * PI_4);
+    }
+
+    // Handle y == -x
+    if (y == -x) {
+        return (x > 0.0f)? -PI_4 : (3.0f * PI_4);
+    }
+
+    // For other cases, determine quadrant and do appropriate lookup and calculation
+    bool right = (x > 0.0f);
+    bool top = (y > 0.0f);
+    if (right && top) {
+        // First quadrant
+        if (y < x) {
+            return AtanLookup2(y, x);
+        }
+        else {
+            return PI_2 - AtanLookup2(x, y);
+        }
+    }
+    else if (!right && top) {
+        // Second quadrant
+        const float posx = fabsf(x);
+        if (y < posx) {
+            return PI - AtanLookup2(y, posx);
+        }
+        else {
+            return PI_2 + AtanLookup2(posx, y);
+        }
+    }
+    else if (!right && !top) {
+        // Third quadrant
+        const float posx = fabsf(x);
+        const float posy = fabsf(y);
+        if (posy < posx) {
+            return -PI + AtanLookup2(posy, posx);
+        }
+        else {
+            return -PI_2 - AtanLookup2(posx, posy);
+        }
+    }
+    else { // right && !top
+        // Fourth quadrant
+        const float posy = fabsf(y);
+        if (posy < x) {
+            return -AtanLookup2(posy, x);
+        }
+        else {
+            return -PI_2 + AtanLookup2(x, posy);
+        }
+    }
+
+    return 0.0f;
+}
+

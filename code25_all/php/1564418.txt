@@ -1,0 +1,173 @@
+$(document).ready(function() {
+    $("td").live('click',function(){
+        var value = $(this).attr('id');
+        $.get('includes/boardControl.php',{play: value, bid: bid});
+    });
+});
+
+session_start();
+
+    $playerId = $_SESSION['char'];
+    $Query=("SELECT p1, p2 FROM board WHERE bid=$bid");
+    $Result=mysql_query($Query);
+    $p1 = mysql_result($Result,0,"p1");
+    $p2 = mysql_result($Result,0,"p2");
+    $newPiece = 0; //*default no player
+    if($playerId == $p1)
+        $newPiece = 1;
+    if($playerId == $p2)
+        $newPiece = 2;
+
+<?php
+session_start();
+require '../../omok/dbConnect.php';
+
+    //*** Refresh Board ***
+    if(isset($_GET['update']))
+    {
+        $bid = $_GET['bid'];
+        $Query=("SELECT turn FROM board WHERE bid=$bid");
+        $Result=mysql_query($Query);
+        $turnCount=mysql_result($Result,0,"turn");
+
+        if($_GET['turnCount'] < $turnCount) //** Turn increased
+        {
+            boardUpdate($turnCount);
+        }
+    }
+
+    //*** Place Piece ***
+    if(isset($_GET['play'])) // turn order? player detect?
+    {
+        $squareID = $_GET['play'];
+        $bid = $_GET['bid'];
+
+        $Query=("SELECT turn, boardstate FROM board WHERE bid=$bid");
+        $Result=mysql_query($Query);
+        $turnCount=mysql_result($Result,0,"turn");
+        $boardState=mysql_result($Result,0,"boardstate");
+
+        $turnCount++;
+
+        $playerId = $_SESSION['char'];
+        $Query=("SELECT p1, p2 FROM board WHERE bid=$bid");
+        $Result=mysql_query($Query);
+        $p1 = mysql_result($Result,0,"p1");
+        $p2 = mysql_result($Result,0,"p2");
+        $newPiece = 0; //*default no player
+        if($playerId == $p1)
+            $newPiece = 1;
+        if($playerId == $p2)
+            $newPiece = 2;
+
+//      if($newPiece != 0)
+//      {
+            $oldPiece = getBoardSpot($squareID, $bid);
+            $oldLetter = $boardState{floor($squareID/3)};
+            $slot = $squareID%3;
+
+            //***function updateCode($old, $new, $current, $slot)***
+            $newLetter = updateCode($oldPiece, $newPiece, $oldLetter, $slot);
+            $newLetter = value2Letter($newLetter);
+            $newBoard = substr_replace($boardState, $newLetter, floor($squareID/3), 1);
+
+            //** Update Query for boardstate & turn
+            $Query=("UPDATE board SET boardState = '$newBoard', turn = '$turnCount' WHERE bid = '$bid'");
+            mysql_query($Query);
+//      }
+        boardUpdate($turnCount);
+
+
+    }
+
+    function boardUpdate($turnCount)
+    {
+            $json = '{"turnCount":"'.$turnCount.'",';           //** turnCount **
+
+
+            $bid = $_GET['bid'];
+            $Query=("SELECT boardstate FROM board WHERE bid='$bid'");
+            $Result=mysql_query($Query);
+            $Board=mysql_result($Result,0,"boardstate");
+            $json.= '"boardState":"'.$Board.'"';            //** boardState **
+
+
+            $json.= '}';
+            echo $json;
+    }
+
+    function letter2Value($input)
+    {
+        if(ord($input) >= 48 && ord($input) <= 57)
+            return ord($input) - 48;
+        else
+            return ord($input) - 87;
+    }
+
+    function value2Letter($input)
+    {
+        if($input >= 10)
+            return chr($input += 87);
+        else
+            return chr($input += 48);
+    }
+
+
+    //*** UPDATE CODE *** updates an letter with a new peice change and returns result letter.
+    //***** $old : peice value before update
+    //***** $new : peice value after update
+    //***** $current : letterValue of code before update.
+    //***** $slot : which of the 3 sqaures the change needs to take place in.
+    function updateCode($old, $new, $current, $slot)
+    {
+        if($slot == 0)
+        {// echo $current,"+((",$new,"-",$old,")*9)";
+            return letter2Value($current)+(($new-$old)*9);
+        }
+        else if($slot == 1)
+        {// echo $current,"+((",$new,"-",$old,")*3)";
+            return letter2Value($current)+(($new-$old)*3);
+        }
+        else //slot == 2
+        {// echo $current,"+((",$new,"-",$old,")";
+            return letter2Value($current)+($new-$old);
+        }
+    }//updateCode()
+
+
+    //**** GETBOARDSPOT *** Returns the peice value at defined location on the board.
+    //****** 0 is first sqaure increment +1 in reading order (0-254).
+    function getBoardSpot($squareID, $bid)
+    {
+        $Query=("SELECT boardstate FROM board WHERE bid='$bid'");
+        $Result=mysql_query($Query);
+        $Board=mysql_result($Result,0,"boardstate");
+
+
+        if($squareID %3 == 2) //**3rd spot**
+        {
+            if( letter2Value($Board{floor($squareID/3)} ) % 3 == 0)
+                return 0;
+            else if( letter2Value($Board{floor($squareID/3)} ) % 3 == 1)
+                return 1;
+            else
+                return 2;
+        }
+        else if($squareID %3 == 0) //**1st spot**
+        {
+            if(letter2Value($Board{floor($squareID/3)} ) <= 8)
+                return 0;
+            else if(letter2Value($Board{floor($squareID/3)} ) >= 18)
+                return 2;
+            else
+                return 1;
+        }
+        else //**2nd spot**
+        {
+            return floor(letter2Value($Board{floor($squareID/3)}))/3%3;
+        }
+    }//end getBoardSpot()
+
+
+?>
+

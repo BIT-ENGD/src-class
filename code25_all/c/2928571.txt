@@ -1,0 +1,136 @@
+#include <stdio.h>
+#include <time.h>
+#include <string.h>
+#include <errno.h>
+#include <semaphore.h>
+
+sem_t trigger_sem1, trigger_sem2, trigger_sem3;
+
+// The main thread process.  Called three times with a different num arg - 1, 2 or 3.
+void *thread(void *arg)
+{
+  int num = (int) arg;
+  sem_t *wait, *trigger;
+  int val, retval;
+  struct timespec ts;
+  struct timeval tv;
+
+  switch (num)
+    {
+      case 1:
+        wait = &trigger_sem1;
+        trigger = &trigger_sem2;
+        break;
+      case 2:
+        wait = &trigger_sem2;
+        trigger = &trigger_sem3;
+        break;
+      case 3:
+        wait = &trigger_sem3;
+        trigger = &trigger_sem1;
+        break;
+    }
+
+  while (1)
+    {
+      // The first thread delays by 40ms to time the whole loop.  
+      // This is an external sync in the real app.
+      if (num == 1)   
+        usleep(40000);
+
+      // print sem value before we wait.  If this is 1, sem_timedwait() will
+      // return immediately, otherwise it will block until sem_post() is called on this sem. 
+      sem_getvalue(wait, &val);
+      printf("sem%d wait sync sem%d. val before %d\n", num, num, val);
+
+          // get current time and add half a second for timeout.
+      gettimeofday(&tv, NULL);
+      ts.tv_sec = tv.tv_sec;
+      ts.tv_nsec = (tv.tv_usec + 500000);    // add half a second
+      if (ts.tv_nsec > 1000000)
+        {
+          ts.tv_sec++;
+          ts.tv_nsec -= 1000000;
+        }
+      ts.tv_nsec *= 1000;    /* convert to nanosecs */
+
+      retval = sem_timedwait(wait, &ts);
+      if (retval == -1)
+        {
+          // timed out.  Print value of sem now.  This should be 0, otherwise sem_timedwait
+          // would have woken before timeout (unless the sem_post happened between the 
+          // timeout and this call to sem_getvalue).
+          sem_getvalue(wait, &val);
+          printf("!!!!!!    sem%d sem_timedwait failed: %s, val now %d\n", 
+            num, strerror(errno), val);
+        }
+      else
+        printf("sem%d wakeup.\n", num);
+
+        // get value of semaphore to trigger.  If it's 1, don't post as it has already been 
+        // triggered and sem_timedwait on this sem *should* not block.
+      sem_getvalue(trigger, &val);
+      if (val <= 0)
+        {
+          printf("sem%d send sync sem%d. val before %d\n", num, (num == 3 ? 1 : num+1), val);
+          sem_post(trigger);
+        }
+      else
+        printf("!! sem%d not sending sync, val %d\n", num, val);
+    }
+}
+
+
+
+int main(int argc, char *argv[])
+{
+  pthread_t t1, t2, t3;
+
+   // create semaphores.  val of sem1 is 1 to trigger straight away and start the whole ball rolling.
+  if (sem_init(&trigger_sem1, 0, 1) == -1)
+    perror("Error creating trigger_listman semaphore");
+  if (sem_init(&trigger_sem2, 0, 0) == -1)
+    perror("Error creating trigger_comms semaphore");
+  if (sem_init(&trigger_sem3, 0, 0) == -1)
+    perror("Error creating trigger_vws semaphore");
+
+  pthread_create(&t1, NULL, thread, (void *) 1);
+  pthread_create(&t2, NULL, thread, (void *) 2);
+  pthread_create(&t3, NULL, thread, (void *) 3);
+
+  pthread_join(t1, NULL);
+  pthread_join(t2, NULL);
+  pthread_join(t3, NULL);
+}
+
+[...]
+sem1 wait sync sem1. val before 1
+sem1 wakeup.
+sem1 send sync sem2. val before 0
+sem2 wakeup.
+sem2 send sync sem3. val before 0
+sem2 wait sync sem2. val before 0
+sem3 wakeup.
+sem3 send sync sem1. val before 0
+sem3 wait sync sem3. val before 0
+sem1 wait sync sem1. val before 1
+sem1 wakeup.
+sem1 send sync sem2. val before 0
+[...]
+
+01  sem3 wait sync sem3. val before 0
+02  sem1 wakeup.
+03  sem1 send sync sem2. val before 0
+04  sem2 wakeup.
+05  sem2 send sync sem3. val before 0
+06  sem2 wait sync sem2. val before 0
+07  sem1 wait sync sem1. val before 0
+08  !!!!!!    sem3 sem_timedwait failed: Connection timed out, val now 1
+09  sem3 send sync sem1. val before 0
+10  sem3 wait sync sem3. val before 1
+11  sem3 wakeup.
+12  !! sem3 not sending sync, val 1
+13  sem3 wait sync sem3. val before 0
+14  sem1 wakeup.
+[...]
+

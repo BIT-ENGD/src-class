@@ -1,0 +1,184 @@
+// Compilation Command: gcc -o Proc1 Proc1.c ssem.o sshm.o
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include "ssem.h"
+#include "sshm.h"
+
+// Code of Proc1
+int main()
+{int i, internal_reg;
+ int key1 = 111111, key2 = 222222, key3 = 333333, key4 = 444444;
+ /* here create and initialize all semaphores */
+ int sem1 = sem_create(key1, 1);
+ if (sem1 < 0) {
+   perror("sem failed");
+ }
+ int sem2 = sem_create(key2, 1);
+ if (sem2 < 0) {
+   perror("sem failed");
+ }
+ int sem3 = sem_create(key3, 1);
+ if (sem3 < 0) {
+   perror("sem failed");
+ }
+ int sem4 = sem_create(key4, 1);
+ if (sem4 < 0) {
+   perror("sem failed");
+ }
+ /* here created: shared memory array Account of size 3 */
+ int *Account;
+ int shmid = shm_get(123456, (void**) &Account, 3*sizeof(int));
+ if (shmid < 0) {
+   perror("shm failed");
+ }
+ Account[0]=10000;
+ Account[1]=10000;
+ Account[2]=10000;
+ /* synchronize with Proc2, Proc3 and Proc4 (4 process 4 way synchronization)*/
+
+ for (i = 0; i < 1000; i++)
+   {
+     sem_signal(sem1);
+     sem_signal(sem1);
+     sem_signal(sem1);
+
+ internal_reg = Account[0];
+     internal_reg = internal_reg - 200;
+     Account[0] = internal_reg;
+
+     /* same thing, except we're adding $100 to Account1 now... */
+     internal_reg = Account[1];
+     internal_reg = internal_reg + 200;
+     Account[1] = internal_reg;
+
+     if (i % 100 == 0 && i != 0) {
+       printf("Account 0: $%i\n", Account[0]);
+       printf("Account 1: $%i\n", Account[1]);
+     }
+
+     if (i == 300 || i == 600) {
+       sleep(1);
+     }
+
+     sem_wait(sem2);
+     sem_wait(sem3);
+     sem_wait(sem4);
+   }
+ /*     Here add a code that prints contents of each account
+ and their sum after 100th, 200th, 300th, ...., and 1000th iterations*/ 
+
+}
+
+/*in the code above include some wait and signal operations on semaphores. Do no
+t over-synchronize. */
+
+/*
+ * ssem.c
+ * 
+ * Version 1.0.0
+ * Date : 10 Jan 2002
+ *
+ */
+
+
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <sys/types.h>
+
+#include "ssem.h"
+
+#define PERMS 0600
+
+static struct sembuf op_lock[1] = {
+        0, -1, 0
+};
+
+static struct sembuf op_unlock[1] = {
+        0, 1, IPC_NOWAIT
+
+};
+
+
+
+int sem_create(int key,int initval)
+{
+        int semid,i;
+        semid = semget((key_t)key, 1, IPC_CREAT | PERMS);
+
+        for(i=0;i<initval;i++)
+                semop(semid,&op_unlock[0],1);
+
+
+      return semid;
+
+}
+
+int sem_open(int key)
+{
+        int semid;
+        semid = semget(key,0,0);
+        return semid;
+}
+
+
+int sem_wait(int semid)
+{
+        return semop(semid,&op_lock[0],1);
+}
+
+
+int sem_signal(int semid)
+{
+        return semop(semid,&op_unlock[0],1);
+}
+
+
+int sem_rm(int semid)
+{
+        return semctl(semid, 0, IPC_RMID, 0);
+}
+
+
+
+/*
+ * sshm.c
+ * 
+ * Routines for Simpler shared memory operations
+ * Version : 1.0.0.
+ * Date : 10 Jan 2002
+ *
+ */
+
+#include <sys/shm.h>
+#include <sys/ipc.h>
+#include <sys/types.h>
+
+#include "sshm.h"
+
+#define PERMS 0600
+
+int shm_get(int key, void **start_ptr, int size)
+{
+        int shmid;
+        shmid = shmget((key_t) key, size, PERMS | IPC_CREAT);
+        (*start_ptr) = (void *) shmat(shmid, (char *) 0, 0);
+        return shmid;
+
+}
+
+
+int shm_rm(int shmid)
+{
+        return shmctl(shmid, IPC_RMID, (struct shmid_ds *) 0);
+
+}
+
+int *Account = 0;
+
+printf("Account == %p\n", Account);
+
+Account == ffffffff
+Bus error
+

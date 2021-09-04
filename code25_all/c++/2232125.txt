@@ -1,0 +1,511 @@
+#include <audiopolicy.h>
+#include <audioclient.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
+#include <windows.h>
+#include <shlwapi.h>
+#include <iostream>
+#include <Tchar.h>
+
+static const GUID AudioSessionVolumeCtx = { 0x2715279f, 0x4139, 0x4ba0, { 0x9c, 0xb1, 0xb3, 0x51, 0xf1, 0xb5, 0x8a, 0x4a } };
+
+template <class T> void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)->Release();
+        *ppT = NULL;
+    }
+}
+
+class CAudioSessionVolume : public IAudioSessionEvents
+{
+public:
+    static HRESULT CreateInstance( UINT uNotificationMessage, HWND hwndNotification, CAudioSessionVolume **ppAudioSessionVolume )
+    {
+        CAudioSessionVolume *pAudioSessionVolume = new (std::nothrow) 
+            CAudioSessionVolume(uNotificationMessage, hwndNotification);
+
+        if (pAudioSessionVolume == NULL)
+        {
+            return E_OUTOFMEMORY;
+        }
+
+        HRESULT hr = pAudioSessionVolume->Initialize();
+        if (SUCCEEDED(hr))
+        {
+            *ppAudioSessionVolume = pAudioSessionVolume;
+        }
+        else
+        {
+            pAudioSessionVolume->Release();
+        }
+
+        return hr;
+    }
+
+    // IUnknown methods.
+    STDMETHODIMP QueryInterface(REFIID riid, void **ppv)
+    {
+        static const QITAB qit[] = 
+        {
+            QITABENT(CAudioSessionVolume, IAudioSessionEvents),
+            { 0 },
+        };
+        return QISearch(this, qit, riid, ppv);
+    }
+
+    STDMETHODIMP_(ULONG) AddRef()
+    {
+        return InterlockedIncrement(&m_cRef);
+    }
+
+    STDMETHODIMP_(ULONG) Release()
+    {
+        LONG cRef = InterlockedDecrement( &m_cRef );
+        if (cRef == 0)
+        {
+            delete this;
+        }
+        return cRef;
+    }
+
+    STDMETHODIMP OnSimpleVolumeChanged( float NewVolume, BOOL NewMute, LPCGUID EventContext )
+    {
+        MessageBox(NULL, _T("vol changed"), _T("test"), MB_OK);
+        return S_OK;
+    }
+
+    // The remaining audio session events do not require any action.
+    STDMETHODIMP OnDisplayNameChanged(LPCWSTR,LPCGUID)
+    {
+        return S_OK;
+    }
+
+    STDMETHODIMP OnIconPathChanged(LPCWSTR,LPCGUID)
+    {
+        return S_OK;
+    }
+
+    STDMETHODIMP OnChannelVolumeChanged(DWORD,float[],DWORD,LPCGUID)
+    {
+        return S_OK;
+    }
+
+    STDMETHODIMP OnGroupingParamChanged(LPCGUID,LPCGUID)
+    {
+        return S_OK;
+    }
+
+    STDMETHODIMP OnStateChanged(AudioSessionState)
+    {
+        return S_OK;
+    }
+
+    STDMETHODIMP OnSessionDisconnected(AudioSessionDisconnectReason)
+    {
+        return S_OK;
+    }
+
+    // Other methods
+    HRESULT EnableNotifications(BOOL bEnable)
+    {
+        HRESULT hr = S_OK;
+
+        if (bEnable)
+        {
+            hr = m_pAudioSession->RegisterAudioSessionNotification(this);
+        }
+        else
+        {
+            hr = m_pAudioSession->UnregisterAudioSessionNotification(this);
+        }
+
+        return hr;
+    }
+
+    HRESULT SetDisplayName(const WCHAR *wszName)
+    {
+        if (m_pAudioSession == NULL)
+        {
+            return E_FAIL;
+        }
+        else
+        {
+            return m_pAudioSession->SetDisplayName(wszName, NULL);
+        }
+    }
+
+protected:
+    CAudioSessionVolume( UINT uNotificationMessage, HWND hwndNotification ) :
+        m_cRef(1), m_pAudioSession(NULL), m_pSimpleAudioVolume(NULL)
+    {
+    }
+
+    ~CAudioSessionVolume()
+    {
+        EnableNotifications(FALSE);
+
+        SafeRelease(&m_pAudioSession);
+        SafeRelease(&m_pSimpleAudioVolume);
+    }
+
+    HRESULT Initialize()
+    {
+        HRESULT hr = S_OK;
+
+        IMMDeviceEnumerator *pDeviceEnumerator = NULL;
+        IMMDevice *pDevice = NULL;
+        IAudioSessionManager *pAudioSessionManager = NULL;
+
+        // Get the enumerator for the audio endpoint devices.
+        hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pDeviceEnumerator));
+
+        if (FAILED(hr)) 
+        { 
+            goto done; 
+        }
+
+        // Get the default audio endpoint that the SAR will use.
+        hr = pDeviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole,
+            &pDevice);
+
+        if (FAILED(hr)) 
+        { 
+            goto done; 
+        }
+
+        // Get the session manager for this device.
+        hr = pDevice->Activate(__uuidof(IAudioSessionManager), 
+            CLSCTX_INPROC_SERVER, NULL, (void**) &pAudioSessionManager);
+
+        if (FAILED(hr)) 
+        { 
+            goto done; 
+        }
+
+        // Get the audio session. 
+        hr = pAudioSessionManager->GetAudioSessionControl( 
+            &GUID_NULL,     // Get the default audio session. 
+            FALSE,          // The session is not cross-process.
+            &m_pAudioSession);
+
+
+        if (FAILED(hr)) 
+        { 
+            goto done; 
+        }
+
+        hr = pAudioSessionManager->GetSimpleAudioVolume(&GUID_NULL, 0,
+            &m_pSimpleAudioVolume);
+
+    done:
+        SafeRelease(&pDeviceEnumerator);
+        SafeRelease(&pDevice);
+        SafeRelease(&pAudioSessionManager);
+        return hr;
+    }
+
+private:
+    LONG m_cRef;
+
+    IAudioSessionControl    *m_pAudioSession;
+    ISimpleAudioVolume      *m_pSimpleAudioVolume;
+};
+
+int main()
+{
+    CoInitialize(NULL);
+    CAudioSessionVolume *asv;
+    CAudioSessionVolume::CreateInstance(0, NULL, &asv);
+    asv->EnableNotifications(true);
+
+    char s;
+    gets(&s);
+}
+
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
+#include <Tchar.h>
+#include <strsafe.h>
+
+class CVolumeNotification : public IAudioEndpointVolumeCallback 
+{ 
+    LONG m_RefCount; 
+    ~CVolumeNotification(void) {}; 
+public: 
+    CVolumeNotification(void) : m_RefCount(1) 
+    { 
+    } 
+    STDMETHODIMP_(ULONG)AddRef() { return InterlockedIncrement(&m_RefCount); } 
+    STDMETHODIMP_(ULONG)Release()  
+    { 
+        LONG ref = InterlockedDecrement(&m_RefCount);  
+        if (ref == 0) 
+            delete this; 
+        return ref; 
+    } 
+    STDMETHODIMP QueryInterface(REFIID IID, void **ReturnValue) 
+    { 
+        if (IID == IID_IUnknown || IID== __uuidof(IAudioEndpointVolumeCallback))  
+        { 
+            *ReturnValue = static_cast<IUnknown*>(this); 
+            AddRef(); 
+            return S_OK; 
+        } 
+        *ReturnValue = NULL; 
+        return E_NOINTERFACE; 
+    } 
+
+    STDMETHODIMP OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA NotificationData) 
+    { 
+        wchar_t outputString[256]; 
+        DWORD written; 
+        COORD writeCoord; 
+        StringCbPrintf(outputString, sizeof(outputString), L"Volume Changed: %f", NotificationData->fMasterVolume); 
+
+        writeCoord.X = 0; 
+        writeCoord.Y = 3; 
+        WriteConsoleOutputCharacter(GetStdHandle(STD_OUTPUT_HANDLE), outputString, (DWORD)wcslen(outputString), writeCoord, &written); 
+        return S_OK; 
+    } 
+}; 
+
+struct TimerContext 
+{ 
+    IAudioMeterInformation *_Meter; 
+}; 
+
+const int TimerPeriodicityMS = 100; 
+void CALLBACK TimerMeterCallback(PTP_CALLBACK_INSTANCE CallbackInstance, PVOID Context, PTP_TIMER Timer) 
+{
+    TimerContext *timerContext = (TimerContext *)Context; 
+    wchar_t outputString[256]; 
+    float peakValue; 
+    DWORD written; 
+    COORD writeCoord; 
+    StringCbCopy(outputString, sizeof(outputString), L"Meter: "); 
+
+    timerContext->_Meter->GetPeakValue(&peakValue); 
+    for (size_t i = 0 ; i < peakValue*100; i += 1) 
+    { 
+        StringCbCat(outputString, sizeof(outputString), L"*"); 
+    } 
+    for (size_t i = (size_t)(peakValue*100) ; i < 100; i += 1) 
+    { 
+        StringCbCat(outputString, sizeof(outputString), L"."); 
+    } 
+    writeCoord.X = 0; 
+    writeCoord.Y = 1; 
+    WriteConsoleOutputCharacter(GetStdHandle(STD_OUTPUT_HANDLE), outputString, (DWORD)wcslen(outputString), writeCoord, &written); 
+} 
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    CoInitialize(NULL);
+    HRESULT hr;
+    IMMDeviceEnumerator *deviceEnumerator = NULL;;
+    HANDLE handle; 
+    TP_CALLBACK_ENVIRON callbackEnvironment; 
+    PTP_CLEANUP_GROUP cleanupGroup; 
+    PTP_TIMER timer; 
+    TimerContext context; 
+
+    InitializeThreadpoolEnvironment(&callbackEnvironment); 
+    cleanupGroup = CreateThreadpoolCleanupGroup(); 
+    SetThreadpoolCallbackCleanupGroup(&callbackEnvironment, cleanupGroup, NULL); 
+
+    timer = CreateThreadpoolTimer(TimerMeterCallback, &context, &callbackEnvironment); 
+
+    //
+    //    Clear the screen.  Code stolen from: http://support.microsoft.com/kb/319257.
+    //
+    handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD writtenChars = 0;
+    CONSOLE_SCREEN_BUFFER_INFO consoleInfo;
+    COORD home;
+    home.X = home.Y = 0;
+    GetConsoleScreenBufferInfo(handle, &consoleInfo);
+    FillConsoleOutputCharacter(handle, L' ', consoleInfo.dwSize.X * consoleInfo.dwSize.Y, home, &writtenChars);
+    SetConsoleCursorPosition(handle, home);
+
+    //
+    //    Set the console to raw mode. 
+    //
+    DWORD oldMode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &oldMode);
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), oldMode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
+
+    // 
+    //    Instantiate an endpoint volume object.
+    //
+    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)&deviceEnumerator);
+    IMMDevice *defaultDevice = NULL;
+
+    hr = deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defaultDevice);
+    deviceEnumerator->Release();
+    deviceEnumerator = NULL;
+
+    IAudioEndpointVolume *endpointVolume = NULL;
+    hr = defaultDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (LPVOID *)&endpointVolume);
+    CVolumeNotification *volumeNotification = new CVolumeNotification(); 
+    hr = endpointVolume->RegisterControlChangeNotify(volumeNotification); 
+    hr = defaultDevice->Activate(__uuidof(IAudioMeterInformation), CLSCTX_INPROC_SERVER, NULL, (LPVOID *)&context._Meter); 
+    defaultDevice->Release(); 
+    defaultDevice = NULL; 
+    // Set a 100 millisecond timer. 
+    LARGE_INTEGER timerPeriodicityLI; 
+    FILETIME timerPeriodicity; 
+    timerPeriodicityLI.QuadPart = -1*(TimerPeriodicityMS* 10000 ); 
+
+    timerPeriodicity.dwLowDateTime = timerPeriodicityLI.LowPart; 
+    timerPeriodicity.dwHighDateTime = timerPeriodicityLI.HighPart; 
+
+    SetThreadpoolTimer(timer, &timerPeriodicity, TimerPeriodicityMS, 10); 
+
+    wchar_t inputChar = '\0';
+    while (inputChar != '\r')
+    {
+        UINT currentStep, stepCount;
+        DWORD read, written;
+        COORD writeCoord;
+        wchar_t outputString[256];
+        StringCbCopy(outputString, sizeof(outputString), L"Volume: ");
+
+        // 
+        //    Calculate the cheesy OSD.
+        //
+        endpointVolume->GetVolumeStepInfo(&currentStep, &stepCount);
+        for (size_t i = 0 ; i < stepCount ; i += 1)
+        {
+            if (i <= currentStep)
+            {
+                StringCbCat(outputString, sizeof(outputString), L"=");
+            }
+            else
+            {
+                StringCbCat(outputString, sizeof(outputString), L"-");
+            }
+        }
+        writeCoord.X = 0;
+        writeCoord.Y = 0;
+        WriteConsoleOutputCharacter(handle, outputString, (DWORD)wcslen(outputString), writeCoord, &written);
+
+        ReadConsole(GetStdHandle(STD_INPUT_HANDLE), &inputChar, 1, &read, NULL);
+        if (inputChar == '+')
+        {
+            endpointVolume->VolumeStepUp(NULL);
+        }
+        else if (inputChar == '-')
+        {
+            endpointVolume->VolumeStepDown(NULL);
+        }
+    }
+
+    // 
+    //    Remove our notification. 
+    // 
+    endpointVolume->UnregisterControlChangeNotify(volumeNotification); 
+
+    endpointVolume->Release(); 
+    volumeNotification->Release(); 
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), oldMode);
+
+    CloseThreadpoolCleanupGroupMembers(cleanupGroup, FALSE, NULL); 
+    CloseThreadpoolCleanupGroup(cleanupGroup); 
+    cleanupGroup = NULL; 
+    DestroyThreadpoolEnvironment(&callbackEnvironment); 
+
+    context._Meter->Release(); 
+
+    CoUninitialize();
+
+    return 0;
+}
+
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
+#include <iostream>
+#include <Tchar.h>
+
+class CVolumeNotification : public IAudioEndpointVolumeCallback 
+{ 
+    LONG m_RefCount; 
+    ~CVolumeNotification(void) {}; 
+public: 
+    CVolumeNotification(void) : m_RefCount(1) 
+    { 
+    } 
+    STDMETHODIMP_(ULONG)AddRef() { return InterlockedIncrement(&m_RefCount); } 
+    STDMETHODIMP_(ULONG)Release()  
+    { 
+        LONG ref = InterlockedDecrement(&m_RefCount);  
+        if (ref == 0) 
+            delete this; 
+        return ref; 
+    } 
+    STDMETHODIMP QueryInterface(REFIID IID, void **ReturnValue) 
+    { 
+        if (IID == IID_IUnknown || IID== __uuidof(IAudioEndpointVolumeCallback))  
+        { 
+            *ReturnValue = static_cast<IUnknown*>(this); 
+            AddRef(); 
+            return S_OK; 
+        } 
+        *ReturnValue = NULL; 
+        return E_NOINTERFACE; 
+    } 
+
+    STDMETHODIMP OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA NotificationData) 
+    { 
+        std::cout << NotificationData->fMasterVolume << _T(" ");
+
+        return S_OK; 
+    } 
+}; 
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    CoInitialize(NULL);
+    HRESULT hr;
+    IMMDeviceEnumerator *deviceEnumerator = NULL;;
+
+    // 
+    //    Instantiate an endpoint volume object.
+    //
+    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)&deviceEnumerator);
+    IMMDevice *defaultDevice = NULL;
+
+    hr = deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defaultDevice);
+    deviceEnumerator->Release();
+    deviceEnumerator = NULL;
+
+    IAudioEndpointVolume *endpointVolume = NULL;
+    hr = defaultDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (LPVOID *)&endpointVolume);
+    CVolumeNotification *volumeNotification = new CVolumeNotification(); 
+    hr = endpointVolume->RegisterControlChangeNotify(volumeNotification); 
+    defaultDevice->Release(); 
+    defaultDevice = NULL; 
+
+    wchar_t inputChar = '\0';
+    while (inputChar != '\r')
+    {
+        DWORD read;
+        ReadConsole(GetStdHandle(STD_INPUT_HANDLE), &inputChar, 1, &read, NULL);
+    }
+
+    // 
+    //    Remove our notification. 
+    // 
+    endpointVolume->UnregisterControlChangeNotify(volumeNotification); 
+    endpointVolume->Release(); 
+    volumeNotification->Release(); 
+
+    CoUninitialize();
+
+    return 0;
+}
+

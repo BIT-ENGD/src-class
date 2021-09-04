@@ -1,0 +1,157 @@
+class hexFile;
+
+class hexIterator : public std::iterator<std::bidirectional_iterator_tag, wchar_t>
+{
+    hexFile *parent;
+    __int64 cacheCurrentFor;
+    wchar_t cacheCharacters[2];
+    void updateCache();
+public:
+    bool highCharacter;
+    __int64 filePosition;
+    hexIterator();
+    hexIterator(hexFile *file, bool begin);
+    hexIterator operator++();
+    hexIterator operator++(int)
+    {
+        return ++(*this);
+    }
+    hexIterator operator--();
+    hexIterator operator--(int)
+    {
+        return --(*this);
+    }
+    bool operator==(const hexIterator& toCompare) const;
+    bool operator!=(const hexIterator& toCompare) const;
+    wchar_t& operator*();
+    wchar_t* operator->();
+};
+
+#include <stdafx.h>
+class hexFile;
+hexIterator::hexIterator()
+{
+    parent = NULL;
+    highCharacter = false;
+    filePosition = 0;
+}
+hexIterator::hexIterator(hexFile *file, bool begin) : parent(file)
+{
+    if(begin)
+    {
+        filePosition = 0;
+        highCharacter = false;
+    } else
+    {
+        filePosition = parent->fileLength;
+        highCharacter = true;
+    }
+}
+
+hexIterator hexIterator::operator++()
+{
+    if (highCharacter)
+    {
+        highCharacter = false;
+        filePosition++;
+    } else
+    {
+        highCharacter = true;
+    }
+    return (*this);
+}
+
+hexIterator hexIterator::operator--()
+{
+    if (highCharacter)
+    {
+        highCharacter = false;
+    } else
+    {
+        filePosition--;
+        highCharacter = true;
+    }
+    return (*this);
+}
+
+bool hexIterator::operator==(const hexIterator& toCompare) const
+{
+    if (toCompare.filePosition == filePosition &&
+        toCompare.highCharacter == highCharacter)
+        return true;
+    else return false;
+}
+
+bool hexIterator::operator!=(const hexIterator& toCompare) const
+{
+    if (toCompare.filePosition == filePosition &&
+        toCompare.highCharacter == highCharacter)
+        return false;
+    else return true;
+}
+wchar_t& hexIterator::operator*()
+{
+    updateCache();
+    if (highCharacter)
+        return cacheCharacters[1];
+    return cacheCharacters[0];
+}
+
+wchar_t* hexIterator::operator->()
+{
+    updateCache();
+    if (highCharacter)
+        return cacheCharacters + 1;
+    return cacheCharacters;
+}
+
+void hexIterator::updateCache()
+{
+    if (filePosition == cacheCurrentFor)
+        return;
+    BYTE rawData;
+    DWORD numberRead;
+    LONG lowValue = static_cast<LONG>(filePosition);
+    LONG highValue = static_cast<LONG>(filePosition >> 32);
+    SetFilePointer(parent->theFile, lowValue, &highValue, FILE_BEGIN);
+    if (!ReadFile(parent->theFile, &rawData, 1, &numberRead, 0))
+        throw std::runtime_error(eAsciiMsg("Error reading from file."));
+    static const wchar_t hexCharacters[] = L"0123456789ABCDEF";
+    cacheCharacters[0] = hexCharacters[rawData & 0x0F];
+    cacheCharacters[1] = hexCharacters[rawData >> 4];
+    cacheCurrentFor = filePosition;
+}
+
+class hexFile {
+public: 
+    HANDLE theFile;
+    unsigned __int64 fileLength;
+    hexFile(const std::wstring& fileName)
+    {
+        theFile = CreateFile(fileName.c_str(),GENERIC_READ,FILE_SHARE_DELETE|FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,NULL,NULL);
+        if (theFile == INVALID_HANDLE_VALUE)
+        {
+            throw std::runtime_error(eAsciiMsg("Could not open file!"));
+        }
+        BY_HANDLE_FILE_INFORMATION sizeFinder;
+        GetFileInformationByHandle(theFile, &sizeFinder);
+        fileLength = sizeFinder.nFileSizeHigh;
+        fileLength <<= 32;
+        fileLength += sizeFinder.nFileSizeLow;
+    };
+    ~hexFile()
+    {
+        CloseHandle(theFile);
+    };
+    hexIterator begin()
+    {
+        hexIterator theIterator(this, true);
+        return theIterator;
+    };
+    hexIterator end()
+    {
+        hexIterator theIterator(this, false);
+        return theIterator;
+    };
+};
+

@@ -1,0 +1,70 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]
+then
+   echo "You need to specify an argument"
+   exit 0;
+fi
+
+CMD="/var/webserver/user/bin/console $@";
+echo "$CMD";
+nice $CMD;
+ERR=$?
+
+## Possibilities
+# 97    - planned pause/restart
+# 98    - planned restart
+# 99    - planned stop, exit.
+# 0     - unplanned restart (as returned by "exit;")
+#        - Anything else is also unplanned paused/restart
+
+if [ $ERR -eq 97 ]
+then
+   # a planned pause, then restart
+   echo "97: PLANNED_PAUSE - wait 1";
+   sleep 1;
+   exec $0 $@;
+fi
+
+if [ $ERR -eq 98 ]
+then
+   # a planned restart - instantly
+   echo "98: PLANNED_RESTART";
+   exec $0 $@;
+fi
+
+if [ $ERR -eq 99 ]
+then
+   # planned complete exit
+   echo "99: PLANNED_SHUTDOWN";
+   exit 0;
+fi
+
+[user@host]$ ./workers.sh
+
+[user@host]$ ./workers.sh &
+
+[user@host]$ jobs
+[1]+  Stopped                 ./workers.sh email
+
+[user@host]$ fg
+
+#!/bin/bash
+
+WORKER_PATH="/var/webserver/user/workers.sh"
+declare -A Queue
+Queue[email]=2
+Queue[process-images]=5
+
+for key in "${!Queue[@]}"
+do
+  echo "Launching ${Queue[$key]} instance(s) of $key Worker..."
+  CMD="$WORKER_PATH $key"
+  for (( l=1; l<=${Queue[$key]}; l++ ))
+    do
+        INSTANCE="$CMD $l"
+        echo "lnch instance $INSTANCE"
+        nice $INSTANCE > /dev/null 2> /dev/null &
+    done
+done
+

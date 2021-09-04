@@ -1,0 +1,48 @@
+{-# LANGUAGE TemplateHaskell, ScopedTypeVariables #-}
+module Generator where
+import Language.Haskell.TH
+import Language.Haskell.TH.Syntax
+
+data Description = Description String [Description] deriving Show
+
+class HasDescription a where
+  getDescription :: a -> Description
+
+instance HasDescription Int where
+  getDescription _ = Description "Int" []
+
+instance (HasDescription a, HasDescription b) => HasDescription (a, b) where
+  getDescription (_ :: (a, b)) = Description "Tuple2" [getDescription (undefined :: a), getDescription (undefined :: b)]
+
+-- | creates instance of HasDescription for the passed datatype changing descriptions of its fields
+mkHasDescription :: Name -> Q [Dec]
+mkHasDescription dName = do
+  reify dName >>= runIO . print
+  TyConI (DataD cxt name tyVarBndr [NormalC cName types] derives) <- reify dName
+  -- Attempt to get description of data to modify it.
+  let mkSubDesc t = let Description desc ds = getDescription (undefined :: $(return t)) in [| Description $(lift $ desc ++ "Modified") $(lift ds) |]
+
+  let body = [| Description $(lift $ nameBase dName) $(listE $ map (mkSubDesc . snd) types) |]
+  getDescription' <- funD 'getDescription [clause [wildP] (normalB body) []]
+  return [ InstanceD [] (AppT (ConT ''HasDescription) (ConT dName)) [getDescription'] ]
+
+{-# LANGUAGE TemplateHaskell, ScopedTypeVariables #-}
+import Generator
+
+data MyData = MyData Int Int
+
+mkHasDescription ''MyData
+
+{- the code I want to generate
+instance HasDescription MyData where
+  getDescription _ = Description "MyData" [Description "IntModified" [], Description "IntModified" []]
+-}
+
+Generator.hs:23:85:
+GHC stage restriction: `t'
+  is used in a top-level splice or annotation,
+  and must be imported, not defined locally
+In the first argument of `return', namely `t'
+In the expression: return t
+In an expression type signature: $(return t)
+

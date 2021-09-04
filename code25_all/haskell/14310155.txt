@@ -1,0 +1,133 @@
+compileText :: SourceView -> SOE.Window -> IO ()
+compileText tview w = do 
+    txtBuff <- textViewGetBuffer tview
+    startIt <- textBufferGetStartIter txtBuff
+    endIt <- textBufferGetEndIter txtBuff
+    compTime <- getClockTime
+    srcString <- textBufferGetByteString txtBuff startIt endIt False
+
+    BS.writeFile "Test.hs" srcString
+    mkStat <- make "Test.hs" []
+    case mkStat of
+        MakeSuccess cd fp -> print fp
+        MakeFailure (er1:er2:errs) -> error er2
+
+    loadResult <- getModule
+    case loadResult of
+        Right (md, pic) -> do
+                runGraphics $ do
+                    draw3 "gtk test" pic w
+                unload md
+        Left errors -> print errors
+    return ()
+
+getModule :: IO (Either [String] (Module, Picture))
+getModule = do 
+               mv <- load "Test.o" ["."] [] "pic"
+               case mv of
+                    LoadFailure messages -> return (Left messages)
+                    LoadSuccess x y -> return (Right (x, y))
+
+module Test where
+    import Picture
+
+    r1,r2,r3,r4 :: Region
+    r1 = Shape(Rectangle 2 1)
+    r2 = Shape(Ellipse 2 1.5)
+    r3 = Shape(RtTriangle 3 2)
+    r4 = Shape(Polygon [(-2.5, 2.5), (-3.0,0), (-1.7,-1.0), (-1.1,0.2),(-1.5,2.0)])
+
+    p1,p2,p3,p4 :: Picture
+    p1 = Region Red r1
+    p2 = Region Green r2
+    p3 = Region Blue r3
+    p4 = Region Yellow r4
+
+    pics :: Picture
+    pics = foldl Over EmptyPic [p1,p2,p3,p4]
+
+import Control.Monad
+import System.Time
+import System.IO
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
+
+import System.Plugins.Make
+import System.Plugins.Load
+import System.Eval.Haskell
+
+testCaseCorrect :: String
+testCaseCorrect = "module Test where\n printGreeting :: String -> IO ()\n printGreeting greeting = print greeting"
+
+-- This should cause load to fail as it will not be able to find the
+-- printGreeting function
+testCaseIncorrect :: String
+testCaseIncorrect = "module Test where\n printGurting :: String -> IO ()\n printGurting greeting = print greeting"
+
+main :: IO ()
+main = do
+    BS.writeFile "Test.hs" (BSC.pack testCaseCorrect)
+    mkStat <- make "Test.hs" []
+
+    case mkStat of
+        MakeSuccess cd fp -> print fp
+        MakeFailure (er1:er2:errs) -> error er2
+
+    loadResult <- getModule
+    case loadResult of
+        Right (md, greeter) -> do
+                greeter "Hi there"
+                unload md
+        Left errors -> print errors
+
+    BS.writeFile "Test.hs" (BSC.pack testCaseIncorrect)
+
+    mkStat2 <- make "Test.hs" []
+
+    case mkStat2 of
+        MakeSuccess cd fp -> print fp
+        MakeFailure (er1:er2:errs) -> error er2
+
+    loadResult2 <- getModule
+    case loadResult2 of
+        Right (md, greeter) -> do
+                greeter "Hi there"
+                unload md
+        Left errors -> print errors
+
+
+    BS.writeFile "Test.hs" (BSC.pack testCaseCorrect)
+    mkStat3 <- make "Test.hs" []
+
+    case mkStat3 of
+        MakeSuccess cd fp -> print fp
+        MakeFailure (er1:er2:errs) -> error er2
+
+    loadResult3 <- getModule
+    case loadResult3 of
+        Right (md, greeter) -> do
+                greeter "Hi there"
+                unload md
+        Left errors -> print errors
+
+getModule :: IO (Either [String] (Module, String -> IO()))
+getModule = do 
+               mv <- load "Test.o" ["."] [] "printGreeting"
+               case mv of
+                    LoadFailure messages -> return (Left messages)
+                    LoadSuccess x y -> return (Right (x, y))
+
+"Test.o"
+"Hi there"
+"Test.o"
+["load: couldn't find symbol <<printGreeting>>"]
+"Test.o"
+["load: couldn't find symbol <<printGreeting>>"]
+
+"Test.o"
+"Hi there"
+"Test.o"
+"Hi there"
+"Test.o"
+"Hi there"
+

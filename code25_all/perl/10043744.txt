@@ -1,0 +1,99 @@
+#!/usr/bin/perl -w
+
+use DBI;
+use strict;
+
+$| = 1;
+
+#------------------------------------------------------------------------------
+# !!! Configure check time and timeout. These are both in seconds.
+
+my $check =      15;    # check processes every $check seconds
+my $slow_time =  60;    # stop processes that run for >= $slow_time seconds
+
+# !!! Configure log file - All slow queries also get logged to this file
+
+my $logfile =    "./check_mysql_query.log"; # log slow queries to this file
+
+# !!! Configure the database connection parameters
+
+my $db_string = "dbi:mysql:mysql";  # DBI resource to connect to
+my $db_user =   "root";     # DBI username to connect as
+my $db_pass =   "password";     # DBI password to connect with
+
+# !!! Configure path to sendmail program
+
+my $sendmail_bin = "/usr/sbin/sendmail";
+
+#
+#------------------------------------------------------------------------------
+
+
+my ($dbh,$sth,$sth2,$thread,$state,$time,$query,$explain);
+
+print "connecting\n";
+my $opt = {
+    'RaiseError'=>0,
+    'PrintError'=>0
+};
+$dbh = DBI->connect($db_string,$db_user,$db_pass,$opt);
+unless ($dbh) {
+    print "Error: Unable to connect to database: $DBI::errstr\n";
+    exit 1;
+}
+
+$SIG{'TERM'} = sub {
+    print "caught sig TERM!\nexiting!\n";
+    $dbh->disconnect;
+    exit 1;
+};
+
+print "preparing\n";
+unless ($sth = $dbh->prepare("show full processlist")) {
+    print "error preparing query: $DBI::errstr\nexiting!\n";
+    $dbh->disconnect;
+    exit 1;
+}
+
+print "initialized.. starting loop\n";
+while(1) {
+    unless ($sth->execute) {
+        print "statement execute failed: ".$sth->errstr."\nexiting!\n";
+        last;
+    }
+    while(my @tmp = $sth->fetchrow) {
+        $thread = $tmp[0];
+        $state = $tmp[4];
+        $time = $tmp[5];
+        $query = $tmp[7];
+        if ($state eq "Query" && $query =~ /^SELECT/ && $time >= $slow_time) {
+            print "killing slow query thread=$thread state=$state time=$time\n";
+            $dbh->do("kill $thread");
+            unless (log_query($logfile,$query)) {
+                print "log_query failed! exiting!\n";
+                last;
+            }
+
+
+        }
+    }
+    sleep($check);
+}
+
+$sth->finish;
+$dbh->disconnect;
+
+exit 1;
+
+
+sub log_query {
+    my ($file,$query) = @_;
+    unless (open(O,">>".$file)) {
+        print "error opening log file '$file': $!\n";
+        return undef;
+    }
+    print O $query."\n-----\n";
+    close(O);
+    return 1;
+}
+

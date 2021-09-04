@@ -1,0 +1,125 @@
+epoll_wait(4, {{EPOLLIN, {u32=0, u64=0}}}, 128, -1) = 1
+accept(3, {sa_family=AF_INET, sin_port=htons(55328), sin_addr=inet_addr("127.0.0.1")}, [16]) = 5
+fcntl64(5, F_GETFL)                     = 0x2 (flags O_RDWR)
+fcntl64(5, F_SETFL, O_RDWR|O_NONBLOCK)  = 0
+epoll_ctl(4, EPOLL_CTL_ADD, 5, {EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLET, {u32=144039912, u64=144039912}}) = 0
+epoll_wait(4, {{EPOLLIN, {u32=144039912, u64=144039912}}}, 128, -1) = 1
+read(5, "GET /user/register HTTP/1.1\r\nHos"..., 4096) = 161
+send(5, "HTTP/1.1 200 OK\r\nContent-Type: t"..., 106, MSG_NOSIGNAL) = 106 <<<<
+send(5, "00001000\r\n", 10, MSG_NOSIGNAL) = -1 EPIPE (Broken pipe)        <<<< Why did the previous send() work?
+close(5)                                = 0
+epoll_wait(4, {{EPOLLIN, {u32=0, u64=0}}}, 128, -1) = 1
+accept(3, {sa_family=AF_INET, sin_port=htons(55329), sin_addr=inet_addr("127.0.0.1")}, [16]) = 5
+...
+
+#include "Connection.h"
+
+static ExceptionManager *exc;
+
+void Connection0(ExceptionManager *e) {
+    exc = e;
+}
+
+void Connection_Init(Connection *this) {
+    Socket_Init(&this->server);
+    Socket_SetReusableFlag(&this->server);
+    Socket_SetCloexecFlag(&this->server, true);
+    Socket_SetBlockingFlag(&this->server, true);
+    Socket_ListenTCP(&this->server, 8080, SOMAXCONN);
+
+    // Add the server socket to epoll
+    Poll_Init(&this->poll, SOMAXCONN, (void *) &Connection_OnEvent, this);
+    Poll_AddEvent(&this->poll, NULL, this->server.fd, EPOLLIN | EPOLLET | EPOLLHUP | EPOLLERR);
+
+    this->activeConn = 0;
+}
+
+void Connection_Destroy(Connection *this) {
+    Poll_Destroy(&this->poll);
+    Socket_Destroy(&this->server);
+}
+
+void Connection_Process(Connection *this) {
+    Poll_Process(&this->poll, -1);
+}
+
+void Connection_AcceptClient(Connection *this) {
+    Client *client;
+
+    SocketConnection conn = Socket_Accept(&this->server);
+    SocketConnection_SetBlockingFlag(&conn, true);
+
+    client = New(Client);
+
+    client->req = NULL;
+
+    client->conn = New(SocketConnection);
+    client->conn->remote = conn.remote;
+    client->conn->fd = conn.fd;
+
+    this->activeConn++;
+
+    Poll_AddEvent(&this->poll, client, conn.fd, EPOLLIN | EPOLLET | EPOLLHUP | EPOLLERR);
+}
+
+void Connection_DestroyClient(Connection *this, Client *client) {
+    // Poll_DeleteEvent(&this->poll, client->conn->fd);
+    SocketConnection_Close(client->conn);
+
+    if (client->req != NULL) {
+        Request_Destroy(client->req);
+        Memory_Free(client->req);
+    }
+
+    if (client->conn != NULL) {
+        Memory_Free(client->conn);
+    }
+
+    Memory_Free(client);
+
+    this->activeConn--;
+}
+
+void Connection_OnEvent(Connection *this, int events, Client *client) {
+    /* error or connection hung up */
+    if (client != NULL && (events & (EPOLLHUP | EPOLLERR))) {
+        String_Print(String("EPOLLHUP | EPOLLERR received\n"));
+        Connection_DestroyClient(this, client);
+        return;
+    }
+
+    /* incoming connection */
+    if (client == NULL && (events & EPOLLIN)) {
+        if (this->activeConn > SOMAXCONN - 1) { /* TODO */
+            String_Print(String("Too many connections...\n"));
+            return;
+        }
+
+        Connection_AcceptClient(this);
+        return;
+    }
+
+    /* receiving data from client */
+    if (client != NULL && (events & EPOLLIN)) {
+        if (client->req == NULL) {
+            client->req = New(Request);
+            Request_Init(client->req, client->conn);
+        }
+
+        bool keepOpen = false;
+
+        try (exc) {
+            keepOpen = Request_Parse(client->req);
+        } catch(&SocketConnection_PipeException, e) {
+            printf("Caught PipeException on fd=%d\n", client->conn->fd); fflush(stdout);
+        } catch(&SocketConnection_ConnectionResetException, e) {
+            printf("Caught ConnectionResetException on fd=%d\n", client->conn->fd); fflush(stdout);
+        } finally {
+            if (!keepOpen) {
+                printf("Will close...\n"); fflush(stdout);
+                Connection_DestroyClient(this, client);
+            }
+        } tryEnd;
+    }
+}
+

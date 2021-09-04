@@ -1,0 +1,108 @@
+#!/bin/bash
+
+sudo sysctl -w net.inet.tcp.win_scale_factor=8
+sudo sysctl -w kern.ipc.maxsockbuf=16777216
+sudo sysctl -w net.inet.tcp.sendspace=8388608
+sudo sysctl -w net.inet.tcp.recvspace=8388608
+
+import java.io.*;
+import java.nio.*;
+import java.net.*;
+
+public class BandwidthTester {
+private static final int OUT_BUF = (1 << 17),
+                    IN_BUF = (1 << 17), SEND_BUF = (1 << 22), RECV_BUF = (1 << 22);
+public static void main(String[] args) {
+    try {
+        // server
+        if (args.length == 0) {
+            ServerSocket sock = new ServerSocket();
+            sock.bind(new InetSocketAddress(41887));
+
+            // wait for connection
+            Socket s = sock.accept();
+
+            s.setSendBufferSize(SEND_BUF);
+
+            System.out.println("Buffers: " + s.getSendBufferSize() + " and " + s.getReceiveBufferSize());
+
+            sock.close();
+
+            BufferedOutputStream bOut = new BufferedOutputStream(s.getOutputStream(), OUT_BUF);
+
+            // send lots of data
+            sendLotsOfData(bOut);
+        } else if (args.length == 2) {
+            String host = args[0];
+            int port = Integer.parseInt(args[1]);
+
+            System.out.println("Connecting to " + args[0] + ":" + args[1]);
+
+            Socket sock = new Socket();
+            sock.setReceiveBufferSize(RECV_BUF);
+            sock.connect(new InetSocketAddress(host, port));
+
+            System.out.println("Buffers: " + sock.getSendBufferSize() + " and " + sock.getReceiveBufferSize());
+
+            BufferedInputStream bIn = new BufferedInputStream(sock.getInputStream(), IN_BUF);
+            getLotsOfData(bIn);
+        }
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+
+public static void getLotsOfData(InputStream in) {
+    System.out.println("Getting data...");
+    try {
+        long start = System.currentTimeMillis();
+
+        ByteBuffer intConv = ByteBuffer.allocate(4);
+
+        in.read(intConv.array());
+        int len = intConv.getInt(0);
+        for (int i=0; i < len; i++) {
+            in.read(intConv.array());
+            int val = intConv.getInt(0);
+        }
+
+        long end = System.currentTimeMillis();
+
+        double elapsed = ((double)(end - start)) / (1000.0);
+
+        System.out.println("Read in " + elapsed + " seconds: " + ( (4.0*8.0*len/elapsed) + " bits per second"));
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+public static void sendLotsOfData(OutputStream out) {
+    System.out.println("Sending data...");
+    try {
+        long start = System.currentTimeMillis();
+
+        int len = (1 << 29);
+
+        ByteBuffer intConv = ByteBuffer.allocate(4);
+        intConv.putInt(0, len);
+        out.write(intConv.array());
+        for (int i=0; i < len; i++) {
+            intConv.putInt(0, i);
+            out.write(intConv.array());
+        }
+
+        out.flush();
+
+        long end = System.currentTimeMillis();
+
+        double elapsed = ((double)(end - start)) / (1000.0);
+
+        System.out.println("Sent in " + elapsed + " seconds: " + ( (4.0*8.0*len/elapsed) + " bits per second"));
+    }
+    catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+}
+

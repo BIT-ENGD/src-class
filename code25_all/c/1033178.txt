@@ -1,0 +1,144 @@
+TCHAR szTemp[512] = {0};
+BOOL bRet = FALSE;
+HINTERNET hRequest = NULL;
+HINTERNET hSession = NULL;
+HINTERNET hConnect = NULL;
+CERT_CONTEXT *pCert = {0};
+HCERTSTORE hCertStore = NULL;
+DWORD dwRet = 0;
+DWORD dwLen = 0;
+DWORD dwFlags = SECURITY_FLAG_IGNORE_CERT_CN_INVALID|
+                SECURITY_FLAG_IGNORE_CERT_DATE_INVALID|
+                SECURITY_FLAG_IGNORE_UNKNOWN_CA;
+
+CString szUserAgent("Mozilla/4.0 (compatible; MSIE 5.22)");
+
+if ( m_csServer.GetLength() < 3 ) {
+    _stprintf_s( szTemp, 512, _T("Server name is invalid or empty") );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+    return;
+}
+
+hSession = WinHttpOpen(szUserAgent,
+    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    WINHTTP_NO_PROXY_NAME,
+    WINHTTP_NO_PROXY_BYPASS, 0 );
+
+if ( NULL == hSession ) {
+    dwRet = GetLastError();
+    _stprintf_s( szTemp, 512, _T("WinHttpOpen Fails - err: 0x%x"), dwRet );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+    return;
+}
+
+hConnect = WinHttpConnect( hSession,
+    m_csServer,
+    INTERNET_DEFAULT_HTTPS_PORT,
+    0 );
+
+if ( NULL == hConnect ) {
+    dwRet = GetLastError();
+    _stprintf_s( szTemp, 512, _T("WinHttpConnect Fails - err: 0x%x"), dwRet );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+    WinHttpCloseHandle( hSession );
+    return;
+}
+
+hRequest = WinHttpOpenRequest( hConnect,
+    L"GET",
+    L"",
+    NULL,
+    WINHTTP_NO_REFERER,
+    WINHTTP_DEFAULT_ACCEPT_TYPES,
+    WINHTTP_FLAG_SECURE ); 
+
+if ( NULL == hConnect ) {
+    dwRet = GetLastError();
+    _stprintf_s( szTemp, 512, _T("WinHttpOpenRequest Fails - err: 0x%x"), dwRet );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+    WinHttpCloseHandle( hConnect );
+    WinHttpCloseHandle( hSession );
+    return;
+}
+
+bRet = WinHttpSetOption(
+    hRequest,
+    WINHTTP_OPTION_SECURITY_FLAGS,
+    &dwFlags,
+    sizeof(DWORD)
+);
+
+if ( FALSE == bRet ) {
+    dwRet = GetLastError();
+    _stprintf_s( szTemp, 512, _T("WinHttpSetOption Fails - err: 0x%x"), dwRet );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+    WinHttpCloseHandle( hConnect );
+    WinHttpCloseHandle( hSession );
+    return;
+}
+
+bRet = WinHttpSendRequest( hRequest,
+    WINHTTP_NO_ADDITIONAL_HEADERS,
+    0,
+    WINHTTP_NO_REQUEST_DATA,
+    0,
+    0,
+    0 );
+
+if ( FALSE == bRet ) {
+    dwRet = GetLastError();
+    _stprintf_s( szTemp, 512, _T("WinHttpSendRequest Fails - err: 0x%x"), dwRet );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+    WinHttpCloseHandle( hRequest );
+    WinHttpCloseHandle( hConnect );
+    WinHttpCloseHandle( hSession );
+    return;
+}
+
+dwLen = sizeof(pCert);
+
+bRet = WinHttpQueryOption(
+    hRequest,
+    WINHTTP_OPTION_SERVER_CERT_CONTEXT,
+    &pCert,
+    &dwLen
+);
+
+if ( pCert ) {
+    if ( pCert->dwCertEncodingType & X509_ASN_ENCODING ) {
+        OutputDebugString( _T("X509_ASN_ENCODING") );
+    }
+    if ( pCert->dwCertEncodingType & PKCS_7_ASN_ENCODING ) {
+        OutputDebugString( _T("PKCS_7_ASN_ENCODING") );
+    }
+
+    _stprintf_s( szTemp, 512, _T("encoded_size: %ld"), pCert->cbCertEncoded );
+    OutputDebugString( szTemp );
+
+    hCertStore = CertOpenStore( CERT_STORE_PROV_SYSTEM, 0, 0, CERT_STORE_OPEN_EXISTING_FLAG | CERT_SYSTEM_STORE_LOCAL_MACHINE, L"Root"); 
+
+    bRet =  CertAddCertificateContextToStore(
+        hCertStore,
+        pCert,
+        CERT_STORE_ADD_REPLACE_EXISTING,
+        NULL
+    );
+
+    CertFreeCertificateContext(pCert);
+
+    bRet = CertCloseStore( hCertStore, 0 );
+
+    ::MessageBox( NULL, _T("Certificate Added to Store"), _T("Registered"), MB_OK );
+
+    OutputDebugString ( _T("closed store") );
+}
+else {
+    dwRet = GetLastError();
+    _stprintf_s( szTemp, 512, _T("WinHttpQueryOption Fails - err: 0x%x"), dwRet );
+    ::MessageBox(NULL, szTemp, _T("ERROR"), MB_OK );
+}
+
+WinHttpCloseHandle( hRequest );  
+WinHttpCloseHandle( hConnect );
+WinHttpCloseHandle( hSession );
+

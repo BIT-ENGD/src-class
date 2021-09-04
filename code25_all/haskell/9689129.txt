@@ -1,0 +1,72 @@
+loadObjs_ :: (Monad m) => (Maybe Integer -> BL8.ByteString -> RDBObj -> Get (m a)) -> Get (m a)
+loadObjs_ f = do
+             code <- lookAhead getWord8
+             case code of
+                0xfd -> do
+                 skip 1
+                 expire <- loadTime
+                 getPairs_ f (Just expire)
+               0xfc -> do
+                 skip 1
+                 expire <- loadTimeMs
+                 getPairs_ f (Just expire)
+               0xfe -> f Nothing "Switching Database" RDBNull
+               0xff -> f Nothing "" RDBNull
+               _ -> getPairs_ f Nothing
+
+getPairs_ :: (Monad m) => (Maybe Integer -> BL8.ByteString -> RDBObj -> Get (m a)) -> Maybe Integer -> Get (m a)
+getPairs_ f ex = do
+                !t <- getWord8
+                !key <- loadStringObj False
+                !obj <- loadObj t
+                !rest <- loadObjs_ f
+                !out <- f ex key obj
+                return (out >> rest)
+
+
+(loadObj does the actual parsing of a single object but I believe that whatever I need to fix the streaming to operate in constant or near-constant memory is at a higher level in the iteration than loadObj)
+
+getDBs_ :: (Monad m) => (Maybe Integer -> BL8.ByteString -> RDBObj -> Get (m a)) -> Get (m a)
+getDBs_ f = do
+           opc <- lookAhead getWord8
+           if opc == opcodeSelectdb
+              then do
+                  skip 1
+                  (isEncType,dbnum) <- loadLen
+                  objs <- loadObjs_ f
+                  rest <- getDBs_ f
+                  return (objs >> rest)
+              else f Nothing "EOF" RDBNull
+
+processRDB_ :: (Monad m) => (Maybe Integer -> BL8.ByteString -> RDBObj -> Get (m a)) -> Get (m a)
+processRDB_ f = do
+                header <- getBytes 9
+                dbs <- getDBs_ f
+                eof <- getWord8
+                return (dbs)
+
+printRDBObj :: Maybe Integer -> BL8.ByteString -> RDBObj -> Get (IO ())
+printRDBObj (Just exp) key obj = return $ (print ("Expires: " ++ show exp) >>
+                                           print ("Key: " ++ (BL8.unpack key)) >> 
+                                           print ("Obj: " ++ show obj))
+printRDBObj Nothing key RDBNull = return $ (print $ BL8.unpack key)
+printRDBObj Nothing key obj = return $ (print ("Key: " ++ (BL8.unpack key)) >> 
+                                        print ("Obj: " ++ show obj))
+
+
+main = do
+       testf <- BL8.readFile "./dump.rdb"
+       runGet (processRDB_ printRDBObj)  testf
+
+processRDB :: Get [RDBObj]
+
+processRDB = do
+                header <- getBytes 9
+                dbs <- getDBs
+                eof <- getWord8
+                return (dbs)
+
+main = do
+       testf <- BL8.readFile "./dump.rdb"
+       mapM_ (print . show) $ runGet processRDB testf
+

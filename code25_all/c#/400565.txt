@@ -1,0 +1,75 @@
+using System;
+using System.Net;
+using System.Threading;
+
+public class AsyncWebRequest:WebRequest
+{
+    private readonly AsyncCallback getResponseCallback;
+    private readonly Uri uri;
+    private volatile int RetriesLeft = 3;
+    private volatile WebRequest request;
+
+    public AsyncWebRequest(string uri, AsyncCallback getResponseCallback)
+       :this(new Uri(uri), getResponseCallback)
+    {
+    }
+
+    public AsyncWebRequest(Uri uri, AsyncCallback getResponseCallback):base()
+    {
+        this.uri = uri;
+        this.getResponseCallback = getResponseCallback;
+    }
+
+    private IAsyncResult BeginGetResponse()
+    {
+        request = HttpWebRequest.CreateDefault(uri);
+        ((HttpWebRequest)request).ReadWriteTimeout = Timeout;
+        var result = request.BeginGetResponse(GetResponseCallback, null);
+        ThreadPool.RegisterWaitForSingleObject(result.AsyncWaitHandle,
+            GetResponseTimeout, null, Timeout, true);
+        return result;
+    }
+
+    private void GetResponseTimeout(object state, bool timedOut)
+    {
+        if (timedOut)
+        {
+            Retry();
+        }
+    }
+
+    private void Retry()
+    {
+        request.Abort();
+        bool retry = false;
+        lock (request)
+        {
+            if (RetriesLeft > 0)
+            {
+                Interlocked.Decrement(ref RetriesLeft);
+                retry = true;
+            }
+        }
+        if (retry)
+        {
+            BeginGetResponse();
+        }
+        else
+        {
+            getResponseCallback(null);
+        }
+    }
+
+    private void GetResponseCallback(IAsyncResult AsyncResult)
+    {
+        try
+        {
+            getResponseCallback(AsyncResult);
+        }
+        catch(WebException webException)
+        {
+            Retry();
+        }
+    }
+}
+

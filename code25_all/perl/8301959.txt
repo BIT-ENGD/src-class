@@ -1,0 +1,71 @@
+handler.pl
+    #!/usr/bin/perl
+            use Handler;
+    use Data::Dumper;
+
+    my $base_handler = Handler->new();
+    $base_handler->load_modules('SysG/Handler');
+    print Dumper($base_handler);
+
+Handler.pm
+    package Handler;
+    use Moose;
+
+    has 'handlers' => ( traits => ['Array'], handles => { add_handler => 'push' } );
+
+    sub load_modules {
+        my ($self,$dir) = @_;
+
+        push(@INC, $dir);
+
+        my @modules = find_modules_to_load($dir);
+        eval { 
+            # Note that this sort is important. The processing order will be critically important.
+            # The sort implies the sort order
+            foreach my $module ( sort @modules) {
+                (my $file = $module) =~ s|::|/|g;
+                print "About to load $file.pm for module $module\n" ;
+                require $file . '.pm';
+                $module->import();
+                my $obj = $module->new();
+                $self->add_handler($obj);
+                1;
+            }
+        } or do {
+            my $error = $@;
+            print "Error loading modules: $error" if $error;
+        };
+
+    }
+
+    sub find_modules_to_load {
+        my ($dir) = @_;
+        my @files = glob("$dir/*.pm");
+        my $namespace = $dir;
+        $namespace =~ s/\//::/g;
+
+        # Get the leaf name and add the System::Module namespace to it
+        my @modules = map { s/.*\/(.*).pm//g;  "${namespace}::$1"; } @files;
+        die "ERROR: No classifier modules found in $dir\n" unless @modules;
+        return @modules;
+    }
+
+    1;
+
+SysG::Handler::0001_HandleX.pm
+package SysG::Handler::0001_HandleX;
+use Moose;
+1;
+
+SysG::Handler::0002_HandleX.pm
+package SysG::Handler::0002_HandleY;
+use Moose;
+1;
+
+$VAR1 = bless( {
+             'handlers' => [
+                             bless( {}, 'SysG::Handler::0001_HandleX' ),
+                             bless( {}, 'SysG::Handler::0002_HandleY' )
+                           ]
+           }, 'Handler' );
+

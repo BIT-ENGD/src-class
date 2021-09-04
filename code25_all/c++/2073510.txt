@@ -1,0 +1,91 @@
+GLfloat whenSpheresCollide(const sphere2d &firstSphere, const sphere2d &secondSphere)
+{
+    Vector2f relativePosition = subtractVectors(firstSphere.vPosition, secondSphere.vPosition);
+    Vector2f relativeVelocity = subtractVectors(firstSphere.vVelocity, secondSphere.vVelocity);
+
+    GLfloat radiusSum = firstSphere.radius + secondSphere.radius;
+
+    //We'll find the time when objects collide if a collision takes place
+
+    //r(t) = P[0] + t * V[0]
+    //
+    //d^2(t) = P[0]^2 + 2 * t * P[0] * V[0] + t^2 * V[0]^2
+    //
+    //d^2(t) = V[0]^2 * t^2 + 2t( P[0] . V[0] ) + P[0]^2
+    //
+    //d(t) = R
+    //
+    //d(t)^2 = R^2
+    //
+    //V[0]^2 * t^2 + 2t( P[0] . V[0] ) + P[0]^2 - R^2 = 0
+    //
+    //delta = ( P[0] . V[0] )^2 - V[0]^2 * (P[0]^2 - R^2)
+    //
+    //  We are interested in the lowest t:
+    //
+    //t = ( -( P[0] . V[0] ) - sqrt(delta) ) / V[0]^2
+    //
+
+    GLfloat equationDelta = squaref( dotProduct(relativePosition, relativeVelocity) ) - squarev( relativeVelocity ) * ( squarev( relativePosition ) - squaref(radiusSum)  );
+
+    if (equationDelta >= 0.0f)
+    {
+        GLfloat collisionTime = ( - dotProduct(relativePosition, relativeVelocity) - sqrtf(equationDelta) ) / squarev(relativeVelocity);
+
+        if (collisionTime >= 0.0f && collisionTime <= 1.0f / GAME_FPS)
+        {
+            return collisionTime;
+        }
+    }
+
+    return -1.0f;
+}
+
+void GamePhysicsManager::updateBallPhysics()
+{
+    //
+    //Update velocity
+    vVelocity->y -= constG / GAME_FPS;  //v = a * t = g * 1 sec / (updates per second)
+
+    shouldApplyForcesToBall = TRUE;
+
+    vPosition->x += vVelocity->x / GAME_FPS;
+    vPosition->y += vVelocity->y / GAME_FPS;
+
+    if ( distanceBetweenVectors( *pBall->getPositionVector(), *pBasket->getPositionVector() ) <= pBasket->getRadius() + vectorLength(*vVelocity) / GAME_FPS )
+    {
+        //Ball sphere
+        sphere2d ballSphere;
+        ballSphere.radius = pBall->getRadius();
+        ballSphere.mass = 1.0f;
+        ballSphere.vPosition = *( pBall->getPositionVector() );
+        ballSphere.vVelocity = *( pBall->getVelocityVector() );
+
+
+        sphere2d ringSphereRight;
+        ringSphereRight.radius = 0.05f;
+        ringSphereRight.mass = -1.0f;
+        ringSphereRight.vPosition = *( pBasket->getPositionVector() );
+        //ringSphereRight.vPosition.x += pBasket->getRadius();
+        ringSphereRight.vPosition.x += (pBasket->getRadius() - ringSphereRight.radius);
+        ringSphereRight.vVelocity = zeroVector();
+
+
+        GLfloat collisionTime = whenSpheresCollide(ballSphere, ringSphereRight);
+
+        if ( collisionTime >= 0.0f )
+        {
+            DebugLog("collision");
+            respondToCollision(&ballSphere, &ringSphereRight, collisionTime, pBall->getRestitution() * 0.75f );
+        }
+
+        //
+        //Implement selection of the results that are first to collide collision
+
+        vVelocity->x = ballSphere.vVelocity.x;
+        vVelocity->y = ballSphere.vVelocity.y;
+
+        vPosition->x = ballSphere.vPosition.x;
+        vPosition->y = ballSphere.vPosition.y;
+    }
+

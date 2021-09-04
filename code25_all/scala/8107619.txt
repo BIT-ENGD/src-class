@@ -1,0 +1,101 @@
+Unknown(null)
+case class Unknown[T](t : T) {
+  private var value : Option[T] = Option(t)
+  private var applicatives: List[T => Unit] = Nil
+
+  def set(t: T) {
+    if (known) {
+      value = Option(t)
+      applicatives.foreach(f => f(t))
+      applicatives = Nil
+    } else {
+      throw new IllegalStateException
+    }
+  }
+
+  def get : T = value.get
+
+  def apply(f: T => Unit) = value match {
+    case Some(x) => f(x);
+    case None => applicatives ::= f
+  }
+
+  def known = value == None
+}
+
+case class Match(val home: Unknown[Team], val visit: Unknown[Team], val result: Unknown[(Int, Int)]) {
+  val winner: Unknown[Team] = Unknown(null)
+  val loser: Unknown[Team] = Unknown(null)
+
+  result.apply(result => {
+    if (result._1 > result._2) {
+      home.apply(t => winner.set(t))
+      visit.apply(t => loser.set(t))
+    } else {
+      home.apply(t => loser.set(t))
+      visit.apply(t => winner.set(t))
+    }
+  })
+}
+
+val definedUnplayedMatch = Match(Unknown(Team("A")), Unknown(Team("B")), Unknown(null));
+val definedPlayedMatch = Match(Unknown(Team("D")), Unknown(Team("E")), Unknown((1,0)));
+val undefinedUnplayedMatch = Match(Unknown(null), Unknown(null), Unknown(null));
+
+definedUnplayedMatch.winner.apply(undefinedUnplayedMatch.home.set(_))
+definedPlayedMatch.winner.apply(undefinedUnplayedMatch.visit.set(_))
+undefinedUnplayedMatch.result.set((3,1))
+definedUnplayedMatch.result.set((2,4))
+undefinedUnplayedMatch.winner.get must be equalTo(Team("B")); 
+undefinedUnplayedMatch.loser.get must be equalTo(Team("D"));
+
+sealed abstract class Determine[+A] {
+  def map[B](f: A => B): Determine[B]
+  def flatMap[B](f: A => Determine[B]): Determine[B]
+  def filter(p: A => Boolean): Determine[A]
+  def foreach(b: A => Unit): Unit
+}
+final case class Known[+A](value: A) extends Determine[A] {
+  def map[B](f: A => B): Determine[B] = Known(f(value))
+  def flatMap[B](f: A => Determine[B]): Determine[B] = f(value)
+  def filter(p: A => Boolean): Determine[A] = if (p(value)) this else Unknown
+  def foreach(b: A => Unit): Unit = b(value)
+}
+final case class TBD[A](definer: () => A) extends Determine[A] {
+  private var value: A = _
+
+  def map[B](f: A => B): Determine[B] = {
+    def newDefiner(): B = {
+      f(cachedDefiner())
+    }
+    TBD[B](newDefiner)
+  }
+
+  def flatMap[B](f: A => Determine[B]): Determine[B] = {
+    f(cachedDefiner())
+  }
+
+  def filter(p: A => Boolean): Determine[A] = {
+    if (p(cachedDefiner()))
+      this
+    else
+      Unknown
+  }
+
+  def foreach(b: A => Unit): Unit = {
+    b(cachedDefiner())
+  }
+
+  private def cachedDefiner(): A = {
+    if (value == null)
+      value = definer()
+    value
+  }
+}
+case object Unknown extends Determine[Nothing] {
+  def map[B](f: Nothing => B): Determine[B] = this
+  def flatMap[B](f: Nothing => Determine[B]): Determine[B] = this
+  def filter(p: Nothing => Boolean): Determine[Nothing] = this
+  def foreach(b: Nothing => Unit): Unit = {}
+}
+

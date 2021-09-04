@@ -1,0 +1,152 @@
+json = require("json")
+treat = require("treat")
+base64 = require("base64")
+
+function tprint (tbl, indent)
+  if not indent then indent = 0 end
+  for k, v in pairs(tbl) do
+    formatting = string.rep("  ", indent) .. k .. ": "
+    if type(v) == "table" then
+      print(formatting)
+      tprint(v, indent+1)
+    elseif type(v) == 'boolean' then
+      print(formatting .. tostring(v))      
+    else
+      print(formatting .. v)
+    end
+  end
+end
+
+local fmt = function(p, ...)
+    if select('#', ...) == 0 then
+        return p
+    else return string.format(p, ...) end
+end
+
+local tprintf = function(t, p, ...)
+    t[#t+1] = fmt(p, ...)
+end
+
+local append_data = function(r, k, data, extra)
+    tprintf(r, "content-disposition: form-data; name=\"%s\"", k)
+    if extra.filename then
+        tprintf(r, "; filename=\"%s\"", extra.filename)
+    end
+    if extra.content_type then
+        tprintf(r, "\r\ncontent-type: %s", extra.content_type)
+    end
+    if extra.content_transfer_encoding then
+        tprintf(
+            r, "\r\ncontent-transfer-encoding: %s",
+            extra.content_transfer_encoding
+        )
+    end
+    tprintf(r, "\r\n\r\n")
+    tprintf(r, data)
+    tprintf(r, "\r\n")
+end
+
+local gen_boundary = function()
+  local t = {"BOUNDARY-"}
+  for i=2,17 do t[i] = string.char(math.random(65, 90)) end
+  t[18] = "-BOUNDARY"
+  return table.concat(t)
+end
+
+local encode = function(t, boundary)
+    boundary = boundary or gen_boundary()
+    local r = {}
+    local _t
+    for k,v in pairs(t) do
+        tprintf(r, "--%s\r\n", boundary)
+        _t = type(v)
+        if _t == "string" then
+            append_data(r, k, v, {})
+        elseif _t == "table" then
+            assert(v.data, "invalid input")
+            local extra = {
+                filename = v.filename or v.name,
+                content_type = v.content_type or v.mimetype
+                    or "application/octet-stream",
+                content_transfer_encoding = v.content_transfer_encoding or "binary",
+            }
+            append_data(r, k, v.data, extra)
+        else error(string.format("unexpected type %s", _t)) end
+    end
+    tprintf(r, "--%s--\r\n", boundary)
+    return table.concat(r), boundary
+end
+
+local gen_request = function(t)
+    local boundary = gen_boundary()
+    local s = encode(t, boundary)
+    return {
+        method = "POST",
+        source = s,
+        headers = {
+            -- ["content-length"] = #s,
+            ["content-type"] = fmt("multipart/form-data; boundary=%s", boundary),
+        },
+    }
+end
+
+-- this function adds padding around region
+function pad(r, pad)
+  return {r[1]-pad, r[2]-pad, r[3]+pad, r[4]+pad}
+end
+
+-- this function returns element bounding box
+local get_bbox = splash:jsfunc([[
+    function(css) {
+        var el = document.querySelector(css);
+        var r = el.getBoundingClientRect();
+        return [r.left, r.top, r.right, r.bottom];
+    }
+]])
+
+function capture_screenshot(css)
+  local region = pad(get_bbox(css), 2)
+  return splash:png{region=region}
+end
+
+splash:on_request(function(request)
+    request:set_header('USER_AGENT', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.98 Safari/537.36')
+end)
+splash.resource_timeout = 20.0
+
+assert(splash:go('https://mp.weixin.qq.com/cgi-bin/verifycode'))
+assert(splash:wait(0.5))
+
+-- don't crop image by a viewport
+splash:set_viewport_full()
+
+local bytes64 = base64.encode(capture_screenshot("img"))
+local png_bytes = base64.decode(bytes64)
+
+local rq = gen_request{
+    username='xxxxxxx',
+    password='xxxx',
+    codetype='1004',
+    appkey='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    timeout='60',
+    method='upload',
+    file={
+        name="verify_png",
+        content_type="image/png",
+        data=png_bytes
+    },
+}
+
+rq.url="http://api.yundama.com/api.php"
+
+
+local resp = splash:http_post{
+    url=rq.url,
+    headers=rq.headers,
+    body=rq.source
+}
+
+print (base64.decode(resp.info['content']['text']))
+
+SPLASH_LUA_ERROR [input]:148: utf-8
+

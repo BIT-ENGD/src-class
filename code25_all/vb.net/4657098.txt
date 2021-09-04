@@ -1,0 +1,180 @@
+Option Explicit
+
+Public Enum OperationalStates
+  MIB_IF_OPER_STATUS_NON_OPERATIONAL = 0
+  MIB_IF_OPER_STATUS_UNREACHABLE = 1
+  MIB_IF_OPER_STATUS_DISCONNECTED = 2
+  MIB_IF_OPER_STATUS_CONNECTING = 3
+  MIB_IF_OPER_STATUS_CONNECTED = 4
+  MIB_IF_OPER_STATUS_OPERATIONAL = 5
+End Enum
+Public Enum InterfaceTypes  
+  MIB_IF_TYPE_OTHER = 1  
+  MIB_IF_TYPE_ETHERNET = 6  
+  MIB_IF_TYPE_TOKENRING = 9  
+  MIB_IF_TYPE_FDDI = 15  
+  MIB_IF_TYPE_PPP = 23  
+  MIB_IF_TYPE_LOOPBACK = 24  
+  MIB_IF_TYPE_SLIP = 28  
+End Enum
+
+Public Enum AdminStatuses
+  MIB_IF_ADMIN_STATUS_UP = 1
+  MIB_IF_ADMIN_STATUS_DOWN = 2
+  MIB_IF_ADMIN_STATUS_TESTING = 3
+End Enum
+
+Private Const MAXLEN_IFDESCR         As Integer = 256
+Private Const MAXLEN_PHYSADDR        As Integer = 8
+Private Const MAX_INTERFACE_NAME_LEN As Integer = 256
+Private Const ERROR_NOT_SUPPORTED    As Long = 50
+Private Const ERROR_SUCCESS          As Long = 0
+
+Private Type MIB_IFROW  
+  wszName(0 To 511)                        As Byte  
+  dwIndex                                  As Long    '// index of the interface  
+  dwType                                   As Long    '// type of interface  
+  dwMtu                                    As Long    '// max transmission unit  
+  dwSpeed                                  As Long    '// speed of the interface  
+  dwPhysAddrLen                            As Long    '// length of physical address  
+  bPhysAddr(0 To 7)                        As Byte    '// physical address of adapter  
+  dwAdminStatus                            As Long    '// administrative status  
+  dwOperStatus                             As Long    '// operational status  
+  dwLastChange                             As Long  
+  dwInOctets                               As Long      '// octets received  
+  dwInUcastPkts                            As Long    '// unicast packets received  
+  dwInNUcastPkts                           As Long    '// non-unicast packets received  
+  dwInDiscards                             As Long    '// received packets discarded  
+  dwInErrors                               As Long    '// erroneous packets received  
+  dwInUnknownProtos                        As Long  
+  dwOutOctets                              As Long     '// octets sent  
+  dwOutUcastPkts                           As Long    '// unicast packets sent  
+  dwOutNUcastPkts                          As Long    '// non-unicast packets sent  
+  dwOutDiscards                            As Long    '// outgoing packets discarded  
+  dwOutErrors                              As Long    '// erroneous packets sent  
+  dwOutQLen                                As Long    '// output queue length  
+  dwDescrLen                               As Long    '// length of bDescr member  
+  bDescr(0 To 255)                         As Byte    '// interface description  
+ End Type  
+
+Private m_lngBytesReceived As Long  
+Private m_lngBytesSent     As Long  
+
+Private Declare Function GetIfTable _
+            Lib "IPhlpAPI" (ByRef pIfRowTable As Any, _
+                            ByRef pdwSize As Long, _
+                            ByVal bOrder As Long) As Long  
+
+Private Declare Sub CopyMemory _
+            Lib "kernel32" _
+            Alias "RtlMoveMemory" (ByRef pDest As Any, _
+                                   ByRef pSource As Any, _
+                                   ByVal Length As Long)  
+
+Private Declare Function FreeResource Lib "kernel32" (ByVal hResData As Long) As Long  
+
+Public Property Get BytesReceived() As Long  
+ BytesReceived = m_lngBytesReceived  
+End Property  
+
+Public Property Get BytesSent() As Long
+  BytesSent = m_lngBytesSent
+End Property
+
+Public Function InitInterfaces() As Boolean  
+ Dim arrBuffer() As Byte  
+ Dim lngSize     As Long  
+ Dim lngRetVal   As Long  
+ Dim Name        As String  
+ Dim lngRows     As Long  
+ Dim lngRow      As Long  
+ Dim i           As Integer  
+ Dim j           As Integer  
+ Dim IfRowTable  As MIB_IFROW  
+ On Error GoTo err  
+
+ lngSize = 0
+ m_lngBytesReceived = 0
+ m_lngBytesSent = 0
+ lngRetVal = GetIfTable(ByVal 0&, lngSize, 0)
+
+ If lngRetVal = ERROR_NOT_SUPPORTED Then
+    Exit Function
+ End If
+
+ ReDim arrBuffer(0 To lngSize - 1) As Byte
+ lngRetVal = GetIfTable(arrBuffer(0), lngSize, 0)
+
+ If lngRetVal = ERROR_SUCCESS Then
+    CopyMemory lngRows, arrBuffer(0), 4
+
+    If lngRows >= 1 Then
+
+        For lngRow = 1 To lngRows
+            CopyMemory IfRowTable, arrBuffer(4 + (lngRow - 1) * Len(IfRowTable)), Len(IfRowTable)
+
+            For i = 0 To 25
+                Name = Name & Chr(IfRowTable.bDescr(i))
+
+                If IfRowTable.bDescr(i) = Chr(0) Then GoTo ok
+            Next
+
+ok:
+
+            If Not InStr(1, Name, "loop", vbTextCompare) > 0 Then
+
+                With IfRowTable
+                    m_lngBytesReceived = m_lngBytesReceived + .dwInOctets
+                    m_lngBytesSent = m_lngBytesSent + .dwOutOctets
+
+                End With 'IFROWTABLE
+
+                'Set IfRowTable = Nothing
+                InitInterfaces = True
+            End If
+
+            Name = vbNullString
+        Next
+
+        Erase arrBuffer
+    End If
+
+End If
+
+On Error GoTo 0
+Exit Function
+
+err:
+
+Call GErrorHandler(err.Number, err.Description, "CIPHelper:InitInterfaces:" & err.Source, True)
+End Function
+
+Private Sub GetBandwidth()  
+ Dim c As New CIpHelper, R As Double, s As Double  
+ Dim r1 As Double, c1 As Double, SendBytes1 As Double, ReceivedBytes1 As Double  
+
+    On Error GoTo errh:
+    c.InitInterfaces
+    If FirstTime Then
+        FirstTime = False
+        SendBytes = Format(c.BytesSent / 1024, ".0")
+        ReceivedBytes = Format(c.BytesReceived / 1024, ".0")
+        SendBytes1 = c.BytesSent
+        ReceivedBytes1 = c.BytesReceived
+    Else 'FIRSTTIME = FALSE/0
+        R = ((c.BytesReceived / 1024) - ReceivedBytes)
+        s = ((c.BytesSent / 1024) - SendBytes)
+    End If     
+
+
+    lblBandwidthUsed = R+s
+
+    OldR = R
+    OldS = s
+    On Error GoTo 0
+    Exit Sub
+ errh:
+
+    Call GErrorHandler(err.Number, err.Description, "ScreenBlock:GetBandwidth:" & err.Source, True)
+End Sub
+

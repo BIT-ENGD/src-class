@@ -1,0 +1,166 @@
+#include <stdio.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <stdarg.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <signal.h>
+
+void log_error(const char *fmt, ...) 
+{
+ va_list ap;
+ char buf[BUFSIZ] = {0};
+
+ va_start(ap, fmt);
+ vsnprintf(buf, BUFSIZ, fmt, ap);
+ fprintf(stderr, "ERROR: %s\n", buf);
+ va_end(ap);
+ return;
+}
+
+static int create_inet_socket()
+{
+    int fd;
+    struct sockaddr_in my_addr;
+    int yes = 1;
+
+    if ((fd=socket(PF_INET, SOCK_STREAM, 0))==-1) {
+ log_error("create_inet_socket:socket:%d:%s", errno, strerror(errno));
+ return -1;
+    }
+
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int))==-1) {
+ log_error("create_inet_socket:setsockopt:%d:%s", errno, strerror(errno));
+ return -1;
+    }
+
+    my_addr.sin_family = AF_INET;
+    my_addr.sin_port = htons(9998);
+    my_addr.sin_addr.s_addr = INADDR_ANY;
+    memset(&(my_addr.sin_zero), '0', 8);
+
+    if (bind(fd, (struct sockaddr*)&my_addr, sizeof(struct sockaddr_in))==-1) {
+ log_error("main:bind:%d:%s", errno, strerror(errno));
+ return -1;
+    }
+
+    if (listen(fd, 5)==-1) {
+ log_error("main:listen:%d:%s", errno, strerror(errno));
+ return -1;
+    }
+
+    return fd;
+}
+
+int myconnect()
+{
+    int fd;
+    char ch[1] = {'a'};
+    struct sockaddr_in sin;
+    fd_set wfds;
+    struct timeval tv;
+    struct hostent *he;
+    ssize_t nwritten;
+
+    if ((fd=socket(PF_INET, SOCK_STREAM, 0))==-1) {
+ log_error("rlog:socket failed:%d:%s", errno, strerror(errno));
+ return -1;
+    }
+
+    bzero(&sin, sizeof(sin));
+
+    if ((he=gethostbyname("localhost"))==NULL) {
+ log_error("rlog:gethostbyname failed:%d:%s", errno, strerror(errno));
+ return -1;
+    }
+
+    sin.sin_addr = *((struct in_addr*)he->h_addr);
+    sin.sin_port = htons(9998);
+    sin.sin_family = AF_INET;
+
+    if (connect(fd,(struct sockaddr *) &sin,sizeof(sin)) == -1) {
+ log_error("connect:%d:%s", errno, strerror(errno));
+ return 0;
+    }
+
+    nwritten = write(fd, &ch, 1);
+    if (nwritten==-1) {
+ log_error("write:%d:%s", errno, strerror(errno));
+    } else {
+ fprintf(stderr, "client : 1. written %ld\n", nwritten);
+    }
+    sleep(3);
+    nwritten = write(fd, &ch, 1);
+    if (nwritten==-1) {
+ log_error("write:%d:%s", errno, strerror(errno));
+    } else {
+ fprintf(stderr, "client : 2. written %ld\n", nwritten);
+    }
+    sleep(3);
+    nwritten = write(fd, &ch, 1);
+    if (nwritten==-1) {
+ log_error("write:%d:%s", errno, strerror(errno));
+    } else {
+ fprintf(stderr, "client : 3. written %ld\n", nwritten);
+    }
+    return 0;
+}
+
+void run_server()
+{
+    int fd;
+    int newfd;
+    char c[1];
+    ssize_t nread;
+    int status;
+    fprintf(stderr, "server : Running\n");
+    fd = create_inet_socket();
+    if (fd==-1) {
+ perror("create_inet_socket");
+    }
+
+    newfd = accept(fd, NULL, NULL);
+    fprintf(stderr, "server : accepted newfd %d\n", newfd);
+
+    nread = read(newfd, &c, 1);
+    if (nread==-1) {
+ log_error("read:%d:%s", errno, strerror(errno));
+    } else {
+ fprintf(stderr, "read returned %ld, closing socket\n", nread);
+    }
+    shutdown(newfd, SHUT_RDWR);
+    close(newfd);
+    wait(&status);
+    fprintf(stderr, "server : exit\n");
+}
+
+void run_client()
+{
+    fprintf(stderr, "client : running\n");
+    myconnect();
+    fprintf(stderr, "client : exit\n");
+    _exit(1);
+}
+
+int main()
+{
+    signal(SIGPIPE, SIG_IGN);
+    int pid = fork();
+    switch (pid) {
+    case 0:
+ run_client();
+ break;
+    case -1:
+ perror("fork");
+ break;
+    default:
+ run_server();
+ break;
+    }
+    return 0;
+}
+
+

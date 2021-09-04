@@ -1,0 +1,210 @@
+Exception Type:  EXC_BAD_ACCESS (SIGBUS)
+Exception Codes: KERN_PROTECTION_FAILURE at 0x00000000
+Crashed Thread:  5
+
+0   Gaia GPS                       0x000494e4 -[EXFJpeg scanImageData:] (EXFJpeg.m:372)
+1   Gaia GPS                       0x0000524c -[MyAppDelegate saveImage:] (MyAppDelegate.m:935)
+2   Foundation                     0x317fef32 0x317ad000 + 335666
+3   Foundation                     0x317ae09a 0x317ad000 + 4250
+4   libSystem.B.dylib              0x329c892a 0x329a4000 + 149802
+
+EXFJpeg* jpegScanner = [[EXFJpeg alloc] init]; 
+  [jpegScanner scanImageData:imgData];   
+
+  CLLocation *location = self.gps.lastReading ? self.gps.lastReading : [self.gps.locationManager location];
+  [location retain];
+
+
+  NSMutableArray* locArray = [self createLocArray:location.coordinate.latitude]; 
+  EXFGPSLoc* gpsLoc = [[EXFGPSLoc alloc] init]; 
+  [self populateGPS: gpsLoc :locArray]; 
+  [jpegScanner.exifMetaData addTagValue:gpsLoc forKey:[NSNumber numberWithInt:EXIF_GPSLatitude]; 
+  [gpsLoc release]; 
+
+  locArray = [self createLocArray:location.coordinate.longitude]; 
+  gpsLoc = [[EXFGPSLoc alloc] init]; 
+  [self populateGPS: gpsLoc :locArray];
+  [locArray release]; 
+
+  [jpegScanner.exifMetaData addTagValue:gpsLoc forKey:[NSNumber numberWithInt:EXIF_GPSLongitude]; 
+  [gpsLoc release]; 
+
+  NSString *ref = (location.coordinate.latitude <0.0)?ref = @"S": @"N";  
+  [jpegScanner.exifMetaData addTagValue: ref forKey:[NSNumber numberWithInt:EXIF_GPSLatitudeRef] ];
+  ref = (location.coordinate.longitude <0.0)? @"W": @"E";
+  [jpegScanner.exifMetaData addTagValue: ref forKey:[NSNumber numberWithInt:EXIF_GPSLongitudeRef]];
+  [jpegScanner.exifMetaData addTagValue: @"Apple" forKey:[NSNumber numberWithInt:EXIF_Make];
+  [jpegScanner.exifMetaData addTagValue: @"iPhone" forKey:NSNumber numberWithInt:EXIF_Model];  
+  [jpegScanner.exifMetaData addTagValue:[NSNumber numberWithInt:0] forKey:[NSNumber numberWithInt:EXIF_GPSAltitudeRef] ];
+
+  NSArray *arr = [[NSArray alloc] initWithObjects:[NSNumber numberWithInt:0], NSNumber numberWithInt:0], [NSNumber numberWithInt:2], [NSNumber numberWithInt:2], nil];
+  [jpegScanner.exifMetaData addTagValue: arr forKey:[NSNumber numberWithInt:EXIF_GPSVersion] ];
+  [arr release];
+
+  long numDenumArray[2]; 
+  long* arrPtr = numDenumArray; 
+  [EXFUtils convertRationalToFraction:&arrPtr: [NSNumber numberWithDouble:location.altitude]]; 
+  EXFraction *fract = [[EXFraction alloc] initWith:numDenumArray[0] :numDenumArray[1]]; 
+  [jpegScanner.exifMetaData addTagValue:fract forKey:[NSNumber 
+                                           numberWithInt:EXIF_GPSAltitude] ]; 
+
+  NSMutableData *newData = [[NSMutableData alloc] init];
+  [jpegScanner populateImageData:newData];
+  [jpegScanner release];
+
+-(void) scanImageData: (NSData*) jpegData {
+
+    Debug(@"Starting scan headers");
+
+    // pointer to the end of the EXIF Data and the start of the rest of the image
+    ByteArray* endOfEXFPtr;
+
+    imageLength = CFDataGetLength((CFDataRef)jpegData);
+
+   // CFRetain(&imageLength);
+
+    Debug(@"Length of image %i", imageLength);
+
+    imageBytePtr = (UInt8 *) CFDataGetBytePtr((CFDataRef)jpegData);
+    imageStartPtr = imageBytePtr;
+
+    // check if a valid jpeg file
+    UInt8 val = [self readNextbyte];
+
+    if (val != M_BEG){
+         Debug(@"Not a valid JPEG File");
+        return;
+    }
+
+    val = [self readNextbyte];
+
+    if (val != M_SOI){
+        Debug(@"Not a valid start of image JPEG File");
+        return;
+    }
+
+
+    // increment this to position after second byte
+    BOOL finished =FALSE;
+
+    while(!finished){
+        // increment the marker
+
+        val = [self nextMarker];
+
+        Debug(@"Got next marker %x at byte count %i", val, (imageBytePtr - imageStartPtr));
+
+        switch(val){
+                case M_SOF0:  /* Baseline */
+                case M_SOF1:  /* Extended sequential, Huffman */
+                case M_SOF2:  /* Progressive, Huffman */
+                case M_SOF3:  /* Lossless, Huffman */
+                case M_SOF5:  /* Differential sequential, Huffman */
+                case M_SOF6:  /* Differential progressive, Huffman */
+                case M_SOF7:  /* Differential lossless, Huffman */
+                case M_SOF9:  /* Extended sequential, arithmetic */
+                case M_SOF10:  /* Progressive, arithmetic */
+                case M_SOF11:  /* Lossless, arithmetic */
+                case M_SOF13:  /* Differential sequential, arithmetic */
+                case M_SOF14:  /* Differential progressive, arithmetic */
+                case M_SOF15:  /* Differential lossless, arithmetic */
+                    // Remember the kind of compression we saw
+                    {
+                      int compression = *imageBytePtr;   // <-----------LINE 372
+                        self.exifMetaData.compression = compression;
+
+                        // Get the intrinsic properties fo the image
+                        [self readImageInfo];
+                    }
+                    break;
+
+               case M_SOS:  /* stop before hitting compressed data */
+                Debug(@"Found SOS at %i", imageBytePtr - imageStartPtr);
+              //  [self skipVariable];
+
+                // Update the EXIF
+             //  updateExif();
+                    finished = TRUE;
+                    break;
+               case M_EOI:  /* in case it's a tables-only JPEG stream */
+                    Debug(@"End of Image reached at %i ", imageBytePtr - imageStartPtr);
+                    finished =TRUE;
+                    break;
+               case M_COM: 
+                    Debug(@"Got com  at %i",imageBytePtr - imageStartPtr);
+                    break;
+
+               case M_APP0:
+               case M_APP1:
+               case M_APP2:
+               case M_APP3:
+               case M_APP4:
+               case M_APP5:
+               case M_APP6:
+               case M_APP7:
+               case M_APP8:
+               case M_APP9:
+               case M_APP10:
+               case M_APP11:
+               case M_APP12:
+               case M_APP13:
+               case M_APP14:
+               case M_APP15:
+               // Some digital camera makers put useful textual
+               // information into APP1 and APP12 markers, so we print
+               // those out too when in -verbose mode.
+                {
+                    Debug(@"Found app %x at %i", val, imageBytePtr - imageStartPtr);
+
+
+                    NSData* commentData = [self processComment];
+                    NSNumber* key = [[NSNumber alloc]initWithInt:val];
+
+                    // add comments to dictionary
+                    [self.keyedHeaders  setObject:commentData forKey:key];
+                    [key release];
+                    // will always mark the end of the app_x block
+                    endOfEXFPtr = imageBytePtr;
+
+                    // we pass a pointer to the NSData pointer here
+                    if (val == M_APP0){
+                         Debug(@"Parsing JFIF APP_0 at %i", imageBytePtr - imageStartPtr);
+                        [self parseJfif:(CFDataRef*)&commentData];
+                    } else if (val == M_APP1){
+                        [self parseExif:(CFDataRef*)&commentData];
+                        Debug(@"Finished App1 at %i", endOfEXFPtr - imageStartPtr);
+                    } else if (val == M_APP2){
+                        Debug(@"Finished APP2 at %i", imageBytePtr - imageStartPtr);
+                    }else{
+                        Debug(@"Finished App &x at %i", val, imageBytePtr - imageStartPtr);
+                    }
+
+                }
+
+
+               break;
+            case M_SOI:
+                Debug(@"SOI encountered at %i",imageBytePtr - imageStartPtr);
+
+                break;
+               default:           // Anything else just gets skipped
+                Debug(@"NOt handled %x skipping at %i",val, imageBytePtr - imageStartPtr);
+                [self skipVariable];  // we assume it has a parameter count...
+               break;
+               }     
+
+        }
+
+
+
+    // add in the bytes after the exf block
+    NSData* theRemainingdata = [[NSData alloc] initWithBytes:endOfEXFPtr length:imageLength - (endOfEXFPtr - imageStartPtr)];
+    self.remainingData = theRemainingdata;
+    [theRemainingdata release];
+
+    endOfEXFPtr = NULL;
+    imageStartPtr = NULL;
+    imageBytePtr = NULL;
+
+}
+

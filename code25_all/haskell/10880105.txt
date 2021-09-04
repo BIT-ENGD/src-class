@@ -1,0 +1,50 @@
+module Handler.File where
+
+import Import
+
+import System.Random
+import System.FilePath
+import Control.Monad
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text.Encoding
+
+-- upload
+
+uploadDirectory :: FilePath -- FIXME: make this configurable
+uploadDirectory = "incoming"
+
+randomFileName :: IO FilePath
+randomFileName = do
+  fname'base <- replicateM 20 (randomRIO ('a','z'))
+  let fname = uploadDirectory </> fname'base <.> "bin"
+  return fname
+
+fileUploadForm :: Form (FileInfo, Textarea)
+fileUploadForm = renderDivs $ (,)
+    <$> fileAFormReq "Choose a file"
+    <*> areq textareaField "What's on the file?" Nothing
+
+getFileNewR :: Handler RepHtml
+getFileNewR = do
+  (formWidget, formEnctype) <- generateFormPost fileUploadForm
+  defaultLayout $ do
+       setTitle "Upload new file."
+       $(widgetFile "file-new")
+
+postFileNewR :: Handler RepHtml
+postFileNewR = do
+  user <- requireAuth
+  ((result, formWidget), formEnctype) <- runFormPost fileUploadForm
+  case result of
+    FormSuccess (fi,info) -> do
+                 fn <- liftIO randomFileName
+                 liftIO (LBS.writeFile fn (fileContent fi))
+                 let newFile = File (entityKey user) fn info (fileName fi) (fileContentType fi)
+                 fid <- runDB $ insert newFile
+                 redirect (FileViewR fid)
+    _ -> return ()
+
+  defaultLayout $ do
+       setTitle "Upload new file."
+       $(widgetFile "file-new")
+

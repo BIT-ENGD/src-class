@@ -1,0 +1,151 @@
+BOOL IESpy::GetHTMLText( CComPtr<IHTMLDocument2> spDoc, int tagNo, int schNo)
+{
+    USES_CONVERSION;
+
+    HRESULT hr = NULL;
+    BOOL res = TRUE;
+    BOOL doneSearch = FALSE;
+
+    // Extract the source code of the document
+    if (spDoc) {
+        IHTMLFramesCollection2* pFrames = NULL;
+        if (hr = (spDoc->get_frames(&pFrames)) == S_OK){  
+            LONG framesCount;
+            pFrames->get_length(&framesCount);
+            if (framesCount > 0) {
+                for( long i=0; i < framesCount; i++) {
+                    VARIANT varIdx; 
+                    varIdx.vt=VT_I4;
+                    VARIANT varResult;
+                    varIdx.lVal=i;
+                    VariantInit(&varResult);
+                    hr = pFrames->item(&varIdx, &varResult);
+                    if (SUCCEEDED(hr) && (varResult.vt == VT_DISPATCH)){
+                        CComQIPtr<IHTMLWindow2> pFrameWnd;
+                        CComQIPtr<IHTMLDocument2> pFrameDoc;
+                        CComBSTR description=NULL;
+                        pFrameWnd = varResult.pdispVal;
+                        VariantClear(&varResult);
+                        if (pFrameWnd == 0) {
+                            continue;
+                        }
+                        hr = pFrameWnd->get_document(&pFrameDoc);
+                        if (SUCCEEDED(hr) && pFrameDoc){
+                            GetHTMLText( pFrameDoc, tagNo, schNo );
+                            if ( m_foundText ) {
+                                break;
+                            }
+                        } else if ( hr == E_ACCESSDENIED ) {
+                            CComQIPtr<IWebBrowser2> spBrws = HtmlWindowToHtmlWebBrowser(pFrameWnd);
+                            if ( spBrws != NULL) {
+                                // Get the document object from the IWebBrowser2 object.
+                                CComQIPtr<IDispatch> spDisp;
+                                hr = spBrws->get_Document(&spDisp);
+                                if ( hr == S_OK ) {
+                                    pFrameDoc = spDisp;
+                                    if ( pFrameDoc ) {
+                                        GetHTMLText( pFrameDoc, tagNo, schNo );
+                                        if ( m_foundText ) {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            pFrames->Release();
+
+            if ( !m_foundText ) {
+                res = ReadSearchText(spDoc, tagNo, schNo );
+                doneSearch = TRUE;
+            }
+        }
+        if ( !m_foundText && doneSearch == FALSE ) {
+            res = ReadSearchText(spDoc, tagNo, schNo );
+        }
+    }
+
+    return res;
+}
+
+BOOL IESpy::ReadSearchText(CComPtr<IHTMLDocument2> spDoc, int tagNo, int schNo )
+{
+    USES_CONVERSION;
+
+    HRESULT hr = NULL;
+    BOOL found = FALSE;
+
+    IHTMLElementCollection *pAll;
+    hr = spDoc->get_all(&pAll); 
+    if (FAILED(hr))  {
+        return FALSE;
+    }
+    long items;
+    IDispatch *ppvDisp;
+    IHTMLElement *ppvElement;
+    pAll->get_length(&items);
+
+    std::wstring foundText = L"";
+    for ( long j = 0; j < items; j++ ) {
+        VARIANT index;
+        index.vt = VT_I4;
+        index.lVal = j;
+        hr = pAll->item( index, index, &ppvDisp );
+        if (FAILED(hr))  {
+            return FALSE;
+        }
+
+        if ( ppvDisp ) {
+            ppvDisp->QueryInterface(IID_IHTMLElement, (void **)&ppvElement);
+            if ( ppvElement ) { 
+                CComBSTR bstrTag;
+                ppvElement->get_tagName(&bstrTag);
+                wchar_t *wtemp = OLE2W(bstrTag);    
+                if ( wtemp ) {
+                    std::wstring text = ReadSearchText(ppvElement, wtemp, tagNo, schNo, found);
+                    if ( !text.empty() ) {
+                        if ( !foundText.empty() ) {
+                            foundText += concat_string;
+                        }
+                        foundText += text;
+                    }
+                    ppvElement->Release();
+                    if ( found ) {
+                        BOOL stop = FALSE;
+                        for ( size_t i = 0; i < m_tagName[tagNo]->size(); i++ ) {
+                            if ( wcscmp(m_tagName[tagNo]->at(i).c_str(), L"HTML") == 0 
+                                || wcscmp(m_tagName[tagNo]->at(i).c_str(), L"HEAD") == 0 
+                                || wcscmp(m_tagName[tagNo]->at(i).c_str(), L"BODY") == 0 ) {
+                                stop = TRUE;
+                                break;
+                            }
+                        }
+                        if ( stop ) {
+                            break;
+                        }
+                    }
+                } else {
+                    ppvElement->Release();
+                }
+            }
+        }
+    }
+
+    if ( !foundText.empty() ) {
+        if ( m_screenCompare ) {
+        //  long timeStamp = GetHPTimeStamp(spDoc);
+        //  m_temp_results[timeStamp] = foundText;
+            m_temp_results.push_back(foundText);
+        } else {
+            m_result += foundText;
+            m_result += L" ";
+            m_foundText = TRUE;
+        }
+    }
+
+    return TRUE;
+}
+

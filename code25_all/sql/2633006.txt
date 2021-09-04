@@ -1,0 +1,47 @@
+CREATE TABLE travel_time_locks (
+    id_key integer NOT NULL,
+    time_key timestamp without time zone NOT NULL,
+    UNIQUE (id_key, time_key) 
+);
+
+------------
+-- Function: mylock(integer, timestamp)
+DROP FUNCTION IF EXISTS mylock(integer, timestamp) CASCADE;
+-- Usage: SELECT mylock(1, '2010-03-28T19:45');
+-- function tries to do a global lock similar to pg_advisory_lock(key, key)
+CREATE OR REPLACE FUNCTION mylock(id_input integer, time_input timestamp)
+  RETURNS void AS
+$BODY$
+DECLARE
+    rows int;
+BEGIN
+    LOOP
+
+        BEGIN
+            -- active waiting here !!!! :(
+            INSERT INTO travel_time_locks (id_key, time_key) VALUES (id_input, time_input);
+        EXCEPTION WHEN unique_violation THEN
+            CONTINUE;
+        END;
+        EXIT;
+    END LOOP;
+END;
+$BODY$ LANGUAGE 'plpgsql' VOLATILE
+    COST 1;
+
+------------
+-- Function: myunlock(integer, timestamp)
+DROP FUNCTION IF EXISTS myunlock(integer, timestamp) CASCADE;
+-- Usage: SELECT myunlock(1, '2010-03-28T19:45');
+-- function tries to do a global unlock similar to pg_advisory_unlock(key, key)
+CREATE OR REPLACE FUNCTION myunlock(id_input integer, time_input timestamp)
+  RETURNS integer AS
+$BODY$
+DECLARE
+BEGIN
+    DELETE FROM ONLY travel_time_locks WHERE id_key=id_input AND time_key=time_input;
+    RETURN 1;
+END;
+$BODY$ LANGUAGE 'plpgsql' VOLATILE
+    COST 1;
+

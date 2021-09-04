@@ -1,0 +1,472 @@
+----------------
+--mainScreen.lua
+----------------
+
+--
+--mainScreen.lua
+--
+--The main screen for the game
+--set the background back to black
+module(...,package.seeall)
+local director = require("director")
+local localGroup
+
+function new()
+    localGroup = display.newGroup()
+    local background = display.newRect(0,0,900,500)
+    background:setFillColor(0,0,0)
+    localGroup:insert(background)
+    --we need a world
+    local ourWorld = require("world")
+    localGroup:insert(ourWorld)
+    --need multitouch for the joystick
+    system.activate( "multitouch" )
+    --load joystick class
+    local joystickClass = require("joystick")
+
+    -- Add A New Joystick
+    joystick = joystickClass.newJoystick{
+        outerImage = "joystick_bottom.png",     -- Outer Image - Circular - Leave Empty For Default Vector
+        outerAlpha = 0.7,                       -- Outer Alpha ( 0 - 1 )
+        innerImage = "joystick_middle.png",     -- Inner Image - Circular - Leave Empty For Default Vector
+        innerAlpha = 1.0,                       -- Inner Alpha ( 0 - 1 )
+        position_x = 630,                       -- X Position Top - From Left Of Screen - Positions Outer Image
+        position_y = 340,                       -- Y Position - From Left Of Screen - Positions Outer Image
+        onMove = move                           -- Move Event
+    }
+
+    -- Print Output To Terminal
+    local function move( event )
+        if(event.joyX~=false and math.abs(event.joyX)>0.2) then
+            ourWorld.moveleft(event.joyX*10)
+        end
+        if(event.joyY~=false and math.abs(event.joyY)>0.2) then
+            if(event.joyY>0) then
+                if(ourWorld.abletogodown()==true) then
+                    ourWorld.moveup(event.joyY*10)
+                end
+            elseif(event.joyY<0) then
+                ourWorld.moveup(event.joyY*10)
+            end
+        end
+        --print( event.joyX , event.joyY , event.joyAngle , event.joyVector )
+    end
+    return localGroup
+end
+
+-------------
+--world.lua--
+-------------
+--thanks to p120ph37
+--http://developer.anscamobile.com/forum/2011/01/29/object-culling-render-process-when-not-content-area#comment-26658
+--
+--pull in our constant variables
+module(..., package.seeall)
+local const= require("constants")
+require("tile")
+require("sprite")
+require("entity")
+--need a player
+player = entity.new(0,0,100,100,5)
+player.settex(display.newImage("player.png",0,0))
+--put the constants into local vairables
+local TILE_WIDTH,TILE_HEIGHT,DEPTHX,DEPTHY,RUBYLIMIT,IRONLIMIT,SCREENWIDTH,SCREENHEIGHT = unpack(const,0,table.getn(const))
+--define the elements
+local IRON=0
+local BRONZE=1
+local COBALT=2
+local STEEL=3
+local RHODITE=4
+local GOLD=5
+local PLATNIUM=6
+local IRIDIUM=7
+local OPAL=8
+local AMETHYST=9
+local EMERALD=10
+local RUBY=11
+local SAPPHIRE=12
+local TOPAZ=13
+local DIAMOND=14
+local OBSIDIAN=15
+local DIRT=16
+local SPACE=17
+--tiles are 64x64 in 576x1216 image for 9x19=171 tiles
+local map = display.newGroup()
+local center = display.newGroup()
+player_offsetx=player.getx()
+player_offsety=player.gety()+60
+print(player.gettex())
+center:insert(player.gettex())
+map.xTiles = 200
+map.yTiles = 400
+map.tiles = {} -- array to hold tile ids without actually creating display objects yet
+map.tiles.health = {}
+map.tileWidth = 40
+map.tileHeight = 40
+map.tileSheet = sprite.newSpriteSheet("tiles.png", map.tileWidth, map.tileHeight)
+map.tileSet = sprite.newSpriteSet(map.tileSheet, 1, 18)
+map.xTilesInView = math.ceil((display.viewableContentWidth - 1) / map.tileWidth) + 2
+map.yTilesInView = math.ceil((display.viewableContentHeight - 1) / map.tileHeight) + 2
+map.xScroll = 0
+map.yScroll = 0
+
+--populate the group with just enough objects to cover the entire screen
+for y = 0, map.yTilesInView - 1 do
+        for x = 0, map.xTilesInView - 1 do
+                local tile = sprite.newSprite(map.tileSet)
+                tile:setReferencePoint(display.TopLeftReferencePoint)
+                tile.x = x * map.tileWidth
+                tile.y = y * map.tileHeight
+                tile.isVisible = false -- everything starts hidden
+                map:insert(tile)
+        end
+end
+
+-- iterate over the visible tiles with a callback
+function map.forTilesInView(f)
+        for y = 0, map.yTilesInView - 1 do
+                for x = 0, map.xTilesInView - 1 do
+                  local tx = math.floor(map.xScroll / map.tileWidth) + x;
+                  local ty = math.floor(map.yScroll / map.tileHeight) + y;
+                        f(map[map.xTilesInView * y + x + 1], tx, ty)
+                end
+        end
+end
+
+-- align and update the display object grid based on the current scroll position
+function map.updateDisplay()
+  -- align the display object grid
+  map.x = -(map.xScroll % map.tileWidth)
+  map.y = -(map.yScroll % map.tileHeight)
+
+  -- update the tile contents
+  map.forTilesInView(function(t, x, y)
+    if(x >= 0 and x < map.xTiles and y >= 0 and y < map.yTiles) then
+                        -- tile is inside the map
+                        t.isVisible = true
+                        t.currentFrame = map.tiles[y * map.xTiles + x + 1]
+                else
+                        -- tile is off the edge of the map
+                        t.isVisible = false
+                end
+        end)
+end
+
+--init random function
+math.randomseed(os.time())
+math.random()        --bug in first use
+
+function maybe(x)
+    if(x<0 or x>100) then
+        return false
+    else
+        if(x/5>=math.random(1,100)) then
+            return true
+        end
+        return false
+    end
+end
+
+function distribute(y)
+    --this is for the int return
+    local rtn=DIRT
+    --start the cascade
+    if y<10 then
+        rtn = SPACE
+    elseif y<30 then
+        --3% chance of iron
+        if maybe(8) then
+            rtn=IRON
+        end
+        if maybe(5) then
+            rtn=OPAL
+        end
+    elseif y<60 then
+        if maybe(10) then
+            rtn=IRON
+        end
+        if maybe(1) then
+            rtn=OPAL
+        end
+        if maybe(1) then
+            rtn=BRONZE
+        end
+    elseif y<90 then
+        if maybe(10) then
+            rtn=IRON
+        end
+        if maybe(10) then
+            rtn=BRONZE
+        end
+        if maybe(5) then
+            rtn=COBALT
+        end
+        if maybe(3) then
+            rtn=OPAL
+        end
+    elseif y<120 then
+        if maybe(20) then
+            rtn=IRON
+        end
+        if maybe(20) then
+            rtn=BRONZE
+        end
+        if maybe(10) then
+            rtn=COBALT
+        end
+        if maybe(5) then
+            rtn=OPAL
+        end
+        if maybe(1) then
+            rtn=AMETHYST
+        end
+    elseif y<150 then
+        if maybe(25) then
+            rtn=IRON
+        end
+        if maybe(15) then
+            rtn=COBALT
+        end
+        if maybe(8) then
+            rtn=OPAL
+        end
+        if maybe(5) then
+            rtn=AMETHYST
+        end
+        if maybe(3) then
+            rtn=STEEL
+        end
+    elseif y<180 then
+        if maybe(20) then
+            rtn=COBALT
+        end
+        if maybe(10) then
+            rtn=STEEL
+        end
+        if maybe(8) then
+            rtn=AMETHYST
+        end
+        if maybe(1) then
+            rtn=EMERALD
+        end
+        if maybe(1) then
+            rtn=RUBY
+        end
+    elseif y<210 then
+        if maybe(20) then
+            rtn=STEEL
+        end
+        if maybe(5) then
+            rtn=EMERALD
+        end
+        if maybe(5) then
+            rtn=RUBY
+        end
+        if maybe(5) then
+            rtn=RHODITE
+        end
+        if maybe(1) then
+            rtn=SAPPHIRE
+        end
+    elseif y<240 then
+        if maybe(15) then
+            rtn=RHODITE
+        end
+        if maybe(6) then
+            rtn=RUBY
+        end
+        if maybe(5) then
+            rtn=SAPPHIRE
+        end
+        if maybe(2) then
+            rtn=PLATNIUM
+        end
+        if maybe(1) then
+            rtn=GOLD
+        end
+    elseif y<270 then
+        if maybe(12) then
+            rtn=GOLD
+        end
+        if maybe(10) then
+            rtn=PLATNIUM
+        end
+        if maybe(1) then
+            rtn=TOPAZ
+        end
+    elseif y<300 then
+        if maybe(20) then
+            rtn=GOLD
+        end
+        if maybe(15) then
+            rtn=PLATNIUM
+        end
+        if maybe(5) then
+            rtn=TOPAZ
+        end
+        if maybe(1) then
+            rtn=DIAMOND
+        end
+    elseif y<330 then
+        if maybe(10) then
+            rtn=GOLD
+        end
+        if maybe(10) then
+            rtn=PLATNIUM
+        end
+        if maybe(8) then
+            rtn=IRIDIUM
+        end
+        if maybe(5) then
+            rtn=DIAMOND
+        end
+        if maybe(2) then
+            rtn=OBSIDIAN
+        end
+    elseif y<360 then
+        if maybe(15) then
+            rtn=DIAMOND
+        end
+        if maybe(15) then
+            rtn=PLATNIUM
+        end
+        if maybe(10) then
+            rtn=IRIDIUM
+        end
+        if maybe(5) then
+            rtn=OBSIDIAN
+        end
+    else
+        if maybe(25) then
+            rtn=DIAMOND
+        end
+        if maybe(25) then
+            rtn=PLATNIUM
+        end
+        if maybe(15) then
+            rtn=IRIDIUM
+        end
+        if maybe(8) then
+            rtn=OBSIDIAN
+        end
+    end
+    --give back that number
+    return rtn
+end
+
+local theNumber
+local angles = {360,90,180,270}
+
+--randomly populate tile ids (normally this data would be loaded from a file)
+for y = 0, map.yTiles - 1 do
+        for x = 0, map.xTiles - 1 do
+          theNumber = distribute(y)+1
+          map.tiles[#map.tiles + 1] = theNumber
+          --map.tiles[#map.tiles + 1].tile.rotation = angles[math.random(4)]
+
+        end
+end
+
+-- center the map and display the visible tiles
+map.xScroll = 0
+map.yScroll = 0
+map.updateDisplay()
+
+--move tile map
+local prevX, prevY
+function drag(event)
+    if event.phase == "began" then
+            prevX = event.x
+            prevY = event.y
+    elseif event.phase == "moved" then
+            map.xScroll = map.xScroll + prevX - event.x
+            map.yScroll = map.yScroll + prevY - event.y
+            map.updateDisplay()
+            prevX = event.x
+            prevY = event.y
+    end
+end
+--map:addEventListener("touch", drag)
+
+function moveup(x)
+    --if(map.tiles[math.floor(center.y+x/TILE_HEIGHT) * map.xTiles + math.floor(center.x/TILE_WIDTH)]==SPACE+1) then
+    if(center.y>SCREENHEIGHT/2) then
+        --player.sety(player.gety()+x)
+        map.yScroll = map.yScroll + x
+    elseif(center.y<SCREENHEIGHT/2) then
+        center.y=center.y+x
+    elseif(center.y>map.yTiles*map.tileHeight-(SCREENHEIGHT/2)) then
+        center.y=SCREENHEIGHT/2+x
+    end
+    player_offsety = player_offsety + x
+    --lets check if our tile is dirt
+    if(tileon() == DIRT+1) then
+        if(map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1].health > 0) then
+            map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1].health = map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1].health - 1
+        else
+            map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1] = SPACE+1
+        end
+    end
+    --else
+        --print(map.tiles[math.floor(center.y/TILE_HEIGHT) * map.xTiles + math.floor(center.x/TILE_WIDTH)])
+    --end
+    map.updateDisplay()
+end
+
+function moveleft(x)
+    if(center.x>SCREENWIDTH/2) then
+        --player.setx(player.getx()+x)
+        map.xScroll = map.xScroll + x
+    elseif(center.x<SCREENWIDTH/2) then
+        center.x=center.x+x
+    elseif(center.x>map.xTiles*map.tileWidth-(SCREENWIDTH/2)) then
+        center.x =SCREENWIDTH/2+x
+    end
+    player_offsetx = player_offsetx + x
+    map.updateDisplay()
+end
+
+function abletogodown()
+    --this should take some time
+    if(tileon()==DIRT+1) then
+        map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1]=SPACE+1
+        return true
+    end
+    return false
+end
+
+function tick()
+    --make the player drop if he isn't on dirt.
+    if(tileon()==SPACE+1) then
+        if(center.y<SCREENWIDTH/2) then
+            center.y = center.y + 10
+        else
+            map.yScroll=map.yScroll+10
+        end
+        player_offsety = player_offsety + 10
+    end
+    --if the player is digging down, account for it.
+    --tileahead()
+end
+Runtime:addEventListener("enterFrame",tick)
+
+--this function will get the tile the player is on
+function tileon()
+    return map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1]
+end
+
+function tileahead()
+    print(map.tiles[math.floor(player_offsety/TILE_HEIGHT) * map.xTiles + math.floor(player_offsetx/TILE_WIDTH)+1])
+end
+function tilebehind()
+end
+
+--[[ printing thing
+for i=0,map.xTiles do
+    for j=0,map.yTiles do
+        print(map.tiles[j*map.xTiles+i])
+    end
+    print("\n")
+end
+--]]
+

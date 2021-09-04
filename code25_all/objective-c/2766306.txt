@@ -1,0 +1,100 @@
+#import "JSONUtils.h"
+
+
+@implementation JSONUtils
+
+- (NSDictionary*)dataStructureFromManagedObject:(NSManagedObject *)managedObject {
+
+    NSDictionary *attributesByName = [[managedObject entity] attributesByName];
+    NSDictionary *relationshipsByName = [[managedObject entity] relationshipsByName];
+
+    //getting the values correspoinding to the attributes collected in attributesByName
+    NSMutableDictionary *valuesDictionary = [[managedObject dictionaryWithValuesForKeys:[attributesByName allKeys]] mutableCopy];
+
+    //sets the name for the entity being encoded to JSON
+    [valuesDictionary setObject:[[managedObject entity] name] forKey:@"ManagedObjectName"];
+
+    NSLog(@"+++++++++++++++++> before the for loop");
+    //looks at each relationship for the given managed object
+    for (NSString *relationshipName in [relationshipsByName allKeys]) {
+        NSLog(@"The relationship name = %@",relationshipName);
+        NSRelationshipDescription *description = [relationshipsByName objectForKey:relationshipName];
+
+        if (![description isToMany]) {
+            NSLog(@"The relationship is NOT TO MANY!");
+            [valuesDictionary setObject:[self dataStructureFromManagedObject:[managedObject valueForKey:relationshipName]] forKey:relationshipName];
+            continue;
+        }
+        NSSet *relationshipObjects = [managedObject valueForKey:relationshipName];
+        NSMutableArray *relationshipArray = [[NSMutableArray alloc] init];
+        for (NSManagedObject *relationshipObject in relationshipObjects) {
+            [relationshipArray addObject:[self dataStructureFromManagedObject:relationshipObject]];
+        }
+        [valuesDictionary setObject:relationshipArray forKey:relationshipName];
+    }
+    return [valuesDictionary autorelease];
+}
+
+- (NSArray*)dataStructuresFromManagedObjects:(NSArray*)managedObjects {
+
+    NSMutableArray *dataArray = [[NSArray alloc] init];
+    for (NSManagedObject *managedObject in managedObjects) {
+        [dataArray addObject:[self dataStructureFromManagedObject:managedObject]];
+    }
+    return [dataArray autorelease];
+}
+
+
+//method to call for obtaining JSON structure - i.e. public interface to this class
+- (NSString*)jsonStructureFromManagedObjects:(NSArray*)managedObjects {
+    NSLog(@"-------------> just before running the recursive method");
+    NSArray *objectsArray = [self dataStructuresFromManagedObjects:managedObjects];
+    NSLog(@"-------------> just before running the serialiser");
+    NSString *jsonString = [[CJSONSerializer serializer] serializeArray:objectsArray];
+    return jsonString;
+}
+
+- (NSManagedObject*)managedObjectFromStructure:(NSDictionary*)structureDictionary withManagedObjectContext:(NSManagedObjectContext*)moc {
+
+    NSString *objectName = [structureDictionary objectForKey:@"ManagedObjectName"];
+    NSManagedObject *managedObject = [NSEntityDescription insertNewObjectForEntityForName:objectName inManagedObjectContext:moc];
+    [managedObject setValuesForKeysWithDictionary:structureDictionary];
+
+    for (NSString *relationshipName in [[[managedObject entity] relationshipsByName] allKeys]) {
+        NSRelationshipDescription *description = [[[managedObject entity]relationshipsByName] objectForKey:relationshipName];
+        if (![description isToMany]) {
+            NSDictionary *childStructureDictionary = [structureDictionary objectForKey:relationshipName];
+            NSManagedObject *childObject = [self managedObjectFromStructure:childStructureDictionary withManagedObjectContext:moc];
+            [managedObject setValue:childObject forKey:relationshipName];
+            continue;
+        }
+        NSMutableSet *relationshipSet = [managedObject mutableSetValueForKey:relationshipName];
+        NSArray *relationshipArray = [structureDictionary objectForKey:relationshipName];
+        for (NSDictionary *childStructureDictionary in relationshipArray) {
+            NSManagedObject *childObject = [self managedObjectFromStructure:childStructureDictionary withManagedObjectContext:moc];
+            [relationshipSet addObject:childObject];
+        }
+    }
+    return managedObject;
+}
+
+//method to call for obtaining managed objects from JSON structure - i.e. public interface to this class
+- (NSArray*)managedObjectsFromJSONStructure:(NSString *)json withManagedObjectContext:(NSManagedObjectContext*)moc {
+
+    NSError *error = nil;
+    NSArray *structureArray = [[CJSONDeserializer deserializer] 
+                               deserializeAsArray:[json dataUsingEncoding:NSUTF32BigEndianStringEncoding] 
+                               error:&error];
+
+    NSAssert2(error == nil, @"Failed to deserialize\n%@\n%@", [error localizedDescription], json);
+    NSMutableArray *objectArray = [[NSMutableArray alloc] init];
+
+    for (NSDictionary *structureDictionary in structureArray) {
+        [objectArray addObject:[self managedObjectFromStructure:structureDictionary withManagedObjectContext:moc]];
+    }
+    return [objectArray autorelease];
+}
+
+
+@end
+

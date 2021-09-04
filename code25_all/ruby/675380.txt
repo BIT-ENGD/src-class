@@ -1,0 +1,42 @@
+rails encryption-test
+cd encryption-test
+
+script/generate scaffold user name:string password:binary
+
+development:
+    adapter: mysql
+    host: localhost
+    database: test
+    user: <<user>>
+    password: <<password>>
+
+rake db:migrate
+
+script/console
+Loading development environment (Rails 2.2.2)
+>> User.create(:name => "John Doe")
+>> key = "82pjd12398JKBSDIGUSisahdoahOUASDHsdapdjqwjeASIduAsdh078asdASD087asdADSsdjhA7809asdajhADSs"
+>> ActiveRecord::Base.connection.execute("UPDATE users SET password = AES_ENCRYPT('password', '#{key}') WHERE name='John Doe'")
+
+>> loaded_user = User.find_by_sql("SELECT AES_DECRYPT(password, '#{key}') AS password FROM users WHERE id=1").first
+>> loaded_user['password']
+=> "password"
+
+cipher = OpenSSL::Cipher::Cipher.new("AES-128-ECB") 
+cipher.padding = 0
+cipher.key = key
+cipher.decrypt 
+
+user = User.find(1)
+cipher.update(user.password) << cipher.final #=> "########gf####\027\227"
+
+desired_length = 16 * ((key.length / 16) + 1)
+padded_key = key + "\0" * (desired_length - key.length)
+
+cipher = OpenSSL::Cipher::Cipher.new("AES-128-ECB") 
+cipher.key = key
+cipher.decrypt 
+
+user = User.find(1)
+cipher.update(user.password) << cipher.final #=> ""|\e\261\205:\032s\273\242\030\261\272P##"
+

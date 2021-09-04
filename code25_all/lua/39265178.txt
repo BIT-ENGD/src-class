@@ -1,0 +1,115 @@
+luvit version: 2.11.5
+luvi version: v2.7.4
+libuv version: 1.9.1
+rex version: 8.37 2015-04-28
+winsvc version: 1.0.0
+ssl version: OpenSSL 1.0.2g  1 Mar 2016, lua-openssl 0.5.1
+
+local function sleep(ms)
+  local thread = coroutine.running()
+  setTimeout(ms, function ()
+    coroutine.resume(thread)
+  end)
+  coroutine.yield()
+end
+
+Uncaught exception:
+...: attempt to yield across C-call boundary
+stack traceback:
+        [C]: in function 'yield'
+        ...: in function 'sleep'
+        ...: in function 'fn'
+        [string "bundle:deps/require.lua"]:309: in function 'require'
+        [string "bundle:main.lua"]:118: in function 'main'
+        [string "bundle:init.lua"]:49: in function <[string "bundle:init.lua"]:47>
+        [C]: in function 'xpcall'
+        [string "bundle:init.lua"]:47: in function 'fn'
+        [string "bundle:deps/require.lua"]:309: in function <[string "bundle:deps/require.lua"]:265>
+
+local thread = require('thread')
+local http = require('http')
+local fs = require('fs')
+local json = require('json')
+
+
+local function blockCall(fn)
+
+    -- Function to read result from Disk
+    local function retrieveResult()
+        local jsonFile
+        local jsonResult
+        if (pcall(function () jsonFile = fs.readFileSync('temp.json') end)) then
+            pcall(function () jsonResult = json.parse(jsonFile) end)
+
+            fs.unlink('temp.json', function (err)
+                if (err) then return end
+            end)
+
+            return jsonResult
+        end
+    end
+
+    local blockThread = thread.start(function()
+        local thread = require('thread')
+        local fs = require('fs')
+        local json = require('json')
+
+        -- Function to write the result on Disk
+        local function rememberResult(result)
+            fs.open('temp.json', 'w+', '0644', function (err, fd)
+                if (err) then return end
+                    fs.write(fd, 0, json.stringify(result), function (err, bytes_written)
+                        if (err) then return end
+                    fs.close(fd, function (err)
+                        if (err) then return end
+                    end)
+                end)
+            end)
+        end
+
+        -- p(thread.self(), os.date())
+
+        -- I have to hard code the following function inside thread, because I cannot pass function as parameter
+        local http = require('http')
+
+        local result = {}
+
+        local options = {
+            host = 'httpbin.org',
+            port = 80,
+            path = '/'
+        }
+
+        local req = http.request(options)
+        req:done()
+
+        req:on('response', function(res) 
+            result.statuscode = res.statusCode
+            result.statusmessage = res.statusMessage
+            result.headers = res.headers
+
+            res:on('data', function(chunk)
+                result.content = chunk
+            end)
+        end)
+
+        req.socket:on('end', function()
+            -- Write result to a file, when you get full result
+            rememberResult(result)
+        end)
+
+
+    end)
+    -- I am locking main thread with join
+    thread.self().join(blockThread)
+
+    return retrieveResult()
+end
+
+
+
+p('Before block')
+local response = blockCall()
+p('Block function response', response)
+p('After block')
+

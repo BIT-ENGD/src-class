@@ -1,0 +1,203 @@
+
+#include <jni.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "sqlite3.h"
+#include "dynamicArray.h"
+
+void throwSqliteException(JNIEnv * env, const char * message) {
+    jclass ex = (*env)->FindClass(env, "sqliteNative/SqliteException");
+    (*env)->ThrowNew(env, ex, message);
+}
+
+JNIEXPORT jstring JNICALL Java_sqliteNative_Sqlite_getCVersion(JNIEnv * env, jclass obj) {
+    return (*env)->NewStringUTF(env, "1.0.3");
+}
+
+JNIEXPORT jobjectArray JNICALL Java_sqliteNative_Sqlite_query(JNIEnv * env, jobject obj, jstring database, jstring sql) {
+    const char * jDatabase = (*env)->GetStringUTFChars(env, database, NULL);
+    if (jDatabase == NULL)
+        return NULL;
+
+    const char * jSql = (*env)->GetStringUTFChars(env, sql, NULL);
+    if (jSql == NULL)
+        return NULL;
+
+    sqlite3 * db;
+    sqlite3_stmt * stmt;
+    const char * leftOver = 0;
+    jobjectArray table = NULL;
+
+    //printf("opening\n");
+    if (sqlite3_open(jDatabase, &db)) {
+        throwSqliteException(env, sqlite3_errmsg(db));
+    } else {
+        //printf("open ok\n");
+        const char * sqlExec = jSql;
+
+        // run queries for multiple sqls
+        // until left over is empty
+        do {
+            //printf("preparing\n");
+            int rc = sqlite3_prepare_v2(db, sqlExec, -1, &stmt, &leftOver);
+            //printf("prepare ok\n");
+            if (rc) {
+                throwSqliteException(env, sqlite3_errmsg(db));
+                break;
+            }
+
+            // change executing sql to next left over
+            sqlExec = leftOver;
+            //printf("getting coll count\n");
+            int cols = sqlite3_column_count(stmt);
+            //printf("coll count ok\n");
+            //printf("initing dynamic array\n");
+            dynamicArray * da = dynamicArray_init();
+            //printf("init ok\n");
+            jobjectArray row;
+
+            while (1) {
+                //printf("stepping\n");
+                int retval = sqlite3_step(stmt);
+                //printf("step ok\n");
+
+                if (retval == SQLITE_ROW) {
+                    // only return data if it is a last executing sql
+                    if (strlen(leftOver)) {
+                        break;
+                    }
+
+                    //printf("creating row object array with size %d\n", cols);
+                    row = (*env)->NewObjectArray(env, cols, (*env)->FindClass(env, "java/lang/String"), 0);
+                    //printf("create ok\n");
+                    jobjectArray * rowCopy = calloc(1, sizeof (row));
+                    *rowCopy = row;
+
+                    // add row to dynamic array
+                    //printf("adding to da\n");
+                    dynamicArray_add(da, rowCopy);
+                    //printf("add ok\n");
+
+                    int col;
+                    for (col = 0; col < cols; col++) {
+                        //printf("getting col value\n");
+                        const char * val = (const char*) sqlite3_column_text(stmt, col);
+                        //printf("value ok\n");
+
+                        jstring valStr;
+                        if (val == NULL) {
+                            //printf("value is null\n");
+                            //free((void*) val);
+                            //printf("creating value string \"\"\n");
+                            valStr = (*env)->NewStringUTF(env, "");
+                            //printf("create ok\n");
+                        } else {
+                            //printf("creating value string from %s\n", val);
+                            valStr = (*env)->NewStringUTF(env, val);
+                            //printf("create ok\n");
+                        }
+
+                        //printf("adding value to row object array %d/%d\n", col + 1, cols);
+                        (*env)->SetObjectArrayElement(env, row, col, valStr);
+                        //printf("add ok\n");
+                    }
+                } else if (retval == SQLITE_DONE) {
+                    break;
+                } else {
+                    throwSqliteException(env, sqlite3_errmsg(db));
+                    break;
+                }
+            }
+
+            // copy data from dynamic array to java's String[][]
+            if (da->elements > 0) {
+                //printf("creating object array table\n");
+                table = (*env)->NewObjectArray(env, da->elements, (*env)->GetObjectClass(env, row), 0);
+                //printf("create ok\n");
+                int i = 0;
+                for (; i < da->elements; i++) {
+                    //printf("getting object from da\n");
+                    jobjectArray item = *(jobjectArray *) da->array[i];
+                    //printf("get ok\n");
+                    //printf("adding object row to table\n");
+                    (*env)->SetObjectArrayElement(env, table, i, item);
+                    //free(da->array[i]);
+                    //printf("add ok\n");
+                }
+            }
+
+            // free memory
+            //printf("freeing da memory\n");
+            dynamicArray_free(da);
+            //printf("free ok\n");
+        } while (strlen(leftOver));
+    }
+
+    // free memory
+    //printf("closing database\n");
+    //sqlite3_free(stmt);
+    sqlite3_close(db);
+    //printf("close ok\n");
+    //printf("releasing jdatabase\n");
+    (*env)->ReleaseStringUTFChars(env, database, jDatabase);
+    //printf("release ok\n");
+    //printf("releasing jsql\n");
+    (*env)->ReleaseStringUTFChars(env, sql, jSql);
+    //printf("release ok\n");
+
+    return table;
+}
+
+#include "dynamicArray.h"
+#include <stdlib.h>
+
+void dynamicArray_add(dynamicArray * da, void * item) {
+    if (da->elements == da->allocated) {
+        if (da->allocated == 0)
+            da->allocated = 3;
+        else
+            da->allocated *= 2;
+
+        void *_tmp = realloc(da->array, (da->allocated * sizeof (item)));
+        if (!_tmp) {
+            return;
+        }
+
+        da->array = (void**) _tmp;
+    }
+
+    da->array[da->elements] = item;
+    da->elements++;
+}
+
+dynamicArray * dynamicArray_init() {
+    dynamicArray * da = calloc(1, sizeof (dynamicArray));
+    return da;
+}
+
+void dynamicArray_free(dynamicArray * da) {
+    free(da->array);
+    free(da);
+}
+
+public void testQueryLoop() throws Exception {
+    Sqlite.query("testna.db", "drop table if exists user");
+    Sqlite.query("testna.db", "create table user (username, password)");
+    Sqlite.query("testna.db", "insert into user values ('u1', 'a')");
+    Sqlite.query("testna.db", "insert into user values('u2', 'b1');");
+
+    for (int i = 0; i < 1010; i++) {
+        if (i % 500 == 0) {
+            System.out.println("gcing");
+            Runtime.getRuntime().gc();
+        }
+
+        System.out.println(i);
+        String[][] r = Sqlite.query("testna.db", "select * from user");
+
+        assertEquals(2, r.length);
+        assertEquals("u1", r[0][0]);
+        assertEquals("b1", r[1][1]);
+    }
+}

@@ -1,0 +1,54 @@
+ALTER TRIGGER [dbo].[UpdateUniqueSubjectAfterInsertUpdate]
+   ON  [dbo].[Contents]
+   AFTER INSERT,UPDATE
+AS
+BEGIN
+
+-- Grab the Id of the row just inserted/updated
+DECLARE @Id INT
+
+SELECT @Id = Id
+FROM INSERTED
+
+END
+
+INSERT INTO [dbo].[Contents]
+SELECT Id, a, b, c, d, YouDontKnowMe
+FROM [dbo].[CrapTable]
+
+BEGIN
+    SET NOCOUNT ON
+
+    DECLARE @ContentId INTEGER,
+        @ContentTypeId TINYINT,
+        @UniqueSubject NVARCHAR(200),
+        @NumberFound INTEGER
+
+    -- Grab the Id. Also, convert the subject to a (first pass, untested)
+    -- unique subject.
+    -- NOTE: ToUriCleanText just replaces bad uri chars with a ''. 
+    --   eg. an '#' -> ''
+    SELECT @ContentId = ContentId, @ContentTypeId = ContentTypeId, 
+        @UniqueSubject = [dbo].[ToUriCleanText]([Subject])
+    FROM INSERTED
+
+    -- Find out how many items we have, for these two keys.
+    SELECT @NumberFound = COUNT(ContentId)
+    FROM [dbo].[Contents]
+    WHERE ContentId = @ContentId
+        AND UniqueSubject = @UniqueSubject
+
+    -- If we have at least one identical subject, then we need to make it 
+    -- unique by appending the current found number.
+    -- Eg. The first instance has no number. 
+    --     Second instance has subject + '1',
+    --     Third instance has subject + '2', etc...
+    IF @NumberFound > 0
+        SET @UniqueSubject = @UniqueSubject + CAST(@NumberFound AS NVARCHAR(10))
+
+    -- Now save this change.
+    UPDATE [dbo].[Contents]
+    SET UniqueSubject = @UniqueSubject
+    WHERE ContentId = @ContentId
+END
+

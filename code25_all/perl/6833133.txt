@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Storable;
+
+# This script to be run 1 time only. Sets up 'processed' directories hash.
+# After this script is run, ready to run the daily script.
+
+my $dir = '.'; # or what ever directory the date-directories are stored in
+
+opendir my $dh, $dir or die "Opening failed for directory $dir $!";
+my @dir = grep {-d && /^\d\d-\d\d-\d\d$/ && $_ le '11-04-21'} readdir $dh;
+closedir $dh or die "Unable to close $dir $!";
+
+my %processed = map {$_ => 1} @dir;
+
+store \%processed, 'processed_dirs.dat';
+
+#!/usr/bin/perl
+use strict;
+use warnings;
+use File::Copy;
+use Storable;
+
+my $dir = shift or die "Provide path on command line. $!";
+
+my $processed = retrieve('processed_dirs.dat'); # $processed is a hashref
+
+opendir my $dh, $dir or die "Opening failed for directory $dir $!";
+my @dir = grep {-d && /^\d\d-\d\d-\d\d$/ && !$processed->{$_} } readdir $dh;
+closedir $dh or die "Unable to close $dir $!";
+@dir or die "Found no unprocessed date directories";
+
+my $fdir = '/some/example/path';
+
+for my $date (@dir) {
+    my $dday = "$dir/$date";
+    my @gzfiles = glob("$dday/*tar.gz");
+
+    foreach my $zf (@gzfiles) {  
+        next if $zf =~ /BMP/ || $zf =~ /LG/ || $zf =~ /MAP/ || $zf =~ /STR/; 
+        print "$zf\n";
+        copy($zf, $fdir) or die "Unable to copy $zf to $fdir. $!";
+    }
+    $processed->{ $date } = 1;
+}
+store $processed, 'processed_dirs.dat';
+

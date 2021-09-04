@@ -1,0 +1,326 @@
+pt_entry pte[MAX_PAGE];         /* page table */
+int mem_size;               /* physical memory size in page frames */
+list free_list_head;            /* free list */ 
+list res_set_head;          /* resident set */
+int total_fault = 0;            /* total number of page faults */
+int total_ref = 0;          /* total number of memory references */
+FILE *stream;               
+
+
+ int main(int argc, char *argv[])
+ {
+   /*   FILE *stream;*/
+
+if (argc != 3)
+{
+    printf("The format is: pager file_name memory_size.\n");
+    exit(1);
+}
+
+printf("File used %s, resident set size %d\n", argv[1], atoi(argv[2]));
+
+if ((stream = fopen(argv[1], "r")) == NULL)
+{
+    perror("File open failed");
+    exit(1);
+}
+
+if( MAX_PAGE >= (mem_size = atoi(argv[2])) )
+{
+    /* everything is fine we can go ahead */
+    start_simulation();
+}
+else
+{
+         printf    ("\n\n\a\a\a******************************\n");
+    printf("***************************************************\n");
+    printf("**                                               **\n");
+    printf("** Error:                                        **\n");
+    printf("**                                               **\n");
+    printf("** You are attempting to use a resident set size **\n");
+    printf("** that is larger than the address space!        **\n");
+    printf("**                                               **\n");
+    printf("** The maximum address space size is: %-4d       **\n",MAX_PAGE);
+    printf("**                                               **\n");
+    printf("***************************************************\n");
+    printf("***************************************************\n\n\n");
+
+}
+fclose(stream);
+
+return 0;
+  }
+
+  void start_simulation(/*FILE * stream*/void)
+     {
+
+/*char *addr_buf;not used so removed --EC*/
+int address;
+int i, n;
+list new_entry, current;
+
+   /* initialise the page table */
+
+for(i=0; i<MAX_PAGE;i++)
+{
+    pte[i].frame = -1;
+    pte[i].valid = 0;
+    pte[i].dirty = 0;
+    pte[i].in_mem = 0;
+    pte[i].next_ref=-1;
+
+}
+
+   /* initialise the resident set - empty*/
+
+res_set_head = (list)malloc(sizeof(struct list_item));
+res_set_head->next = res_set_head;
+res_set_head->prev = res_set_head;
+
+  /* initialise free list - all physical pages*/
+
+free_list_head = (list)malloc(sizeof(struct list_item));
+free_list_head->next = free_list_head;
+free_list_head->prev = free_list_head;
+current = free_list_head;
+
+for(i=0; i<mem_size;i++)
+{
+    new_entry = (list)malloc(sizeof(struct list_item));
+    current->next = new_entry;
+    new_entry->prev = current;
+    new_entry->next = free_list_head;
+    new_entry->frame = i;
+    current = new_entry;
+    free_list_head->prev = current;
+}
+
+   /* main simulation loop */
+
+while( (n = fscanf(stream, "%x", &address)) != -1)
+{
+   #ifdef DEBUG2
+    printf("Reference %i -------------\n",total_ref);
+   #endif
+
+    resolve(address);
+    total_ref++; 
+}
+
+free_mem(free_list_head);
+free_mem(res_set_head);
+display_stats();
+
+return; 
+   }
+
+void resolve(int address)
+  {
+unsigned short frame_alloc;
+int virt_page,i;
+/*static int disp_counter = 0;not used so removed -EC*/
+
+virt_page = address >> 8;
+if (pte[virt_page].valid == 1)
+{
+    pte[virt_page].next_ref=distance_to_next_ref(virt_page);
+   #ifdef DEBUG2
+    printf("Page %i is valid, next reference is: %i\n",virt_page,pte  
+          [virt_page].next_ref);
+   #endif
+}
+else
+{
+
+    frame_alloc = find_frame();
+    pte[virt_page].valid = 1;
+    pte[virt_page].frame = frame_alloc;
+    total_fault++;
+    pte[virt_page].next_ref=distance_to_next_ref(virt_page);
+    #ifdef DEBUG2
+    printf("Page %i is being loaded, next reference is: %i\n",virt_page,pte
+    [virt_page].next_ref);
+   #endif
+}
+for(i=0;i<MAX_PAGE;i++)
+    {
+    if (pte[i].valid) pte[i].next_ref--;
+    //if(pte[i].next_ref<=0) pte[i].next_ref=distance_to_next_ref(i);
+    /* if the page is valid update the next ref time */
+    }
+    }
+
+  unsigned short find_frame()
+  {
+unsigned short frame;
+list current, new_tail;
+
+if (free_list_head == free_list_head->prev)   /* free list empty */
+{
+    #ifdef DEBUG
+    printf("Free list empty finding frame\n");
+    #endif
+
+    frame = find_victim();
+}
+else
+{
+     #ifdef DEBUG
+    printf("Free list not empty grabbing frame\n");
+     #endif
+    new_tail = free_list_head->prev->prev;
+    new_tail->next = free_list_head;
+    current = free_list_head->prev;
+    free_list_head->prev = new_tail;
+
+    to_resident_set(current);
+    frame = current->frame;
+}
+return frame;
+     }
+
+ void to_resident_set(list current)
+   {
+list tail;
+
+tail = res_set_head->prev;
+tail->next = current;
+current->next = res_set_head;
+current->prev = tail;
+res_set_head->prev = current;
+     }
+
+
+ unsigned short find_victim()
+    {
+int candidate,frame=-1,most_far=0,page;
+
+for(candidate=0;candidate<MAX_PAGE;candidate++)
+{
+
+    if(pte[candidate].valid==1)
+    {
+    #ifdef DEBUG
+   printf("\tValid Page %i is being examined, next reference is: %i\n",candidate,pte
+         [candidate].next_ref);
+   printf("Pt entry:\n\t\tFrame: %d\n\t\tValid: %d\n\t\tin_mem %d\n\t\tDirty: %
+   d\n\t\tNext ref %d\n",pte[candidate].frame,pte[candidate].valid,pte
+   [candidate].in_mem,pte[candidate].dirty,pte[candidate].next_ref);
+   #endif
+        if(  (pte[candidate].next_ref) < 0 ) 
+        {
+   #ifdef DEBUG
+   printf("\t\t< 0 Page %i is being examined, next reference is: %i\n",candidate,pte
+   [candidate].next_ref);
+   #endif
+            pte[candidate].valid=0;
+            frame = pte[candidate].frame;
+            pte[candidate].frame=-1;
+            return frame;
+        }
+   #ifdef DEBUG
+printf("Middle for page %i\n",candidate);
+   #endif
+if(most_far < (pte[candidate].next_ref) )
+        {
+    #ifdef DEBUG
+   printf("\t\t> mf Page %i is being examined, next reference is: %i\n",candidate,pte
+     [candidate].next_ref);
+    #endif
+   frame=pte[candidate].frame;
+   most_far=pte[candidate].next_ref;
+    }
+   #ifdef DEBUG
+   printf("Ending for page %i\n",candidate);
+   #endif
+    }   
+}
+invalidate(frame);
+return frame;
+ }
+
+
+void invalidate(unsigned short frame)
+  {
+int i;
+
+for(i=0;i<MAX_PAGE;i++)
+{
+    if (pte[i].frame == frame && pte[i].valid == 1)
+    {
+        pte[i].valid = 0;
+        pte[i].frame = -1;
+    #ifdef DEBUG
+printf("Page %i is being evicted next ref is: %i\n",i,pte   [i].next_ref);
+    #endif
+        break;
+    }
+
+}
+ }
+
+ void display_stats()
+    {
+printf("\nProcess issued %d memory references\n", total_ref);
+printf("Process triggered %d page faults\n", total_fault);
+printf("Page fault rate is %d percent\n",((total_fault*100)/total_ref));
+     }
+
+ void free_mem(list head)
+    {
+
+list current,tail;
+
+tail = head->prev;
+current = head;
+
+while (current->prev != tail)
+{
+    current = current->next;
+    free(current->prev);
+}
+   }
+
+ /* finds the distance to the next ref, returns -1 if never referenced again */
+
+ int distance_to_next_ref(int frame)
+   {
+ long pos;
+ int n,count;
+ int address,page;  
+
+if((pos=ftell(stream))==-1)
+{
+    printf("Error saving reference stream position\n");
+    perror("Error was");
+    fclose(stream);
+    exit(1);
+}
+
+count=0;
+while( (n = fscanf(stream, "%x", &address)) != -1)
+{
+            count++;    
+    page=address>>8;
+    if(page==frame)
+    {
+        if((fseek(stream,pos,SEEK_SET))==-1)
+        {
+printf("Error restoring the reference stream  position\n");
+            perror("Error was:");
+            fclose(stream);
+        }
+
+        return count;
+    }
+}
+if((fseek(stream,pos,SEEK_SET))==-1)
+{
+    printf("Error restoring the reference stream position\n");
+    perror("Error was:");
+    fclose(stream);
+}
+
+return -1;
+    }
+

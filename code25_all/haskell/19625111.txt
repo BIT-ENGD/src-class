@@ -1,0 +1,67 @@
+sourceIRC
+  :: (MonadBaseControl IO m, MonadLogger m)
+  => NetworkSettings
+  -> Producer (ConnectionT m) Message
+sourceIRC networkSettings = do
+  withConnectionForever networkSettings $ \socket -> do
+    bracket (liftBase $ Network.socketToHandle socket IO.ReadWriteMode)
+            (\handle -> liftBase $ IO.hClose handle)
+            (\handle -> do
+               mvar <- newMVar False
+               bracket (fork $ do
+                          threadDelay 5000000
+                          _ <- swapMVar mvar True
+                          return ())
+                       (killThread)
+                       (\_ -> runConnectionT handle (sourceHandle handle))
+               takeMVar mvar)
+
+Producer
+withConnectionForever
+withConnectionForever
+  :: (MonadBaseControl IO m, MonadLogger m)
+  => NetworkSettings
+  -> (Network.Socket -> m Bool)
+  -> m ()
+
+Haskell/IRC.hs:128:54:
+    Couldn't match expected type `ConnectionT m0 a0'
+                with actual type `ConduitM i0 ByteString.ByteString m1 ()'
+    In the return type of a call of `sourceHandle'
+    In the second argument of `runConnectionT', namely
+      `(sourceHandle handle)'
+    In the expression: runConnectionT handle (sourceHandle handle)
+
+withConnectionForever
+withConnectionForever
+withConnectionForever
+  :: (MonadBaseControl IO m, MonadLogger m)
+  => NetworkSettings
+  -> (Network.Socket -> m Bool)
+  -> m ()
+withConnectionForever networkSettings action = do
+  let loop nFailures = do
+        maybeSocket <- newConnection networkSettings
+        case maybeSocket of
+          Nothing -> return ()
+          Just socket -> do
+            terminatedNormally <- action socket
+            if terminatedNormally
+              then loop 0
+              else do
+                exponentTwiddle <- liftBase $ Random.randomRIO (0, 100)
+                let exponent =
+                      1.25 + fromIntegral (exponentTwiddle - 50) / 100.0
+                    delay = floor $ 1000000.0 *
+                      ((0.5 ** (fromIntegral nFailures * negate exponent))
+                       - 1.0 :: Double)
+                $(logInfo) (Text.concat
+                  ["Abnormal disconnection from the network ",
+                   networkSettingsName networkSettings,
+                   "; pausing attempts for ",
+                   Text.pack $ show $ fromIntegral delay / 1000000.0,
+                   " seconds..."])
+                liftBase $ threadDelay delay
+                loop (nFailures + 1)
+  loop 0
+

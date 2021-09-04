@@ -1,0 +1,62 @@
+Imports System.Text
+Imports System.Text.RegularExpressions
+Imports System.IO
+Imports System.Web
+
+Namespace HttpModules
+
+  Public Class ResponseRewritingModule
+    Implements IHttpModule
+
+    Public Sub Init(ByVal app As HttpApplication) Implements IHttpModule.Init
+      AddHandler app.ReleaseRequestState, AddressOf Me.OnReleaseRequestState
+    End Sub
+
+    Public Sub Dispose() Implements IHttpModule.Dispose
+    End Sub
+
+    Public Sub OnReleaseRequestState(ByVal s As Object, ByVal e As EventArgs)
+      Dim app As HttpApplication = CType(s, HttpApplication)
+      If (app.Request.Url.ToString().Contains(".aspx")) Then
+        app.Response.Filter = New ImageUrlResponseFilter(app.Response.Filter)
+      End If
+    End Sub
+
+  End Class
+
+  Public Class ImageUrlResponseFilter
+    Inherits MemoryStream
+
+    Private responseStream As Stream
+    Private matchpattern As String = "src=""/Images/"
+    Private matchpattern2 As String = "url\(/Images"
+    Private matchpattern3 As String = "src = ""/Images/"
+    Private matchpattern4 As String = "src=""http://www.mydomain.com/Images/"
+    Private replacementstring As String = "src=""http://images.mydomain.com/Images/"
+    Private replacementstring2 As String = "url(http://images.mydomain.com/Images"
+
+    Public Sub New(inputStream As Stream)
+      responseStream = inputStream
+    End Sub
+
+    Public Overrides Sub Write(buffer As Byte(), offset As Integer, count As Integer)
+
+      Dim strBuffer As String = System.Text.UTF8Encoding.UTF8.GetString(buffer)
+
+      If (Not HttpContext.Current.Request.IsSecureConnection) Then
+        strBuffer = Regex.Replace(strBuffer, matchpattern, replacementstring, RegexOptions.Compiled Or RegexOptions.IgnoreCase)
+        strBuffer = Regex.Replace(strBuffer, matchpattern2, replacementstring2, RegexOptions.Compiled Or RegexOptions.IgnoreCase)
+        strBuffer = Regex.Replace(strBuffer, matchpattern3, replacementstring, RegexOptions.Compiled Or RegexOptions.IgnoreCase)
+        strBuffer = Regex.Replace(strBuffer, matchpattern4, replacementstring, RegexOptions.Compiled Or RegexOptions.IgnoreCase)
+        responseStream.Write(UTF8Encoding.UTF8.GetBytes(strBuffer), offset, UTF8Encoding.UTF8.GetByteCount(strBuffer))
+      Else
+        ' Do nothing for SSL connections
+        responseStream.Write(buffer, offset, count)
+      End If
+
+    End Sub
+
+  End Class
+
+End Namespace
+

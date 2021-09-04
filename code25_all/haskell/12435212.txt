@@ -1,0 +1,132 @@
+Name:           simple app
+Version:        0.0.0.1
+Build-Type:     Simple
+Cabal-Version:  >= 1.8
+Executable invaders
+  Main-is:         App.hs
+  Build-Depends:   base > 3 && < 5,
+                   mtl,
+                   SDL,
+                   SDL-image,
+                   SDL-ttf
+
+module App where
+
+import Data.Word
+
+import Control.Monad
+import Control.Monad.State
+import Control.Monad.Reader
+
+import Graphics.UI.SDL
+import Graphics.UI.SDL.Image
+
+import Graphics.UI.SDL.TTF
+import qualified Graphics.UI.SDL.TTF.General as TTFG
+
+screenWidth = 640
+screenHeight = 480
+screenBpp = 32
+
+data MessageDir = MessageDir {
+     upMessage    :: Surface,
+     downMessage  :: Surface,
+     leftMessage  :: Surface,
+     rightMessage :: Surface
+}
+
+data AppConfig = AppConfig {
+     screen       :: Surface,
+     background   :: Surface,
+     messageDir   :: MessageDir
+}
+
+type AppState = StateT (Maybe Surface) IO
+type AppEnv = ReaderT AppConfig AppState
+
+runLoop :: AppConfig -> IO()
+runLoop config = (evalStateT . runReaderT loop) config Nothing
+
+loadImage :: String -> Maybe (Word8, Word8, Word8) -> IO Surface
+loadImage filename colorKey = load filename >>= displayFormat >>= setColorKey' colorKey
+
+setColorKey' Nothing s = return s
+setColorKey' (Just (r, g, b)) surface = (mapRGB . surfaceGetPixelFormat) surface r g b >>= setColorKey surface [SrcColorKey] >> return surface
+
+applySurface :: Int -> Int -> Surface -> Surface -> Maybe Rect -> IO Bool
+applySurface x y src dst clip = blitSurface src clip dst offset
+             where offset = Just Rect { rectX = x, rectY = y, rectW = 0, rectH = 0 }
+
+initEnv :: IO AppConfig
+initEnv = do
+        screen <- setVideoMode screenWidth screenHeight screenBpp [SWSurface]
+        setCaption "Press an Arrow Key" []
+
+        background      <- loadImage "res/img/background.png" $ Just (0x00, 0xff, 0xff)
+        font            <- openFont "res/lazy.ttf" 72
+
+        upMessage       <- renderTextSolid font "Up was pressed" textColor
+        downMessage     <- renderTextSolid font "Down was pressed" textColor
+        leftMessage     <- renderTextSolid font "Left was pressed" textColor
+        rightMessage    <- renderTextSolid font "Right was pressed" textColor
+
+        applySurface 0 0 background screen Nothing
+
+        let msgDir = MessageDir upMessage downMessage leftMessage rightMessage
+        return $ AppConfig screen background msgDir
+      where textColor = Color 0 0 0
+
+loop :: AppEnv ()
+loop = do
+
+     quit <- whileEvents $ \event -> do
+       case event of 
+         (KeyDown (Keysym key _ _)) -> do
+           mdir <- messageDir `liftM` ask
+           case key of
+             SDLK_UP    -> put $ Just $ upMessage mdir
+             SDLK_DOWN  -> put $ Just $ downMessage mdir
+             SDLK_LEFT  -> put $ Just $ leftMessage mdir
+             SDLK_RIGHT -> put $ Just $ rightMessage mdir
+             _          -> put Nothing
+         _ -> return ()
+
+     screen     <- screen `liftM` ask
+     background <- background `liftM` ask
+     msg        <- get
+
+     case msg of
+          Nothing       -> return ()
+          Just message  -> do
+               applySurface' 0 0 background screen Nothing
+               applySurface' ((screenWidth - surfaceGetWidth message) `div` 2) ((screenHeight - surfaceGetHeight message) `div` 2) message screen Nothing
+               put Nothing
+
+     liftIO $ Graphics.UI.SDL.flip screen
+
+     unless quit loop
+
+  where applySurface' x y src dst clip = liftIO (applySurface x y src dst clip)
+
+whileEvents :: MonadIO m => (Event -> m()) -> m Bool
+whileEvents act = do
+            event <- liftIO pollEvent
+            case event of
+                 Quit -> return True
+                 NoEvent -> return False
+                 _ -> do
+                   act event
+                   whileEvents act
+
+main = withInit [InitEverything] $ do
+     result <- TTFG.init
+     if not result
+        then putStr "Failed to init ttf\n"
+        else do
+             env <- initEnv
+             runLoop env
+             ttfWasInit <- TTFG.wasInit
+             case ttfWasInit of
+               True -> TTFG.quit
+               False -> return ()
+

@@ -1,0 +1,138 @@
+# -*- coding: utf-8 -*-
+import scrapy
+import urllib2
+import datetime
+import simplejson as json
+from scrapy.spiders import CrawlSpider
+from DashCrawler.items import dashcrawlerItem
+from DashCrawler import constant
+
+class LucySpider(CrawlSpider):
+    name = "lucy"
+    custom_settings = {
+        "DUPEFILTER_CLASS": 'DashCrawler.middlewares.CustomFilter',
+        "DOWNLOADER_CLIENTCONTEXTFACTORY":                                             'DashCrawler.context.CustomContextFactory',    
+    # "USER_AGENT": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2623.75 Safari/537.36",
+    "RETRY_TIMES": 4,
+    "RETRY_HTTP_CODES": [504, 400],
+    "CONCURRENT_REQUESTS": 1,
+    'DOWNLOADER_MIDDLEWARES': {
+        'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
+        'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware': 110,
+        # 'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
+        'scrapy_splash.SplashCookiesMiddleware': 723,
+        'scrapy_splash.SplashMiddleware': 725,
+        'scrapy.downloadermiddlewares.httpcompression.HttpCompressionMiddleware': 810,
+        'scrapy.downloadermiddlewares.httpauth.HttpAuthMiddleware': 725,
+    }
+}
+constant = constant.constants_by_spider(name)
+http_user = constant['http_user']
+http_pass = constant['http_pass']
+proxy_ip = constant['proxy_ip']
+proxy_auth = constant['proxy_auth']
+gender_types = constant['gender_types']
+no_result_found = "Nenhum resultado encontrado para a consulta"
+availability = "Continuar com a compra"
+scrapy_details = constant['scrapy_details']
+allowed_domains = constant['allowed_domains']
+api_url_call = constant['api_url_call']
+count = constant['login_types']
+zipcodes_count = 0
+start_urls = []
+  accounts = []
+
+splash_source = """function main(splash)
+                        local url = splash.args.url
+                        assert(splash:go(url))
+                        assert(splash:wait(1.0))
+                        return splash:html()
+                        end"""
+
+def start_requests(self):
+    request = urllib2.Request(self.api_url_call, headers=self.constant['headers'])
+    retailer_product_configurations = json.load(urllib2.urlopen(request))
+    self.scrapy_details = retailer_product_configurations
+    login_type = self.scrapy_details["shopper_type"]
+    is_register = "registered" in login_type
+    self.accounts = self.scrapy_details["accounts"]
+    retailer_product_configurations = self.scrapy_details['retailerProductConfigurationURLs']
+    anonymous_user_types = set(["anonymous", "both"]) & set(login_type)
+    #import pudb; pudb.set_trace()
+    if (len(anonymous_user_types) >= 0 and is_register == False) or (len(self.accounts) == 0):
+        yield scrapy.Request(
+            self.api_url_call,
+            callback=self.main_url_parse,
+            headers=self.constant['headers'],
+            meta={
+                "shopper_type": "anonymous",
+                "retailer_product_configurations": retailer_product_configurations,
+                "index": 0,
+            },
+            errback=self.error
+        )
+
+def main_url_parse(self, response):
+    product_store = []
+    index = response.meta['index']
+    retailer_product_configurations = response.meta['retailer_product_configurations']
+    shopper_type = response.meta['shopper_type']
+    self.request_count = len(retailer_product_configurations)
+    # index = 0
+    for retailer_product_configuration in retailer_product_configurations:
+        url = retailer_product_configuration['url']
+        page_type = retailer_product_configuration['urlType']
+        retailer_id = retailer_product_configuration['retailerId']
+        max_number_of_records = retailer_product_configuration['maxNumberOfRecords']
+        retailer_product_configuration_id = retailer_product_configuration['id']
+        product_url = "self.color_url" if page_type == "PDP" else "self.parse"
+        product_store.append(url)
+        index += 1
+        colorVariant = retailer_product_configuration.get('colorVariant', True)
+        colorVariant = True if colorVariant == None else colorVariant
+        yield scrapy.Request(
+            url,
+            callback=  self.parse,
+            meta={"product_store": product_store,
+                  "start_url": url,
+                  "shopper_type": shopper_type,
+                  "retailer_id": retailer_id,
+                  'id': retailer_product_configuration_id,
+                  'max_number_of_records': max_number_of_records,
+                  "index": index,
+                  "colorVariant": colorVariant,
+                  'splash':{
+                              'args': {
+                                'lua_source': self.splash_source},
+                                'endpoint': 'execute',
+                            }
+                  },
+            errback=self.error,
+            dont_filter=True,
+        )
+
+# error handling
+def error(self, response):
+    pass
+
+
+def parse(self, response):
+        retailer_id = response.meta['retailer_id']
+        shopper_type = response.meta['shopper_type']
+        name = response.xpath('//h1[contains(@class,"product-content-info-name product-info-js")]/text()').extract()
+        img = response.xpath('//div[@class=\'product-primary-image\']//img/@src').extract()
+       # sku_code = name
+        item = DashcrawlerItem()
+        item['name'] = response.xpath('//h1[contains(@class,"product-content-info-name product-info-js")]/text()').extract()
+        item['selling_price'] = response.xpath('//span[contains(@class,"product-content-info-offer-price offer-price offer-price-js product-price-amount-js")]/text()').extract()
+        item['description'] = response.xpath('//div[contains(@class,"desc-container pdp-details-desc-container")]/text()').extract()
+        item['retailer_product_configuration_id'] = response.meta['id']
+        item['retailer_id'] = retailer_id
+        item['crawl_date'] = datetime.datetime.utcnow().strftime("%m/%d/%y %H:%M:%S")
+        item['shopper_type'] = shopper_type
+        item['product_url'] = response.url
+        item['sku_code'] = name
+        item['reference_code'] = "cent-%s" % (name)
+        item['preview_image_url'] = img
+        yield item
+

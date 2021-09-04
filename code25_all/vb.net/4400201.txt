@@ -1,0 +1,83 @@
+    Public Function Eval(ByVal vbCode As String, ByRef MyAssembly As System.Reflection.Assembly, ByRef ProjectForm As Project) As ArrayList
+    Dim Provider As VBCodeProvider = CodeDomProvider.CreateProvider("VisualBasic")
+    Dim CompParams As CompilerParameters = New CompilerParameters
+    Dim CResult As CompilerResults
+    Dim EvalAssy As System.Reflection.Assembly
+    Dim InstanceObject As Object
+    Dim InstanceType As Type
+    Dim InstanceMI As MethodInfo
+    Dim CompError As CompilerError
+    Dim NumberOfErrors As Integer = 0
+    Dim ReturnValues As New ArrayList
+    Dim SkipAssembly As Boolean = False
+    Dim DebugTextBox As TextBox = ProjectForm.CompilationErrors
+    Dim DebugFilename As String = ProjectForm.DebugFile
+    Dim StatusBar As ToolStripStatusLabel = ProjectForm.MyMainForm.MessageToolStripStatusLabel
+
+    'Result = MsgBox("HMMM: " & CodeDomProvider.IsDefinedLanguage("VisualBasic").ToString(), MsgBoxStyle.OkOnly + MsgBoxStyle.Exclamation, "HMMM")
+    If Not DebugTextBox Is Nothing Then
+        DebugTextBox.Text &= "Running Eval On Assembly """ & MyAssembly.FullName & """." & vbCrLf
+    End If
+    CompParams.ReferencedAssemblies.Add("system.dll")
+    CompParams.ReferencedAssemblies.Add("system.xml.dll")
+    CompParams.ReferencedAssemblies.Add("system.data.dll")
+    CompParams.ReferencedAssemblies.Add("System.Windows.Forms.dll")
+    ' Pass Myself In
+    CompParams.ReferencedAssemblies.Add(System.Reflection.Assembly.GetExecutingAssembly.Location)
+    CompParams.CompilerOptions = "/t:library"
+    CompParams.GenerateInMemory = True
+
+    CResult = Provider.CompileAssemblyFromSource(CompParams, vbCode)
+    For Each CompError In CResult.Errors
+        If Not CompError.IsWarning Then
+            ' "Real Error"
+            NumberOfErrors += 1
+        End If
+        ReturnValues.Add("Error " & CompError.ErrorNumber & " On Line " & CompError.Line & ": " & CompError.ErrorText)
+    Next
+    If NumberOfErrors = 0 Then
+        Try
+            EvalAssy = CResult.CompiledAssembly
+            InstanceObject = EvalAssy.CreateInstance("Translation")
+            InstanceType = InstanceObject.GetType()
+            InstanceMI = InstanceType.GetMethod("Main")
+            InstanceMI.Invoke(InstanceObject, New Object() {MyAssembly, ProjectForm})
+            'InstanceMI.Invoke(InstanceObject, BindingFlags.Default, Nothing, New Object() {MyAssembly, ProjectForm}, System.Globalization.CultureInfo.CurrentCulture)
+        Catch Ex As Exception
+            If Ex.InnerException Is Nothing Then
+                WriteDebugMsg(DebugTextBox, "Error Evaling Compiled Code.  The Error Is """ & Ex.Message)
+            Else
+                WriteDebugMsg(DebugTextBox, "Error Evaling Compiled Code.  The Error Is:" & vbCrLf & Ex.Message & vbCrLf & "Inner Exception Is:" & vbCrLf & Ex.InnerException.ToString)
+            End If
+        End Try
+    End If
+    Return ReturnValues
+End Function
+
+Imports System
+Imports System.Xml
+Imports System.Data
+Imports Microsoft.VisualBasic
+Imports System.Reflection
+Imports System.Diagnostics
+Imports System.IO
+Imports System.Windows.Forms
+Imports System.Collections
+Imports System.Text
+Imports UniversalTranslator
+
+Public Sub Main(ByRef MyAssembly As System.Reflection.Assembly, ByRef MyProjectForm As Project)
+    ' Create functions needed to parse assembly here and in subroutines called from here
+    Me.ProjectForm = MyProjectForm
+    DebugFile = ProjectForm.DebugFile  ' Set Global Debug Filename Variable
+    DebugTB = ProjectForm.CompilationErrors 
+    ' Initialize Log Files And Debug Textboxes
+    If Dir(DebugFile,FileAttribute.Normal) > "" Then 
+        Kill(DebugFile)
+    End If
+    If Not DebugTB is Nothing Then
+        DebugTB.Text = ""
+    end if 
+    RecurseAssemblyForms(MyAssembly,AddressOf OutputControlInfo)
+End Sub
+

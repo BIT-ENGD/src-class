@@ -1,0 +1,54 @@
+Error running script (call to f_8c07b227bc796743f66bad8dbe75a5bf8fcc8cd6): @user_script:2: @user_script: 2: -MISCONF Redis is configured to save RDB snapshots, but is currently not able to persist on disk. Commands that may modify the data set are disabled. Please check Redis logs for details about the error.
+
+can't save in background: fork: Cannot allocate memory
+lua_scripts.py
+import redis
+from location import REDLOC2 #location of relevant unix socket
+
+my_server = redis.StrictRedis(unix_socket_path=REDLOC2)
+
+# Get recent
+lualatestlogins = """
+local l = redis.call('ZRANGEBYSCORE', KEYS[1], ARGV[1]-600, '+inf') -- returns key:value pairs
+local c = {}
+for _, v in pairs(l) do
+  local p = v:find(':')
+  local i = v:sub(1,p-1)
+  c[#c+1] = i
+end
+return c"""
+getlatestlogins = my_server.register_script(lualatestlogins)
+
+# Evict old
+luacleanselogins = """
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', '(' .. ARGV[1]-600)"""
+cleanselogins = my_server.register_script(luacleanselogins)
+
+# -- Store new
+luastorelogin = """
+redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2] .. ':' .. ARGV[3])
+redis.call('SET',KEYS[2],ARGV[3])
+redis.call('EXPIRE',KEYS[2],600)"""
+storelogin = my_server.register_script(luastorelogin)
+
+# Retrieve collisions
+luaretrieveclones = """
+local q = redis.call('GET',KEYS[2]) 
+if q == nil or q == '' then
+  return nil               
+else
+  local l = redis.call('ZRANGEBYSCORE', KEYS[1], ARGV[1]-600, '+inf')
+  local c = {}
+  for _, v in pairs(l) do  
+    local p = v:find(':')  
+    local i = v:sub(1,p-1) 
+    local n = v:sub(p+1)   
+    if n == q then         
+      c[#c+1] = i          
+    end
+  end
+
+  return c
+end"""
+retrieveclones = my_server.register_script(luaretrieveclones)
+

@@ -1,0 +1,91 @@
+dequeue
+enqueue
+enqueue
+enqueue
+{-#LANGUAGE MultiParamTypeClasses, FlexibleInstances,
+    UndecidableInstances, TypeFamilies, PolyKinds, GADTs,
+    RankNTypes#-}
+
+-- Queue consist of a head and tail lists with the invariant that the
+-- tail list should never grow longer than the head list.
+
+-- Type for representing the invariant of the queue
+data MyConstraint = Constraint Nat Nat
+type family Valid c :: Bool
+type instance Valid (Constraint a b) = GE a b 
+
+-- The queue type. Should the constraint be here?
+data Queue :: * -> MyConstraint -> * where
+  Empty :: Queue a (Constraint Zero Zero)
+  NonEmpty :: Valid (Constraint n m) ~ True => 
+          LenList a n -> LenList a m -> Queue a (Constraint n m) 
+
+instance (Show a) => Show (Queue a c) where
+  show Empty = "Empty"
+  show (NonEmpty a b) = "NonEmpty "++quote a ++ " " ++ quote b
+
+quote a = "("++show a++")"
+
+-- Check the head of the queue
+peek :: GE m (Succ Zero) ~ True => Queue a (Constraint m n) -> a
+peek (NonEmpty (CONS a _) _) = a
+
+-- Add an element to the queue where head is shorter than the tail
+push :: (Valid (Constraint m (Succ n))) ~ True =>  
+        a -> Queue a (Constraint m n) -> Queue a (Constraint m (Succ n))
+push x (NonEmpty hd as) = NonEmpty hd (CONS x as)
+
+-- Create a single element queue
+singleton :: (Valid (Constraint (Succ Zero) Zero)) ~ True =>  
+        a -> Queue a (Constraint (Succ Zero) Zero) 
+singleton x = NonEmpty (CONS x NIL) NIL
+
+-- Reset the queue by reversing the tail list and appending it to the head list
+reset :: (Valid (Constraint (Plus m n) Zero)) ~ True =>
+      Queue a (Constraint m n) -> Queue a (Constraint (Plus m n) Zero)
+reset Empty = Empty
+reset (NonEmpty a b) = NonEmpty (cat a b) NIL -- Should have a reverse here
+
+enqueue :: ?? 
+enqueue = -- If the tail is longer than head, `reset` and then `push`, otherwise just `push`
+
+-- Type Level natural numbers and operations
+
+data Nat = Zero | Succ Nat deriving (Eq,Ord,Show)
+
+type family Plus m n :: Nat
+type instance Plus Zero n = n
+type instance Plus n Zero = n
+type instance Plus (Succ m) n = Succ (Plus m n)
+
+type family GE m n :: Bool
+type instance GE (Succ m) Zero = True
+type instance GE Zero (Succ m) = False
+type instance GE Zero  Zero = True
+type instance GE (Succ m) (Succ n) = GE m n
+
+type family EQ m n :: Bool
+type instance EQ Zero Zero = True
+type instance EQ Zero (Succ m) = False
+type instance EQ (Succ m) Zero = False
+type instance EQ (Succ m) (Succ n) = EQ m n
+
+-- Lists with statically typed lengths
+data LenList :: * -> Nat -> * where
+  NIL :: LenList a Zero
+  CONS :: a -> LenList a n -> LenList a (Succ n)
+
+instance (Show a) => Show (LenList a c) where
+  show x = "LenList " ++ (show . toList $ x)
+
+-- Convert to ordinary list
+toList :: forall a. forall m. LenList a m -> [a]
+toList NIL = []
+toList (CONS a b) = a:toList b
+
+-- Concatenate two lists
+cat :: LenList a n -> LenList a m -> LenList a (Plus n m)
+cat NIL a = a
+cat a   NIL = a
+cat (CONS a b) cs = CONS a (cat b cs)
+

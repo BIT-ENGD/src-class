@@ -1,0 +1,80 @@
+StringContext
+val tz = zone"Europe/London" //tz is of type java.util.TimeZone
+
+def maybeTZ(s: String): Option[java.util.TimeZone] =
+  java.util.TimeZone.getAvailableIDs collectFirst { case id if id == s =>
+    java.util.TimeZone.getTimeZone(id)
+  }
+
+scala> implicit class TZContext(val sc: StringContext) extends AnyVal {
+ |   def zone(args: Any *) = {
+ |     val s = sc.raw(args.toSeq : _ *)
+ |     maybeTZ(s) getOrElse sys.error(s"Invalid zone: $s")
+ |   }
+ | }
+
+scala> zone"UTC"
+res1: java.util.TimeZone = sun.util.calendar.ZoneInfo[id="UTC",offset=0,...
+
+zone"foobar"
+StringContext
+package object oxbow {
+  implicit class TZContext(val sc: StringContext) extends AnyVal {
+    def zone(args: Any *) = macro zoneImpl //zoneImpl cannot be in TZContext
+  }
+
+  def zoneImpl(c: reflect.macros.Context)
+    (args: c.Expr[Any] *): c.Expr[java.util.TimeZone] = {
+      import c.universe._
+      //1. How can I access sc from here?
+
+      /// ... if I could, would this be right?
+      if (args.isEmpty) {
+        val s = sc.raw()
+        reify(maybeTZ(s) getOrElse sys.error(s"Not valid $s")) 
+      }
+      else {
+        //Ok, now I'm stuck. What goes here?
+      }
+    }
+
+}
+
+def zoneImpl(c: reflect.macros.Context)
+           (args: c.Expr[Any] *): c.Expr[java.util.TimeZone] = {
+  import c.universe._
+  val z =
+    c.prefix.tree match {
+      case Apply(_, List(Apply(_, List(Literal(Constant(const: String)))))) => gsa.shared.datetime.XTimeZone.getTimeZone(const)
+      case x => ??? //not sure what to put here
+    }
+
+  c.Expr[java.util.TimeZone](Literal(Constant(z))) //this compiles but doesn't work at the use-site
+                             ^^^^^^^^^^^^^^^^^^^
+                             this is wrong. What should it be?
+}
+
+zone"UTC"
+java.lang.Error: bad constant value: sun.util.calendar.ZoneInfo[id="UTC",offset=0,dstSavings=0,useDaylight=false,transitions=0,lastRule=null] of class class sun.util.calendar.ZoneInfo
+
+Literal(Constant( .. ))
+def zoneImpl(c: reflect.macros.Context)
+         (args: c.Expr[Any] *): c.Expr[java.util.TimeZone] = {
+  import c.universe._
+  import java.util.TimeZone
+
+  val tzExpr: c.Expr[String] = c.prefix.tree match {
+    case Apply(_, Apply(_, List(tz @ Literal(Constant(s: String)))) :: Nil)
+      if TimeZone.getAvailableIDs contains s => c.Expr(tz)
+    case Apply(_, Apply(_, List(tz @ Literal(Constant(s: String)))) :: Nil) =>
+      c.abort(c.enclosingPosition, s"Invalid time zone! $s")
+    case _ => ??? 
+//            ^^^ What do I do here? I do not want to abort, I merely wish to 
+//                "carry on as you were". I've tried ... 
+//                    c.prefix.tree.asInstanceOf[c.Expr[String]]
+//                ...but that does not work
+  }
+  c.universe.reify(TimeZone.getTimeZone(tzExpr.splice))
+
+}
+

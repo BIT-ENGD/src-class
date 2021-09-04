@@ -1,0 +1,54 @@
+{-# LANGUAGE RankNTypes #-}
+
+import Data.Binary.Get
+import Data.Binary.Put
+
+type Sortable = forall a. (Bits a, Binary a, Ord a) => a
+
+data SortOpts = SortOpts { maxFiles :: Int
+    , maxMemory :: Integer
+    , maxThreads :: Int
+    , binType    :: Sortable
+}
+
+defaultOpts = SortOpts { maxFiles = 128
+    , maxMemory = 1000 * 1000 * 1000 * 1000
+    , maxThreads = 4
+    , binType = 0 :: Word32
+};
+
+putBinaryValues :: Binary a => Handle -> [a] -> IO ()
+putBinaryValues out vals = do
+    let bytes = runPut . mapM_ put $ vals
+    BL.hPut out bytes
+
+binaryValues :: (Binary a, Bits a) => a -> Handle -> IO [a]
+binaryValues t inf = do 
+    size <- hFileSize inf
+    let cast = runGet (genericReplicateM (size `div` byteWidth) get)
+    cast . BL.fromChunks . (:[]) <$> BS.hGetContents inf
+    where genericReplicateM n = sequence . (DL.genericReplicate n)
+          byteWidth = fromIntegral $ (bitSize t) `div` 8
+
+Could not deduce (a ~ Word32)
+    from the context (Bits a, Ord a, Binary a)
+        bound by a type expected by the context:
+             (Bits a, Ord a, Binary a) => a
+at ...
+    `a' is a rigid type variable bound by
+        a type expected by the context: (Bits a, Ord a, Binary a) => a
+
+configure = defaultOpts -- and exporting that
+
+let myOpts = configure{ binType = 42 :: Word16 }
+
+Record update for insufficiently polymorphic field: binType :: a
+In the expression: configure {binType = words !! 0}
+In an equation for `o': o = configure {binType = words !! 0}
+In the expression:
+  do { inTestHandle <- inTest;
+       words <- testRandomWords;
+       putBinaryValues inTestHandle $ take 100 words;
+       seekBeg inTestHandle;
+       .... }
+

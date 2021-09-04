@@ -1,0 +1,55 @@
+CREATE PROCEDURE [dbo].[sp_LoadEventsTemp]
+(
+   @RequestKey varchar(20),
+   @RequestType varchar(20),
+   @Status varchar(20),
+   @ScheduledDate smalldatetime = null
+)
+AS
+BEGIN
+   declare @LoadEvents table
+   (
+      id int
+   )
+
+   BEGIN TRANSACTION
+
+   if (@scheduledDate is null)
+   Begin
+      insert into @LoadEvents (id)
+      (
+         Select eventqueueid FROM eventqueue
+         WITH (HOLDLOCK, ROWLOCK)
+         WHERE requestkey = @RequestKey
+         and requesttype = @RequestType
+         and [status] = @Status
+      )
+   END
+   else
+   BEGIN
+      insert into @LoadEvents (id)
+      (
+         Select eventqueueid FROM eventqueue
+         WITH (HOLDLOCK, ROWLOCK)
+         WHERE requestkey = @RequestKey
+         and requesttype = @RequestType
+         and [status] = @Status
+         and (convert(smalldatetime,scheduleddate) <= @ScheduledDate)
+      )
+   END
+
+   update eventqueue set [status] = 'InProgress'
+   where eventqueueid in (select id from @LoadEvents)
+
+   IF @@Error 0
+   BEGIN
+      ROLLBACK TRANSACTION
+   END
+   ELSE
+   BEGIN
+      COMMIT TRANSACTION
+      select * from eventqueue
+      where eventqueueid in (select id from @LoadEvents)
+   END
+END
+

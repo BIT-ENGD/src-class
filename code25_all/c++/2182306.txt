@@ -1,0 +1,73 @@
+void KNNClassifier::classify_various_k(int dim, double *feature, int label, int *ks, double * errors, int nb_ks, int k_max) {   
+  ANNpoint      queryPt = 0;    
+  ANNidxArray   nnIdx = 0;      
+  ANNdistArray  dists = 0;     
+
+  queryPt = feature;      
+  nnIdx = new ANNidx[k_max];                
+  dists = new ANNdist[k_max];               
+
+  if(strcmp(_search_neighbors, "brutal") == 0) {// search  
+    _search_struct->annkSearch(queryPt, k_max,  nnIdx, dists, _eps);  
+  }else if(strcmp(_search_neighbors, "kdtree") == 0) {  
+    _search_struct->annkSearch(queryPt, k_max,  nnIdx, dists, _eps);  // double free or corruption
+  }  
+
+  for (int j = 0; j < nb_ks; j++)  
+  {  
+    scalar_t result = 0.0;  
+    for (int i = 0; i < ks[j]; i++) {          
+        result+=_labels[ nnIdx[i] ];  // Segmentation fault
+    }  
+    if (result*label<0)  
+    {  
+    #pragma omp critical  
+    {  
+      errors[j]++;  
+    }  
+    }  
+
+  }  
+
+  delete [] nnIdx;  
+  delete [] dists;  
+
+}
+
+      void KNNClassifier::tune_complexity(int nb_examples, int dim, double **features, int *labels, int fold, char *method, int nb_examples_test, double **features_test, int *labels_test) {    
+          int nb_try = (_k_max - _k_min) / scalar_t(_k_step);    
+          scalar_t *error_validation = new scalar_t [nb_try];    
+          int *ks = new int [nb_try];    
+
+          for(int i=0; i < nb_try; i ++){    
+            ks[i] = _k_min + _k_step * i;    
+          }    
+
+          if (strcmp(method, "ct")==0)                                                                                                                     
+          {    
+
+            train(nb_examples, dim, features, labels );// train once for all nb of nbs in ks                                                                                                
+
+            for(int i=0; i < nb_try; i ++){    
+              if (ks[i] > nb_examples){nb_try=i; break;}    
+              error_validation[i] = 0;    
+            }    
+
+            int i = 0;    
+      #pragma omp parallel shared(nb_examples_test, error_validation,features_test, labels_test, nb_try, ks) private(i)    
+            {    
+      #pragma omp for schedule(dynamic) nowait    
+              for (i=0; i < nb_examples_test; i++)         
+              {    
+                classify_various_k(dim, features_test[i], labels_test[i], ks, error_validation, nb_try, ks[nb_try - 1]); // where error occurs    
+              }    
+            }    
+            for (i=0; i < nb_try; i++)    
+            {    
+              error_validation[i]/=nb_examples_test;    
+            }    
+          }
+
+          ......
+     }
+

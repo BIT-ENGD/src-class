@@ -1,0 +1,81 @@
+> import Network.Socket
+> import Control.Monad
+> import Network
+> import System.Environment (getArgs)
+> import System.Process
+> import System.IO
+> import Control.Concurrent (forkIO)
+> import Control.Exception (bracket)
+> import Data.Maybe
+
+> main :: IO ()
+> main = withSocketsDo $ do
+>    putStrLn ("up top\n")
+>    [port] <- getArgs
+>    bracket (prepareSocket (fromIntegral $ read port))
+>            sClose
+>            acceptConnections
+
+> prepareSocket :: PortNumber -> IO Socket
+> prepareSocket port = do
+>    sock <- socket AF_INET Stream defaultProtocol 
+>    let socketAddress = SockAddrInet port 0000 
+>    bindSocket sock socketAddress
+>    listen sock 1
+>    putStrLn $ "Listening on " ++ (show port)
+>    return sock
+
+> acceptConnections :: Socket -> IO ()
+> acceptConnections sock' = do
+>    forever $ do
+>        (sock, sockAddr) <- Network.Socket.accept sock'
+>        handle <- socketToHandle sock ReadWriteMode
+>        sockHandler sock handle
+
+> sockHandler :: Socket -> Handle -> IO ()
+> sockHandler sock' handle = do
+>     hSetBuffering handle LineBuffering
+>     -- Add the forkIO back if you want to allow concurrent connections.
+>     {- forkIO  $ -}
+>     commandProcessor handle
+>     return ()
+
+> commandProcessor :: Handle -> IO ()
+> commandProcessor handle = untilM (hIsEOF handle) handleCommand >> hClose handle
+>   where
+>     handleCommand = do
+>         line <- hGetLine handle
+>         let (cmd:arg) = words line
+>         case cmd of
+>             "echo" -> echoCommand handle arg 
+>             "runjob" -> runJob handle arg
+>             _ -> do hPutStrLn handle "Unknown command"
+
+> echoCommand :: Handle -> [String] -> IO ()
+> echoCommand handle arg = do
+>     hPutStrLn handle (unwords arg)
+
+> runJob :: Handle -> [String] -> IO ()
+> runJob handle jobNumber = do
+>        
+>   --  let batchDirectory = "fookit" 
+>     (_, Just hout, Just herr, jHandle) <-  
+>         createProcess (proc testJob [])  { cwd = Just batchDirectory, 
+>                                                    std_out = CreatePipe, 
+>                                                    std_err = CreatePipe }
+>     stdOUT <- hGetLine herr
+>     hPutStrLn stdout stdOUT
+>     hPutStrLn handle stdOUT 
+>     exitCode <- waitForProcess jHandle 
+>    -- stdErr <- hShow hout                                           
+>     --hPutStrLn handle stdOUT 
+>     return ()
+
+> batchDirectory = "C:\\Users\\ixia\\Documents"
+> testJob = "C:\\Users\\ixia\\Documents\\680batch.bat"
+> untilM cond action = do
+>    b <- cond
+>    if b
+>      then return ()
+>      else action >> untilM cond action
+

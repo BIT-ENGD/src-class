@@ -1,0 +1,68 @@
+{-# LANGUAGE BangPatterns #-}
+import Control.Concurrent
+import Control.Monad
+import System.Environment(getArgs)
+import Data.Int
+import Data.IORef
+
+-- "i" times, add "n" for each IORef (in "a")
+addMany :: [IORef Int64] -> Int64 -> Int64 -> IO ()
+addMany !a !n !i =
+  forM_ [1..i] (\_ ->
+    forM_ a (shW n))
+
+-- MVar, TVar, IORef, ... read/write (x' = x + k)
+shR = readIORef
+shW !k !r = atomicModifyIORef r (\ !x' -> (x' + k, ()))
+
+main = do
+  (n':i':_) <- getArgs
+  let (n, i) = (read n', read i')
+  v <- forM [1..n] (\_ -> newIORef 0)
+  addMany v 1 i
+  mapM shR v >>= (putStrLn.show.sum)
+
+MUT     time    3.12s  (  3.12s elapsed)
+GC      time    6.96s  (  6.96s elapsed)
+...
+
+COST CENTRE  MODULE                  no.     entries  %time %alloc   %time %alloc
+
+MAIN         MAIN                     47           0    0.0    0.0   100.0  100.0
+ main        Main                     95           0    0.0    0.0   100.0  100.0
+  main.i     Main                    100           1    0.0    0.0     0.0    0.0
+  addMany    Main                     99           1    0.4    0.5   100.0  100.0
+   addMany.\ Main                    101       15000    6.6    0.0    99.6   99.5
+    shW      Main                    102     2250000   92.7   99.5    93.0   99.5
+     shW.\   Main                    104     2250000    0.3    0.0     0.3    0.0
+
+class Node { 
+    private object m; 
+    private int n; 
+
+    public Node() {n = 0; m = new object();} 
+    public void Inc() {lock(m) n++;} 
+    public int Read() {return n;} 
+} 
+
+class MainClass { 
+
+    public static void Main(string[] args) { 
+
+        var nitems = 1000; 
+        var nthreads = 6; 
+        var niters = 100000; 
+
+        var g = Enumerable.Range(0, nitems).Select(i => new Node()).ToArray(); 
+        Task.WaitAll(Enumerable.Range(0, nthreads).Select(q => Task.Factory.StartNew(() => { 
+            var z = niters; 
+            while(z-- > 0) 
+                foreach(var i in g) 
+                    i.Inc(); 
+        })).ToArray()); 
+
+        Console.WriteLine("Sum node values: {0}", g.Sum(i => i.Read())); 
+
+    } 
+} 
+

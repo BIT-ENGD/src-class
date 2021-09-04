@@ -1,0 +1,64 @@
+class Foo < ActiveRecord::Base
+  has_one :bar
+  accepts_nested_attributes :bar
+end
+
+class Bar < ActiveRecord::Base
+  #property name: string
+  belongs_to :foo
+  validates_presence_of :foo #trouble line!
+end
+
+#now when you do
+foo = Foo.create! :bar_attributes => {:name => 'steve'}
+#you get an error because the bar validation failed
+
+class Bar < ActiveRecord::Base
+  validates_presence_of :foo, :unless => :being_built_by_foo?
+end
+
+resources :bids
+resources :projects do
+  resources: bids
+end
+
+#I'm sure there is a better way then map.connect
+map.connect "projects/invalid_id", :controller => "projects", :action => "invalid_id"
+resources :projects
+  resources :bids
+end
+
+#couple of changes from Yehuda
+def redirect(*args, &block)
+  options = args.last.is_a?(Hash) ? args.pop : {}
+
+  path = args.shift || block
+  path_proc = path.is_a?(Proc) ? path : proc {|params| path % params }
+  status = options[:status] || 301
+
+  lambda do |env|
+    req = Rack::Request.new(env)
+    #Get both the query paramaters and url paramaters
+    params = env["action_dispatch.request.path_parameters"].merge req.params
+    url = path_proc.call(params.stringify_keys)
+    #Doesn't add the port back in!
+    #url = req.scheme + '://' + req.host + params
+    #content-type might be a bad idea, need to look into what happens for different requests
+    [status, {'Location' => url, 'Content-Type' => env['HTTP_ACCEPT'].split(',').first}, ['Moved Permanently']]
+  end
+end
+
+def bid_path
+  redirect do |params| 
+    if params['project_id']
+      "/projects/#{params['project_id']}/bids/#{params['id']}" 
+    else
+      '/projects/invalid_id'
+    end
+  end
+end
+
+
+match "bids", :to => bid_path
+match "bids/:id", :to => bid_path
+

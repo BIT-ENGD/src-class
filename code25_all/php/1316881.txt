@@ -1,0 +1,56 @@
+function add_file($name, $data, $opt = array(), $deflateLevel=0) {
+    # compress data
+
+    $zdata = gzdeflate($data, $deflateLevel);
+
+    # calculate header attributes
+
+    $crc  = crc32($data);
+    $zlen = strlen($zdata);
+    $len  = strlen($data);
+    $meth = 0x08;
+
+    # send file header
+    $this->add_file_header($name, $opt, $meth, $crc, $zlen, $len);
+
+    # print data
+    $this->send($zdata);
+}
+
+private function add_file_header($name, $opt, $meth, $crc, $zlen, $len) {
+    # strip leading slashes from file name
+    # (fixes bug in windows archive viewer)
+    $name = preg_replace('/^\\/+/', '', $name);
+
+    # calculate name length
+    $nlen = strlen($name);
+
+    # create dos timestamp
+    $opt['time'] = $opt['time'] ? $opt['time'] : time();
+    $dts = $this->dostime($opt['time']);
+
+    # build file header
+    $fields = array(            # (from V.A of APPNOTE.TXT)
+    array('V', 0x04034b50),     # local file header signature
+    array('v', (6 << 8) + 3),   # version needed to extract
+    array('v', 0x00),           # general purpose bit flag
+    array('v', $meth),          # compresion method (deflate or store)
+    array('V', $dts),           # dos timestamp
+    array('V', $crc),           # crc32 of data
+    array('V', $zlen),          # compressed data length
+    array('V', $len),           # uncompressed data length
+    array('v', $nlen),          # filename length
+    array('v', 0),              # extra data len
+    );
+
+    # pack fields and calculate "total" length
+    $ret = $this->pack_fields($fields);
+    $cdr_len = strlen($ret) + $nlen + $zlen;
+
+    # print header and filename
+    $this->send($ret . $name);
+
+    # add to central directory record and increment offset
+    $this->add_to_cdr($name, $opt, $meth, $crc, $zlen, $len, $cdr_len);
+}
+

@@ -1,0 +1,262 @@
+#include <windows.h>
+#include <jawt_md.h>
+#include <jawt.h>
+#include <jni.h>
+
+// Don't mangle names for the JVM
+extern "C" {
+
+BOOL APIENTRY DllMain( HMODULE hModule,
+                       DWORD  ul_reason_for_call,
+                       LPVOID lpReserved
+                     )
+{
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH:
+    case DLL_THREAD_ATTACH:
+    case DLL_THREAD_DETACH:
+    case DLL_PROCESS_DETACH:
+        break;
+    }
+    return TRUE;
+}
+
+/**
+ * Gets the window handle for the Java window.
+ * Procedure for obtaining the handle:
+ *   1. Get the structure (JAWT) that contains the native methods. 
+ *   2. Get the drawing surface (JAWT_DrawingSurface).
+ *   3. Using the drawing surface, get the drawing surface info (JAWT_DrawingSurfaceInfo).
+ *   4. Get the drawing info that's specific to Win32 (JAWT_Win32DrawingSurfaceInfo).
+ *   5. Using the drawing surface info, get the hwnd.
+ */
+/*
+ * Class:     test_Transparency
+ * Method:    getWindowHandle
+ * Signature: (Ljava/awt/Component;)J
+ */
+JNIEXPORT jlong JNICALL Java_test_Transparency_getWindowHandle
+  (JNIEnv * env, jclass cls, jobject component)
+{
+   JAWT awt;
+   JAWT_DrawingSurface* ds;
+   JAWT_DrawingSurfaceInfo* dsi;
+   JAWT_Win32DrawingSurfaceInfo* dsi_win;
+   jint dsLock;
+   jboolean result = JNI_FALSE;
+
+   // Get the AWT
+   awt.version = JAWT_VERSION_1_4;
+   result = JAWT_GetAWT(env, &awt);
+
+
+   if ( result == JNI_FALSE )
+   {
+      printf( "%s:%i -  JAWT_GetAWT() failed.\n", __FILE__, __LINE__ );
+      return 0;
+   }
+
+   // Get the drawing surface
+   ds = awt.GetDrawingSurface(env, component);
+
+   if ( ds == NULL )
+   {
+      printf( "%s:%i -  GetDrawingSurface() failed.\n", __FILE__, __LINE__ );
+      return 0;
+   }
+
+   dsLock = ds->Lock(ds);
+
+   // Get the drawing surface info
+   dsi = ds->GetDrawingSurfaceInfo(ds);
+
+
+   // Get the platform-specific drawing info
+   dsi_win = (JAWT_Win32DrawingSurfaceInfo*)dsi->platformInfo;
+
+
+   HWND handle = dsi_win->hwnd;
+
+   ds->FreeDrawingSurfaceInfo(dsi);
+   ds->Unlock(ds);
+   awt.FreeDrawingSurface(ds);
+
+   return (jlong)handle;
+}
+
+void printLastError()
+{
+    LPTSTR pszMessage;
+    DWORD dwLastError = GetLastError(); 
+
+    FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        dwLastError,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR)&pszMessage,
+        0, NULL );
+
+    // Display the error message
+    wprintf(L"failed with error %d: %s\n", dwLastError, pszMessage);
+
+    LocalFree(pszMessage);
+
+}
+
+/*
+ * Class:     test_Transparency
+ * Method:    setTransparency
+ * Signature: (JF)V
+ */
+JNIEXPORT void JNICALL Java_test_Transparency_setTransparency
+  (JNIEnv * env, jclass cls, jlong windowHandle, jfloat alpha)
+{
+
+   HWND hwnd = (HWND)windowHandle;
+
+   // Get the current window style
+   LONG currentStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+
+
+   if ( currentStyle == 0 )
+   {
+      printf( "Error calling GetWindowLong() ");
+      printLastError();
+
+   }
+
+   if ( alpha == 0 )
+   {
+      // No transparency.
+      // Remove WS_EX_LAYERED from this window style
+      SetWindowLong(hwnd, GWL_EXSTYLE, currentStyle & ~WS_EX_LAYERED);
+   }
+   else
+   {
+      // Calculate the transparency value. Should be in the range 0-255
+      unsigned char transparency = (unsigned char)(255 * alpha);
+
+      // Set window style to WS_EX_LAYERED. This is required for windows to be transparent.
+      SetWindowLong(hwnd, GWL_EXSTYLE, currentStyle | WS_EX_LAYERED );
+
+      // set the transparency level
+      SetLayeredWindowAttributes(hwnd, 0, transparency, LWA_ALPHA);
+   }
+}
+
+
+} // extern "C"
+
+package test;
+
+import javax.swing.*;
+import javax.swing.SwingUtilities;
+import java.awt.event.*;
+
+public class MyFrame implements ActionListener
+{
+   private JFrame frame;
+   private Transparency trans; // = new Transparency();
+   private float t = 1.0f;
+
+   public MyFrame()
+   {
+      frame = new JFrame("My transparent window");
+      frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+      frame.setBounds( 10, 10, 200, 200 );
+
+      JButton button = new JButton("My button");
+      button.setBounds( 20, 20, 50, 10 );
+      button.addActionListener( this );
+
+      JPanel panel = new JPanel();
+      panel.add( button );
+
+      frame.setContentPane( panel );
+
+      //Display the window.
+      frame.setVisible(true);
+
+      trans = new Transparency();
+   }
+
+
+   /**
+    * @param args
+    */
+   public static void main( String[] args )
+   {
+      MyFrame f = new MyFrame();
+   }
+
+   public void actionPerformed(ActionEvent e)
+   {
+      t -= 0.05f;
+      trans.setWindowOpacity( frame, t );
+   }
+
+}
+
+package test;
+
+import java.awt.Window;
+import java.awt.Component;
+
+public class Transparency
+{
+   static boolean libLoaded = false;
+   /**
+    * Sets the transparency for a window.
+    * @param hwnd Handle for the window.
+    * @param opacity Transparency level, from 0.0 to 1.0.
+    * 1.0 is completely transparent. 0.0 is completely opaque.
+    */
+   private static native void setTransparency( long hwnd, float opacity );
+
+   /**
+    * Get the window handle for the component.
+    * @param component
+    * @return HWND value obtained from the OS.
+    */
+   private static native long getWindowHandle( Component component );
+
+   static
+   {
+      try
+      {
+         System.loadLibrary("transJNI");
+         libLoaded = true;
+      }
+      catch ( Exception e )
+      {
+         e.printStackTrace();
+         libLoaded = false;
+      }
+   }
+
+   /**
+    * @param window The window whose opacity will be adjusted.
+    * @param opacity The opacity level, from 0.0 (opaque) to 1.0 (completely transparent).
+    */
+   public void setWindowOpacity(Window window, float opacity)
+   {
+      if ( !libLoaded )
+      {
+         return;
+      }
+
+      if ( !window.isVisible() )
+      {
+         return;
+      }
+      long hwnd = getWindowHandle( window );
+      setTransparency(hwnd, opacity);
+
+   }
+
+}
+

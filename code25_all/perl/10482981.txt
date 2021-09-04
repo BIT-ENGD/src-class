@@ -1,0 +1,48 @@
+sub sendData2Master {
+    my ($data) = @_ ;
+    my $failed = -1;
+    return( $failed ) unless defined $data ;
+
+    my $proto = (getprotobyname('tcp'))[2] ;
+    my $sin = sockaddr_in( $PORTMASTER, inet_aton($MASTER) ) ;
+    my $FS;
+    unless (socket($FS, AF_INET, SOCK_STREAM, $proto)) {
+        logger("socket [$MASTER]:[$PORTMASTER] failed:[$?]:[$!]") ;
+        return( $failed ) ;
+    }
+
+    while (!connect($FS, $sin) && ! $!{EISCONN}) 
+    {
+        if ($!{EINTR} || $!{EINPROGRESS})
+        {
+            last;
+            # the connection shall be established asynchronously.
+            # http://pubs.opengroup.org/onlinepubs/009695399/functions/connect.html
+        }
+        else
+        {
+            logger("connect to [$MASTER]:[$PORTMASTER] failed:[$?]:[$!]") ;
+            if ($!{ECONNREFUSED})
+            {
+                # tcp server can refuse a connection because a low Listen parameter in IO::Socket::INET->new
+                next;
+            }
+            else
+            {
+                return ( $failed );
+            }
+        }
+
+    }
+
+    select((select($FS),$|=1)[0]);
+    unless ( print $FS "$data","\n" ) {
+        logger("print [$data] to [$MASTER]:[$PORTMASTER] failed:[$?]:[$!]") ;
+        return( $failed );
+    }
+    close ($FS) ;
+    select((select(STDOUT),$|=1)[0]);
+
+    return 1;
+}
+

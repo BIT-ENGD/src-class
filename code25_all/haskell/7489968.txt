@@ -1,0 +1,73 @@
+tell
+runWriter
+WriterT
+type Packet = B.ByteString
+
+newtype MStack a = MStack { unMStack :: WriterT [Packet] (WriterT [String] Identity) a }
+  deriving (Monad)
+
+MStack
+MonadWriter [Packet]
+MonadWriter [String]
+instance MonadWriter [String] MStack where
+  tell = Control.Monad.Writer.tell
+  listen = Control.Monad.Writer.listen
+  pass = Control.Monad.Writer.pass
+
+instance MonadWriter [Packet] MStack where
+  tell = lift . Control.Monad.Writer.tell
+  listen = lift . Control.Monad.Writer.listen
+  pass = lift . Control.Monad.Writer.pass
+
+/Users/djoyner/working/channelized-writer/Try1.hs:12:10:
+    Functional dependencies conflict between instance declarations:
+      instance MonadWriter [String] MStack
+        -- Defined at /Users/djoyner/working/channelized-writer/Try1.hs:12:10-36
+      instance MonadWriter [Packet] MStack
+        -- Defined at /Users/djoyner/working/channelized-writer/Try1.hs:17:10-36
+Failed, modules loaded: none.
+
+WriterT
+Packet
+String
+runMStack
+tellPacket
+tellDebug
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
+import Control.Monad.Identity
+import Control.Monad.Writer
+import qualified Data.ByteString as B
+
+type Packet = B.ByteString
+
+data MStackWriterWrapper = MSWPacket Packet
+                         | MSWDebug String
+
+newtype MStack a = MStack { unMStack :: WriterT [MStackWriterWrapper] Identity a }
+  deriving (Monad, MonadWriter [MStackWriterWrapper])
+
+runMStack :: MStack a -> (a, [Packet], [String])
+runMStack act = (a, concatMap unwrapPacket ws, concatMap unwrapDebug ws)
+  where (a, ws) = runIdentity $ runWriterT $ unMStack act
+        unwrapPacket w = case w of
+          MSWPacket p -> [p]
+          _ -> []
+        unwrapDebug w = case w of
+          MSWDebug d -> [d]
+          _ -> []
+
+tellPacket = tell . map MSWPacket
+tellDebug = tell . map MSWDebug
+
+myFunc = do
+  tellDebug ["Entered myFunc"]
+  tellPacket [B.pack [0..255]]
+  tellDebug ["Exited myFunc"]
+
+main = do
+  let (_, ps, ds) = runMStack myFunc
+  putStrLn $ "Will be sending " ++ (show $ length ps) ++ " packets."
+  putStrLn "Debug log:"
+  mapM_ putStrLn ds
+

@@ -1,0 +1,71 @@
+<data><dataitem evaluateduserid="208" idcompetencylevel="90" /><dataitem evaluateduserid="211" idcompetencylevel="89" /><dataitem evaluateduserid="205" idcompetencylevel="90" /></data>
+
+ALTER PROC [dbo].[Spel_CM_AssessmentsDataInsertEventItem]
+    @IdAssessmentEventItem int,
+    @UserCompetencyLevel xml
+AS
+SET NOCOUNT ON
+
+-- XML Data model:
+-- <data>
+--  <dataitem evaluateduserid="x" idcompetencylevel="y"></dataitem>
+--</data>
+
+DECLARE @TableUserCompetencyLevel table
+(
+    EvaluatedUserId int,
+    IdCompetencyLevel int
+)
+
+INSERT INTO 
+    @TableUserCompetencyLevel
+    (
+        EvaluatedUserId,
+        IdCompetencyLevel
+    )
+SELECT
+    EvaluatedUserId = aa.Item.value('@evaluateduserid', 'int'),
+    IdCompetencyLevel = aa.Item.value('@idcompetencylevel', 'int')
+FROM
+    @UserCompetencyLevel.nodes('data/dataitem') AS aa(Item)
+
+
+-- Delete previously existing data. This is useful in case the user is
+-- updating an assessment event item
+DELETE FROM
+    Spel_CM_AssessmentsData
+WHERE
+    IdAssessmentEventItem = @IdAssessmentEventItem
+
+-- Preparing to insert data...
+DECLARE @IdAssessmentEvent int
+SELECT @IdAssessmentEvent = da.[IdAssessmentEvent] FROM Spel_CM_AssessmentsEventsItems da WHERE da.[IdAssessmentEventItem] = @IdAssessmentEventItem
+
+
+-- Inserts data into AssessmentsData table
+INSERT INTO Spel_CM_AssessmentsData
+(
+    [IdAssessmentEvent],
+    [IdAssessmentEventItem],
+    [EvalatedUserId],
+    [IdCompetencyLevel]
+)
+
+SELECT
+    @IdAssessmentEvent,
+    @IdAssessmentEventItem,
+    ca.[EvaluatedUserId],
+    ca.[IdCompetencyLevel]
+FROM
+    @TableUserCompetencyLevel ca
+WHERE
+    (NOT ca.[EvaluatedUserId] IS NULL)
+    AND
+    ((NOT ca.[IdCompetencyLevel] IS NULL) AND (NOT ca.[IdCompetencyLevel] = ''))
+
+-- Updates the AssessmentsEventsItems table to confirm that the items have been inserted
+EXECUTE Spel_CM_AssessmentsEventsItemsUpdate @IdAssessmentEventItem, 1
+
+
+SET NOCOUNT OFF
+

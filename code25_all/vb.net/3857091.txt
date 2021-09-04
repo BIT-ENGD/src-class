@@ -1,0 +1,76 @@
+Function getCOMDLNames(ByVal searchStr As String) As DataTable
+    Dim MySearchRoot As DirectoryEntry = New DirectoryEntry("path", "usr", "pwd")
+    Dim MyDirectorySearcher As New DirectorySearcher(MySearchRoot)
+    Dim con As New SqlConnection
+    Dim cmdSelect As SqlCommand
+    Dim da As New SqlDataAdapter
+    Dim cdt As New DataTable
+    Dim row As DataRow
+    Dim campusGroupArray() As String
+    Dim j As Integer = 0
+
+    Try
+        con.ConnectionString = ConfigurationManager.AppSettings("sql_dir")
+        con.Open()
+        cmdSelect = New SqlCommand("...")
+        cmdSelect.Connection = con
+        da.SelectCommand = cmdSelect
+        da.Fill(cdt)
+        ReDim campusGroupArray(0 To cdt.Rows.Count)
+
+        'Fill array
+        For i As Integer = 0 To cdt.Rows.Count - 1
+            row = cdt.Rows(i)
+            campusGroupArray(i) = row(0)
+        Next
+
+        'Remove empty elements from array
+        Dim tempStr As String = String.Join("'", campusGroupArray)
+        campusGroupArray = Nothing
+        campusGroupArray = tempStr.Split(New Char() {"'"c}, StringSplitOptions.RemoveEmptyEntries)
+
+        Dim MySearchResult As SearchResultCollection
+
+        'Loop through OU's until members are found
+        Do
+            MyDirectorySearcher.Filter = ("(&(objectCategory=person)(memberof=cn=" & searchStr & ", ou=groups, ou=" & campusGroupArray(j) & ", dc=.., dc=.., dc=.., dc=..))")
+
+            MyDirectorySearcher.SearchScope = SearchScope.Subtree
+            MyDirectorySearcher.PropertiesToLoad.Add("cn")
+
+            MyDirectorySearcher.Sort.Direction = System.DirectoryServices.SortDirection.Ascending
+            MyDirectorySearcher.Sort.PropertyName = "cn"
+
+            MySearchResult = MyDirectorySearcher.FindAll()
+            j += 1
+        Loop Until MySearchResult.Count > 0 Or j > campusGroupArray.Length - 1
+
+
+        Dim myTable As New DataTable
+        Dim colName As String
+
+        'Create columns in table
+        For Each colName In MyDirectorySearcher.PropertiesToLoad
+            myTable.Columns.Add(colName, GetType(System.String))
+        Next
+
+        Dim result As SearchResult
+
+        'Fill table
+        For Each result In MySearchResult
+            Dim dr As DataRow = myTable.NewRow()
+            For Each colName In MyDirectorySearcher.PropertiesToLoad
+                If result.Properties.Contains(colName) Then
+                    dr(colName) = CStr(result.Properties(colName)(0))
+                Else
+                    dr(colName) = ""
+                End If
+            Next
+            myTable.Rows.Add(dr)
+        Next
+        Return myTable
+    Catch ex As Exception
+        Return Nothing
+    End Try
+End Function
+

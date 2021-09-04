@@ -1,0 +1,71 @@
+ void execute_external()
+{        
+    int numCommands = 1;
+    char **commands;
+    commands = malloc(sizeof(char *));
+
+    if(strstr(raw_command, "|") != NULL)        
+    {
+        numCommands = separate_pipeline_commands(commands);
+    }
+    else
+    {
+        commands[0] = malloc(strlen(raw_command) * sizeof(char));
+        commands[0] = raw_command;
+    }
+
+    int i;
+    int pipefd[2];
+    for (i = 0; i < numCommands; i++)
+    {
+        char **parameters_array = malloc(strlen(commands[i]) * sizeof(char *));
+        int num_params;
+        num_params = str_to_str_array(commands[i], parameters_array);
+
+        if (numCommands > 1 && i > 0 && i != numCommands - 1)
+        {
+            if (pipe(pipefd) == -1)
+            {
+                printf("Could not open a pipe.");
+            }
+        }
+
+        pid_t pid = fork();
+
+
+        pmesg(2, "Process forked. ID = %i. \n", pid);
+        int status;
+        if (fork < 0)
+        {
+            fprintf(to_write_to, "Could not fork a process to complete the external command.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (pid == 0) // This is the child process
+        {
+            if (numCommands > 1) { close(pipefd[1]); } // close the unused write end of the pipe
+                           if (i == 0) // we may be pipelining and this is the first process
+            {
+                dup2(1, pipefd[1]); // set the source descriptor (for the next iteration of the loop) to this proc's stdout
+            }
+            if (i !=0 && (i != numCommands-1)) // we are pipelining and this is not the first or last process
+            {
+                dup2(pipefd[0], 0); // set the stdin of this process to the source of the previous process
+            }
+            if (execvp(parameters_array[0], parameters_array) < 0)
+            {
+                fprintf(to_write_to, "Could not execute the external command. errno: %i.\n", errno);
+                exit(EXIT_FAILURE);
+            }
+            else    { pmesg(2, "Executed the child process.\n");}
+        }
+        else
+        {
+            if (numCommands > 1) { close(pipefd[0]); } // close the unused read end of the pipe
+            if (backgrounding == 0) { while(wait(&status) != pid); }// Wait for the child to finish executing
+        } 
+        free(parameters_array);
+    }
+free(commands);
+    }
+

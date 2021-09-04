@@ -1,0 +1,89 @@
+using namespace boost::interprocess;
+class SharedMemoryWrapper
+{
+public:
+    SharedMemoryWrapper(const std::string & name, bool server) :
+      m_name(name),
+      m_server(server)
+    {
+        if (server)
+        {
+            named_mutex::remove("named_mutex");
+            shared_memory_object::remove(m_name.c_str());
+            m_segment = new managed_shared_memory (create_only,name.c_str(),65536);         
+            m_stackAllocator = new StringStackAllocator(m_segment->get_segment_manager());
+            m_stack = m_segment->construct<StringStack>("MyStack")(*m_stackAllocator);
+        }
+        else
+        {
+            m_segment = new managed_shared_memory(open_only ,name.c_str());
+            m_stack = m_segment->find<StringStack>("MyStack").first;
+        }
+        m_mutex = new named_mutex(open_or_create, "named_mutex");
+    }
+
+    ~SharedMemoryWrapper()
+    {
+        if (m_server)
+        {
+            named_mutex::remove("named_mutex");
+            m_segment->destroy<StringStack>("MyStack");
+            delete m_stackAllocator;
+            shared_memory_object::remove(m_name.c_str());
+        }
+        delete m_mutex;
+        delete m_segment;
+    }
+
+    void push(const std::string & in)
+    {
+        scoped_lock<named_mutex> lock(*m_mutex);
+        boost::interprocess::string inStr(in.c_str());
+        m_stack->push_back(inStr);
+    }
+    std::string pop()
+    {
+        scoped_lock<named_mutex> lock(*m_mutex);
+        std::string result = "";
+        if (m_stack->size() > 0)
+        {
+            result = std::string(m_stack->begin()->c_str());
+            m_stack->erase(m_stack->begin());
+        }
+        return result;
+    }
+private:
+    typedef boost::interprocess::allocator<boost::interprocess::string, boost::interprocess::managed_shared_memory::segment_manager> StringStackAllocator;
+    typedef boost::interprocess::vector<boost::interprocess::string, StringStackAllocator> StringStack;
+    bool m_server;
+    std::string m_name;
+    boost::interprocess::managed_shared_memory * m_segment;
+    StringStackAllocator * m_stackAllocator;
+    StringStack * m_stack;  
+    boost::interprocess::named_mutex * m_mutex;
+};
+
+//reader process
+SharedMemoryWrapper mem("MyMemory", true);
+std::string myString;
+int x = 5;
+do
+{
+    myString = mem.pop();
+    if (myString != "") 
+    {
+        std::cout << myString << std::endl;
+    }
+} while (1); //while (myString != ""); 
+
+//writer
+SharedMemoryWrapper mem("MyMemory", false);
+for (int i = 0; i < 1000000000; i++)
+{
+    std::stringstream ss;
+    ss <<  i;  //causes failure after few thousand iterations
+    //ss << "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" << i; //causes immediate failure
+    mem.push(ss.str());
+}
+return 0;
+

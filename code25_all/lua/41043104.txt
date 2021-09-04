@@ -1,0 +1,140 @@
+--VARS
+local os_ver = "0.1"
+local w,h = term.getSize() --Terminal size
+local bar_b_color, bar_f_color --Background and foreground colors (bar)
+local menu_b_color, menu_f_color --Background and foreground colors (menu)
+local bg_image, bg_color --Background image, color
+local root_dir = "/MaOS/"
+local sys_dir = root_dir .. "sys/"
+local usr_dir = root_dir .. "usr/"
+local start_txt = "START" --The text printed in start button
+
+local menus_index --Gui's index of menus
+
+local prog_name --Name of the sel. program
+local prog_path --Path of the sel. program
+
+local win, process
+
+--LOAD APIS
+os.loadAPI(sys_dir .. "apis/flib")
+os.loadAPI(sys_dir .. "apis/stdlib")
+os.loadAPI(sys_dir .. "apis/gui")
+
+--BASE FUNCS
+function init() --Loads settings
+    menu_b_color = tonumber(flib.getSetting(sys_dir .. "conf", "Background Menu Color"))
+    menu_f_color = tonumber(flib.getSetting(sys_dir .. "conf", "Foreground Menu Color"))
+    bar_b_color = tonumber(flib.getSetting(sys_dir .. "conf", "Background Bar Color"))
+    bar_f_color = tonumber(flib.getSetting(sys_dir .. "conf", "Foreground Bar Color"))
+    bg_image = paintutils.loadImage(flib.getSetting(sys_dir .. "conf", "Background Image Path"))
+    bg_color = tonumber(flib.getSetting(sys_dir .. "conf", "Background Color"))
+end
+
+--PRE-MAIN
+init()
+
+--TABLES
+--Menu: [1] -> Menu informations
+local menus = {
+    [1] = { --Start menu
+        [1] = {is_shown = false; parent=0; x = 1; xx = 11; y = 1; yy = 6; b_color = menu_b_color; f_color = menu_f_color};
+        [2] = {txt = "           "; cmd = function() end};
+        [3] = {txt = " PROGRAMS >"; cmd = function()
+                                             loadPrograms()
+                                             gui.showMenu(menus_index, 3)
+                                         end};
+        [4] = {txt = " CUSTOMIZE "; cmd = function() launchShell("CUSTOMIZE", "/rom/programs/edit", sys_dir .. "conf") end};
+        [5] = {txt = " SHELL     "; cmd = function() launchShell("SHELL", "/rom/programs/shell") end};
+        [6] = {txt = " EXIT     >"; cmd = function() gui.showMenu(menus_index, 2) end};
+        [7] = {txt = "           "; cmd = function() 
+                                              win = window.create(term.current(),15,5,20,10, true)
+                                              process = coroutine.create(function() os.run({term = win}, sys_dir .. "programs/Ice-Browser") end)
+                                              coroutine.resume(process)
+                                          end}
+    };
+    [2] = { --Exit menu
+        [1] = {is_shown = false; parent=1; x = 12; xx = 23; y = 1; yy = 6; b_color = menu_b_color; f_color = menu_f_color};
+        [2] = {txt = "          "; cmd = function() end};
+        [3] = {txt = " SHUTDOWN "; cmd = function() os.shutdown() end};
+        [4] = {txt = " REBOOT   "; cmd = function() os.reboot() end};
+        [5] = {txt = "          "; cmd = function() end}
+    };
+    [3] = { --Programs menus
+        [1] = {is_shown = false; parent=1; x = 12; xx = 25; y = 1; yy = 0; b_color = menu_b_color; f_color = menu_f_color};
+        [2] = {txt = "              "; cmd = function() end};
+    };
+    [4] = { --Args menu
+        [1] = {is_shown = false; parent=3; x = 26; xx = 38; y = 1; yy = 5; b_color = menu_b_color; f_color = menu_f_color};
+        [2] = {txt = "               "; cmd = function() end};
+        [3] = {txt = " RUN           "; cmd = function() launchShell(prog_name, prog_path, nil) end};
+        [4] = {txt = " RUN WITH ARGS "; cmd = function() end};
+        [5] = {txt = "               "; cmd = function() end};
+    }
+}
+
+--FUNCS
+function loadPrograms() --Load programs
+    stdlib.clearTable(gui.menus[menus_index][3], 2)
+    local programs = flib.getFiles(sys_dir .. "programs/")
+
+    for _, program in pairs(programs) do
+        name = " " .. program
+        path = sys_dir .. "programs/" .. program
+
+        if string.len(name) > (menus[3][1].xx-menus[3][1].x) then
+            name = string.sub(name, 1, string.len(name)-4) .."... "
+        elseif string.len(name)-1 < (menus[3][1].xx-menus[3][1].x) then
+            for i=string.len(name),(menus[3][1].xx-menus[3][1].x),1 do
+                name = name .. " "
+            end
+        end
+        name = string.upper(name)
+
+        table.insert(gui.menus[menus_index][3], {txt = name; cmd = function() end})
+    end
+
+    table.insert(gui.menus[menus_index][3], {txt = "              "; cmd = function() end})
+    gui.menus[menus_index][3][1].yy = table.getn(programs)+1
+end
+
+function drawScr() --Draw screen
+    --Draw bg
+    term.setBackgroundColor(bg_color)
+    term.clear()
+    paintutils.drawImage(bg_image, 1, 2)
+
+    --Draw bar
+    term.setBackgroundColor(bar_b_color)
+    term.setTextColor(bar_f_color) 
+    term.setCursorPos(1, 1)
+    term.clearLine()
+    term.setCursorPos(w-#os_ver, 1)
+    print(os_ver)
+    term.setCursorPos(2, 1)
+    print(start_txt)
+
+    --Draw menus
+    gui.drawAllShownMenus()
+
+    if win ~= nil then win.redraw() end
+end
+
+function launchShell(title, path, arg)
+    local shell_tab = multishell.launch({shell = shell}, path, arg)
+    multishell.setTitle(shell_tab, title)
+    multishell.setFocus(shell_tab)
+    return shell_tab
+end
+
+--MAIN
+multishell.setTitle(multishell.getCurrent(), "MaOS") --Set title of this shell
+init()
+
+menus_index = gui.loadMenuGroup(menus) --Load menus into gui
+
+while true do
+    drawScr()
+    gui.handleMenuClick(2, 2+string.len(start_txt), 1, 1)
+end
+

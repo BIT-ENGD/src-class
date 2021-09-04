@@ -1,0 +1,76 @@
+-------------------------------------------------------------------------
+-- Check Syntax of Database Objects
+-- Copyrighted work.  Free to use as a tool to check your own code or in 
+--  any software not sold. All other uses require written permission.
+-------------------------------------------------------------------------
+-- Turn on ParseOnly so that we don't actually execute anything.
+SET PARSEONLY ON 
+GO
+
+-- Create a table to iterate through
+declare @ObjectList table (ID_NUM int NOT NULL IDENTITY (1, 1), OBJ_NAME varchar(255), OBJ_TYPE char(2))
+
+-- Get a list of most of the scriptable objects in the DB.
+insert into @ObjectList (OBJ_NAME, OBJ_TYPE)
+SELECT   name, type
+FROM     sysobjects WHERE type in ('P', 'FN', 'IF', 'TF', 'TR', 'V')
+order by type, name
+
+-- Var to hold the SQL that we will be syntax checking
+declare @SQLToCheckSyntaxFor varchar(max)
+-- Var to hold the name of the object we are currently checking
+declare @ObjectName varchar(255)
+-- Var to hold the type of the object we are currently checking
+declare @ObjectType char(2)
+-- Var to indicate our current location in iterating through the list of objects
+declare @IDNum int
+-- Var to indicate the max number of objects we need to iterate through
+declare @MaxIDNum int
+-- Set the inital value and max value
+select  @IDNum = Min(ID_NUM), @MaxIDNum = Max(ID_NUM)
+from    @ObjectList
+
+-- Begin iteration
+while @IDNum <= @MaxIDNum
+begin
+  -- Load per iteration values here
+  select  @ObjectName = OBJ_NAME, @ObjectType = OBJ_TYPE
+  from    @ObjectList
+  where   ID_NUM = @IDNum 
+
+  -- Get the text of the db Object (ie create script for the sproc)
+  SELECT @SQLToCheckSyntaxFor = OBJECT_DEFINITION(OBJECT_ID(@ObjectName, @ObjectType))
+
+  begin try
+    -- Run the create script (remember that PARSEONLY has been turned on)
+    EXECUTE(@SQLToCheckSyntaxFor)
+  end try
+  begin catch
+    -- See if the object name is the same in the script and the catalog (kind of a special error)
+    if (ERROR_PROCEDURE() <> @ObjectName)
+    begin
+      print 'Error in ' + @ObjectName
+      print '  The Name in the script is ' + ERROR_PROCEDURE()+ '. (They don''t match)'
+    end
+    -- If the error is just that this already exists then  we don't want to report that.
+    else if (ERROR_MESSAGE() <> 'There is already an object named ''' + ERROR_PROCEDURE() + ''' in the database.')
+    begin
+      -- Report the error that we got.
+      print 'Error in ' + ERROR_PROCEDURE()
+      print '  ERROR TEXT: ' + ERROR_MESSAGE() 
+    end
+  end catch
+
+  -- Setup to iterate to the next item in the table
+  select  @IDNum = case
+            when Min(ID_NUM) is NULL then @IDNum + 1
+            else Min(ID_NUM)
+          end  
+  from    @ObjectList
+  where   ID_NUM > @IDNum
+
+end
+-- Turn the ParseOnly back off.
+SET PARSEONLY OFF 
+GO
+

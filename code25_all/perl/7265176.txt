@@ -1,0 +1,66 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use threads;
+use threads::shared;
+
+use MongoDB;
+use Time::HiRes;
+
+my $conn = MongoDB::Connection->new;
+
+my $db = $conn->tutorial;
+
+my $users = $db->users;
+
+my $cmd = Tie::IxHash->new(
+    "create"    => "users",
+    "capped"    => "boolean::true",
+    "max"       => 10000000,
+    );
+
+$db->run_command($cmd);
+
+my $idx = Tie::IxHash->new(
+    "background"=> "boolean::true",
+);
+$users->ensure_index($idx);
+
+
+my $myhash =
+    {
+        "name"  => "James",
+        "age"   => 31,
+        #    "likes" => [qw/Danielle biking food games/]
+    };
+
+my $j : shared = 0;
+
+my $numthread = 2;  # how many threads to run
+
+my @array;
+for (1..100000) {
+    push (@array, $myhash);
+    $j++;
+}
+
+sub thInsert {
+    #my @ids = $users->batch_insert(\@array);
+    #$users->bulk_insert(\@array);
+    $users->batch_insert(\@array);
+}
+
+my @threads;
+
+my $timestart = Time::HiRes::time();
+push @threads, threads->new(\&thInsert) for 1..$numthread;
+$_->join foreach @threads; # wait for all threads to finish
+print (($j*$numthread) . "\n");
+my $timeend = Time::HiRes::time();
+
+print( (($j*$numthread)/($timeend - $timestart)) . "\n");
+
+$users->drop();
+$db->drop();
+

@@ -1,0 +1,135 @@
+Imports System.Net.Sockets
+Imports System.Text
+Imports System.Reflection
+
+Public Class frmComplete
+  Dim Data As Integer
+  Dim Message As String
+
+  Private sServer As TcpListener
+  Private sClient As New TcpClient
+
+  Private cServer As TcpListener
+  Private cClient As New TcpClient
+  Private cNick As String
+
+  Dim BufferSize(1024) As Byte
+
+  Private Delegate Sub MessageDelegate(ByVal Message As String)
+
+Private Sub frmComplete_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
+    srvListen(5900)
+    btnSend.Enabled = False
+End Sub
+
+Private Sub OnServerConnect(ByVal AR As IAsyncResult)
+    sClient = sServer.EndAcceptTcpClient(AR)
+
+    sClient.GetStream.BeginRead(BufferSize, 0, BufferSize.Length, AddressOf OnRead, Nothing)
+
+    My.Computer.Audio.Play(Application.StartupPath & "\Connected.wav", AudioPlayMode.Background)
+End Sub
+
+Private Sub OnRead(ByVal AR As IAsyncResult)
+    Data = sClient.GetStream.EndRead(AR)
+    Message = Encoding.ASCII.GetString(BufferSize, 0, Data)
+
+    Dim Args As Object() = {Message}
+    Me.Invoke(New MessageDelegate(AddressOf PrintMessage), Args)
+
+    sClient.GetStream.BeginRead(BufferSize, 0, BufferSize.Length, AddressOf OnRead, Nothing)
+End Sub
+
+Private Sub PrintMessage(ByVal Message As String)
+    Try
+        txtChat.Text = txtChat.Text & Message & vbCrLf
+        My.Computer.Audio.Play(Application.StartupPath & "\Message.wav", AudioPlayMode.Background)
+    Catch ex As Exception
+        MsgBox(ex.Message, MsgBoxStyle.Critical)
+    End Try
+End Sub
+
+Private Sub srvListen(ByVal port As Integer)
+    Try
+        sServer = New TcpListener(System.Net.IPAddress.Any, 5900)
+        sServer.Start()
+
+        'THIS WILL RAISE THE EVENT WHEN A CLIENT IS CONNECTED
+        sServer.BeginAcceptTcpClient(AddressOf OnServerConnect, Nothing)
+    Catch ex As Exception
+        MsgBox(ex.Message, MsgBoxStyle.Critical)
+    End Try
+End Sub
+
+
+
+Private Sub txtMessage_KeyDown(ByVal sender As System.Object, ByVal e As System.Windows.Forms.KeyEventArgs) Handles txtMessage.KeyDown
+    'FIXME (SOUND T_T)
+    If e.KeyCode = Keys.Enter Then
+        SendMessage(cNick & ":" & txtMessage.Text)
+    End If
+End Sub
+
+Private Sub btnConnect_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnConnect.Click
+    ConnectToServer(txtIP.Text)
+    cNick = txtNickname.Text
+
+    txtNickname.Enabled = False
+    txtIP.Enabled = False
+    btnConnect.Enabled = False
+End Sub
+
+Private Sub ConnectToServer(ByVal ipadress As String)
+    Try
+        cClient.BeginConnect(ipadress, 5900, AddressOf OnClientConnect, Nothing)
+    Catch ex As Exception
+        MsgBox(ex.Message)
+    End Try
+End Sub
+
+Private Sub OnClientConnect(ByVal AR As IAsyncResult)
+    Try
+        cClient.EndConnect(AR)
+    Catch ex As Exception
+        MsgBox(ex.Message)
+    End Try
+End Sub
+
+Private Sub btnSend_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnSend.Click
+    If Not String.IsNullOrEmpty(txtMessage.Text) Then
+
+        txtChat.Text = txtChat.Text & "Me:" & txtMessage.Text & vbCrLf
+        SendMessage(cNick & ":" & txtMessage.Text)
+
+    End If
+End Sub
+
+Private Sub SendMessage(ByVal message As String)
+    If cClient.Connected = True Then
+        Dim Writer As New IO.StreamWriter(cClient.GetStream)
+        Writer.Write(message)
+        Writer.Flush()
+    End If
+
+    txtMessage.Text = ""
+End Sub
+
+Private Sub SendCommand(ByVal command As String)
+    If cClient.Connected = True Then
+        Dim Writer As New IO.StreamWriter(cClient.GetStream)
+        Writer.Write(command)
+        Writer.Flush()
+    End If
+
+    txtMessage.Text = ""
+End Sub
+
+Private Sub txtMessage_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles txtMessage.TextChanged
+    If Not String.IsNullOrEmpty(txtMessage.Text) Then
+        btnSend.Enabled = True
+    Else
+        btnSend.Enabled = False
+    End If
+End Sub
+End Class
+

@@ -1,0 +1,123 @@
+    #!/bin/bash
+    #
+    BASE=/tmp
+    PID=$BASE/app.pid
+    LOG=$BASE/app.log
+    ERROR=$BASE/app-error.log
+
+    PORT=11211
+    LISTEN_IP='0.0.0.0'
+    MEM_SIZE=4
+    CMD='memcached'
+# Does this mean, that the COMMAND variable can adopt different values, depending on
+# what is entered as parameter? "memcached" is chosen by default, port, ip address and 
+# memory size are options, but what is -v?
+    COMMAND="$CMD -p $PORT -l $LISTEN_IP -m $MEM_SIZE -v"
+
+    USR=user
+
+    status() {
+        echo
+    echo "==== Status"
+
+        if [ -f $PID ]
+        then
+    echo
+    echo "Pid file: $( cat $PID ) [$PID]"
+            echo
+# ps -ef: Display uid, pid, parent pid, recent CPU usage, process start time, 
+# controling tty, elapsed CPU usage, and the associated command of all other processes
+# that are owned by other users.
+# The rest of this line I don't understand, especially grep -v grep
+    ps -ef | grep -v grep | grep $( cat $PID )
+        else
+    echo
+    echo "No Pid file"
+        fi
+    }
+
+    start() {
+        if [ -f $PID ]
+        then
+    echo
+    echo "Already started. PID: [$( cat $PID )]"
+        else
+    echo "==== Start"
+# Lock file that indicates that no 2nd instance should be started
+            touch $PID
+# COMMAND is called as background process and ignores SIGHUP signal, writes it's
+# output to the LOG file. 
+            if nohup $COMMAND >>$LOG 2>&1 &
+# The pid of the last background is saved in the PID file
+            then echo $! >$PID
+                 echo "Done."
+                 echo "$(date '+%Y-%m-%d %X'): START" >>$LOG
+            else echo "Error... "
+                 /bin/rm $PID
+            fi
+    fi
+    }
+# I don't understand this function :-(    
+    kill_cmd() {
+        SIGNAL=""; MSG="Killing "
+        while true
+    do
+    LIST=`ps -ef | grep -v grep | grep $CMD | grep -w $USR | awk '{print $2}'`
+            if [ "$LIST" ]
+            then
+    echo; echo "$MSG $LIST" ; echo
+    echo $LIST | xargs kill $SIGNAL
+# Why this sleep command?
+                sleep 2
+                SIGNAL="-9" ; MSG="Killing $SIGNAL"
+                if [ -f $PID ]
+                then
+                    /bin/rm $PID
+                fi
+    else
+    echo; echo "All killed..." ; echo
+    break
+    fi
+    done
+    }
+
+    stop() {
+        echo "==== Stop"
+
+        if [ -f $PID ]
+        then
+    if kill $( cat $PID )
+            then echo "Done."
+                 echo "$(date '+%Y-%m-%d %X'): STOP" >>$LOG
+            fi
+            /bin/rm $PID
+            kill_cmd
+        else
+    echo "No pid file. Already stopped?"
+        fi
+    }
+
+    case "$1" in
+        'start')
+                start
+                ;;
+        'stop')
+                stop
+                ;;
+        'restart')
+                stop ; echo "Sleeping..."; sleep 1 ;
+                start
+                ;;
+        'status')
+                status
+                ;;
+        *)
+                echo
+    echo "Usage: $0 { start | stop | restart | status }"
+                echo
+    exit 1
+                ;;
+    esac
+
+    exit 0
+

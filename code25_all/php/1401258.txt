@@ -1,0 +1,255 @@
+        public static function find_by_id($id=0) {
+            global $database;
+            $result_array = self::find_by_sql("SELECT * FROM " . self::$table_name . " WHERE id={$id} LIMIT 1 ");
+            return !empty($result_array) ? array_shift($result_array) : false;
+        }
+
+        public static function find_by_sql($sql="") {
+            global $database;
+            $result_set = $database->query($sql);
+            $object_array = array();
+            while ($row = $database->fetch_array($result_set)) {
+                $object_array[] = self::instantiate($row);
+            }
+            return $object_array;
+        }
+
+        private static function instantiate($record) {
+            // Could check that $record exists and is an array
+            // Simple, long-form approach: (if 100 cols, this would be huge)
+            // PHP 5.3 LSB : $class_name = get_called_class();
+            $object = new self;
+            // $object->id      = $record['id'];
+            // $object->username    = $record['username'];
+            // $object->password    = $record['password'];
+            // $object->first_name = $record['first_name'];
+            // $object->last_name   = $record['last_name'];
+
+            // More dynamic, short-form approach:
+            foreach($record as $attribute=>$value) {
+                if($object->has_attribute($attribute)) {
+                    $object->$attribute = $value;
+                }
+            }       
+            return $object;
+        }
+
+        public function save() {
+            // A new record won't have an id yet.
+            return isset($this->id) ? $this->update() : $this->create();
+        }
+
+        protected function create() { // protected so you are forced to call save() method for safety (no duplicate creates)
+            global $database;
+            $attributes = $this->sanitized_attributes();
+            $sql = "INSERT INTO ". self::$table_name ." (";
+            $sql .= join(", ", array_keys($attributes));
+            $sql .= ") VALUES ('";
+            $sql .= join("', '", array_values($attributes));
+            $sql .= "')";
+            if($database->query($sql)) {
+                $this->id = $database->insert_id();
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        protected function update() {
+            global $database;
+            $attributes = $this->sanitized_attributes();
+            $attribute_pairs = array();
+            foreach ($attributes as $key => $value) {
+                $attribute_pairs[] = "{$key} = '{$value}'";
+            }
+            $sql = "UPDATE ". self::$table_name ." SET ";
+            $sql .= join(", ", $attribute_pairs);
+            $sql .= " WHERE id=". $database->escape_value($this->id);
+            $database->query($sql);
+            return ($database->affected_rows() == 1) ? true : false;
+
+        }           
+
+<?php
+require_once('../../includes/init.php');
+if (!$session->is_logged_in()) { redirect_to("login.php"); }
+$user = User::find_by_id($session->user_id);
+
+if (!isset($_GET['e'])) { redirect_to("calendar.php"); }
+else { $event_id = $_GET['e']; }
+
+$sql = "SELECT * FROM slots WHERE event_id = {$event_id}";
+
+// find_by_sql() method also instantiates each row as a new Slot object
+// $slots is now an array() of objects
+$slots = Slot::find_by_sql($sql);
+
+// new Slot object used for adding a time slot to current event
+$blank_slot = new Slot();
+
+// initialize $message var to ""
+$message="";
+
+// Check to see if either of the submit buttons have been set in the $_POST
+if (isset($_POST['edit_event']) || isset($_POST['add_slot'])) {
+
+// Counts the number of slots associated with the current event id
+// Add one so that there is a blank field to add another time slot
+$count = count($slots) + 1;
+
+// Vars for checking if the last m/d/y is set in the form, before adding another slot field
+$check_month = "month" . $count;
+$check_year = "year" . $count;
+$check_day = "day" . $count;
+
+// initialize running errors var
+$errors = 0;
+
+// Don't add another slot field if the previous one has not been set
+if (isset($_POST['add_slot']) && (empty($_POST[$check_month]) || empty($_POST[$check_year]) || empty($_POST[$check_day]))) {
+                $message .= "Oops, you must enter a value for all months, dates, and years before adding a new date to this event.<br />";
+                $errors++;
+
+} else {
+    // create new Event object and set attrs from $_POST vars   
+    $event = new Event();       
+    $event->id = $event_id;
+    $event->title = $_POST['title'];
+    $event->description = $_POST['description'];
+    $event->category = $_POST['cat'];
+
+    $new_event = $event->save();
+    if ($new_event = true) {
+        $i = 1;
+        // for each of the $slots objects...
+        foreach ($slots as $slot) {
+            // get the db_fields for the object
+            $fields = Slot::get_db_fields();
+            // for each field...
+            foreach ($fields as $field) {
+                // create a $field_n var that appends $i, to match $_POST name
+                $field_n = $field . $i;
+                if ($field == 'id') {
+                    $slot_id_n = "slot_id" . $i;
+                    $slot->id = $_POST[$slot_id_n];
+                }
+                elseif ($field == 'start_hour') {
+                    $start_ampm_n = "start_ampm" . $i;
+                    $start_hour = Slot::convert_to_military($_POST[$field_n], $_POST[$start_ampm_n]);
+                    $slot->start_hour = $start_hour;
+                } elseif ($field == 'end_hour') {
+                    $end_ampm_n = "end_ampm" . $i;
+                    $end_hour = Slot::convert_to_military($_POST[$field_n], $_POST[$end_ampm_n]);
+                    $slot->end_hour = $end_hour;
+                } elseif ($field == 'start_ampm' || $field == 'end_ampm') {
+                } elseif ($field == 'event_id') {
+                    $slot->event_id = $event_id;
+                } elseif ($field == 'status') {
+                    $slot->status = "confirmed";
+                } else {
+                    $slot->$field = $_POST[$field_n];
+                }
+            }
+
+            // save() method runs create() or update() method
+            $save_slot = $slot->save();
+            // save m and y for redirecting back to calendar
+            $last_month = $slot->month;
+            $last_year = $slot->year;
+            if ($save_slot == false) {
+
+ // THIS IS THE ERROR I AM ALWAYS GETTING
+
+                $message .= "(1) Problem saving time slot number {$i}.<br />"; 
+                // rollback previous $slot and $event saves!
+                $errors++;
+            }
+
+        $i++;
+        }
+        // add the new time slot, if it exists
+        if (!empty($_POST[$check_month]) && !empty($_POST[$check_year]) && !empty($_POST[$check_day])) {
+            $fields = Slot::get_db_fields();
+            foreach ($fields as $field) {
+                $field_n = $field . $i;
+                if ($field == 'id') {
+                $slot_id_n = "slot_id" . $i;
+                    if(!empty($_POST[$slot_id_n])) {
+                        $blank_slot->id = $_POST[$slot_id_n];
+                    } else {
+                        $blank_slot->id = NULL;
+                    }
+                }
+                elseif ($field == 'start_hour') {
+                    $start_ampm_n = "start_ampm" . $i;
+                    $start_hour = Slot::convert_to_military($_POST[$field_n], $_POST[$start_ampm_n]);
+                    $blank_slot->start_hour = $start_hour;
+                } elseif ($field == 'end_hour') {
+                    $end_ampm_n = "end_ampm" . $i;
+                    $end_hour = Slot::convert_to_military($_POST[$field_n], $_POST[$end_ampm_n]);
+                    $blank_slot->end_hour = $end_hour;
+                } elseif ($field == 'start_ampm' || $field == 'end_ampm') {
+                } elseif ($field == 'event_id') {
+                    $blank_slot->event_id = $event_id;
+                } elseif ($field == 'status') {
+                    $blank_slot->status = "confirmed";
+                } else {
+                    $blank_slot->$field = $_POST[$field_n];
+                }
+            }
+            $save_slot = $blank_slot->save();
+            $last_month = $blank_slot->month;
+            $last_year = $blank_slot->year;
+            if ($save_slot == false) {
+                $message .= "Problem saving time slotb number {$i}.<br />";
+                // rollback previous $slot and $event saves!
+                $errors++;
+            }
+        }       
+    } else {
+        $message .= "Error updating the event.<br />";
+        $errors++;
+    }
+
+    if ($errors == 0) {
+        $redirect = "calendar.php";
+        if (isset($last_month) && isset($last_year)) {
+            $redirect .= "?m={$last_month}&y={$last_year}";
+        }
+        if (isset($_POST['edit_event'])) { redirect_to($redirect); }
+    }
+}
+}
+$event = Event::find_by_id($event_id);
+?>
+
+<?php include_layout_template('header.php'); ?>
+<div id="main"> 
+    <h1>Edit Event</h1>
+    <?php if (!empty($message)) { echo "<p class='message'>" . $message . "</p>"; } ?>
+    <a href="calendar.php">Cancel (Go back to the Calendar)</a></p><br /><br />
+    <form style="width: 700px;" action="?e=<?php echo $event_id; ?>" method="post">
+    <?php echo $event->build_event_form(); ?>
+    <?php 
+    $sql = "SELECT * FROM slots WHERE event_id = {$event_id}";
+    $slots = Slot::find_by_sql($sql);
+    ?>
+<br /><br />
+<?php
+    $num = 1;
+    foreach ($slots as $slot) {
+        echo $slot->build_slot_form($num);
+        $num++;
+    }
+    echo $blank_slot->build_slot_form($num);
+?>
+    <br /><br /><br />
+    <input type="hidden" name="date_count" value="<?php echo $num; ?>">
+    <input type="submit" name="edit_event" value="Edit Event" />
+    <input type="submit" name="add_slot" value="Add Another Date">
+    </form>
+
+</div>
+
+<?php include_layout_template('footer.php'); ?>
+

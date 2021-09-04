@@ -1,0 +1,57 @@
+import Text.Trifecta
+import Text.Trifecta.Parser.Token.Style
+import Text.Trifecta.Parser.Identifier.Style
+import Text.Trifecta.Layout.Combinators
+import Text.Trifecta.Language.Prim
+
+import Control.Applicative
+import Control.Monad.Trans
+import Data.Maybe (fromMaybe)
+
+import Data.HashSet as HashSet
+import Data.ByteString.UTF8 as UTF8
+
+-- Copypasta from Text.Trifecta.Parser.Identifier.Style
+set :: [String] -> HashSet ByteString
+set = HashSet.fromList . fmap UTF8.fromString
+
+lang :: MonadParser m => LanguageDef m
+lang = LanguageDef{ languageCommentStyle = haskellCommentStyle
+                  , languageIdentifierStyle = emptyIdents{ styleReserved = set keywords }
+                  , languageOperatorStyle = emptyOps{ styleReserved = set ops }
+                  }
+  where
+    keywords = ["where"]
+    ops = ["="]
+
+data Def = Def ByteString [ByteString] [ByteString] [Def]
+         deriving Show
+
+instance MonadLanguage m => MonadLanguage (Layout m) where
+    askLanguage = fmap liftLanguageDef $ lift askLanguage
+
+def :: (MonadParser m) => Layout (Language m) Def
+def = Def <$> identifier <*> vars <* reservedOp "=" <*> vars <*> laidout locals
+  where
+    vars = many identifier
+    locals = fromMaybe [] <$> optional (reserved "where" *> defs)
+
+defs :: (MonadParser m) => Layout (Language m) [Def]
+defs = laidout (many def)
+
+test :: String -> IO ()
+test =  parseTest $ run $ defs <* eof
+  where
+    run p = runLanguage (fst <$> runLayout p defaultLayoutState) lang
+
+test
+f x = x y a b c -- 1
+  where         -- 2
+    y = d       -- 3
+g x = z         -- 4
+
+(interactive):4:2: error: expected: "=",
+    identifier, letter or digit
+g x = z         -- 4 
+ ^      
+

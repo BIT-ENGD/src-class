@@ -1,0 +1,101 @@
+  <LatLonBox id="GE_MET0D_VP-MPE-latlonbox">
+        <north>57.4922</north>
+        <south>-57.4922</south>
+        <east>57.4922</east>
+        <west>-57.4922</west>
+        <rotation>0</rotation>
+  </LatLonBox>
+
+[[RadarOverlay alloc] initWithImageData:[[self.currentRadarData objectAtIndex:0] valueForKey:@"Image"] withLowerLeftCoordinate:CLLocationCoordinate2DMake(-57.4922, -57.4922) withUpperRightCoordinate:CLLocationCoordinate2DMake(57.4922, 57.4922)];
+
+- (id) initWithImageData:(NSData*) imageData withLowerLeftCoordinate:(CLLocationCoordinate2D)lowerLeftCoordinate withUpperRightCoordinate:(CLLocationCoordinate2D)upperRightCoordinate
+{
+     self.radarData = imageData;
+
+     MKMapPoint lowerLeft = MKMapPointForCoordinate(lowerLeftCoordinate);
+     MKMapPoint upperRight = MKMapPointForCoordinate(upperRightCoordinate);
+
+     mapRect = MKMapRectMake(lowerLeft.x, upperRight.y, upperRight.x - lowerLeft.x, lowerLeft.y - upperRight.y);
+
+     return self;
+}
+
+- (CLLocationCoordinate2D)coordinate
+{
+     return MKCoordinateForMapPoint(MKMapPointMake(MKMapRectGetMidX(mapRect), MKMapRectGetMidY(mapRect)));
+}
+
+- (MKMapRect)boundingMapRect
+{
+     return mapRect;
+}
+
+- (void)drawMapRect:(MKMapRect)mapRect zoomScale:(MKZoomScale)zoomScale inContext:(CGContextRef)context
+{
+    RadarOverlay* radarOverlay = (RadarOverlay*) self.overlay;
+
+    UIImage *image          = [[UIImage alloc] initWithData:radarOverlay.radarData];
+
+    CGImageRef imageReference = image.CGImage;
+
+    MKMapRect theMapRect    = [self.overlay boundingMapRect];
+   CGRect theRect           = [self rectForMapRect:theMapRect];
+    CGRect clipRect     = [self rectForMapRect:mapRect];
+
+    NSUserDefaults *preferences = [NSUserDefaults standardUserDefaults];
+    CGContextSetAlpha(context, [preferences floatForKey:@"RadarTransparency"]);
+
+    CGContextAddRect(context, clipRect);
+    CGContextClip(context);
+
+    CGContextDrawImage(context, theRect, imageReference);
+
+    [image release]; 
+}
+
+size_t width    = (CGImageGetWidth(imageReference) / self.scaleFactor);
+size_t height   = (CGImageGetHeight(imageReference) / self.scaleFactor);
+
+// Calculate colorspace for the specified image
+CGColorSpaceRef imageColorSpace = CGImageGetColorSpace(imageReference);
+
+// Allocate and clear memory for the data of the image
+unsigned char *imageData = (unsigned char*) malloc(height * width * 4);
+memset(imageData, 0, height * width * 4);
+
+// Define the rect for the image
+CGRect imageRect;
+if(image.imageOrientation==UIImageOrientationUp || image.imageOrientation==UIImageOrientationDown) 
+    imageRect = CGRectMake(0, 0, width, height); 
+else 
+    imageRect = CGRectMake(0, 0, height, width); 
+
+// Create the imagecontext by defining the colorspace and the address of the location to store the data
+CGContextRef imageContext = CGBitmapContextCreate(imageData, width, height, 8, width * 4, imageColorSpace, kCGImageAlphaPremultipliedLast);
+
+CGContextSaveGState(imageContext);
+
+// Scale the image to the opposite orientation so it can be easylier drawn with CGContectDrawImage
+CGContextTranslateCTM(imageContext, 0, height);
+CGContextScaleCTM(imageContext, 1.0, -1.0);
+
+if(image.imageOrientation==UIImageOrientationLeft) 
+{
+    CGContextRotateCTM(imageContext, M_PI / 2);
+    CGContextTranslateCTM(imageContext, 0, -width);
+}
+else if(image.imageOrientation==UIImageOrientationRight) 
+{
+    CGContextRotateCTM(imageContext, - M_PI / 2);
+    CGContextTranslateCTM(imageContext, -height, 0);
+} 
+else if(image.imageOrientation==UIImageOrientationDown) 
+{
+    CGContextTranslateCTM(imageContext, width, height);
+    CGContextRotateCTM(imageContext, M_PI);
+}
+
+// Draw the image in the context
+CGContextDrawImage(imageContext, imageRect, imageReference);
+CGContextRestoreGState(imageContext);
+

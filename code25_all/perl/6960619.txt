@@ -1,0 +1,81 @@
+sub snmp_close {
+    my $self = shift;
+
+    $self->{SNMP_SESSION}->close if (defined $self->{SNMP_SESSION} && $self->{SNMP_SESSION});
+    $self->{SNMP_SESSION} = undef;
+}
+
+sub {
+    my ($self, $ip, $community) = @_;
+    # If there's a leftover session around, make sure it's closed
+    $self->snmp_close;
+
+    my ($session, $error) = Net::SNMP->session(
+        -hostname => $ip,
+        -community => $community,
+        -nonblocking => 1,
+        -version => 'snmpv2c',
+        -translate => [
+            -timeticks => 0x0
+        ],
+    );
+
+    if (!defined $session) {
+        $self->_logger->logcluck("Can't create SNMP object, error: '$error'");
+        return;
+    }
+
+    $self->{SNMP_SESSION} = $session;
+
+    my $end = time() + 90;
+    while (time < $end) {
+        $self->_logger->debug("Probing for SNMP connectivity, giving up in " . int($end - time()) . " seconds");
+        my %sysName = $self->get_bulk('1.3.6.1.2.1.1.5');
+        if(scalar keys %sysName >= 1) { # try polling sysName..
+            return 1;
+        }
+        else {
+            sleep 5;
+        }
+    }
+    # if we've made it this far there's no hope for snmp...
+    $self->_logger->warn("No SNMP connectivity after 90 seconds");
+    $self->{SNMP_SESSION} = 0;
+    return;
+}
+
+sub get_bulk { # return a hash of oid keys and values
+    my ($self, $oid) = @_;
+
+    $self->_logger->logdie("Not connected; call snmp_connect") if not defined $self->{SNMP_SESSION};
+    $self->_logger->logdie("Connection failed") if not $self->{SNMP_SESSION};
+
+    my %table;
+
+    my $result = $self->snmp->get_bulk_request(
+        -varbindlist => [ $oid ],
+        -maxrepetitions => 20,
+        -callback => [\&_table_callback, $self, \%table, $oid],
+    );
+
+    if (!defined $result) {
+        $self->_logger->warn("SNMP error: '" . $self->snmp->error() . "'");
+        return;
+    }
+
+    snmp_dispatcher();
+
+    use Data::Dumper; my %_table = map {s/\Q$oid.\E//; $_} %table; $self->_logger->debug("SNMP Debug, OID polled: '$oid', response is: " . Dumper(\%_table));
+    return %table;
+}
+
+FATAL: select() error [No child processes] at perl/lib/perl5.8/Net/SNMP/Dispatcher.pm line 635.
+  at perl/lib/perl5.8/Net/SNMP/Dispatcher.pm line 635
+        Net::SNMP::Dispatcher::_event_select('Net::SNMP::Dispatcher=HASH(0xaca5ce0)', 4.99994683265686) called at perl/lib/perl5.8/Net/SNMP/Dispatcher.pm line 601
+        Net::SNMP::Dispatcher::_event_handle('Net::SNMP::Dispatcher=HASH(0xaca5ce0)') called at perl/lib/perl5.8/Net/SNMP/Dispatcher.pm line 80
+        Net::SNMP::Dispatcher::activate('Net::SNMP::Dispatcher=HASH(0xaca5ce0)') called at perl/lib/perl5.8/Net/SNMP.pm line 611
+        Net::SNMP::snmp_dispatcher() called at perl/lib/perl5.8/Device.pm line 857
+        Device::get_bulk('Device::Class=HASH(0xb1e405c)', 1.3.6.1.2.1.1.5) called at perl/lib/perl5.8/Device.pm line 824
+        Device::snmp_connect('Device::Class=HASH(0xb1e405c)', 10.0.0.1, 'COMMUNITY_STRING') called at perl/lib/perl5.8/Device.pm line 912
+
+snmp_dispatcher

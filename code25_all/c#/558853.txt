@@ -1,0 +1,51 @@
+internal class Timeline : IDisposable {
+    private Thread eventThread;
+    private volatile bool active;
+    private SortedList<DateTime, MethodInvoker> events = new SortedList<DateTime,MethodInvoker>();
+    private EventWaitHandle wakeup = new EventWaitHandle(false, EventResetMode.AutoReset);
+
+    internal Timeline() {
+        active = true;
+        eventThread = new Thread(executeEvents);
+        eventThread.Start();
+    }
+
+    ~Timeline() {
+        Dispose();
+    }
+
+    private DateTime NextEvent {
+        get {
+            lock(events) 
+                return events.Keys[0];
+        }
+    }
+
+    private void executeEvents() {
+        while (active) {
+            // Process all events that are due
+            while (events.Count > 0 && NextEvent <= DateTime.Now) {
+                lock(events) {
+                    events.Values[0]();
+                    events.RemoveAt(0);
+                }
+            }
+
+            // Wait for the next event, or until one is scheduled
+            if (events.Count > 0)
+                wakeup.WaitOne((int)(NextEvent - DateTime.Now).TotalMilliseconds);
+            else
+                wakeup.WaitOne();
+        }
+    }
+
+    internal void Stop() {
+        active = false;
+        wakeup.Set();
+    }
+
+    public void Dispose() {
+        Stop();
+    }
+}
+

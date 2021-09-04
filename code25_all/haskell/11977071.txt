@@ -1,0 +1,63 @@
+runResourceT
+Sink
+Sink
+Sinks
+runResourceT
+{-# LANGUAGE FlexibleContexts #-}
+
+import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Resource
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BC8 (pack)
+import Data.Conduit
+import qualified Data.Conduit.Binary as Cb
+import qualified Data.Conduit.List as Cl
+import System.FilePath ((<.>))
+
+test :: IO ()
+test =
+  runResourceT
+      $ Cl.sourceList (fmap (BC8.pack . show) [(1 :: Int)..1000])
+     $$ rotateResourceHog "/tmp/foo"
+
+-- |
+-- files are allocated on demand but handles are released at the same time
+rotateResourceHog
+  :: MonadResource m
+  => FilePath -> Sink ByteString m ()
+rotateResourceHog filePath = step 0 where
+  step i = do
+    x <- Cl.peek
+    case x of
+      Just _  -> do
+        chunkWriter $ filePath <.> show (i :: Integer)
+        -- loop
+        step $ i+1
+
+      Nothing -> return ()
+
+-- |
+-- files are allocated on demand but handles are released immediately
+rotateUsingClosedHandles
+  :: (MonadBaseControl IO m, MonadResource m)
+  => FilePath -> Sink ByteString m ()
+rotateUsingClosedHandles filePath = step 0 where
+  step i = do
+    x <- Cl.peek
+    case x of
+      Just _  -> do
+        transPipe runResourceT . chunkWriter $ filePath <.> show (i :: Integer)
+        -- loop
+        step $ i+1
+
+      Nothing -> return ()
+
+chunkWriter
+  :: MonadResource m
+  => FilePath -> Sink ByteString m ()
+chunkWriter filePath = do
+  _ <- lift $ allocate (putStrLn "alloc") (\ _ -> putStrLn "free")
+
+  -- the actual conduit chain is more complicated
+  Cl.isolate 100 =$= Cb.sinkFile filePath
+

@@ -1,0 +1,468 @@
+<%@ Page Title="" Language="VB" MasterPageFile="~/_Common/Admin.master" %>
+
+<script runat="server">
+
+    Protected Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs)
+
+    End Sub
+
+    Protected Sub RadGrid1_NeedDataSource(ByVal source As Object, ByVal e As Telerik.Web.UI.GridNeedDataSourceEventArgs)
+        If Not e.IsFromDetailTable Then
+            Dim forms As New MB.RequestFormPacket()
+            RadGrid1.DataSource = forms.GetPackets()
+        End If
+    End Sub
+
+    Protected Sub RadGrid1_DetailTableDataBind(ByVal source As Object, ByVal e As Telerik.Web.UI.GridDetailTableDataBindEventArgs)
+        Select Case e.DetailTableView.Name
+            Case "gtvForms"
+                Dim PacketID As Guid = e.DetailTableView.ParentItem.GetDataKeyValue("ID")
+                e.DetailTableView.DataSource = MB.RequestForm.GetRequestForms(PacketID)
+        End Select
+    End Sub
+
+    Protected Sub RadGrid1_InsertCommand(ByVal source As Object, ByVal e As Telerik.Web.UI.GridCommandEventArgs)
+        If IsValid Then
+            Select Case TryCast(e.Item.NamingContainer.NamingContainer, GridTableView).Name
+                Case "gtvPackets"
+                    Dim rtbName As RadTextBox = TryCast(e.Item.FindControl("rtbName"), RadTextBox)
+                    Dim IsActive As Boolean = TryCast(e.Item.FindControl("cbxIsActive"), CheckBox).Checked
+
+                    Dim packet As New MB.RequestFormPacket()
+                    packet.Name = rtbName.Text
+                    packet.IsActive = IsActive
+                    packet.Insert()
+
+                    e.Canceled = True
+                    e.Item.OwnerTableView.IsItemInserted = False
+                    RadGrid1.Rebind()
+                    System.Web.UI.ScriptManager.RegisterStartupScript(Me.Page, Me.GetType(), "ClientMessage", "SuccessMessage('Request Form Packet has been added successfully.');", True)
+                Case "gtvForms"
+                    Dim parentItem As GridDataItem = e.Item.OwnerTableView.ParentItem
+                    Dim rcbForms As RadComboBox = TryCast(e.Item.FindControl("rcbForms"), RadComboBox)
+
+                    Dim rf As New MB.RequestForm()
+                    rf.RequestFormPacketID = CType(parentItem.OwnerTableView.DataKeyValues(parentItem.ItemIndex)("ID"), Guid)
+                    rf.FormID = rcbForms.SelectedValue
+
+                    If MB.RequestFormPacket.HasItems(rf.RequestFormPacketID) Then
+                        rf.SortOrder = rf.MaxSortOrder + 1
+                    Else
+                        rf.SortOrder = 0
+                    End If
+
+                    rf.Insert()
+
+                    e.Canceled = True
+                    e.Item.OwnerTableView.IsItemInserted = False
+                    TryCast(e.Item.NamingContainer.NamingContainer, GridTableView).Rebind()
+            End Select
+        End If
+    End Sub
+
+    Protected Sub RadGrid1_UpdateCommand(ByVal source As Object, ByVal e As Telerik.Web.UI.GridCommandEventArgs)
+        If IsValid Then
+            Select Case TryCast(e.Item.NamingContainer, GridTableView).Name
+                Case "gtvPackets"
+                    Dim PacketID As Guid = CType(CType(e.CommandSource, Button).NamingContainer, GridEditFormItem).GetDataKeyValue("ID")
+                    Dim Name As String = TryCast(e.Item.FindControl("rtbName"), RadTextBox).Text
+                    Dim Tags As String = TryCast(e.Item.FindControl("hdnTags"), HiddenField).Value
+                    Dim IsActive As Boolean = TryCast(e.Item.FindControl("cbxIsActive"), CheckBox).Checked
+                    Dim rfp As New MB.RequestFormPacket()
+                    rfp.Update(PacketID, Name, IsActive)
+                    Call MB.RequestFormPacketTag.Insert(PacketID, Tags)
+                    e.Item.Edit = False
+                    TryCast(e.Item.NamingContainer, GridTableView).Rebind()
+                    System.Web.UI.ScriptManager.RegisterStartupScript(Me.Page, Me.GetType(), "ClientMessage", "SuccessMessage('Request Form Packet has been updated successfully.');", True)
+                Case "gtvForms"
+                    Dim RequestFormID As Guid = CType(CType(e.CommandSource, Button).NamingContainer, GridEditFormItem).GetDataKeyValue("ID")
+                    Dim rcbForms As RadComboBox = TryCast(e.Item.FindControl("rcbForms"), RadComboBox)
+                    Dim rf As New MB.RequestForm()
+                    rf.Update(RequestFormID, rcbForms.SelectedValue)
+                    e.Item.Edit = False
+                    TryCast(e.Item.NamingContainer, GridTableView).Rebind()
+            End Select
+        End If
+    End Sub
+
+    Protected Sub RadGrid1_DeleteCommand(ByVal source As Object, ByVal e As Telerik.Web.UI.GridCommandEventArgs)
+        Dim editedItem As GridEditableItem = TryCast(e.Item, GridEditableItem)
+        Select Case CType(editedItem.Parent.Parent, GridTableView).Name
+            Case "gtvPackets"
+                Dim ID As Guid = CType(CType(e.CommandSource, ImageButton).NamingContainer, GridDataItem).GetDataKeyValue("ID")
+                MB.RequestFormPacket.Delete(ID)
+                System.Web.UI.ScriptManager.RegisterStartupScript(Me.Page, Me.GetType(), "ClientMessage", "NotifyMessage('Request Form Packet has been deleted.');", True)
+            Case "gtvForms"
+                Dim ID As Guid = CType(CType(e.CommandSource, ImageButton).NamingContainer, GridDataItem).GetDataKeyValue("ID")
+                MB.RequestForm.Delete(ID)
+                System.Web.UI.ScriptManager.RegisterStartupScript(Me.Page, Me.GetType(), "ClientMessage", "NotifyMessage('Request Form has been removed.');", True)
+        End Select
+    End Sub
+
+    Protected Sub ibnItemUpArrow_Command(ByVal sender As Object, ByVal e As System.Web.UI.WebControls.CommandEventArgs)
+        Dim gtv As GridTableView = CType(CType(sender, ImageButton).NamingContainer.NamingContainer, GridTableView)
+        Dim ID As Guid = New Guid(e.CommandArgument.ToString())
+        Call MB.RequestForm.MoveUp(ID)
+        gtv.Rebind()
+    End Sub
+
+    Protected Sub ibnItemDownArrow_Command(ByVal sender As Object, ByVal e As System.Web.UI.WebControls.CommandEventArgs)
+        Dim gtv As GridTableView = CType(CType(sender, ImageButton).NamingContainer.NamingContainer, GridTableView)
+        Dim ID As Guid = New Guid(e.CommandArgument.ToString())
+        Call MB.RequestForm.MoveDown(ID)
+        gtv.Rebind()
+    End Sub
+
+    Protected Sub RadGrid1_RowDrop(ByVal sender As Object, ByVal e As Telerik.Web.UI.GridDragDropEventArgs)
+        If String.IsNullOrEmpty(e.HtmlElement) Then
+            If e.DraggedItems(0).OwnerGridID = RadGrid1.ClientID Then
+                If e.DestDataItem IsNot Nothing Then
+                    Dim gtv As GridTableView = CType(e.DestDataItem.NamingContainer, GridTableView)
+                    For Each gdi As GridDataItem In e.DraggedItems
+                        Select Case gtv.Name
+                            Case "gtvForms"
+                                MB.RequestForm.DragAndDropReorder(gdi.GetDataKeyValue("ID"), e.DestDataItem.GetDataKeyValue("ID"), IIf(e.DropPosition = GridItemDropPosition.Above, True, False))
+                                gtv.Rebind()
+                        End Select
+                    Next
+                End If
+            End If
+        End If
+    End Sub
+
+    Protected Sub cbxAllowDragAndDrop_CheckedChanged(ByVal sender As Object, ByVal e As System.EventArgs)
+        Dim cbx As CheckBox = CType(sender, CheckBox)
+        If cbx.Checked Then
+            RadGrid1.ClientSettings.AllowRowsDragDrop = True
+            RadGrid1.ClientSettings.Selecting.AllowRowSelect = True
+            RadGrid1.ClientSettings.Selecting.EnableDragToSelectRows = True
+        Else
+            RadGrid1.ClientSettings.AllowRowsDragDrop = False
+            RadGrid1.ClientSettings.Selecting.AllowRowSelect = False
+            RadGrid1.ClientSettings.Selecting.EnableDragToSelectRows = False
+        End If
+    End Sub
+
+    Protected Sub ibnDisableToggleProcess_Click(ByVal sender As Object, ByVal e As System.Web.UI.ImageClickEventArgs)
+        Dim ibn As ImageButton = CType(sender, ImageButton)
+        Dim hdn As HiddenField = CType(ibn.NamingContainer.FindControl("hdnDisableProcessID"), HiddenField)
+        Dim status As Boolean = MB.RequestFormPacket.ActivateToggle(New Guid(hdn.Value))
+        Dim gtv As GridTableView = CType(ibn.NamingContainer.NamingContainer, GridTableView)
+        gtv.Rebind()
+        System.Web.UI.ScriptManager.RegisterStartupScript(Me.Page, Me.GetType(), "ClientMessage", "SuccessMessage('Process has been " & IIf(status, "Activated", "Deactivated") & ".');", True)
+    End Sub
+
+    Protected Function DisplayTagList(ByVal tags As IEnumerable(Of MB.RequestFormPacketTag)) As String
+        Dim list As String = ""
+        For Each t As MB.RequestFormPacketTag In tags
+            list += "<span class=""tags"">" & t.Tag.Name & "</span>"
+        Next
+        Return list
+    End Function
+
+    Protected Sub RadGrid1_ItemDataBound(ByVal sender As Object, ByVal e As Telerik.Web.UI.GridItemEventArgs)
+        Select Case e.Item.GetType.Name
+            Case "GridEditFormInsertItem"
+                'do nothing
+            Case "GridEditFormItem"
+                Dim plh As PlaceHolder = CType(e.Item.FindControl("plhTags"), PlaceHolder)
+                Dim hdn As HiddenField = CType(e.Item.FindControl("hdnTags"), HiddenField)
+                If hdn IsNot Nothing Then
+                    Dim gefi As GridEditFormItem = e.Item
+                    Dim packet As MB.RequestFormPacket = gefi.DataItem
+                    For Each pt As MB.RequestFormPacketTag In packet.RequestFormPacketTags
+                        Call CreateTagStyle(plh, hdn, pt.Tag.Name)
+                        If hdn.Value = "" Then
+                            hdn.Value = "|"
+                        End If
+                        hdn.Value += pt.Tag.Name & "|"
+                    Next
+                End If
+        End Select
+    End Sub
+
+    Protected Sub btnAddTag_Click(ByVal sender As Object, ByVal e As System.EventArgs)
+        Dim btnAddTag As Button = sender
+        Dim rtbTags As RadTextBox = btnAddTag.NamingContainer.FindControl("rtbTags")
+        Dim plhTags As PlaceHolder = btnAddTag.NamingContainer.FindControl("plhTags")
+        Dim hdnTags As HiddenField = btnAddTag.NamingContainer.FindControl("hdnTags")
+        Dim TagExists As Boolean = False
+
+        rtbTags.Text = rtbTags.Text.ToUpper().Trim()
+
+        Dim currentTags() As String = Split(hdnTags.Value, "|")
+
+        For i As Integer = 1 To currentTags.Count - 2
+            Call CreateTagStyle(plhTags, hdnTags, currentTags(i))
+        Next
+
+        If TagExists = False And String.IsNullOrEmpty(rtbTags.Text) = False Then
+            Call CreateTagStyle(plhTags, hdnTags, rtbTags.Text)
+            If String.IsNullOrEmpty(hdnTags.Value) Then
+                hdnTags.Value = "|"
+            End If
+            hdnTags.Value += rtbTags.Text & "|"
+            'System.Web.UI.ScriptManager.RegisterStartupScript(Me.Page, Me.GetType(), "ClientMessage", "highlightTag('" & lbn.ClientID & "');", True)
+        End If
+
+        rtbTags.Text = ""
+        rtbTags.Focus()
+    End Sub
+
+    Public Sub RemoveTag(ByVal sender As Object, ByVal e As EventArgs)
+        Response.End()
+        Dim lbnSender As LinkButton = sender
+        Dim plhTags As PlaceHolder = lbnSender.NamingContainer.FindControl("plhTags")
+        Dim hdnTags As HiddenField = lbnSender.NamingContainer.FindControl("hdnTags")
+        Response.Write(hdnTags.Value)
+        Response.End()
+        Dim TagExists As Boolean = False
+        Dim currentTags() As String = Split(hdnTags.Value, "|")
+        For i As Integer = 1 To currentTags.Count - 2
+            Call CreateTagStyle(plhTags, hdnTags, currentTags(i))
+        Next
+    End Sub
+
+    Protected Sub CreateTagStyle(ByVal plh As PlaceHolder, ByVal hdn As HiddenField, ByVal tagName As String)
+        Dim lbn As New LinkButton()
+        lbn.ID = "lbn_" & hdn.ClientID & "_" & tagName
+        lbn.CssClass = "deleteCreateTag"
+        lbn.Text = "X"
+        AddHandler lbn.Click, AddressOf RemoveTag
+        plh.Controls.Add(New LiteralControl("<div><span class=showTag>" & tagName & "</span>"))
+        plh.Controls.Add(lbn)
+        plh.Controls.Add(New LiteralControl("</div>"))
+    End Sub
+
+</script>
+
+<asp:Content ID="Content1" ContentPlaceHolderID="head" Runat="Server">
+    <style type="text/css">
+        .tags
+        {
+            border:solid 1px #93AFE5;
+            background-color:#F3F7F8;
+            margin: 0px 2px 0px 2px;
+            padding: 0px 4px 0px 4px;
+            font-family:Verdana;
+            font-size:10px;
+            text-transform:uppercase;
+        }
+    </style>
+    <script type="text/javascript">
+        function highlightTag(id) {
+            $("#" + id).highlightFade({ color: '#FFFF99', speed: 2000, iterator: 'sinusoidal' });
+        }
+    </script>
+</asp:Content>
+
+<asp:Content ID="Content2" ContentPlaceHolderID="ContentPlaceHolder1" Runat="Server">
+
+    <telerik:RadAjaxManager ID="RadAjaxManager1" runat="server" DefaultLoadingPanelID="RadAjaxLoadingPanel1" EnableAJAX="false">
+        <AjaxSettings>
+            <telerik:AjaxSetting AjaxControlID="RadGrid1">
+                <UpdatedControls>
+                    <telerik:AjaxUpdatedControl ControlID="RadGrid1" />
+                </UpdatedControls>
+            </telerik:AjaxSetting>
+        </AjaxSettings>
+    </telerik:RadAjaxManager>
+
+    <telerik:RadAjaxLoadingPanel ID="RadAjaxLoadingPanel1" runat="server" />
+
+    <telerik:RadTabStrip ID="RadTabStrip1" runat="server" Skin="WebBlue" style="position:relative;top:1px;" ValidationGroup="vgTabs">
+        <Tabs>
+            <telerik:RadTab Text="Request Form Packets" Selected="true" ImageUrl="~/Admin/Images/Packet2.png" />
+            <telerik:RadTab Text="Request Forms" NavigateUrl="Forms.aspx" ImageUrl="~/Admin/Images/Forms.png" />
+        </Tabs>
+    </telerik:RadTabStrip>
+
+    <asp:ObjectDataSource ID="odsForms" runat="server" TypeName="MB.Form" SelectMethod="GetForms" />
+
+    <asp:Panel ID="pnlContent" runat="server" CssClass="ContentPanel">
+
+        <telerik:RadGrid ID="RadGrid1" runat="server" AllowPaging="True" AllowSorting="True" GridLines="None"
+                OnNeedDataSource="RadGrid1_NeedDataSource"
+                AllowAutomaticUpdates="true"
+                AllowAutomaticDeletes="true"
+                AllowAutomaticInserts="true"
+                OnInsertCommand="RadGrid1_InsertCommand"
+                OnUpdateCommand="RadGrid1_UpdateCommand"
+                OnDeleteCommand="RadGrid1_DeleteCommand"
+                OnRowDrop="RadGrid1_RowDrop"
+                OnDetailTableDataBind="RadGrid1_DetailTableDataBind" OnItemDataBound="RadGrid1_ItemDataBound">
+
+            <%-----------------------------------------------------------%>
+            <%------------------------- PACKETS -------------------------%>
+            <%-----------------------------------------------------------%>
+            <MasterTableView AutoGenerateColumns="False" DataKeyNames="ID" ClientDataKeyNames="ID"
+                    ShowHeadersWhenNoRecords="true" Name="gtvPackets"
+                    NoMasterRecordsText="There are currently no Request Form Packets"
+                    GroupLoadMode="Client"
+                    RetrieveNullAsDBNull="true"
+                    CommandItemDisplay="Top"
+                    AllowAutomaticUpdates="true"
+                    AllowAutomaticDeletes="true"
+                    AllowAutomaticInserts="true">
+
+                <RowIndicatorColumn>
+                    <HeaderStyle Width="20px"></HeaderStyle>
+                </RowIndicatorColumn>
+
+                <ExpandCollapseColumn>
+                    <HeaderStyle Width="20px"></HeaderStyle>
+                </ExpandCollapseColumn>
+
+                <CommandItemTemplate>
+                    <table width="100%">
+                        <tr>
+                            <td class="AdminGridHeader">&nbsp;<img src="../Admin/Images/Packet2.png" align="absmiddle" width="16" height="16" />&nbsp;&nbsp;Request Form Packets</td>
+                            <td width="1%"><asp:CheckBox ID="cbxAllowDragAndDrop" runat="server" AutoPostBack="true" OnCheckedChanged="cbxAllowDragAndDrop_CheckedChanged" /></td>
+                            <td width="1%" nowrap="nowrap"><asp:Label AssociatedControlID="cbxAllowDragAndDrop" ID="Label1" runat="server" Text="Enable Drag and Drop Reordering" ToolTip="Drag and Drop Reordering applies only to Forms." /></td>
+                            <td align="right" width="1%"><asp:Button ID="btnAddPacket" Text="Create New Packet" runat="server" CommandName="InitInsert" /></td>
+                        </tr>
+                    </table>
+                </CommandItemTemplate>
+
+                <EditFormSettings>
+                    <EditColumn ButtonType="PushButton" HeaderStyle-Font-Bold="true" UniqueName="EditCommandColumn" />
+                </EditFormSettings>
+
+                <EditItemStyle Font-Bold="true" BackColor="#FFFFCC"  />
+
+                <Columns>
+
+                    <telerik:GridTemplateColumn HeaderText="Packet Name" UniqueName="PacketName" SortExpression="Name">
+                        <ItemTemplate>
+                            <img src="../Admin/Images/Packet2.png" align="absmiddle" width="16" height="16" />&nbsp;&nbsp;<%#Eval("Name")%>
+                        </ItemTemplate>
+                        <EditItemTemplate>
+                            <telerik:RadTextBox runat="server" ID="rtbName" Width="300" Text='<%# Bind("Name") %>' />
+                            <asp:RequiredFieldValidator ID="rfvName" runat="server" ErrorMessage="Required" ControlToValidate="rtbName" />
+                        </EditItemTemplate>
+                    </telerik:GridTemplateColumn>
+
+                    <telerik:GridTemplateColumn HeaderText="Tags" UniqueName="Tags">
+                        <ItemTemplate>
+                            <%#DisplayTagList(Eval("RequestFormPacketTags"))%>
+                        </ItemTemplate>
+                        <EditItemTemplate>
+                            <asp:Panel ID="pnlAddTags" runat="server" DefaultButton="btnAddTag">
+                                <table cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td>
+                                            <telerik:RadTextBox ID="rtbTags" runat="server" Width="200" style="text-transform:uppercase;" />
+                                            <asp:RegularExpressionValidator ID="revTags" runat="server" ErrorMessage="Invalid Entry" ControlToValidate="rtbTags" Display="Dynamic" ValidationExpression="^[^<>`~!/@\#}$%:;)(_^{&*=|+]+$" ValidationGroup="vgTags" />
+                                        </td>
+                                        <td>
+                                            <asp:Button ID="btnAddTag" runat="server" ValidationGroup="vgTags" Text="Add" OnClick="btnAddTag_Click" />
+                                        </td>
+                                    </tr>
+                                </table>
+                            </asp:Panel>
+                            <div id="divTags">
+                                <asp:PlaceHolder id="plhTags" runat="server" />
+                                <asp:HiddenField ID="hdnTags" runat="server" />
+                            </div>
+                        </EditItemTemplate>
+                    </telerik:GridTemplateColumn>
+
+                    <telerik:GridTemplateColumn HeaderTooltip="Disable" ItemStyle-Width="1%" ItemStyle-HorizontalAlign="Center" SortExpression="IsActive" UniqueName="IsActive" ReadOnly="true">
+                        <ItemTemplate>
+                            <asp:ImageButton ID="ibnDisabledProcess" runat="server" ImageUrl="../Images/Icons/Stop.png" Width="16"
+                                OnClientClick="return window.confirm('Activate this Process?');"
+                                ToolTip="Click to activate this Request for Account use." Visible='<%#IIF(Eval("IsActive"),false,true) %>' OnClick="ibnDisableToggleProcess_Click" />
+                            <asp:ImageButton ID="ibnEnabledProcess" runat="server" ImageUrl="../Images/Icons/Stop_disabled.png" Width="16"
+                                OnClientClick="return window.confirm('Deactivate this Process?');"
+                                ToolTip="Click to deactivate this Request for Account use." Visible='<%#IIF(Eval("IsActive"),true,false) %>' OnClick="ibnDisableToggleProcess_Click" />
+                            <asp:HiddenField ID="hdnDisableProcessID" runat="server" Value='<%#Eval("ID") %>' />
+                        </ItemTemplate>
+                    </telerik:GridTemplateColumn>
+
+                    <telerik:GridTemplateColumn HeaderText="Is Active" UniqueName="IsActiveCheckbox" Display="false">
+                        <EditItemTemplate>
+                            <asp:CheckBox ID="cbxIsActive" runat="server" Checked='<%# IIF(Eval("IsActive") Is DbNull.Value OrElse Eval("IsActive") = False,False,True) %>' />
+                        </EditItemTemplate>
+                    </telerik:GridTemplateColumn>
+
+                    <telerik:GridEditCommandColumn ButtonType="ImageButton" EditText="Edit Admin" ItemStyle-Width="16" EditImageUrl="~/Images/edit-small.png" />
+
+                    <telerik:GridButtonColumn ConfirmText="Do you really want to delete this Admin? WARNING: THIS CANNOT BE UNDONE!!" ConfirmDialogType="RadWindow"
+                        ConfirmTitle="Delete" ButtonType="ImageButton" CommandName="Delete" Text="Delete Admin" ImageUrl="~/Images/Delete.png"
+                        UniqueName="DeleteColumn">
+                        <ItemStyle HorizontalAlign="Center" Width="16" />
+                    </telerik:GridButtonColumn>
+
+                </Columns>
+
+                <DetailTables>
+
+                    <%-----------------------------------------------------------%>
+                    <%-------------------------- FORMS --------------------------%>
+                    <%-----------------------------------------------------------%>
+                    <telerik:GridTableView Name="gtvForms"
+                            AllowPaging="true"
+                            PagerStyle-Position="TopAndBottom"
+                            PageSize="20"
+                            AutoGenerateColumns="false"
+                            DataKeyNames="RequestFormPacketID,ID"
+                            runat="server"
+                            CommandItemDisplay="Top"
+                            Width="100%">
+
+                        <ParentTableRelation>
+                            <telerik:GridRelationFields DetailKeyField="RequestFormPacketID" MasterKeyField="ID" />
+                        </ParentTableRelation>
+
+                        <CommandItemTemplate>
+                            <table width="100%" class="AdminGridHeaders">
+                                <tr>
+                                    <td class="AdminGridHeaders">
+                                        &nbsp;<img src="../Admin/Images/Forms.png" align="absmiddle" width="16" height="16" />&nbsp;&nbsp;Forms
+                                    </td>
+                                    <td align="right">
+                                        <asp:Button ID="ibnAdd" runat="server" Text="Add Form" CommandName="InitInsert" />
+                                    </td>
+                                </tr>
+                            </table>
+                        </CommandItemTemplate>
+
+                        <EditFormSettings>
+                            <EditColumn ButtonType="PushButton" InsertText="Save" UpdateText="Update" CancelText="Cancel" />
+                        </EditFormSettings>
+
+                        <EditItemStyle Font-Bold="true" BackColor="#FFFFCC"  />
+
+                        <Columns>
+
+                            <telerik:GridTemplateColumn HeaderText="Form Name" UniqueName="FormName">
+                                <ItemTemplate>
+                                    <img src="../Admin/Images/Forms.png" align="absmiddle" width="16" height="16" style="margin-right:4px;" /> <%#Eval("Form.Name")%>
+                                </ItemTemplate>
+                                <EditItemTemplate>
+                                    <telerik:RadComboBox ID="rcbForms" runat="server" DataSourceID="odsForms" AppendDataBoundItems="true" DataTextField="Name" DataValueField="ID" SelectedValue='<%#Bind("FormID")%>'>
+                                        <Items>
+                                            <telerik:RadComboBoxItem Text="-- Select a Form --" Value="" />
+                                        </Items>
+                                    </telerik:RadComboBox>
+                                    <asp:RequiredFieldValidator ID="rfvForms" runat="server" ErrorMessage="Required" ControlToValidate="rcbForms" InitialValue="-- Select a Form --" Display="Dynamic" />
+                                </EditItemTemplate>
+                            </telerik:GridTemplateColumn>
+
+                            <telerik:GridTemplateColumn HeaderText="Test" ReadOnly="true" UniqueName="TestForm" HeaderStyle-Width="1%" ItemStyle-HorizontalAlign="Center">
+                                <ItemTemplate>
+                                    <asp:HyperLink ID="hypTestForm" runat="server" NavigateUrl='<%# "FormsPreview.aspx?fid=" & Eval("FormID").ToString() & "&test=true" %>' Target="_blank"><asp:Image ID="imgTestProcess" runat="server" ImageUrl="~/Admin/Images/Test.png" ImageAlign="AbsMiddle" ToolTip="Test Form" /></asp:HyperLink>
+                                </ItemTemplate>
+                            </telerik:GridTemplateColumn>
+
+                            <telerik:GridTemplateColumn HeaderText="Header" SortExpression="Header" UniqueName="Header">
+                                <ItemTemplate>
+                                    <%#Eval("Form.Header")%>&nbsp;
+                                </ItemTemplate>
+                            </telerik:GridTemplateColumn>
+
+                            <telerik:GridTemplateColumn ReadOnly="true" ItemStyle-HorizontalAlign="Center" HeaderStyle-Width="1%" HeaderStyle-Wrap="false" ItemStyle-Wrap="false"
+                                UniqueName="SortOrder">
+                                <ItemTemplate>
+                                    <asp:ImageButton ID="ibnItemUpArrow" runat="server" Width="16" height="16" ImageUrl="~/Admin/Images/ArrowUp.png" ImageAlign="AbsMiddle" Visible='<%#IIF(Eval("SortOrder") = 0,false,true) %>' CommandArgument='<%#Eval("ID") %>' OnCommand
+

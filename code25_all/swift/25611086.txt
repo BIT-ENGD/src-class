@@ -1,0 +1,93 @@
+import Foundation
+import Photos
+import OpenGLES
+import AVFoundation
+import CoreMedia
+
+class MovieGenerator {
+
+    var _videoWriter:AVAssetWriter
+    var _videoWriterInput: AVAssetWriterInput
+    var _adapter: AVAssetWriterInputPixelBufferAdaptor
+    var _buffer = UnsafeMutablePointer<Unmanaged<CVPixelBuffer>?>.alloc(1)
+
+
+    init(frameSize size: CGSize, outputURL url: NSURL) {
+
+    // delete file if exists
+    let sharedManager = NSFileManager.defaultManager() as NSFileManager
+    if(sharedManager.fileExistsAtPath(url.path!)) {
+        sharedManager.removeItemAtPath(url.path, error: nil)
+    }
+
+    // video writer
+    _videoWriter = AVAssetWriter(URL: url, fileType: AVFileTypeQuickTimeMovie, error: nil)
+
+    // writer input
+    var videoSettings = [AVVideoCodecKey:AVVideoCodecH264, AVVideoWidthKey:size.width, AVVideoHeightKey:size.height]
+    _videoWriterInput = AVAssetWriterInput(mediaType: AVMediaTypeVideo, outputSettings: videoSettings)
+    _videoWriterInput.expectsMediaDataInRealTime = true
+    _videoWriter.addInput(_videoWriterInput)
+
+    // pixel buffer adapter
+    var adapterAttributes = [kCVPixelBufferPixelFormatTypeKey:kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey: size.width,
+        kCVPixelBufferHeightKey: size.height,
+        kCVPixelFormatOpenGLESCompatibility: kCFBooleanTrue]
+
+    _adapter = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: _videoWriterInput, sourcePixelBufferAttributes: adapterAttributes)
+    var poolCreateResult:CVReturn = CVPixelBufferPoolCreatePixelBuffer(nil, _adapter.pixelBufferPool, _buffer)
+    println("pool creation:\(poolCreateResult)")
+
+    _videoWriter.startWriting()
+    _videoWriter.startSessionAtSourceTime(kCMTimeZero)
+
+}
+
+func addImage(image:UIImage, frameNum:Int, fps:Int)->Bool {
+
+
+    self.createPixelBufferFromCGImage(image.CGImage, pixelBufferPtr: _buffer)
+
+    var presentTime:CMTime = CMTimeMake(Int64(frameNum), Int32(fps))
+    var result:Bool = _adapter.appendPixelBuffer(_buffer.memory?.takeUnretainedValue(), withPresentationTime: presentTime)
+
+    return result
+}
+
+func finalizeMovie(timeStamp: CMTime) {
+    _videoWriterInput.markAsFinished()
+    _videoWriter.endSessionAtSourceTime(timeStamp)
+    _videoWriter.finishWritingWithCompletionHandler({println("video writer finished with status: \(self._videoWriter.status)")})
+}
+
+func createPixelBufferFromCGImage(image: CGImage, pixelBufferPtr: UnsafeMutablePointer<Unmanaged<CVPixelBuffer>?>) {
+
+    let width:UInt = CGImageGetWidth(image)
+    let height:UInt = CGImageGetHeight(image)
+
+    let imageData:CFData = CGDataProviderCopyData(CGImageGetDataProvider(image))
+    let options:CFDictionary = [kCVPixelBufferCGImageCompatibilityKey:NSNumber.numberWithBool(true), kCVPixelBufferCGBitmapContextCompatibilityKey:NSNumber.numberWithBool(true)]
+
+    var status:CVReturn = CVPixelBufferCreate(kCFAllocatorDefault, width, height, OSType(kCVPixelFormatType_32BGRA), options, pixelBufferPtr)
+    assert(status != 0,"CVPixelBufferCreate: \(status)")
+
+    var lockStatus:CVReturn = CVPixelBufferLockBaseAddress(pixelBufferPtr.memory?.takeUnretainedValue(), 0)
+    println("CVPixelBufferLockBaseAddress: \(lockStatus)")
+
+    var pxData:UnsafeMutablePointer<(Void)> = CVPixelBufferGetBaseAddress(pixelBufferPtr.memory?.takeUnretainedValue())
+    let bitmapinfo = CGBitmapInfo.fromRaw(CGImageAlphaInfo.NoneSkipFirst.toRaw())
+    let rgbColorSpace:CGColorSpace = CGColorSpaceCreateDeviceRGB()
+
+    var context:CGContextRef = CGBitmapContextCreate(pxData, width, height, 8, 4*CGImageGetWidth(image), rgbColorSpace, bitmapinfo!)
+
+    CGContextDrawImage(context, CGRectMake(0, 0, CGFloat(width), CGFloat(height)), image)
+
+    CVPixelBufferUnlockBaseAddress(pixelBufferPtr.memory?.takeUnretainedValue(), 0)
+
+
+}
+
+
+
+}
+

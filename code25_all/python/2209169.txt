@@ -1,0 +1,37 @@
+current transaction is aborted, commands ignored until end of transaction block
+def hello(req):
+req.content_type = "text/json"
+req.headers_out.add('Cache-Control', "no-store, no-cache, must-revalidate")
+req.headers_out.add('Pragma', "no-cache")
+req.headers_out.add('Expires', "-1")
+instance = req.hostname.split(".")[0]
+
+cookieSecret = '....' # whatever :-)
+receivedCookies = Cookie.get_cookies(req, Cookie.SignedCookie, secret = cookieSecret)
+sessionList = receivedCookies.get('sessions', None)
+sessionId = str(uuid.uuid4())
+if sessionList:
+    if type(sessionList) is not Cookie.SignedCookie:
+        return "{status: 'error', errno:1, errmsg:'Permission denied.'}"
+    else:
+        sessionList = sessionList.value.split(",")
+        for x in sessionList[:]:
+            revisionCookie = receivedCookies.get('rev_' + str(sessionAppId(x, instance)), None)
+            # more processing here....
+# .....
+cursors[instance].execute("lock revision, app, timeout IN SHARE MODE")
+cursors[instance].execute("insert into app (type, active, active_revision, contents, z) values ('session', true, %s, %s, 0) returning id", (cRevision, sessionId))
+sAppId = cursors[instance].fetchone()[0]
+cursors[instance].execute("insert into revision (app_id, type) values (%s, 'active')", (sAppId,))
+cursors[instance].execute("insert into timeout (app_id, last_seen) values (%s, now())", (sAppId,))
+connections[instance].commit()
+# .....
+
+def sessionAppId(sessionId, instance):
+cursors[instance].execute("select id from app where type='session' and contents = %s", (sessionId, ))
+row = cursors[instance].fetchone()
+if row == None:
+    return 0
+else:
+    return row[0]
+

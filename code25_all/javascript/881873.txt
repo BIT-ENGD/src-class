@@ -1,0 +1,485 @@
+var customerType;
+var selYear;
+var selMonth;
+var sdir;
+var sort;
+var page;
+var noteId;
+var hasDoneCall;
+var customerId;
+
+var customerIdChanged = false;
+
+
+function initValues() {
+    customerType = "Publisher";
+    selYear = new Date().getFullYear();
+    selMonth = new Date().getMonth()+1;
+    sdir = false;
+    sort = "CustomerName";
+    page = 1;
+    noteId = false;
+    customerId = 0;
+
+    hasDoneCall = location.href.indexOf('#') > 0;
+
+}
+function flash(elm, color, duration) {
+
+    var current = elm.css('backgroundColor');
+
+    elm.animate({ backgroundColor: 'rgb(' + color + ')' }, duration / 2).animate({ backgroundColor: current }, duration / 2);
+
+}
+
+function createNotes(elm) {
+    var btn = jQuery(elm);
+    btn.attr('disabled', 'disabled');
+    bulkCreditOption('true', '', function(changeSet) {
+        var i = 0;
+        while (i < changeSet.length) {
+            var selector = "input[type=checkbox][value=" + changeSet[i] + "].check:checked";
+            var row = jQuery(selector).parent().parent();
+            var cell = row.find("td:nth-child(2)");
+
+            cell.html("<a href=\"javascript:showNotes('" + changeSet[i] + "')\">" + cell.html() + "</a>");
+            flash(row, '60, 130, 200', 500);
+            i++;
+        }
+        btn.removeAttr('disabled');
+    });
+}
+
+function deleteNotes(elm) {
+    var btn = jQuery(elm);
+    btn.attr('disabled', 'disabled');
+    bulkCreditOption('', 'true', function(changeSet) {
+        var i = 0;
+        while (i < changeSet.length) {
+            var selector = "input[type=checkbox][value=" + changeSet[i] + "].check:checked";
+            var row = jQuery(selector).parent().parent();
+            var cell = row.find("td:nth-child(2)");
+
+            cell.html(cell.text());
+            flash(row, '60, 130, 200', 500);
+            i++;
+        }
+        btn.removeAttr('disabled');
+    });
+}
+
+function bulkCreditOption(createNotes, deleteNotes, callback) {
+    var path = "/BulkCredit";
+    var data = "";
+    var checked = jQuery("input[type=checkbox].check:checked");
+    checked.each(function(chk) {
+        data += "&ids=" + urlencode(jQuery(this).val());
+
+    });
+    jQuery.ajax({
+        type: 'POST',
+        url: path,
+        dataType: 'json',
+        data: "createNotes=" + urlencode(createNotes) + data + "&deleteNotes=" + urlencode(deleteNotes),
+        success: function(msg) {
+            callback(msg);
+        }
+    });
+}
+
+initValues();
+
+Sys.Application.add_init(function() {
+    Sys.Application.add_navigate(function(sender, e) {
+        var reinstate = e.get_state();
+        if (typeof (reinstate) != 'undefined' && typeof (reinstate.customerType) != 'undefined') {
+            customerType = reinstate.customerType;
+            selYear = reinstate.selYear;
+            selMonth = reinstate.selMonth;
+            sdir = reinstate.sdir;
+            sort = reinstate.sort;
+            page = reinstate.page;
+            noteId = reinstate.noteId;
+            customerId = reinstate.customerId;
+
+        } else {
+            initValues();
+        }
+
+        if (!customerIdChanged) {
+
+            jQuery("#customerTypeChanger").val(customerType);
+
+            jQuery("#customerFilter").val(customerId);
+
+            jQuery("#monthPicker").empty();
+
+            makeMonthPicker();
+
+            if (noteId != false && noteId != 'false') {
+                doShowNotes();
+            } else {
+                jQuery("#notesContent").hide();
+                jQuery("#tableContent").show();
+                doAjaxCall();
+            }
+        } else {
+            //logic to fetch customer specific stuff here, TODO
+            customerIdChanged = false;
+        }
+    });
+    Sys.Application.set_enableHistory(true);
+
+
+    jQuery(document).ready(function() {
+        origColor = jQuery("#dataTable > thead > tr > th").css('backgroundColor');
+
+        makeMonthPicker();
+
+        jQuery("#customerTypeChanger").val(customerType);
+        jQuery("#customerTypeChanger").change(function() {
+            customerType = jQuery(this).val();
+            iqSetHistory();
+        });
+
+        jQuery("#customerFilter").change(function() {
+            customerId = jQuery(this).val();
+            var tableBody = jQuery("#dataTable > tbody");
+            tableBody.find("tr").removeClass("selected");
+            tableBody.find("tr[rel=" + customerId + "]").addClass("selected");
+            customerIdChanged = true;
+            iqSetHistory();
+        });
+
+        jQuery(".checkAll").click(function() {
+            var elm = jQuery(this);
+            if (elm.is(':checked')) {
+                jQuery(".check").attr('checked', 'checked');
+            } else {
+                jQuery(".check").removeAttr('checked');
+            }
+        });
+
+        if (!hasDoneCall) {
+            if (noteId == false) {
+                doAjaxCall();
+            } else {
+                doShowNotes();
+            }
+        }
+
+    });
+});
+
+function makeMonthPicker() {
+    var selDate = new Date();
+    selDate.setFullYear(selYear);
+    selDate.setMonth(selMonth-1);
+    jQuery("#monthPicker").monthPicker(function(year, month) {
+        selYear = year;
+        selMonth = month;
+        iqSetHistory();
+    }, selDate);
+}
+
+var origColor;
+var notesPath = "/ShowNotes";
+
+
+function fadeOut(elm) {
+    elm.animate({ backgroundColor: 'rgb(180, 180, 180)' }, 250);
+}
+function fadeIn(elm) {
+    elm.animate({ backgroundColor: origColor }, 250);
+}
+
+function iqSetHistory() {
+    var state = { 'customerType': customerType, 'selYear': selYear, 'selMonth': selMonth, 'sdir': sdir, 'sort': sort, 'page': page, 'noteId': noteId, 'customerId':customerId };
+
+    Sys.Application.addHistoryPoint(state);
+}
+var ajaxPath = "/GetCreditListMonth";
+function doAjaxCall() {
+
+    fadeOut(jQuery("#dataTable > thead > tr > th"));
+    jQuery.ajax({
+        type: "POST",
+        url: ajaxPath,
+        dataType: "json",
+        data: "month=" + selMonth + "&year=" + selYear + "&custType=" + customerType + "&sort=" + sort + "&sdir=" + sdir + "&page=" + page + "&asCsv=false",
+        success: function(msg) {
+            var table = jQuery("#dataTable");
+
+            var tableBody = table.find("tbody");
+
+
+            tableBody.empty();
+
+            var i = 0;
+            while (i < msg.Rows.length) {
+                var data = msg.Rows[i];
+                var row = jQuery("<tr rel=\"" + data.CustomerId + "\"></tr>");
+
+                if (data.CustomerId == customerId) {
+                    row.addClass("selected");
+                }
+
+                if (i % 2 == 1) {
+                    row.addClass("alternatetablerow");
+                }
+
+                var custName = data.CustomerName;
+                if (data.PaymentCreated) {
+                    custName = "<a href=\"javascript:showNotes('" + getCreditId(data.CustomerId) + "')\">" + custName + "</a>";
+                }
+                row.append("<td><input type=\"checkbox\" class=\"check\" name=\"ids\" value=\"" + getCreditId(data.CustomerId) + "\" /></td>");
+                row.append("<td>" + custName + "</td>");
+                row.append("<td>" + data.AmountExcludingTaxes + "</td>");
+                row.append("<td>" + data.BonusAmount + "</td>");
+                row.append("<td>" + data.Amount + "</td>");
+
+                row.appendTo(tableBody);
+                i++;
+            }
+
+
+            tableBody.find("input, a").click(function(event){ //Stop clicks from falling through to the table row event
+                event.stopPropagation();
+                return true;
+            });
+            tableBody.find("tr").click(function(event){
+                var row = jQuery(this);
+                if (row.hasClass("selected")) { //Deselect
+                    jQuery("#customerFilter").val(0);
+                } else {
+                    jQuery("#customerFilter").val(jQuery(this).attr('rel'));
+                }
+                jQuery("#customerFilter").triggerHandler("change");
+            });
+
+
+
+            createPager(msg.Pages, jQuery("#pager"));
+            jQuery(".checkAll").triggerHandler('click');
+
+            fadeIn(table.find('thead > tr > th'));
+        }
+    });
+}
+
+function downloadListAsCsv() {
+    window.location.href = ajaxPath + "?month=" + selMonth + "&year=" + selYear + "&custType=" + customerType + "&sort=" + sort + "&sdir=" + sdir + "&page=0&asCsv=true";
+}
+
+function doShowNotes(){
+    jQuery.ajax({
+        type: "GET",
+        url: notesPath + "/" + noteId,
+        success: function(msg) {
+            jQuery("#tableContent").hide();
+            jQuery("#notesContent").html(msg).show();
+
+        }
+
+    });
+}
+
+function showNotes(id) {
+    noteId = id;
+    iqSetHistory();
+}
+
+function showTable() {
+    noteId = false;
+    iqSetHistory();
+}
+
+function getCreditId(custId) {
+    return selYear + "-" + selMonth + "-" + custId;
+}
+
+function sortDataTable(col) {
+    if (col == sort) {
+        sdir = !sdir;
+    } else {
+        sdir = false;
+    }
+
+    page = 1
+
+    sort = col;
+    iqSetHistory();
+}
+
+function createPager(totalPages, elm) {
+    elm.empty();
+    if (totalPages > 1)
+        {
+            var builder = "";
+
+
+            var numDirections = 2;
+
+            if (page > 1)
+            {
+                if (page - numDirections - 1 > 0)
+                {
+                    builder += CreatePageLinkStatic(1, "&laquo;");
+                    builder += " ";
+                }
+
+                builder += CreatePageLinkStatic(page - 1, "&lt;");
+                builder += " ";
+            }
+
+            var n = page - numDirections;
+            while (n < page)
+            {
+                if (n > 0)
+                {
+                    builder += CreatePageLinkStatic(n, n);
+                    builder += " ";
+                }
+                n++;
+            }
+
+            builder += page;
+            builder += " ";
+
+            n = page + 1;
+
+            while (n <= page + numDirections && n <= totalPages)
+            {
+                builder += CreatePageLinkStatic(n, n);
+                builder +=" ";
+                n++;
+            }
+
+            if (page < totalPages)
+            {
+                builder += CreatePageLinkStatic(page + 1, "&gt;");
+                builder += " ";
+                if (page + numDirections < totalPages)
+                {
+                    builder += CreatePageLinkStatic(totalPages, "&raquo;");
+                }
+            }
+
+            builder;
+
+            elm.append(builder);
+        }
+
+}
+function CreatePageLinkStatic(page, str){
+    return "<a href=\"javascript:pageDataTable(" + page + ")\">" + str + "</a>";
+}
+
+function pageDataTable(newPage){
+    page = newPage;
+    iqSetHistory();
+}
+
+<div id="tableContent">
+<select id="customerTypeChanger">
+    <option selected="selected" value="Publisher">Publisher</option>
+    <option value="Advertiser">Advertiser</option>
+</select>
+<select id="customerFilter"><option value="0">Choose Customer</option><option value="1">Customer 1</option><option value="1">Customer 2</option>...</select>
+<div id="monthPicker"></div>
+<div><a href="javascript:downloadListAsCsv()">DownloadAsCSV</a></div>
+    <table id="dataTable" class="grid">
+        <thead>
+            <tr>
+                <th style="text-align: left"><input type="checkbox" name="toggleCheckBox" class="checkAll" value="dummy" /></th>
+                <th><a href="javascript:sortDataTable('CustomerName')">Customer name</a></th>
+                <th><a href="javascript:sortDataTable('AmountExcludingTaxes')">Amount</th>
+                <th><a href="javascript:sortDataTable('BonusAmount')">Bonus amount</a></th>
+                <th><a href="javascript:sortDataTable('Amount')">Amount including VAT</a></th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div class="pagination" id="pager"></div>
+    <div>With the selected rows</div>
+<input id="createNotes" type="button" value="Create notes" onclick="javascript:createNotes(this)" /> <input id="deleteNotes" value="Delete notes" type="submit" onclick="javascript:deleteNotes(this)" />
+
+</div>
+<div id="notesContent"></div>
+
+(function($) {
+
+
+    var selDate;
+
+    $.fn.monthPicker = function(callback, selectedDate) {
+
+        selDate = selectedDate;
+
+        var elm = this;
+
+        this.html("<span class=\"prevMonthButton\"><a href=\"\">&lt;</a></span><span class=\"prevMonth\"><a href=\"\"></a></span><span class=\"curMonth\"></span><span class=\"nextMonth\"><a href=\"\"></a></span><span class=\"nextMonthButton\"><a href=\"\">&gt;</a></span>");
+
+        populateDates(this);
+
+        var prevMonthFunc = function() {
+
+            var month = selDate.getMonth() - 1;
+            if (month < 0) {
+                month = 11;
+                selDate.setFullYear(selDate.getFullYear() - 1);
+            }
+            selDate.setMonth(month);
+
+            populateDates(elm);
+            callback(selDate.getFullYear(), selDate.getMonth() + 1);
+            return false;
+        }
+        var nextMonthFunc = function() {
+            var month = selDate.getMonth() + 1;
+            if (month > 11) {
+                month = 0;
+                selDate.setFullYear(selDate.getFullYear() + 1);
+            }
+            selDate.setMonth(month);
+
+            populateDates(elm);
+            callback(selDate.getFullYear(), selDate.getMonth() + 1);
+            return false;
+        };
+
+        this.find(".prevMonth > a").click(prevMonthFunc);
+        this.find(".prevMonthButton > a").click(prevMonthFunc);
+        this.find(".nextMonth > a").click(nextMonthFunc);
+        this.find(".nextMonthButton > a").click(nextMonthFunc);
+    }
+
+    function populateDates(elm) {
+
+        var months = jQuery.datepicker._defaults.monthNames;
+        var selYear = selDate.getFullYear();
+        var selMonth = selDate.getMonth();
+
+
+        elm.find(".curMonth").text(months[selMonth] + " " + selYear);
+
+        var prevMonth = selMonth - 1;
+        var prevYear = selYear;
+        if (prevMonth < 0) {
+            prevMonth = 11;
+            prevYear = prevYear - 1;
+        }
+
+        elm.find(".prevMonth > a").text(months[prevMonth] + " " + prevYear);
+
+        var nextMonth = selMonth + 1;
+        var nextYear = selYear;
+        if (nextMonth > 11) {
+            nextMonth = 0;
+            nextYear = nextYear + 1;
+        }
+
+        elm.find(".nextMonth > a").text(months[nextMonth] + " " + nextYear);
+    }
+})(jQuery);
+

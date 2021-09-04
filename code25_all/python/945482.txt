@@ -1,0 +1,124 @@
+import time
+import threading
+import traceback
+import logging
+import MySQLdb
+
+def get_conn():
+    return MySQLdb.connect(host='localhost', db='TESTS',
+                           user='tito', passwd='testing123')
+
+class DeadlockTestThread(threading.Thread):
+    def __init__(self, order):
+        super(DeadlockTestThread, self).__init__()
+        self.first_select_done = threading.Event()
+        self.do_the_second_one = threading.Event()
+        self.order = order
+
+    def log(self, msg):
+        logging.info('%s: %s' % (self.getName(), msg))
+
+    def run(self):
+        db = get_conn()
+        c = db.cursor()
+        c.execute('BEGIN;')
+        query = 'SELECT * FROM locktest%i FOR UPDATE;'
+        try:
+            try:
+                c.execute(query  % self.order[0])
+                self.first_select_done.set()
+
+                self.do_the_second_one.wait()
+                c.execute(query  % self.order[1])
+                self.log('2nd SELECT OK, we got %i rows' % len(c.fetchall()))
+
+                c.execute('SHOW WARNINGS;')
+                self.log('SHOW WARNINGS: %s' % str(c.fetchall()))
+            except:
+                self.log('Failed! Rolling back')
+                c.execute('ROLLBACK;')
+                raise
+            else:
+                c.execute('COMMIT;')
+        finally:
+            c.close()
+            db.close()
+
+
+def init():
+    db = get_conn()
+
+    # Create the tables.
+    c = db.cursor()
+    c.execute('DROP TABLE IF EXISTS locktest1;')
+    c.execute('DROP TABLE IF EXISTS locktest2;')
+    c.execute('''CREATE TABLE locktest1 (
+                    a int(11), PRIMARY KEY(a)
+                  ) ENGINE=innodb;''')
+    c.execute('''CREATE TABLE locktest2 (
+                    a int(11), PRIMARY KEY(a)
+                  ) ENGINE=innodb;''')
+    c.close()
+
+    # Insert some data.
+    c = db.cursor()
+    c.execute('BEGIN;')
+    c.execute('INSERT INTO locktest1 VALUES (123456);')
+    c.execute('INSERT INTO locktest2 VALUES (123456);')
+    c.execute('COMMIT;')
+    c.close()
+
+    db.close()
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+
+    init()
+
+    t1 = DeadlockTestThread(order=[1, 2])
+    t2 = DeadlockTestThread(order=[2, 1])
+
+    t1.start()
+    t2.start()
+
+    # Wait till both threads did the 1st select.
+    t1.first_select_done.wait()
+    t2.first_select_done.wait()
+
+    # Let thread 1 continue, it will get wait for the lock 
+    # at this point.
+    t1.do_the_second_one.set()
+
+    # Just make sure thread 1 is waiting for the lock.
+    time.sleep(0.1)
+
+    # This will trigger the deadlock and thread-2 will
+    # fail silently, getting 0 rows.
+    t2.do_the_second_one.set()
+
+    t1.join()
+    t2.join()
+
+$ python bug_mysqldb_deadlock.py
+INFO:root:Thread-2: 2nd SELECT OK, we got 0 rows
+INFO:root:Thread-2: SHOW WARNINGS: (('Error', 1213L, 'Deadlock found when trying to get lock; try restarting transaction'),)
+INFO:root:Thread-1: 2nd SELECT OK, we got 1 rows
+INFO:root:Thread-1: SHOW WARNINGS: ()
+
+$ python bug_mysqldb_deadlock.py
+INFO:root:Thread-2: Failed! Rolling back
+Exception in thread Thread-2:
+Traceback (most recent call last):
+  File "/usr/lib/python2.4/threading.py", line 442, in __bootstrap
+    self.run()
+  File "bug_mysqldb_deadlock.py", line 33, in run
+    c.execute(query  % self.order[1])
+  File "/home/koba/Desarollo/InetPub/IBSRL/VirtualEnv-1.0-p2.4/lib/python2.4/site-packages/MySQL_python-1.2.2-py2.4-linux-x86_64.egg/MySQLdb/cursors.py", line 178, in execute
+    self.errorhandler(self, exc, value)
+  File "/home/koba/Desarollo/InetPub/IBSRL/VirtualEnv-1.0-p2.4/lib/python2.4/site-packages/MySQL_python-1.2.2-py2.4-linux-x86_64.egg/MySQLdb/connections.py", line 35, in defaulterrorhandler
+    raise errorclass, errorvalue
+OperationalError: (1213, 'Deadlock found when trying to get lock; try restarting transaction')
+
+INFO:root:Thread-1: 2nd SELECT OK, we got 1 rows
+INFO:root:Thread-1: SHOW WARNINGS: ()
+

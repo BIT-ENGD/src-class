@@ -1,0 +1,65 @@
+    // Http Basic Authentication 
+    LiftRules.authentication = HttpBasicAuthentication("xxx") { 
+      case (userName, userPass, _) => { 
+        Console.println("Authenticating: " + userName) 
+        User.find("userName", userName).map { 
+          user => 
+            if (user.password.isMatch(userPass)) { 
+              Account.authenticatedUser.setFieldsFromDBObject(user.asDBObject) 
+              userRoles(AuthRole("authorisedUser")) 
+              Console.println("Success: " + userName) 
+              true 
+            } 
+            else { 
+              Console.println("Failed: " + userName) 
+              false 
+            } 
+        } openOr false 
+      } 
+    } 
+
+    LiftRules.responseTransformers.append { 
+      resp => resp match { 
+        case UnauthorizedResponse("xxx") => 
+          Console.println("Responding modified..."); 
+          JsonUnauthorizedResponse(("error" -> "Incorrect username or password")) 
+
+        case x => Console.println("Responding..."); x 
+      } 
+    }
+
+  case class JsonHttpBasicAuthentication(realmName: String)(func: PartialFunction[(String, String, Req), Boolean]) extends HttpAuthentication {
+
+  def credentials(r: Req): Box[(String, String)] = {
+    header(r).flatMap(auth => {
+      val decoded = new String(Base64.decodeBase64(auth.substring(6, auth.length).getBytes)).split(":").toList
+      decoded match {
+        case userName :: password :: _ => Full((userName, password))
+        case userName :: Nil => Full((userName, ""))
+        case _ => Empty
+      }
+    }
+    )
+  }
+
+  override def realm = realmName
+
+  def verified_? = {
+    case (req) => {
+      credentials(req) match {
+        case Full((user, pwd)) if (func.isDefinedAt(user, pwd, req)) =>
+          func(user, pwd, req)
+        case _ => false
+      }
+    }
+  }
+
+  override def unauthorizedResponse: UnauthorizedResponse = new UnauthorizedResponse(realm) {
+    override def toResponse = {
+      val errResp: JValue = ("error" -> "Incorrect username or password")
+      InMemoryResponse(errResp.toString.getBytes("UTF-8"),
+      S.getHeaders(Nil), S.responseCookies, 200)
+    }
+  }
+}
+

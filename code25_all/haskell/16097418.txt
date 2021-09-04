@@ -1,0 +1,89 @@
+{-# LANGUAGE TypeOperators, FlexibleContexts, BangPatterns #-}
+
+import System.Random
+import System.Environment (getArgs)
+import Control.Monad.State
+import Control.Monad.Identity (runIdentity)
+
+import Data.Array.Repa as Repa
+import Data.Array.Repa.Eval as Eval
+import Data.Array.Repa.Repr.Vector
+
+force :: (Shape sh) => Array D sh e -> Array V sh e
+force = runIdentity . computeP
+
+chunk :: [a] -> [(a,a)]
+chunk [] = []
+chunk (x1:x2:xs) = (x1,x2):(chunk xs)
+
+slow_fib :: Int -> Integer
+slow_fib 0 = 0
+slow_fib 1 = 1
+slow_fib n = slow_fib (n-2) + slow_fib (n-1) 
+
+testSubsetProd :: Int -> Int -> IO ()
+testSubsetProd size seed = do
+    let work = do
+            !flags <- replicateM size (state random)
+            !values <- replicateM size (state $ randomR (1,10))
+            return $ subsetProd values flags
+        value = evalState work (mkStdGen seed)
+    print value
+
+subsetProd :: [Int] -> [Bool] -> Int
+subsetProd [!x] _ = x
+subsetProd !vals !flags = 
+    let len = (length vals) `div` 2
+        !valpairs = Eval.fromList (Z :. len) $ chunk vals :: (Array V (Z :. Int) (Int, Int))
+        !flagpairs = Eval.fromList (Z :. len) $ chunk flags :: (Array V (Z :. Int) (Bool, Bool))
+        !prods = force $ Repa.zipWith mul valpairs flagpairs
+        mul (!v0,!v1) (!f0,!f1)
+            | (not f0) && (not f1) = 1
+            | (not f0) = v0+1
+            | (not f1) = v1+1
+            | otherwise = fromInteger $ slow_fib ((v0*v1) `mod` 35)
+    in subsetProd (toList prods) (Prelude.map (uncurry (||)) (toList flagpairs))
+
+main :: IO ()
+main = do
+  args <- getArgs
+  let [numleaves, seed] = Prelude.map read args :: [Int]
+  testSubsetProd numleaves seed
+
+ghc -Odph -rtsopts -threaded -fno-liberate-case -funfolding-use-threshold1000 -funfolding-keeness-factor1000 -fllvm -optlo-O3
+
+$> time ./Test 4096 4 +RTS -sstderr -N4
+
+672,725,819,784 bytes allocated in the heap
+ 11,312,267,200 bytes copied during GC
+   866,787,872 bytes maximum residency (49 sample(s))
+   433,225,376 bytes maximum slop
+        2360 MB total memory in use (0 MB lost due to fragmentation)
+
+                                Tot time (elapsed)  Avg pause  Max pause
+
+
+  Gen  0     1284212 colls, 1284212 par   174.17s   53.20s     0.0000s    0.0116s
+  Gen  1        49 colls,    48 par   13.76s    4.63s     0.0946s    0.6412s
+
+  Parallel GC work balance: 16.88% (serial 0%, perfect 100%)
+
+  TASKS: 6 (1 bound, 5 peak workers (5 total), using -N4)
+
+  SPARKS: 0 (0 converted, 0 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+  INIT    time    0.00s  (  0.00s elapsed)
+  MUT     time  497.80s  (448.38s elapsed)
+  GC      time  187.93s  ( 57.84s elapsed)
+  EXIT    time    0.00s  (  0.00s elapsed)
+  Total   time  685.73s  (506.21s elapsed)
+
+  Alloc rate    1,351,400,138 bytes per MUT second
+
+  Productivity  72.6% of total user, 98.3% of total elapsed
+
+gc_alloc_block_sync: 8670031
+whitehole_spin: 0
+gen[0].sync: 0
+gen[1].sync: 571398
+

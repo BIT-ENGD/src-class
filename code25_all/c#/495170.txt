@@ -1,0 +1,64 @@
+[DllImport("coredll.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+static extern int CredWrite([In]IntPtr pCred, [In]CREDWRITE_FLAGS dwflags);
+
+public enum CREDWRITE_FLAGS : int
+{
+    CRED_FLAG_FAIL_IF_EXISTING = 0x00000400
+}
+
+    public struct CRED
+    {
+        public int dwVersion;
+        public CRED_TYPE dwType;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string wszUser;
+        public int dwUserLen;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string wszTarget;
+        public int dwTargetLen;
+        public IntPtr pBlob;
+        public int dwBlobSize;
+        public CRED_FLAGS dwFlags;
+    }
+    public enum CRED_TYPE
+    {
+        CRED_TYPE_NTLM = 0x00010002,
+        CRED_TYPE_KERBEROS = 0x00010004,
+        CRED_TYPE_PLAINTEXT_PASSWORD = 0x00010006,
+        CRED_TYPE_CERTIFICATE = 0x00010008,
+        CRED_TYPE_GENERIC = 0x0001000a,
+        CRED_TYPE_DOMAIN_PASSWORD = 0x00010001,
+    }
+    public enum CRED_FLAGS : int
+    {
+        CRED_FLAG_PERSIST = 0x00000001,
+        CRED_FLAG_DEFAULT = 0x00000002,
+        CRED_FLAG_SENSITIVE = 0x00000008,
+        CRED_FLAG_TRUSTED = 0x00000010
+    }
+
+public static void WriteCredentials(string target, string userName, string password)
+{
+    CRED cred = new CRED();
+    cred.dwVersion = 1;
+    cred.dwType = CRED_TYPE.CRED_TYPE_NTLM;
+    cred.wszTarget = target;
+    cred.dwTargetLen = target.Length + 1;
+    cred.wszUser = userName;
+    cred.dwUserLen = userName.Length + 1; 
+
+    cred.dwBlobSize = (Encoding.Unicode.GetBytes(password).Length + 1) * 2;
+    //cred.pBlob = Marshal.StringToCoTaskMemUni(password); //<--not in CF
+    //cred.pBlob = Marshal2.StringToHGlobalUni(password); //<--from OpenNETCF, the same?
+    cred.pBlob = Marshal.StringToBSTR(password); //<--not sure of that, but tried the other one also
+    cred.dwFlags = CRED_FLAGS.CRED_FLAG_PERSIST | CRED_FLAGS.CRED_FLAG_SENSITIVE | CRED_FLAGS.CRED_FLAG_TRUSTED; //<-- results in 25 which is also used in creds read which are stored by the IE-UI-CredMan-dialog
+
+    IntPtr credPtr = Marshal.AllocHGlobal(Marshal.SizeOf(cred));
+    Marshal.StructureToPtr(cred, credPtr, true);
+
+    int ret = -1;
+    ret = CredWrite(credPtr, CREDWRITE_FLAGS.CRED_FLAG_FAIL_IF_EXISTING); //returns zero, unless called twice with the same target/username-tuple.
+
+    Marshal.FreeHGlobal(credPtr);
+}
+

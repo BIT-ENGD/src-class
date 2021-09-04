@@ -1,0 +1,53 @@
+Value
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+import Network.Wai (Response, responseLBS, Application, requestBody)
+import Network.HTTP.Types (status200, status400)
+import Network.Wai.Handler.Warp (run)
+import Data.Aeson.Parser (json)
+import Data.Conduit.Attoparsec (sinkParser)
+import Control.Monad.IO.Class (liftIO)
+import Data.Aeson (Value(..), encode, object, (.=))
+import Control.Exception (SomeException)
+import Data.ByteString (ByteString)
+import Data.Conduit (ResourceT, ($$))
+import Control.Exception.Lifted (handle)
+
+import qualified Data.HashMap.Strict as M
+import Data.Aeson.TH (deriveJSON)
+
+-- I ADDED THIS
+
+data JSONRequest = JSONRequest {
+    command :: ByteString,
+    params :: M.HashMap ByteString ByteString
+}
+
+deriveJSON id ''JSONRequest
+
+-- END OF WHAT I ADDED
+
+main :: IO ()
+main = run 3000 app
+
+app :: Application
+app req = handle invalidJson $ do
+    value <- requestBody req $$ sinkParser json
+    newValue <- liftIO $ dispatch value
+    return $ responseLBS
+        status200
+        [("Content-Type", "application/json")]
+        $ encode newValue
+
+invalidJson :: SomeException -> ResourceT IO Response
+invalidJson ex = return $ responseLBS
+    status400
+    [("Content-Type", "application/json")]
+    $ encode $ object
+        [ ("message" .= show ex)
+        ]
+
+-- Application-specific logic would go here.
+dispatch :: Value -> IO Value
+dispatch = return
+
+dispatch

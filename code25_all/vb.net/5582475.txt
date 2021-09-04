@@ -1,0 +1,79 @@
+<asp:Repeater ID="UnitMatchRepeater" runat="server" DataSourceID="OldUnitsDataSource" >
+    <ItemTemplate>
+       <tr>
+       <td>
+       <asp:Label ID="OldUnitNumber" runat="server" Text='<%# Eval("Vehicle")%>' value='<%#Container.DataItem("LinkNumber") %>'></asp:Label>
+       </td>
+       <td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+        <td>
+        <asp:DropDownList ID="NewUnitsDropDownBox" runat="server" DataSourceID="NewUnitsDataSource" DataTextField="UnitNumber"
+            DataValueField="LinkNumber" OnDataBound="call_it" AutoPostBack="true" value='<%# Container.DataItem("LinkNumber")%>'></asp:DropDownList>
+        </td>
+        <br/>
+        </tr>
+    </ItemTemplate>
+    </asp:Repeater>
+<asp:SqlDataSource ID="OldUnitsDataSource" runat="server" 
+        ConnectionString="<%$ ConnectionStrings:minotaurSQLConnectionString %>">
+    </asp:SqlDataSource>
+    <br />
+    <asp:SqlDataSource ID="NewUnitsDataSource" runat="server" 
+        ConnectionString="<%$ ConnectionStrings:minotaurSQLConnectionString %>" 
+        SelectCommand="SELECT Minotaur.dbo.Units.LinkNumber AS LinkNumber, RTAFleet.dbo.vehfile.vehicle AS UnitNumber FROM RTAFleet.dbo.vehfile INNER JOIN Minotaur.dbo.Units ON RTAFleet.dbo.vehfile.link_number = Minotaur.dbo.Units.LinkNumber AND Minotaur.dbo.Units.AcquisitionOrderID = @AcquisitionOrderID AND Minotaur.dbo.Units.SnapShotID = 1 AND Minotaur.dbo.Units.OldLinkNumber IS NULL">
+        <SelectParameters>
+            <asp:QueryStringParameter Name="AcquisitionOrderID" QueryStringField="orderID" 
+                Type="Int32" />
+        </SelectParameters>
+    </asp:SqlDataSource>
+
+Private Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+        Dim LinkNoArray As String() = Request.QueryString("linkNumber").Split(",")
+        Dim SqlStr As String = "SELECT Vehicle = CASE WHEN ISNUMERIC(RTAFleet.dbo.vehfile.vehicle) = 1 AND RTAFleet.dbo.vehfile.vehicle IS NOT NULL THEN RTAFleet.dbo.vehfile.vehicle ELSE  RTAFleet.dbo.vehfile.veh_xref_num END, RTAFleet.dbo.vehfile.link_number AS LinkNumber FROM RTAFleet.dbo.vehfile INNER JOIN Minotaur.dbo.Units ON RTAFleet.dbo.vehfile.link_number = Minotaur.dbo.Units.LinkNumber AND  Minotaur.dbo.Units.SnapShotID = 1 WHERE "
+        For Each Str As String In LinkNoArray
+            SqlStr = SqlStr & " Minotaur.dbo.Units.LinkNumber = " & Trim(Str) & " OR"
+        Next
+        If Not Page.IsPostBack Then
+            SqlStr = Left(SqlStr, (SqlStr.Length - 2))
+            OldUnitsDataSource.SelectCommand = SqlStr
+            UnitMatchRepeater.DataBind()
+        End If
+
+
+
+End Sub
+
+Private Sub UnitMatchRepeater_ItemCreated(ByVal sender As Object, ByVal e As System.Web.UI.WebControls.RepeaterItemEventArgs) Handles UnitMatchRepeater.ItemCreated
+        If Not e.Item.ItemType = ListItemType.Item And Not e.Item.ItemType = ListItemType.AlternatingItem Then
+            Exit Sub
+        End If
+        Dim NewUnitsDDB As DropDownList = e.Item.FindControl("NewUnitsDropDownBox")
+
+        AddHandler NewUnitsDDB.SelectedIndexChanged, AddressOf NewUnitsDDB_SelectedIndexChanged
+    End Sub
+
+    Protected Sub NewUnitsDDB_SelectedIndexChanged(ByVal sender As Object, ByVal e As System.EventArgs)
+        Dim linkNo As String = CType(sender, DropDownList).SelectedValue
+        Dim sqlStr As String = "UPDATE dbo.Units SET OldLinkNumber = @oldLinkNum WHERE LinkNumber = @newLinkNum"
+        Dim con As SqlConnection = New SqlConnection(ConfigurationManager.ConnectionStrings("minotaurSQLConnectionString").ConnectionString)
+        Dim cmd As SqlCommand = New SqlCommand(sqlStr, con)
+        cmd.Parameters.Add("@oldLinkNum", SqlDbType.Int).Value = CType(sender, DropDownList).Attributes("value")
+        cmd.Parameters.Add("@newLinkNum", SqlDbType.Int).Value = CInt(linkNo)
+
+        con.Open()
+        cmd.ExecuteNonQuery()
+        con.Close()
+
+        dlistdatabinding()
+
+
+    End Sub
+
+ Private Sub dlistdatabinding()
+
+        For Each rep As RepeaterItem In UnitMatchRepeater.Items
+            Dim list As DropDownList = rep.FindControl("NewUnitsDropDownBox")
+            list.DataBind()
+        Next
+
+End Sub
+

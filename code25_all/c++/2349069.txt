@@ -1,0 +1,109 @@
+class Font
+{
+    Font(const String& filename)
+    {
+       if (FT_New_Face(Font::ftLibrary, "arial.ttf", 0, &mFace)) {
+          cout << "UH OH!" << endl;
+       }
+
+       FT_Set_Char_Size(mFace, 16 * 64, 16 * 64, 72, 72);
+    }
+
+    Glyph* GetGlyph(const unsigned char ch)
+    {
+       if(FT_Load_Char(mFace, ch, FT_LOAD_RENDER))
+          cout << "OUCH" << endl;
+
+       FT_Glyph glyph;
+
+       if(FT_Get_Glyph( mFace->glyph, &glyph ))
+          cout << "OUCH" << endl;
+
+       FT_BitmapGlyph bitmap_glyph = (FT_BitmapGlyph)glyph;
+
+       Glyph* thisGlyph = new Glyph;
+       thisGlyph->buffer = bitmap_glyph->bitmap.buffer;
+       thisGlyph->width = bitmap_glyph->bitmap.width;
+       thisGlyph->height = bitmap_glyph->bitmap.rows;
+
+       return thisGlyph;
+    }
+};
+
+struct Glyph {
+   GLubyte* buffer;
+   Uint width;
+   Uint height;
+};
+
+class RenderFont 
+{
+   RenderFont(Font* font)
+   {
+      mTextureIds = new GLuint[128];
+
+      mFirstDisplayListId=glGenLists(128);
+      glGenTextures( 128, mTextureIds );
+
+      for(unsigned char i=0;i<128;i++)
+      {
+         MakeDisplayList(font, i);
+      }
+   }
+
+   void MakeDisplayList(Font* font, unsigned char ch)
+   {
+      Glyph* glyph = font->GetGlyph(ch);
+
+      glBindTexture( GL_TEXTURE_2D, mTextureIds[ch]);
+      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+
+      glTexImage2D(GL_TEXTURE_2D, 
+                   0, 
+                   GL_RGBA, 
+                   glyph->width, 
+                   glyph->height, 
+                   0,
+                   GL_ALPHA, 
+                   GL_UNSIGNED_BYTE, 
+                   glyph->buffer);
+
+      glNewList(mFirstDisplayListId+ch,GL_COMPILE);
+      glBindTexture(GL_TEXTURE_2D, mTextureIds[ch]);
+
+      glBegin(GL_QUADS);
+      glTexCoord2d(0,1); glVertex2f(0,glyph->height);
+      glTexCoord2d(0,0); glVertex2f(0,0);
+      glTexCoord2d(1,0); glVertex2f(glyph->width,0);
+      glTexCoord2d(1,1); glVertex2f(glyph->width,glyph->height);
+      glEnd();
+
+      glTranslatef(16, 0, 0);
+
+      glEndList();
+   }
+
+   void Draw(const String& text, Uint size, const TransformComponent* transform, const Color32* color)
+   {
+      glEnable(GL_TEXTURE_2D);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+      glTranslatef(100, 250, 0.0f);
+
+      glListBase(mFirstDisplayListId);
+
+      glCallLists(text.length(), GL_UNSIGNED_BYTE, text.c_str());
+
+      glDisable(GL_TEXTURE_2D);
+      glDisable(GL_BLEND);
+
+      glLoadIdentity();
+   }
+
+private:
+   GLuint mFirstDisplayListId;
+   GLuint* mTextureIds;
+};
+

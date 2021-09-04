@@ -1,0 +1,106 @@
+import qualified Sound.File.Sndfile as Snd
+import qualified Graphics.UI.SDL.Mixer.Channels as SDLC
+import qualified Graphics.UI.SDL.Mixer.General as SDLG
+import qualified Graphics.UI.SDL.Mixer.Samples as SDLS
+
+import Control.Applicative
+import Foreign.Marshal.Array
+import Data.List.Split (splitOn)
+import Data.Word (Word16)
+import System.IO (hGetContents, Handle, openFile, IOMode(..))
+
+a4 :: Double
+a4 = 440.0
+
+frameRate :: Int
+frameRate = 16000
+
+noteLength :: Double
+noteLength = 5.0
+
+volume = maxBound `div` 2 :: Word16
+
+noteToFreq :: (String, Int) -> Double
+noteToFreq (note, octave) =
+    if octave >= -1 && octave < 10 && n /= 12.0
+    then a4 * 2 ** ((o - 4.0) + ((n - 9.0) / 12.0))
+    else undefined
+    where o = fromIntegral octave :: Double
+          n = case note of
+                "B#" -> 0.0
+                "C"  -> 0.0
+                "C#" -> 1.0
+                "Db" -> 1.0
+                "D"  -> 2.0
+                "D#" -> 3.0
+                "Eb" -> 3.0
+                "E"  -> 4.0
+                "Fb" -> 4.0
+                "E#" -> 5.0
+                "F"  -> 5.0
+                "F#" -> 6.0
+                "Gb" -> 6.0
+                "G"  -> 7.0
+                "G#" -> 8.0
+                "Ab" -> 8.0
+                "A"  -> 9.0
+                "A#" -> 10.0
+                "Bb" -> 10.0
+                "B"  -> 11.0
+                "Cb" -> 11.0
+                _    -> 12.0
+
+notesToFreqs :: [(String, Int)] -> [Double]
+notesToFreqs = map noteToFreq 
+
+noteToSample :: Double -> [Word16]
+noteToSample freq =
+    take (round $ noteLength * fromIntegral frameRate) $
+    map ((round . (* fromIntegral volume)) . sin) 
+    [0.0, (freq * 2 * pi / fromIntegral frameRate)..]
+
+notesToSamples :: [Double] -> [Word16]
+notesToSamples = concatMap noteToSample 
+
+getFileName :: IO FilePath
+getFileName = putStr "Enter the name of the file: " >> getLine
+
+openMFile :: FilePath -> IO Handle
+openMFile fileName = openFile fileName ReadMode
+
+getNotesAndOctaves :: IO String
+getNotesAndOctaves = getFileName >>= openMFile >>= hGetContents 
+
+noteValuePairs :: String -> [(String, Int)]
+noteValuePairs = pair . splitOn " "
+    where pair (x:y:ys) = (x, read y) : pair ys
+          pair []       = []
+
+getWavSamples :: IO [Word16]
+getWavSamples = (notesToSamples . notesToFreqs . noteValuePairs) <$>
+                getNotesAndOctaves 
+
+extendNotes :: [Word16] -> [Word16]
+extendNotes = concatMap (replicate 1000)
+
+format :: Snd.Format
+format = Snd.Format Snd.HeaderFormatWav Snd.SampleFormatPcm16 Snd.EndianBig
+
+openWavHandle :: [Word16] -> IO Snd.Handle
+openWavHandle frames =
+    let info = Snd.Info (length frames) frameRate 1 format 1 False
+    in if Snd.checkFormat info
+       then Snd.openFile "temp.wav" Snd.WriteMode info
+       else error "Bad format."
+
+writeWav :: [Word16] -> IO Snd.Count
+writeWav frames = openWavHandle frames >>= \h ->
+                  newArray frames >>= \ptr ->
+                  Snd.hPutBuf h ptr (length frames) >>= \c ->
+                  return c
+
+makeWavFile :: IO ()
+makeWavFile = getWavSamples >>= \s ->
+              writeWav s >>= \c ->
+              putStrLn $ "Frames written: " ++ show c
+

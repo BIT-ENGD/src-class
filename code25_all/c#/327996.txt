@@ -1,0 +1,135 @@
+namespace SilverlightApplication2
+{
+    public class Customer
+    {
+        public string Name { get; set; }
+    }
+
+    public class RestHost
+    {
+        public event EventHandler Loaded = delegate { };
+        public event EventHandler Error = delegate { };
+
+        public Customer Customer { get; set; }
+        public string ErrorMessage { get; set; }
+
+        public RestHost()
+        {
+            Customer = new Customer();
+
+            Load();
+        }
+
+        private void Load()
+        {
+            // begin loading customer
+            var request = (HttpWebRequest)WebRequest.Create(new Uri("http://localhost:41078/SilverlightApplication2.Web/Service.svc/"));
+            request.BeginGetResponse(delegate(IAsyncResult result)
+            {
+                try
+                {
+                    var resp = request.EndGetResponse(result);
+
+                    var doc = XDocument.Load(resp.GetResponseStream());
+
+                    Customer.Name = doc.Element("SampleItem").Element("Value").Value;
+
+                    Loaded(this, EventArgs.Empty);
+                }
+                catch (Exception ex)
+                {
+                    ErrorMessage = ex.GetBaseException().Message;
+                    Error(this, EventArgs.Empty);
+                }
+            }, null);
+        }
+
+        public void Save()
+        {
+            var request = (HttpWebRequest)WebRequest.Create(new Uri("http://localhost:41078/SilverlightApplication2.Web/Service.svc/"));
+            request.Method = "POST";
+            request.ContentType = "application/xml";
+            request.BeginGetRequestStream(delegate(IAsyncResult result)
+            {
+                var postDoc = new XDocument(
+                    new XElement("SampleItem", new XAttribute(XNamespace.Xmlns + "i", "http://www.w3.org/2001/XMLSchema-instance"),
+                        new XElement("Value", Customer.Name)
+                    )
+                );
+                postDoc.Save(request.EndGetRequestStream(result));
+
+                request.BeginGetResponse(delegate(IAsyncResult result2)
+                {
+                    try
+                    {
+                        var resp = request.EndGetResponse(result2); // NotSupportedExecption here
+
+                        var doc = XDocument.Load(resp.GetResponseStream());
+
+                        Customer.Name = doc.Element("SampleItem").Element("Value").Value;
+
+                        Loaded(this, EventArgs.Empty);
+                    }
+                    catch (Exception ex)
+                    {
+                        ErrorMessage = ex.GetBaseException().Message;
+                        Error(this, EventArgs.Empty);
+                    }
+                }, null);
+            }, null);
+
+
+        }
+    }
+}
+
+<UserControl x:Class="SilverlightApplication2.Page"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
+    Width="400" Height="300">
+    <Grid x:Name="LayoutRoot" Background="White">
+        <StackPanel Width="100" HorizontalAlignment="Left" Margin="15">
+            <TextBlock>Customer</TextBlock>
+            <TextBox x:Name="CustomerName" />
+            <TextBlock Foreground="LightGray" x:Name="LoadingLabel" Margin="5,-19,0,0">Loading ...</TextBlock>
+            <Button Content="Save" Margin="0,5,0,0" Click="Button_Click" />
+        </StackPanel>
+    </Grid>
+</UserControl>
+
+namespace SilverlightApplication2
+{
+    public partial class Page : UserControl
+    {
+        private RestHost _host;
+
+        public Page()
+        {
+            InitializeComponent();
+
+            _host = new RestHost();
+            _host.Loaded += delegate
+            {
+                this.Dispatcher.BeginInvoke(delegate
+                {
+                    this.LoadingLabel.Visibility = Visibility.Collapsed;
+                    this.CustomerName.Text = _host.Customer.Name;
+                });
+            };
+            _host.Error += delegate
+            {
+                this.Dispatcher.BeginInvoke(delegate
+                {
+                    HtmlPage.Window.Alert(_host.ErrorMessage);
+                });
+            };
+        }
+
+        private void Button_Click(object sender, RoutedEventArgs e)
+        {
+            _host.Customer.Name = this.CustomerName.Text;
+            _host.Save();
+        }
+    }
+}
+

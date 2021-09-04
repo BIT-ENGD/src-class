@@ -1,0 +1,164 @@
+public class Particle
+{
+    public Point3D Position { get; set; }
+    public Point3D Velocity { get; set; }
+    public double Size { get; set; }
+
+    public Ellipse Ellipse { get; set; }
+
+    public BlurEffect Blur { get; set; }
+    public Brush Brush { get; set; }
+}
+
+<Window x:Class="Particles.Window1"
+xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+Title="Window1" Height="600" Width="800" Loaded="Window_Loaded">
+    <Grid>
+        <Grid.Background>
+            <RadialGradientBrush Center="0.54326,0.45465" RadiusX="0.602049" RadiusY="1.02049" GradientOrigin="0.4326,0.45465">
+                <GradientStop Color="#57ffe6" Offset="0"/>
+                <GradientStop Color="#008ee7" Offset="0.718518495559692"/>
+                <GradientStop Color="#2c0072" Offset="1"/>
+            </RadialGradientBrush>
+        </Grid.Background>
+        <Canvas x:Name="ParticleHost" />
+    </Grid>
+</Window>
+
+public partial class Window1 : Window
+{
+    // ... some var/init code...
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        timer.Interval = TimeSpan.FromMilliseconds(10);
+        timer.Tick += new EventHandler(timer_Tick);
+        timer.Start();
+    }
+
+    void timer_Tick(object sender, EventArgs e)
+    {
+        UpdateParticules();
+    }
+
+    double elapsed = 0.1;
+    private void UpdateParticules()
+    {
+        // clear dead particles list
+        deadList.Clear();
+        // update existing particles
+        foreach (Particle p in this.particles)
+        {
+            // kill a particle when its too high or on the sides
+            if (p.Position.Y < -p.Size || p.Position.X < -p.Size || p.Position.X > Width + p.Size)
+            {
+                deadList.Add(p);
+            }
+            else
+            {
+                // update position
+                p.Position.X += p.Velocity.X * elapsed;
+                p.Position.Y += p.Velocity.Y * elapsed;
+                p.Position.Z += p.Velocity.Z * elapsed;
+                TranslateTransform t = (p.Ellipse.RenderTransform as TranslateTransform);
+                t.X = p.Position.X;
+                t.Y = p.Position.Y;
+
+                // update brush/blur
+                p.Ellipse.Fill = p.Brush;
+                p.Ellipse.Effect = p.Blur;
+            }
+        }
+
+        // create new particles (up to 10 or 25)
+        for (int i = 0; i < 10 && this.particles.Count < 25; i++)
+        {
+            // attempt to recycle ellipses if they are in the deadlist
+            if (deadList.Count - 1 >= i)
+            {
+                SpawnParticle(deadList[i].Ellipse);
+                deadList[i].Ellipse = null;
+            }
+            else
+            {
+                SpawnParticle(null);
+            }
+        }
+
+        // Remove dead particles
+        foreach (Particle p in deadList)
+        {
+            if (p.Ellipse != null) ParticleHost.Children.Remove(p.Ellipse);
+            this.particles.Remove(p);
+        }
+    }
+
+    private void SpawnParticle(Ellipse e)
+    {
+        // Randomization
+        double x = RandomWithVariance(Width / 2, Width / 2);
+        double y = Height;
+        double z = 10 * (random.NextDouble() * 100);
+        double speed = RandomWithVariance(20, 15);
+        double size = RandomWithVariance(75, 50);
+
+        Particle p = new Particle();
+        p.Position = new Point3D(x, y, z);
+        p.Size = size;
+
+        // Blur
+        var blur = new BlurEffect();
+        blur.RenderingBias = RenderingBias.Performance;
+        blur.Radius = RandomWithVariance(10, 15);
+        p.Blur = blur;
+
+        // Brush (for opacity)
+        var brush = (Brush)Brushes.White.Clone();
+        brush.Opacity = RandomWithVariance(0.5, 0.5);
+        p.Brush = brush;
+
+        TranslateTransform t;
+
+        if (e != null) // re-use
+        {
+            e.Fill = null;
+            e.Width = e.Height = size;
+            p.Ellipse = e;
+
+            t = e.RenderTransform as TranslateTransform;
+        }
+        else
+        {
+            p.Ellipse = new Ellipse();
+            p.Ellipse.Width = p.Ellipse.Height = size;
+            this.ParticleHost.Children.Add(p.Ellipse);
+
+            t = new TranslateTransform();
+            p.Ellipse.RenderTransform = t;
+            p.Ellipse.RenderTransformOrigin = new Point(0.5, 0.5);
+        }
+
+        t.X = p.Position.X;
+        t.Y = p.Position.Y;
+
+        // Speed
+        double velocityMultiplier = (random.NextDouble() + 0.25) * speed;
+        double vX = (1.0 - (random.NextDouble() * 2.0)) * velocityMultiplier;
+        // Only going from the bottom of the screen to the top (for now)
+        double vY = -Math.Abs((1.0 - (random.NextDouble() * 2.0)) * velocityMultiplier);
+
+        p.Velocity = new Point3D(vX, vY, 0);
+        this.particles.Add(p);
+    }
+
+
+    private double RandomWithVariance(double midvalue, double variance)
+    {
+        double min = Math.Max(midvalue - (variance / 2), 0);
+        double max = midvalue + (variance / 2);
+        double value = min + ((max - min) * random.NextDouble());
+        return value;
+    }
+}
+

@@ -1,0 +1,56 @@
+-- this sql script creates a line table that connects points 
+
+-- convert multi lines into lines
+
+CREATE TABLE exploded_roads AS
+SELECT the_geom
+FROM (
+    SELECT ST_GeometryN(
+    the_geom,
+    generate_series(1, ST_NumGeometries(the_geom)))
+    AS the_geom 
+    FROM "StreetCenterLines"
+)
+AS foo;
+
+
+-- Create line table that'll connect the centroids to the projected points on exploded lines
+CREATE TABLE lines_from_centroids_to_roads (
+    the_geom    geometry,
+    edge_id SERIAL
+);
+
+-- Populate Table
+INSERT INTO lines_from_centroids_to_roads ( the_geom )
+SELECT
+    ST_MakeLine(
+        centroids.the_geom,
+        (pgis_fn_nn(centroids.the_geom, 1000000, 1,1000, 'exploded_roads' ,'true', 'gid',
+            ST_Line_Interpolate_Point(
+                exploded_roads.the_geom,
+                ST_Line_Locate_Point(
+                    exploded_roads.the_geom,
+                    centroids.the_geom
+                )
+            )
+        )).*
+    )
+FROM exploded_roads, fred_city_o6_da_centroids centroids;
+
+DROP TABLE exploded_roads;
+
+NOTICE:  CREATE TABLE will create implicit sequence "lines_from_centroids_to_roads_edge_id_seq" for serial column "lines_from_centroids_to_roads.edge_id"
+
+ERROR:  function pgis_fn_nn(geometry, integer, integer, integer, unknown, unknown, unknown, geometry) does not exist
+LINE 28:   (pgis_fn_nn(centroids.the_geom, 1000000, 1,1000, 'exploded...
+            ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+********** Error **********
+
+ERROR: function pgis_fn_nn(geometry, integer, integer, integer, unknown, unknown, unknown, geometry) does not exist
+SQL state: 42883
+Hint: No function matches the given name and argument types. You might need to add explicit type casts.
+Character: 584
+

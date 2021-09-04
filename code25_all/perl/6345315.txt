@@ -1,0 +1,61 @@
+#!/cbilldata/media/perl/bin/perl
+use Data::Dumper;
+use POE;
+use POE qw( Component::Pool::DBI );
+my $user_name = "username";
+
+POE::Session->create(
+    inline_states => {
+        _start => sub {
+            my ($kernel, $heap) = @_[KERNEL, HEAP];
+
+            my $dbpool = POE::Component::Pool::DBI->new(
+                connections => 1,
+                dsn         => "DBI:Oracle:192.168.90.225:1521/CRMDB",
+                username    => "$user_name",
+                password    => "password"
+            );
+
+            # Outstanding queries keep the calling session alive.
+
+            $dbpool->query(
+                callback => "handle_result",
+                query    => "select price  from cost where rownum < 2 and price= ?",
+                params   => ["0.03872515"],
+
+                # userdata => "example"
+            );
+
+            $heap->{dbpool} = $dbpool;
+
+        },
+
+        handle_result => sub {
+            my ($kernel, $heap, $results, $userdata) = @_[KERNEL, HEAP, ARG0, ARG1];
+
+            # Will be an arrayref of hashrefs.
+
+            for my $record (@{$results}) {
+                print "$record->{PRICE} \n";
+            }
+
+            my $dbpool = $heap->{dbpool};
+
+            # Queries which do not return data should use the do method.
+            # If no callback is supplied, no callback happens.  This is
+            # suitable for queries where the result is not necessarily
+            # important.
+
+            $dbpool->do(
+                query => "INSERT INTO cost (cost_id,operation_id,price,description) VALUES (?,?,?,?)",
+                args  => [10000685233, 1, 1, 'Western Samoa'],
+            );
+
+            # Ask for a clean shutdown.
+            $dbpool->shutdown;
+        },
+    },
+);
+
+POE::Kernel->run();
+

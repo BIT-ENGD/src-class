@@ -1,0 +1,75 @@
+public class Db4oServer : ServerConfiguration, IMessageRecipient
+{
+    private bool stop;
+
+    #region IMessageRecipient Members
+
+    public void ProcessMessage(IMessageContext con, object message)
+    {
+        if (message is StopDb4oServer)
+        {
+            Close();
+        }
+    }
+
+    #endregion
+
+    public static void Main(string[] args)
+    {
+        //Ingestion.Do();
+        new Db4oServer().Run(true, true);
+    }
+
+    public void Run(bool shouldIndex, bool shouldOptimizeNativeQueries)
+    {
+        lock (this)
+        {
+            var cfg = Db4oFactory.NewConfiguration();
+            if (shouldIndex)
+            {
+                cfg.ObjectClass(typeof (Sequence))
+                               .ObjectField("<ChannelID>k__BackingField")
+                               .Indexed(true);
+                cfg.ObjectClass(typeof (Vlip))
+                               .ObjectField("<ChannelID>k__BackingField")
+                               .Indexed(true);
+            }
+            if (shouldOptimizeNativeQueries)
+            {
+                cfg.OptimizeNativeQueries(true);
+            }
+
+            var server = Db4oFactory.OpenServer(cfg, FILE, PORT);
+            server.GrantAccess("0", "kieran");
+            server.GrantAccess("1", "kieran");
+            server.GrantAccess("2", "kieran");
+            server.GrantAccess("3", "kieran");
+            //server.Ext().Configure().ClientServer().SingleThreadedClient(false);
+            server.Ext().Configure().MessageLevel(3);
+            server.Ext().Configure().Diagnostic().AddListener(new DiagnosticToConsole());
+            server.Ext().Configure().ClientServer().SetMessageRecipient(this);
+            try
+            {
+                if (!stop)
+                {
+                    Monitor.Wait(this);
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.ToString());
+            }
+            server.Close();
+        }
+    }
+
+    public void Close()
+    {
+        lock (this)
+        {
+            stop = true;
+            Monitor.PulseAll(this);
+        }
+    }
+}
+

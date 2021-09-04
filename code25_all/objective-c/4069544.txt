@@ -1,0 +1,83 @@
+-(void)writeImageAsMovie:(NSArray *)array toPath:(NSString*)path size:(CGSize)size
+{
+NSMutableDictionary *attributes = [[NSMutableDictionary alloc]init];
+[attributes setObject:[NSNumber numberWithUnsignedInt:kCVPixelFormatType_32ARGB] forKey:(NSString*)kCVPixelBufferPixelFormatTypeKey];
+[attributes setObject:[NSNumber numberWithUnsignedInt:320] forKey:(NSString*)kCVPixelBufferWidthKey];
+[attributes setObject:[NSNumber numberWithUnsignedInt:416] forKey:(NSString*)kCVPixelBufferHeightKey];
+
+NSError *error = nil;
+AVAssetWriter *videoWriter = [[AVAssetWriter alloc] initWithURL:
+                              [NSURL fileURLWithPath:path] fileType:AVFileTypeQuickTimeMovie
+                                                          error:&error];
+NSParameterAssert(videoWriter);
+
+NSDictionary *videoSettings = [NSDictionary dictionaryWithObjectsAndKeys:
+                               AVVideoCodecH264, AVVideoCodecKey,
+                               [NSNumber numberWithInt:size.width], AVVideoWidthKey,
+                               [NSNumber numberWithInt:size.height], AVVideoHeightKey,
+                               nil];
+
+AVAssetWriterInput* writerInput = [[AVAssetWriterInput
+                                    assetWriterInputWithMediaType:AVMediaTypeVideo
+                                    outputSettings:videoSettings] retain];
+
+adaptor = [AVAssetWriterInputPixelBufferAdaptor
+                                                 assetWriterInputPixelBufferAdaptorWithAssetWriterInput:writerInput
+                                                 sourcePixelBufferAttributes:attributes];
+
+NSParameterAssert(writerInput);
+NSParameterAssert([videoWriter canAddInput:writerInput]);
+[videoWriter addInput:writerInput];
+
+
+//Start a session:
+[videoWriter startWriting];
+[videoWriter startSessionAtSourceTime:kCMTimeZero];
+
+CVPixelBufferRef buffer = NULL;
+buffer = [self pixelBufferFromCGImage:[[array objectAtIndex:0] CGImage]];
+[adaptor appendPixelBuffer:buffer withPresentationTime:kCMTimeZero];
+
+//Write samples:
+for (int i = 0;i<[array count]; i++)
+{
+    if([writerInput isReadyForMoreMediaData])
+    {
+        NSLog(@"inside for loop %d",i);
+        CMTime frameTime = CMTimeMake(1, 20);
+
+        CMTime lastTime=CMTimeMake(i, 20); //i is from 0 to 19 of the loop above
+
+        CMTime presentTime=CMTimeAdd(lastTime, frameTime);
+
+        buffer = [self pixelBufferFromCGImage:[[array objectAtIndex:i] CGImage]];
+
+        [adaptor appendPixelBuffer:buffer withPresentationTime:presentTime];
+
+        if(buffer)
+            CVBufferRelease(buffer);
+    }
+    else
+    {
+        NSLog(@"error");
+        i--;
+    }
+
+}
+
+//Finish the session:
+[writerInput markAsFinished];
+[videoWriter finishWriting];
+
+NSURL *pathURL = [NSURL fileURLWithPath:path];
+
+AVURLAsset *url = [[AVURLAsset alloc] initWithURL:pathURL options:nil];
+
+[clipsArray addObject:url];
+[url release];
+CVPixelBufferPoolRelease(adaptor.pixelBufferPool);
+[videoWriter release];
+[writerInput release];
+[imageArray removeAllObjects];
+}
+

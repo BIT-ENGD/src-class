@@ -1,0 +1,139 @@
+--[[ string2table(s : string)
+
+    De-serialise the string argument into a Lua table. 
+
+    s should define a string serialised Lua constructor
+
+    However, no value of s can:
+        embed any code that can be executed at any stage by the caller
+        cause a runtime error during exec of the function
+
+    Pre:
+        Requires Lua v5.3
+        string2table() is in the global env.
+        The caller has no acccess to load or pcall. i.e the caller is in a jail
+
+        s should represent a serialised Lua constructor as a string starting with "{".
+        s cannot not be pre-compiled or the function will return an error.
+        s must not encode any table key containing the text "function".
+
+    Return Value:
+
+        On success
+
+            table : s de-serialised into a lua table. Bascially pcall(load(s))
+
+        On fail
+
+            nil, errmsg
+]]
+
+function string2table(s)
+    if type(s) ~= "string" then return nil, "call format: string2table(string)" end
+    if string.find(s, "{") ~= 1 then return nil, "string arg must begin with '{'" end -- just a hint, this affords no protection
+    s = "return"..string.gsub(s, "function", "fun\\99tion")     -- NB   \99 = "c"
+    -- The return & gsub above prevents embedding any code in s.
+    -- Specifically re the gsub:
+    --      when the text 'function' appears in a lua string it gets converted to 'function' ie no effect.
+    --      when the text 'function' appears outside of a lua string it gets converted to 'fun\99tion' causing the pcall to fail.
+    -- The cost of the gsub aprroach is that s can't define any table key with the text "function" in it.
+    -- However any "function" text embedded in a string will be unaffected.
+
+    local jail = {}
+    local f, err = load(s, "string2table:", "t", jail)
+    if err then return nil, err end   -- it didnt compile, return the error
+    local ok, torErrmsg = pcall(f)
+
+    if not ok then return nil, torErrmsg end -- runtime error occured
+    return torErrmsg -- all ok, return the table
+end
+
+--[[ Example arguments:
+
+        "{s = \"function\"}"                                            -- rv = true, {s = "function"}
+        "{f = (function () while true do end end)()}"                   -- value is a function call; rv = nil, [string "string2table:"]:1: ')' expected near '\'
+        "{[(function () while true do end return 123 end)()] = 456}"    -- key is a function call;   rv = nil, [string "string2table:"]:1: ')' expected near '\'
+        "{a = t.IdontExist}"                                            -- runtime error; rv = nil, [string "string2table:"]:1: attempt to index a nil value (global 't')
+
+]]
+
+--[[ string2table(s : string)
+
+De-serialise the string argument into a Lua table.
+
+s should define a string serialised Lua constructor
+
+However, no value of s can:
+    embed any code that can be executed at any stage by the caller
+    cause a runtime error during exec of the function
+
+Pre:
+    Requires Lua v5.3
+    string2table() is in the global env.
+    The caller has no acccess to load or pcall. i.e the caller is in a jail
+    Assumes the string library is present/visible.
+
+    s should represent a serialised Lua constructor as a string starting with "{".
+    s cannot not be pre-compiled or the function will return an error.
+    s must not encode any table key containing the text "function".
+
+Warning:
+    Inefficient (invokes Lua compiler).
+        Recommend JSON & JSON lib for frequent use over this function.
+
+Return Value:
+
+    On success
+
+        table : s de-serialised into a lua table. Bascially pcall(load(s))
+
+    On fail
+
+        nil, errmsg
+]]
+
+do
+
+    local s_load         = load
+    local string_mt      = getmetatable("")
+
+    function string2table(s)
+        if type(s) ~= "string" then return nil, "call format: string2table(string)" end
+        if string.find(s, "{") ~= 1 then return nil, "string arg must begin with '{'" end -- just a hint, this affords no protection
+        s = "return"..string.gsub(s, "function", "fun\\99tion")     -- NB   \99 = "c"
+        -- The return & gsub above prevents embedding most code from being embedded in s.
+        -- Specifically re the gsub:
+        --      when the text 'function' appears in a lua string it gets converted to 'function' ie no effect.
+        --      when the text 'function' appears outside of a lua string it gets converted to 'fun\99tion' causing the pcall to fail.
+        -- The cost of the gsub aprroach is that s can't define any table key with the text "function" in it.
+        -- However any "function" text embedded in a string will be unaffected.
+
+        -- gsub option:    string.gsub(s, "%f[%w_]function%f[^%w_]", "fun\\99tion")
+        -- This variation above should safely allows keys with ..'function'.. in the key text to still load e.g. "{functional = true}"
+        -- [ed: I simply havent used this alt. gsub yet because im still learning Lua patterns and %f still confuses me]
+
+        local jail = {}
+
+        -- The string library's metatable represents a gaping hole in the jail. Temporarily close it.
+        -- This will ensure strings like this "{('a'):rep(99):find(('.*'):rep(99)..'b')}" are caught as an error.
+        string_mt.__index = nil -- disable string lib metatable
+
+        local f, err = s_load(s, "string2table:", "t", jail) -- "t" means only text chunks
+        if err then return nil, err end   -- it didnt compile, return the error
+        local ok, torErrmsg = pcall(f)
+
+        string_mt.__index = string
+        if not ok then return nil, torErrmsg end -- runtime error occured
+        return torErrmsg -- all ok, return the table
+    end
+end
+
+--[[ quick test cases:
+
+    "{s = \"function\"}"                                            -- rv = true, {s = "function"}
+    "{f = (function () while true do end end)()}"                   -- value is a function call; rv = nil, [string "luaDoStringLua:simple"]:1: ')' expected near '\'
+    "{[(function () while true do end return 123 end)()] = 456}"    -- key is a function call;   rv = nil, [string "luaDoStringLua:simple"]:1: ')' expected near '\'
+    "{a = t.IdontExist}"                                            -- runtime error; rv = nil, [string "luaDoStringLua:simple"]:1: attempt to index a nil value (global 't')
+    "{('a'):rep(99):find(('.*'):rep(99)..'b')}"                     -- If string if exec'd it will hang the Lua interpreter.
+]]
+

@@ -1,0 +1,46 @@
+object Test {
+    def main(args: Array[String]) {
+        Class.forName("org.h2.Driver");
+        import Library._
+
+        val sessionA = Session.create(DriverManager.getConnection(
+                "jdbc:h2:file:data/dbA","sa","password"),new H2Adapter)
+        val sessionB = Session.create(DriverManager.getConnection(
+                "jdbc:h2:file:data/dbB","sa","password"),new H2Adapter)
+
+        using(sessionA){
+            drop; create
+            myTable.insert(Message(0,"Hello"))
+        }
+        using(sessionB){
+            drop; create
+            myTable.insert(Message(0,"Goodbye"))
+        }
+
+        using(sessionA){
+            val results = from(myTable)(s => select(s))//.toList
+
+            using(sessionB){
+                results.foreach(m => {
+                    val newMsg = m.copy(msg = (m.msg+"World"))
+                    myTable.insert(newMsg)
+                    println("Inserted "+newMsg)
+                })
+            }
+        }
+    }
+
+    case class Message(val id: Long, val msg: String) extends KeyedEntity[Long]
+    object Library extends Schema { val myTable = table[Message] }
+}
+
+val results = from(myTable)(s => select(s))
+
+using(sessionA){            
+    results.foreach(m => {
+        val newMsg = m.copy(msg = (m.msg+"World"))
+        using(sessionB){myTable.insert(newMsg)}
+        println("Inserted "+newMsg)
+    })
+}
+

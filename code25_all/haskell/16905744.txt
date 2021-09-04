@@ -1,0 +1,165 @@
+module Reversi where
+
+import Data.List
+
+-- Position type and utility functions
+type Position = (Int, Int)
+
+-- Given a Position value, determine whether or not it is a legal position on the board 
+isValidPos :: Position -> Bool
+isValidPos (a,b)
+  | a > 8 || b > 8 = False
+  | a < 1 || b < 1 = False
+  | otherwise      = True
+
+-- Player type and utility functions
+data Player = PlayerWhite | PlayerBlack deriving (Eq)
+
+instance Show Player where
+  show PlayerWhite = "white"
+  show PlayerBlack = "black"
+
+-- Given a Player value, return the opponent player
+otherPlayer :: Player -> Player
+otherPlayer a
+  | a == PlayerWhite = PlayerBlack
+  | otherwise = PlayerWhite
+
+-- Piece type and utility functions
+data Piece = Piece Position Player deriving (Eq)
+
+instance Show Piece where
+  show (Piece _ PlayerWhite) = " W"
+  show (Piece _ PlayerBlack) = " B"
+
+-- Given a Player value and a Piece value, does this piece belong to the player?
+isPlayer :: Player -> Piece -> Bool
+isPlayer a (Piece (x,y) z)
+  | a == z = True
+  | otherwise = False
+
+-- Given a Piece value, determine who the piece belongs to
+playerOf :: Piece -> Player
+playerOf a 
+  | show a == " W" = PlayerWhite
+  | otherwise = PlayerBlack
+
+-- Flip a piece over
+flipPiece :: Piece -> Piece
+flipPiece (Piece (x,y) z)
+  | z == PlayerWhite = (Piece (x,y) PlayerBlack)
+  | otherwise = (Piece (x,y) PlayerWhite)
+
+-- Board type and utility functions
+type Board = [Piece]
+
+-- The initial configuration of the game board
+initialBoard :: Board
+initialBoard =
+  [
+    Piece (3,4) PlayerWhite, Piece (4,4) PlayerBlack,
+    Piece (3,3) PlayerBlack, Piece (4,3) PlayerWhite
+  ]
+
+-- Given a Position value, is there a piece at that position?
+isOccupied :: Position -> Board -> Bool
+isOccupied (x,y) b
+  | any (\(Piece b c) -> b == (x,y)) b = True
+  | otherwise = False
+
+-- Which piece is at a given position?
+-- Return Nothing in the case that there is no piece at the position
+-- Otherwise return Just the_piece
+pieceAt :: Position -> Board -> Maybe Piece
+pieceAt (x,y) b
+  | isOccupied (x,y) b = (find (\(Piece (a,b) player) -> (a,b) == (x,y)) b)
+  | otherwise = Nothing
+
+-- ***
+-- Determine if a particular piece can be placed on a board.
+-- There are two conditions:
+-- (1) no two pieces can occupy the same space, and
+-- (2) at least one of the other player's pieces must be flipped by the placement of the new piece.
+validMove :: Piece -> Board -> Bool
+validMove (Piece (x,y) p) b
+  | isOccupied (x,y) b && toFlip (Piece (x,y) p) b /= [] = True
+  | otherwise = False
+
+-- ***
+-- Determine which pieces would be flipped by the placement of a new piece
+toFlip :: Piece -> Board -> [Piece]
+toFlip (Piece (x,y) player) b
+  | validMove (Piece (x,y) player) b = (getLineDir (-1,-1) (Piece (x,y) player) b) ++
+                                       (getLineDir (-1,0)  (Piece (x,y) player) b) ++
+                                       (getLineDir (-1,1)  (Piece (x,y) player) b) ++
+                                       (getLineDir (0,-1)  (Piece (x,y) player) b) ++
+                                       (getLineDir (0,0)   (Piece (x,y) player) b) ++
+                                       (getLineDir (0,1)   (Piece (x,y) player) b) ++
+                                       (getLineDir (1,-1)  (Piece (x,y) player) b) ++
+                                       (getLineDir (1,0)   (Piece (x,y) player) b) ++
+                                       (getLineDir (1,1)   (Piece (x,y) player) b)
+  | otherwise = []
+
+-- ***
+-- Auxillary function for toFlip.
+-- You don't have to use this function if you prefer to define toFlip some other way.
+-- Determine which pieces might get flipped along a particular line
+-- when a new piece is placed on the board.
+-- The first argument is a vector (pair of integers) that describes
+-- the direction of the line to check.
+-- The second argument is the hypothetical new piece.
+-- The return value is either the empty list,
+-- a list where all pieces belong to the same player,
+-- or a list where the last piece belongs to the player of the hypothetical piece.
+-- Only in the last case can any of the pieces be flipped.
+getLineDir :: (Int, Int) -> Piece -> Board -> [Piece]
+getLineDir (x1,y1) (Piece (x,y) player) b
+  | isOccupied (x*x1, y*y1) b && (pieceAt (x, y) b) == (pieceAt (x*x1, y*y1) b) = (concat . concat) (map (\(Piece (x,y) player) -> drop 1 [filter (\(Piece (x,y) player) -> (x,y) == (x*x1, y*y1))    b]++[(getLineDir (x*x1, y*y1) (Piece (x,y) player) b)]) b)
+  | otherwise = []
+--getLineDir :: (Int, Int) -> Piece -> Board -> [Piece]
+--getLineDir (x1,y1) (Piece (x,y) player) b
+--    | isOccupied (x*x1, y*y1) b && (pieceAt (x, y) b) == (pieceAt (x*x1, y*y1) b) = (Piece (x, y) player):(getLineDir (x*x1, y*y1)    (Piece (x,y) player) b)
+--   | otherwise = []
+
+-- ***
+-- Auxillary function for toFlip.
+-- You don't have to use this function if you prefer to define toFlip some other way.
+-- Given the output from getLineDir, determine which, if any, of the pieces would be flipped.
+
+--flippable :: [Piece] -> [Piece]
+-- ***
+-- Place a new piece on the board.  Assumes that it constitutes a validMove
+makeMove :: Piece -> Board -> Board
+makeMove p b = [p]++b
+
+-- ***
+-- Find all valid moves for a particular player
+allMoves :: Player -> Board -> [Piece]
+allMoves p ((Piece (x,y) plr):bs) =
+   if p == plr then ( toFlip (Piece (x,y) p) [Piece (x,y) p]++bs )++(allMoves p bs)    else []
+
+--allMoves :: Player -> Board -> [Piece]
+--allMoves p b
+--    | filter (\(Piece (x,y) player) -> player == p) b /= [] = (concat . concat) (map (\x -> drop 1 [filter (\(Piece (x,y) player)    -> player == p) b]++[(toFlip x b)] ) (filter (\(Piece (x,y) player) -> player == p) b))
+--    | otherwise = []
+
+-- ***
+-- Count the number of pieces belonging to a player
+score :: Player -> Board -> Int
+score player [] = 0 score player ((Piece pos plr):bs) = if player == plr then 1 + score player bs else score player bs
+
+-- Decide whether or not the game is over. The game is over when neither player can make a validMove
+isGameOver :: Board -> Bool
+isGameOver b
+  | allMoves PlayerBlack b == [] && allMoves PlayerWhite b == [] = True
+  | otherwise = False
+
+-- Find out who wins the game.
+-- Return Nothing in the case of a draw.
+-- Otherwise return Just the_Player
+winner :: Board -> Maybe Player
+winner b
+  | score PlayerWhite b > score PlayerBlack b = Just PlayerWhite
+  | score PlayerWhite b < score PlayerBlack b = Just PlayerBlack
+  | otherwise = Nothing
+

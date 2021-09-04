@@ -1,0 +1,88 @@
+roepIFTTT()
+PANIC: unprotected error in call to Lua API (script1.lua:35: attempt to index global 'http' (a nil value))
+
+ ets Jan  8 2013,rst cause:2, boot mode:(3,7)
+
+load 0x40100000, len 26096, room 16 
+tail 0
+chksum 0x0c
+load 0x3ffe8000, len 2232, room 8 
+tail 0
+chksum 0x7a
+load 0x3ffe88b8, len 8, room 8 
+tail 0
+chksum 0x5f
+csum 0x5f
+ŒÂœäƒoä’sƒûo|ìld$l`„âr›lŒdŒŸ
+
+NodeMCU custom build by frightanic.com
+    branch: master
+    commit: 7b83bbb2ea134cd85ac9d63108603cc02c4e20f7
+    SSL: false
+    modules: adc,bit,cjson,coap,dht,file,gpio,i2c,mqtt,net,node,ow,pwm,rtctime,sntp,spi,tmr,uart,wifi,ws2812
+ build  built on: 2016-11-25 08:30
+ powered by Lua 5.1.4 on SDK 1.5.4.1(39cb9a32)
+
+wifi.setmode(wifi.STATION)
+wifi.sta.config("ssid", "password")
+wifi.sta.connect()
+
+ledpen = 0
+gpio.mode(ledpen, gpio.OUTPUT)
+gpio.write(ledpen, gpio.HIGH)
+
+pirsensorpen = 2
+
+gpio.mode(pirsensorpen, gpio.INT, gpio.PULLUP)
+
+function beweging() -- This function gets called when movement is detected
+    print("PIR sensor detecteerde beweging")
+    gpio.write(ledpen, gpio.LOW)
+    roepIFTTT(1)
+    tmr.alarm(0, 2000, tmr.ALARM_SINGLE, function()
+        gpio.write(ledpen, gpio.HIGH)
+    end)
+end
+
+function roepIFTTT(value1)
+  -- Trigger flashbutton op IFTTT
+  conn = nil
+  conn = net.createConnection(net.TCP, 0)
+  conn:on("receive", function(conn, payload) end)
+  conn:connect(80,"maker.ifttt.com")
+  conn:on("connection", function(conn, payload)
+  conn:send("POST /trigger/pirsensor/with/key/API_KEY?value1="..value1.." HTTP/1.1\r\nHost: maker.ifttt.com\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n") end)
+  conn:close()
+  print("IFTTT is aangeroepen")
+
+
+
+-- It is about the code below that generates the error. If there is another way if creating a simple HTTP GET request, it is welcome.
+    http.get("http://httpbin.org/ip", nil, function(code, data)
+    if (code < 0) then
+      print("HTTP request failed")
+    else
+      print(code, data)
+    end
+  end)
+  -- coe above
+
+
+end
+
+function metingNaarThingSpeak()  
+  local a = adc.read(0)
+  print("Value of moisture sensor: "..a)
+  local conn = nil
+  conn = net.createConnection(net.TCP, 0)
+  conn:on("receive", function(conn, payload) end)
+  conn:connect(80, "api.thingspeak.com")
+  conn:on("connection", function(conn, payload)
+  conn:send("GET /update?api_key=API_KEY&field1="..a.." HTTP/1.1\r\nHost: api.thingspeak.com\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n") end)
+  conn:close()
+  print("Meting naar ThingSpeak verzonden")
+end
+
+gpio.trig(pirsensorpen, "up", beweging)
+tmr.alarm(4, 60000, tmr.ALARM_AUTO, function() metingNaarThingSpeak() end)
+

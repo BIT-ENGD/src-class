@@ -1,0 +1,119 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <assert.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
+#define PAGE_SIZE 0x1000
+#define FILENAME_LENGTH 0x10
+#if defined ARCH && ARCH == 32
+#define PAGE_SIZE_COMPLEMENT 0xfffff000
+#define UINT uint32_t
+#define INT int32_t
+#define BP "ebp"
+#define SP "esp"
+#define X_FORMAT "%x"
+#else
+#define PAGE_SIZE_COMPLEMENT 0xfffffffffffff000
+#define UINT uint64_t
+#define INT int64_t
+#define BP "rbp"
+#define SP "rsp"
+#define X_FORMAT "%lx"
+#endif
+#define PAGE_ROUND_UP(v) (((v) + PAGE_SIZE - 1) & PAGE_SIZE_COMPLEMENT)
+#define PAGE_ROUND_DOWN(v) ((v) & PAGE_SIZE_COMPLEMENT)
+
+
+UINT stack_low, stack_high, stack_length;
+
+void find_stack_high(void) {
+
+    UINT bp = 0;
+    UINT raw_stack_high = 0;
+
+    /* Set the global stack high to the best
+     * approximation.
+     */
+
+    asm volatile ("mov %%"BP", %0" : "=m"(bp));
+    while (bp) {
+        raw_stack_high = bp;
+        bp = *(UINT *)bp;
+    }
+    stack_high = PAGE_ROUND_UP(raw_stack_high);
+}
+
+
+int file_create(void) {
+
+    int fd;
+    char filename[FILENAME_LENGTH];
+
+    strcpy(filename, "tmp.XXXXXX");
+    fd = mkstemp(filename);
+    if (fd == -1) {
+        perror("file_create:mkstemp");
+        exit(EXIT_FAILURE);
+    }
+
+    unlink(filename);  
+    return fd;
+}
+
+
+int main(void) {
+
+
+    int fd, bytes_written;
+    UINT bp;
+    off_t offset;
+
+    printf("In main\n");
+
+    fd = file_create();
+    printf("fd %d\n", fd);
+
+    find_stack_high();
+
+    // Get the current frame pointer.
+
+    asm volatile ("mov %%"BP", %0" : "=m" (bp));
+
+    // Store page boundary below 
+    // frame pointer as end of potentially shared stack.
+
+    stack_low = PAGE_ROUND_DOWN(bp);
+    stack_length = stack_high - stack_low;
+
+    printf("start "X_FORMAT"   end "X_FORMAT"   length "X_FORMAT"\n",
+           stack_low, stack_high, stack_length);
+
+    bytes_written = 
+        write(fd, (const void *)stack_low, PAGE_SIZE);
+    if (bytes_written != PAGE_SIZE) {
+        perror("main: write");
+        fprintf(stderr, "Num bytes: %x\n", bytes_written);
+        exit(EXIT_FAILURE);
+    }
+
+    offset = 0;
+
+    if (mmap((void *)stack_low, PAGE_SIZE, PROT_READ | PROT_WRITE,
+         MAP_SHARED | MAP_FIXED | MAP_GROWSDOWN, fd, offset) ==
+        MAP_FAILED) {
+        perror("file_copy: mmap");
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd);
+
+    return EXIT_SUCCESS;
+}
+

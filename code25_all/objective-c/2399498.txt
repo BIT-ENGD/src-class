@@ -1,0 +1,91 @@
+
+// This code is part of the peer1, the one who sends the data
+- (void)sendData
+{
+    int packetId = 0;
+    NSString *soundFilePath = [[NSBundle mainBundle] pathForResource:@"myAudioFile" ofType:@"wav"];
+
+    NSData *soundData = [[NSData alloc] initWithContentsOfFile:soundFilePath];
+    NSMutableArray *arraySoundData = [[NSMutableArray alloc] init];
+
+    // Spliting the audio in 2 pieces
+    // This is only an illustration
+    // The idea is to split the data into multiple pieces
+    // dependin on the size of the file to be sent
+    NSRange soundRange;
+    soundRange.length = [soundData length]/2;
+    soundRange.location = 0;
+    [arraySoundData addObject:[soundData subdataWithRange:soundRange]];
+    soundRange.length = [soundData length]/2;
+    soundRange.location = [soundData length]/2;
+    [arraySoundData addObject:[soundData subdataWithRange:soundRange]];
+
+    for (int i=0; i<[arraySoundData count]; i++)
+    {
+        NSData *soundPacket = [arraySoundData objectAtIndex:i];
+
+        if(soundPacket == nil)
+        {
+            NSLog(@"soundData is nil");
+            return;
+        }       
+
+        NSMutableData* message = [[NSMutableData alloc] init];
+        NSKeyedArchiver* archiver = [[NSKeyedArchiver alloc] initForWritingWithMutableData:message];
+        [archiver encodeInt:packetId++ forKey:PACKET_ID];
+        [archiver encodeObject:soundPacket forKey:PACKET_SOUND_DATA];
+        [archiver finishEncoding];      
+
+        NSError* error = nil;
+        [connectionManager sendMessage:message error:&error];
+        if (error) NSLog (@"send greeting failed: %@" , [error localizedDescription]);
+
+        [message release];
+        [archiver release];
+    }
+
+    [soundData release];
+    [arraySoundData release];
+}
+
+
+// This is the code on peer2 that would receive and play the piece of audio on each packet
+
+- (void) receiveData:(NSData *)data
+{
+
+    NSKeyedUnarchiver* unarchiver = [[NSKeyedUnarchiver alloc] initForReadingWithData:data];
+
+    if ([unarchiver containsValueForKey:PACKET_ID])
+        NSLog(@"DECODED PACKET_ID: %i", [unarchiver decodeIntForKey:PACKET_ID]);
+
+    if ([unarchiver containsValueForKey:PACKET_SOUND_DATA])
+    {
+        NSLog(@"DECODED sound");
+        NSData *sound = (NSData *)[unarchiver decodeObjectForKey:PACKET_SOUND_DATA];
+
+        if (sound == nil)
+        {
+            NSLog(@"sound is nil!");
+
+        }
+        else
+        {
+            NSLog(@"sound is not nil!");
+
+            AVAudioPlayer *audioPlayer = [AVAudioPlayer alloc];
+
+            if ([audioPlayer initWithData:sound error:nil])
+            {
+                [audioPlayer prepareToPlay];
+                [audioPlayer play];
+            } else {
+                [audioPlayer release];
+                NSLog(@"Player couldn't load data");
+            }   
+        }
+    }
+
+    [unarchiver release];
+}
+

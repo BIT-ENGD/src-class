@@ -1,0 +1,81 @@
+Public Class DocumentComparer
+    Implements IComparer(Of Document)
+
+    Private _Prop As PropertyDescriptor
+    Private _Properties As PropertyDescriptorCollection = TypeDescriptor.GetProperties(GetType(Document))
+    Private _SortDirection As ListSortDirection
+    Private _PropertyType As Type
+
+    Public ReadOnly Property Prop As PropertyDescriptor
+        Get
+            Return _Prop
+        End Get
+    End Property
+
+    Public ReadOnly Property SortDirection As ListSortDirection
+        Get
+            Return _SortDirection
+        End Get
+    End Property
+
+    Public Sub New(ByVal prop As PropertyDescriptor, ByVal sortDirection As ListSortDirection)
+        _Prop = prop
+        _SortDirection = sortDirection
+    End Sub
+
+    Public Function Compare(ByVal x As Document, ByVal y As Document) As Integer Implements System.Collections.Generic.IComparer(Of Document).Compare
+        Dim xPropertyValue As Object
+        Dim yPropertyValue As Object
+        Dim compareValue As Integer = 0
+
+        Try
+            xPropertyValue = _Prop.GetValue(x)
+            yPropertyValue = _Prop.GetValue(y)
+
+            If _Prop.Name = "Revision" Then
+                ' When sorting by the revision, actually sort by the RevisionSort property from the Document class.
+                _Prop = _Properties.Item("RevisionSort")
+                xPropertyValue = _Prop.GetValue(x)
+                yPropertyValue = _Prop.GetValue(y)
+                compareValue = xPropertyValue.ToString().CompareTo(yPropertyValue.ToString())
+            ElseIf _Prop.Name = "ReleaseDate" Then
+                If xPropertyValue Is Nothing And yPropertyValue Is Nothing Then
+                    compareValue = 0
+                ElseIf xPropertyValue Is Nothing Then
+                    compareValue = -1
+                ElseIf yPropertyValue Is Nothing Then
+                    compareValue = 1
+                Else
+                    compareValue = DirectCast(xPropertyValue, DateTime).CompareTo(DirectCast(yPropertyValue, DateTime))
+                End If
+            ElseIf xPropertyValue Is Nothing And yPropertyValue Is Nothing Then
+                Return 0
+            ElseIf xPropertyValue Is Nothing And yPropertyValue IsNot Nothing Then
+                compareValue = -1
+            ElseIf xPropertyValue IsNot Nothing And yPropertyValue Is Nothing Then
+                compareValue = 1
+            ElseIf _Prop.PropertyType Is GetType(String) Then
+                ' If we are sorting string values...that's easy.  Just call the String's CompareTo() method.
+                compareValue = xPropertyValue.ToString().CompareTo(yPropertyValue.ToString())
+            ElseIf _Prop.PropertyType Is GetType(DateTime) Then
+                ' If we are sorting by a DateTime column then just call the DateTime's CompareTo() method.
+                compareValue = DirectCast(xPropertyValue, DateTime).CompareTo(DirectCast(yPropertyValue, DateTime))
+            ElseIf _Prop.PropertyType Is GetType(Integer) Then
+                compareValue = DirectCast(xPropertyValue, Integer).CompareTo(DirectCast(yPropertyValue, Integer))
+            Else
+                ' Future expansion of comparison of different types
+                Throw New NotImplementedException("Datatype of column cannot be compared.")
+            End If
+        Catch ex As Exception
+            DocDbModelException.AddObjectToExceptionData(Me, ex)
+            Throw New DocDbModelException(String.Format("Failed comparing objects:  {0}", ex.Message), ex, True)
+        End Try
+
+        If _SortDirection = ListSortDirection.Ascending Then
+            Return compareValue
+        Else
+            Return -compareValue
+        End If
+    End Function
+End Class
+

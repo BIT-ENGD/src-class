@@ -1,0 +1,49 @@
+constructH :: Tree a -> Tree (Type a)
+
+Type
+data Type a where !Int -> !Int -> a -> Type a
+
+subtypeOf :: Type a -> Type a -> Bool
+
+subtypeSanity ∷ Tree (Type ()) → Gen Prop
+subtypeSanity Node { rootLabel = t, subForest = f } =
+  let subtypes = concatMap flatten f
+  in (not $ null subtypes) ==> conjoin
+     (forAll (elements subtypes) (\x → x `subtypeOf` t):(map subtypeSanity f))
+
+subtypeSanity
+conjoin
+Arbitrary
+Tree (Type a)
+sized
+conjoin
+allNodes ∷ Tree a → [Tree a]
+allNodes n@(Node { subForest = f }) = n:(concatMap allNodes f)
+
+subtypeSanity ∷ Tree (Type ()) → Gen Prop
+subtypeSanity tree = forAll (elements $ allNodes tree)
+  (\(Node { rootLabel = t, subForest = f }) →
+    let subtypes = concatMap flatten f
+    in (not $ null subtypes) ==> forAll (elements subtypes) (\x → x `subtypeOf` t))
+
+Arbitrary
+instance (Arbitrary a, Eq a) ⇒ Arbitrary (Tree (Type a)) where
+  arbitrary = liftM (constructH) $ sized arbTree
+
+arbTree ∷ Arbitrary a ⇒ Int → Gen (Tree a)
+arbTree n = do
+  m ← choose (0,n)
+  if m == 0
+    then Node <$> arbitrary <*> (return [])
+    else do part ← randomPartition n m
+            Node <$> arbitrary <*> mapM arbTree part
+
+-- this is a crude way to find a sufficiently random x1,..,xm,
+-- such that x1 + .. + xm = n, for any n, m, with 0 < m.
+randomPartition ∷ Int → Int → Gen [Int]
+randomPartition n m' = do
+  let m = m' - 1
+  seed ← liftM ((++[n]) . sort) $ replicateM m (choose (0,n))
+  return $ zipWith (-) seed (0:seed)
+
+conjoin

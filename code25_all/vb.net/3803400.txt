@@ -1,0 +1,192 @@
+If Not _bShowAll Then
+Public Sub New()
+    'Initializes all of the controls on the screen and their properties.'
+    InitializeComponent()
+    'Sets the variable to what the Window text is at Startup'
+    _strTitle = Me.Text
+
+    'ViewModes is a dll that contains Class ViewModes and a variable ViewModes.'
+    'Goes through the Dictionary(Of string, String) and adds all of the keys to the View Mode ComboBox.'
+    For Each kvp As KeyValuePair(Of String, String) In ViewModes.ViewModes.ViewModes
+        cmbViewMode.Items.Add(kvp.Key)
+    Next
+
+    'Sets the View Mode ComboBox to the first item that was added to it.'
+    cmbViewMode.SelectedIndex = 0
+
+    lblFigureTitle.Text = "ALL"
+
+    _bShowAll = True
+
+    For Each strReportName As String In _dataController.ReportNames
+        lvReports.Items.Insert(lvReports.Items.Count, strReportName)
+    Next
+
+    _bShowAll = False
+
+    'Check to see if the database has any information or not.'
+    If Not _dataController.DatabaseIsEmpty Then
+        'There''s no point in doing the stuff in this block if the database is Empty'
+
+        'Sets the lable next to "IPB:" to the IPB obtained from the first record of the .out file.'
+        lblIPBNumber.Text = _dataController.IPBNumber
+        'Adds the IPB Number to the Window text so if it is minimized and the user has multiple'
+        'instances of the app running, they can know which one is which by hovering over the bar in the Taskbar.'
+        Me.Text = _strTitle + "    IPB: " + _dataController.IPBNumber
+        'This builds the TreeView with the Figure names.'
+        BuildFigureTree()
+        'This goes through the data in the database and builds the list of reports'
+        'BuildReports()'
+    End If
+End Sub
+
+Private Sub lvReports_ItemChecked(ByVal sender As System.Object, ByVal e As System.Windows.Forms.ItemCheckedEventArgs) Handles lvReports.ItemChecked
+    If Not e Is Nothing Then
+        If cbAllReports.Checked Then
+            If Not e.Item.Checked Then
+                cbAllReports.Checked = False
+                e.Item.Checked = True
+            End If
+
+            _lstReportFilter.Add(e.Item.Name)
+        Else
+            If e.Item.Checked Then
+                _lstReportFilter.Add(e.Item.Name)
+                cbTaggedRecords.Checked = False
+            Else
+                _lstReportFilter.Remove(e.Item.Name)
+            End If
+        End If
+    Else
+        For Each lvi As ListViewItem In lvReports.Items
+            lvi.Checked = False
+        Next
+    End If
+
+    For Each rr As ReportRecord In _lstReportRecords.Where(Function(rRecord As ReportRecord) _lstReportFilter.Contains(rRecord.Description))
+        _strReportFilter += If(String.IsNullOrEmpty(_strReportFilter) Or _strReportFilter = "-1", "", ",") + rr.PartID.ToString()
+    Next
+
+    If Not _bShowAll Then
+        FillDataGridView()
+    End If
+End Sub
+
+Private Sub FillDataGridView()
+    'Set the cursor to a wait cursor just in case it takes some time retrieving information from the db'
+    Me.Cursor = Cursors.WaitCursor
+    Try
+        'We always want to make sure both scroll bars are visible'
+        dgvParts.ScrollBars = ScrollBars.Both
+
+        Dim strFilter As String = String.Empty
+
+        'If there is a value in the Search TextBox, add it to the filter'
+        If Not String.IsNullOrEmpty(_strSearchFilter) Then
+            strFilter += If(String.IsNullOrEmpty(strFilter), " ", " and ") + _strSearchFilter
+        End If
+
+        'For us to filter on Figures, there has to be nodes in the tree.'
+        If tvFigures.Nodes.Count > 0 Then
+            'If the FigureTitle text equals "ALL" (set whenever a tree node is selected)'
+            'then we don''t need to set a filter for figure.'
+            If Not lblFigureTitle.Text = "ALL" Then
+                'cbCurrentFigure is naturally not checked.  And we don''t want to filter on just that figure'
+                'if the user isn''t searching for something.  So if there is a value in the search box and'
+                'cbCurrentFigure is checked, then we want to look at only the selected figure.  However,'
+                'if the search box is empty and cbCurrentFigure is not checked, we also want to search'
+                'only on the selected figure.'
+                If (Not String.IsNullOrEmpty(_strSearchFilter) And cbCurrentFigure.Checked) Or (String.IsNullOrEmpty(_strSearchFilter) And Not cbCurrentFigure.Checked) Then
+                    strFilter += If(String.IsNullOrEmpty(strFilter), " ", " and ") + Constants.TransformColumnOrHeaderName("Figure") + " = '" + tvFigures.SelectedNode.Name + "'"
+                End If
+            Else
+                strFilter += If(String.IsNullOrEmpty(strFilter), " ", " and ") + Constants.TransformColumnOrHeaderName("Figure") + " LIKE '%%' "
+            End If
+        End If
+
+        'A selection of an indenture level in the combo box means we need to add a filter.  "ALL"'
+        'is not a selection and needs no filter.'
+        If Not cmbIndentureLevel.Text = "ALL" And Not String.IsNullOrEmpty(cmbIndentureLevel.Text) Then
+            strFilter += If(String.IsNullOrEmpty(strFilter), " ", " and ") + Constants.TransformColumnOrHeaderName("Indenture") + " = " + cmbIndentureLevel.Text
+        End If
+
+        'If the user has selected any of the reports in the list view, add those to the filter.'
+        If Not String.IsNullOrEmpty(_strReportFilter) Then
+            strFilter += If(String.IsNullOrEmpty(strFilter), " ", " and ") + " PART_ID IN (" + _strReportFilter + ")"
+        End If
+
+        'If there is no filter, then we don''t want to view anything.'
+        If Not String.IsNullOrEmpty(strFilter) Then
+            'If there are validation errors from importing the file, we want to display those errors and get out.'
+            If _lstValidationResults.Count > 0 Then
+                dgvParts.DataSource = _lstValidationResults
+
+                For Each col As DataGridViewColumn In dgvParts.Columns
+                    col.DataPropertyName = "ErrorMessage"
+                    col.Visible = True
+                    col.SortMode = DataGridViewColumnSortMode.Programmatic
+                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.ColumnHeader
+                Next
+
+                dgvParts.AutoResizeColumns()
+                Return
+            End If
+
+            Dim bSource As BindingSource = New BindingSource()
+            'We use the text from the View Mode combo box to look in a dictionary and obtain'
+            'the query needed for that view.  We also send the filter so we get ONLY what we'
+            'need when we''re pulling the data, instead of pulling it all and then filtering.'
+            bSource.DataSource = _dataController.PopulateDataGrid(cmbViewMode.Text, strFilter).Tables(0)
+
+            dgvParts.DataSource = bSource
+            dgvParts.Columns(0).Visible = False
+            'The Description Column should only be 250 characters in size.  If a description is longer'
+            'than that, they need to double click the cell and a message box will pop up.'
+            dgvParts.Columns("Description").Resizable = DataGridViewTriState.False
+            dgvParts.Columns("Description").Width = 750
+
+            For Each col As DataGridViewColumn In dgvParts.Columns
+                'Programmatic sorting means custom sorting.  May be changed to automatic.'
+                col.SortMode = DataGridViewColumnSortMode.Programmatic
+
+                'Again, we don''t want to resize the description column, it should stay set.'
+                If Not col.Name = "Description" Then
+                    dgvParts.AutoResizeColumn(col.Index)
+                End If
+
+                'Because the Tags column is only reported, we do not want them to change any values'
+                'in the column.'
+                If col.Name.ToUpper() = "TAGS" Then
+                    col.ReadOnly = True
+                End If
+            Next
+
+            'Other row and cell properties.'
+            dgvParts.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCells
+            dgvParts.ShowCellToolTips = True
+            dgvParts.BorderStyle = BorderStyle.Fixed3D
+        End If
+
+        FormatCells()
+
+        'The information from here until the Catch statement goes through and counts how'
+        'many records for each report there are and to set those counts into the items'
+        'in the list view.'
+        Dim nTotalCount As Integer = 0
+
+        For Each lvi As ListViewItem In lvReports.Items
+            Dim nCount As Integer = _lstReportRecords.Where(Function(rr As ReportRecord) lvi.Text.Contains(rr.Description)).Count()
+            nTotalCount += nCount
+            lvi.Text = If(lvi.Text.Contains("("), lvi.Text.Substring(0, lvi.Text.IndexOf("(") + 1), lvi.Text.Trim() + " (") + nTotalCount.ToString() + ")"
+        Next
+
+        cbAllReports.Text = If(cbAllReports.Text.Contains("("), cbAllReports.Text.Substring(0, cbAllReports.Text.IndexOf("(") + 1), cbAllReports.Text + " (") + nTotalCount.ToString() + ")"
+        cbTaggedRecords.Text = If(cbTaggedRecords.Text.Contains("("), cbTaggedRecords.Text.Substring(0, cbTaggedRecords.Text.IndexOf("(") + 1), cbTaggedRecords.Text + " (") + _lstReportRecords.Where(Function(rr As ReportRecord) rr.Description.Contains("Tagged")).Count().ToString() + ")"
+    Catch ex As Exception
+        'An exception was thrown.  Show it to the user so they can report it.'
+        MessageBox.Show(ex.Message)
+    End Try
+    'Change the cursor back to the default cursor'
+    Me.Cursor = Cursors.Default
+End Sub
+

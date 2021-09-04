@@ -1,0 +1,45 @@
+data Tree a = Leaf a | Node (Tree a) (Tree a) deriving (Show)
+
+instance NFData a => NFData (Tree a) where
+    rnf (Leaf v) = deepseq v ()
+    rnf (Node x y) = deepseq (x, y) ()
+
+listToTree [] = error "listToTree -- empty list"
+listToTree [x] = Leaf x
+listToTree xs = uncurry Node $ listToTree *** listToTree $
+    splitAt (length xs `div` 2) xs
+
+-- mergeSort' :: Ord a => Tree a -> Eval [a]
+mergeSort' l (Leaf v) = return [v]
+mergeSort' l (Node x y) = do
+    xr <- strat $ runEval $ mergeSort' (l - 1) x
+    yr <- rseq $ runEval $ mergeSort' (l - 1) y
+    rdeepseq (merge xr yr)
+    where
+        merge [] y = y
+        merge x [] = x
+        merge (x:xs) (y:ys) | x < y = x : merge xs (y:ys)
+                            | otherwise = y : merge (x:xs) ys
+        strat | l > 0 = rpar
+              | otherwise = rseq
+
+mergeSort = runEval . mergeSort' 10
+
+rm -f ParallelMergeSort; ghc -O2 -O3 -optc-O3 -optc-ffast-math -eventlog --make -rtsopts -threaded ParallelMergeSort.hs
+./ParallelMergeSort +RTS -H512m -K512m -ls -N
+threadscope ParallelMergeSort.eventlog
+
+> ./ParallelMergeSort 
+initialization: 10.461204s sec.
+sorting: 6.383197s sec.
+> ./ParallelMergeSort +RTS -H512m -K512m -N
+initialization: 27.94877s sec.
+sorting: 5.228463s sec.
+
+> ./ParallelMergeSort 
+initialization: 18.943919s sec.
+sorting: 10.465077s sec.
+> ./ParallelMergeSort +RTS -H512m -K512m -ls -N
+initialization: 22.92075s sec.
+sorting: 7.431716s sec.
+

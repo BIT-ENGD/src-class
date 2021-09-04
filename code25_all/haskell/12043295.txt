@@ -1,0 +1,162 @@
+mkMessage "Blog" "messages" "en"
+
+mkYesod "Blog" [parseRoutes|
+/ RootR GET
+/blog BlogR GET POST
+/blog/#EntryId EntryR GET POST
+/auth AuthR Auth getAuth
+|]
+
+instance Yesod Blog where
+    approot = ApprootStatic "http://localhost:3000"
+    defaultLayout = defLayout
+    authRoute _ = Just $ AuthR LoginR
+
+    isAuthorized BlogR True = do
+      mauth <- maybeAuth
+      case mauth of
+        Nothing -> return AuthenticationRequired
+        Just (Entity _ user)
+             | isAdmin user -> return Authorized
+             | otherwise    -> unauthorizedI MsgNotAnAdmin
+
+    isAuthorized (EntryR _) True = do
+      mauth <- maybeAuth
+      case mauth of 
+         Nothing -> return AuthenticationRequired
+         Just _  -> return Authorized
+
+    isAuthorized _ _ = return Authorized
+
+isAdmin :: User -> Bool
+isAdmin user = userEmail user == "email@something.com"
+
+instance YesodPersist Blog where
+    type YesodPersistBackend Blog = SqlPersist
+    runDB f = do
+      master <- getYesod
+      let pool = connPool master
+      runSqlPool f pool
+
+type Form x = Html -> MForm Blog Blog (FormResult x, Widget)
+
+instance RenderMessage Blog FormMessage where
+    renderMessage _ _ = defaultFormMessage
+
+instance YesodNic Blog
+
+instance YesodAuth Blog where
+    type AuthId Blog = UserId
+    loginDest _ = RootR
+    logoutDest _ = RootR
+    authHttpManager = httpManager
+    authPlugins _ = [authBrowserId]
+    getAuthId creds = do
+      let email = credsIdent creds
+          user = User email
+      res <- runDB $ insertBy user
+      return $ Just $ either entityKey id res
+
+getRootR :: Handler RepHtml
+getRootR = defaultLayout $ do
+             setTitleI MsgHomepageTitle
+             [whamlet|
+<p>_{MsgWelcomeHomepage}
+<p>
+    <a href=@{BlogR}>_{MsgSeeArchive}
+|]
+
+entryForm :: Form Entry
+entryForm = renderDivs $ Entry
+            <$> areq textField (fieldSettingsLabel MsgNewEntryTitle) Nothing
+            <*> aformM (liftIO getCurrentTime)
+            <*> areq nicHtmlField (fieldSettingsLabel MsgNewEntryContent)
+            Nothing
+
+getBlogR :: Handler RepHtml
+getBlogR = do
+  muser <- maybeAuth
+  entries <- runDB $ selectList [] [Desc EntryPosted]
+  (entryWidget, enctype) <- generateFormPost entryForm
+  defaultLayout $ do
+             setTitleI MsgBlogArchiveTitle
+             [whamlet|
+$if null entries
+    <p>_{MsgNoEntries}
+$else
+    <ul>
+        $forall Entity entryId entry <- entries
+            <li>
+                <a href=@{EntryR entryId}>#{entryTitle entry}
+$maybe Entity _ user <- muser
+    $if isAdmin user
+        <form method=post enctype=#{enctype}>
+              ^{entryWidget}
+              <div>
+                  <input type=submit value=_{MsgNewEntry}>
+$nothing
+    <p>
+        <a href=@{AuthR LoginR}>_{MsgLoginToPost}
+|]
+
+postBlogR :: Handler RepHtml
+postBlogR = do
+  ((res, entryWidget), enctype) <- runFormPost entryForm
+  case res of
+    FormSuccess entry -> do
+              entryId <- runDB $ insert entry
+              setMessageI $ MsgEntryCreated $ entryTitle entry
+              redirect $ EntryR entryId
+    _ -> defaultLayout $ do
+              setTitleI MsgPleaseCorrectEntry
+              [whamlet|
+<form method=post enctype=#{enctype}>
+    ^{entryWidget}
+    <div>
+        <input type=submit value=_{MsgNewEntry}>
+|]
+
+-- comment form
+commentForm         :: EntryId -> Form Comment
+commentForm entryId = renderDivs $ Comment
+                      <$> pure entryId
+                      <*> aformM (liftIO getCurrentTime)
+                      <*> aformM requireAuthId
+                      <*> areq textField (fieldSettingsLabel MsgCommentName) Nothing
+                      <*> areq textareaField (fieldSettingsLabel MsgCommentText) Nothing
+
+getEntryR :: EntryId -> Handler RepHtml
+getEntryR entryId = do
+  (entry, comments) <- runDB $ do
+          entry <- get404 entryId
+          comments <- selectList [] [Asc CommentPosted]
+          return (entry, map entityVal comments)
+  muser <- maybeAuth
+  (commentWidget, enctype) <- generateFormPost (commentForm entryId)
+  defaultLayout $ do
+    setTitleI $ MsgEntryTitle $ entryTitle entry
+    [whamlet|
+<h1>#{entryTitle entry}
+<article>#{entryContent entry}
+    <section .comments>
+        <h1>_{MsgCommentsHeading}
+        $if null comments
+            <p>_{MsgNoComments}
+        $else
+             $forall Comment _entry posted _user name text <- comments
+                 <div .comment>
+                      <span .by>#{name}
+                      <span .at>#{show posted}
+                      <div .content>#{text}
+        <section>
+            <h1>_{MsgAddCommentHeading}
+            $maybe Entity _ user <- muser
+                <form method=post enctype=#{enctype}>
+                    ^{commentWidget}
+                    <div>
+                        <input type=submit value=_{MsgAddCommentButton}>
+            $nothing
+                <p>
+                    <a href=@{AuthR LoginR}>_{MsgLoginToComment}
+|]
+

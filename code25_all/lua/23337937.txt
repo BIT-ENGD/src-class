@@ -1,0 +1,91 @@
+http {
+    lua_shared_dict  my_cache 10m;
+    lua_package_cpath '/usr/local/lib/lfs.so';
+
+    init_worker_by_lua_file  'conf/cop/check1.lua';
+    ...
+}
+
+local time_at = ngx.timer.at
+local shared = ngx.shared
+local log = ngx.log
+local delay = 5
+local ngx_err = ngx.ERR
+local handler, updateip, checkfile
+local my_cache = shared["my_cache"]
+local filename = '/home/nginx/conf/cop/ip.txt'
+
+local lfs = require "lfs"
+local attribute = lfs.attribute
+
+if not my_cache then
+    log(ngx_err, "disappear the shared dict")
+    return
+end
+
+checkfile = function (filename)
+    local attr = attributes(filename)
+    if attr then
+        return attr.modification
+    else
+        return nil
+    end
+end
+
+updateip = function (filename)
+    my_cache:flush_all()
+    local fp = io.open(filename, "r")
+    if not fp then
+        log(ngx_err, "failed to open file")
+        return
+    end
+    for line in fp:lines() do
+        my_cache:set(line, line)
+    end
+end
+
+handler = function (premature, filename)
+    -- do some routine job in Lua just like a cron job
+    if premature then
+        return
+    end
+    local mod
+    local md5result, flags = my_cache:get("md5")
+    if not md5result then
+        mod = checkfile(filename)
+        updateip(filename)
+        my_cache:set("md5", mod)
+    else
+        mod = checkfile(filename)
+        if mod ~= md5result then
+            updateip(filename)
+            my_cache:set("md5", mod)
+        end
+    end
+    local ok, err = time_at(delay, handler, filename)
+    if not ok then
+        log(ngx_err, "failed to create the timer: ", err)
+        return
+    end
+end
+
+local ok, err = time_at(delay, handler, filename)
+if not ok then
+    log(ngx_err, "failed to create the timer: ", err)
+    return
+end
+
+2014/04/28 16:36:54 [error] 9437#0: lua entry thread aborted: runtime error: 
+
+/home/nginx/conf/cop/check1.lua:22: attempt to call upvalue    'attributes' (a nil value) stack traceback: coroutine 0:
+/home/nginx/conf/cop/check1.lua: in function 'checkfile'
+/home/nginx/conf/cop/check1.lua:50: in function </home/nginx/conf/cop/check1.lua:42>, context: ngx.timer
+
+LuaJIT 2.0.3 -- Copyright (C) 2005-2014 Mike Pall. http://luajit.org/
+JIT: ON CMOV SSE2 SSE3 SSE4.1 fold cse dce fwd dse narrow loop abc sink fuse
+> lfs = require "lfs"
+> attr = lfs.attributes('check1.lua')
+> print(attr.modification)
+1398678137
+> 
+

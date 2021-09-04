@@ -1,0 +1,183 @@
+#!/bin/sh -e
+### BEGIN INIT INFO
+# Provides:          jobserver
+# Required-Start:    $local_fs $network $syslog
+# Required-Stop:     $local_fs $network $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: start/stop jobserver
+### END INIT INFO
+
+APPLICATION_CONFIG="/etc/jobserver/jobserver.conf"
+
+test -f $APPLICATION_CONFIG && . $APPLICATION_CONFIG
+
+set -e
+if [ ! -x $APPLICATION_PATH ] ; then
+    echo "No jobserver installed"
+    exit 0
+fi
+
+#load init.d helper functions
+. /lib/lsb/init-functions
+
+PIDFILE=$APPLICATION_PIDFILE
+CONF=$APPLICATION_CONFIG
+DAEMON=$APPLICATION_DAEMON
+PARAMETER="--configuration $CONF --daemon"
+
+if [ -z "$PIDFILE" ] ; then
+    echo "ERROR: APPLICATION_PIDFILE needs to be defined in application config" >&2
+    exit 2
+fi
+
+jobserver_start() {
+    #log_daemon_msg "Starting Jobserver Daemon"
+    log_success_msg "Starting Jobserver Daemon"
+    start-stop-daemon --start --quiet --oknodo --make-pidfile --pidfile "$PIDFILE" --exec "$DAEMON" -- $PARAMETER
+    #log_end_msg $?
+}
+
+jobserver_stop() {
+    log_success_msg "Stopping Jobserver Daemon"
+    start-stop-daemon --stop --quiet --oknodo --pidfile "${PIDFILE}"
+    rm -f "${PIDFILE}"
+    #log_end_msg $?
+}
+
+case $1 in
+    start)
+        jobserver_start
+    ;;
+    stop)
+        jobserver_stop
+    ;;
+    restart)
+        jobserver_stop
+        jobserver_start
+    ;;
+    *)
+        log_success_msg "Usage: /etc/init.d/jobserver {start|stop|restart}"
+        exit 1
+    ;;
+esac
+
+exit $?;
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+APPLICATION_CONFIG="/etc/jobserver/jobserver.conf"
+test -f $APPLICATION_CONFIG && . $APPLICATION_CONFIG
+
+PIDFILE=$APPLICATION_PIDFILE
+CONF=$APPLICATION_CONFIG
+DAEMON=$APPLICATION_DAEMON
+PARAMETER="--configuration $CONF --daemon"
+RETVAL=0
+
+if [ -z "$PIDFILE" ] ; then
+    echo "ERROR: APPLICATION_PIDFILE needs to be defined in application config" >&2
+    exit 2
+fi
+
+jobserver_start() {
+    echo -n $"Starting jobserver daemon: "
+    daemon --pidfile=$PIDFILE $DAEMON $PARAMETER
+    RETVAL=$?
+
+    if [ $RETVAL -ne 0 ]; then
+        failure;
+    fi;
+    echo
+    return $RETVAL
+}
+
+jobserver_stop() {
+    echo -n $"Stopping jobserver daemon: "
+    if [ ! -f $PIDFILE ]; then
+        echo -n $"Jobserver daemon is not running: ";
+    else
+        killproc -p $PIDFILE
+        RETVAL=$?
+    fi
+    echo
+    return $RETVAL;
+}
+
+case $1 in
+    start)
+        jobserver_start
+    ;;
+    stop)
+        jobserver_stop
+    ;;
+    restart)
+        jobserver_stop
+        jobserver_start
+    ;;
+    *)
+        echo "Usage: /etc/init.d/jobserver {start|stop|restart}"
+        exit 1
+    ;;
+esac
+
+exit $?;
+
+sub daemonize {
+    # start a new child process
+    if (fork()) {
+        exit(0);
+    }
+    # become process group leader
+    unless (POSIX::setsid) {
+        die("POSIX setsid failed: $!");
+    }
+    # change to root dir
+    chdir("/");
+    foreach (0 .. (POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 1024)) {
+        POSIX::close($_);
+    }
+    # allow only user based io
+    umask(077);
+
+    # reopen pipes
+    open(STDIN,  "<", "/dev/null");
+    open(STDOUT, ">", "/dev/null");
+    open(STDERR, ">", "/dev/null");
+
+    # Advisory. Fork one more time; this is not "necessary" for most toolserver
+    # daemons but it is a best practice as there are situations where
+    # forking twice is needed to avoid zombies. A second fork also
+    # prevents the daemon from ever re-acquiring a terminal, by making
+    # the main daemon process not be the process group leader
+    if (fork()) {
+        exit(0);
+    }
+
+    # write pidfile
+    my $pidfile = "/var/run/jobserverd.pid";
+    open(PIDFILE, ">$pidfile");
+    print(PIDFILE "$$");
+    close(PIDFILE);
+}
+
+sub listen {
+    my $self = shift;
+
+    logInfo("Starting webservice. Listening to port ".$self->{'_port'}, 1);
+
+    # Spawn the webservice
+    POE::Component::Server::HTTP->new (
+        Port           => $self->{'_port'},
+        ContentHandler => {
+            "/json/" => \&dispatchJSONService
+        },
+        Headers        => {
+            "Server" => "Perl JobServer version ".$self->{'_version'}
+        },
+    );
+
+    $poe_kernel->run();
+}
+

@@ -1,0 +1,45 @@
+State[MyStateType, MyLeftType \/ MyRightType]
+
+(a, b) <- comprehension
+
+object StateProblem {
+  case class MyStateType
+  case class MyRightType
+  case class MyLeftType
+
+  type StateWithFixedStateType[+A] = State[MyStateType, A]
+  type EitherTWithFailureType[F[+_], A] = EitherT[F, MyLeftType, A]
+  type CombinedStateAndFailure[A] = EitherTWithFailureType[StateWithFixedStateType, A]
+
+  def doSomething: CombinedStateAndFailure[MyRightType] = {
+    val x = State[MyStateType, MyLeftType \/ MyRightType] {
+      case s => (s, MyRightType().right)
+    }
+    EitherT[StateWithFixedStateType, MyLeftType, MyRightType](x)
+  }
+
+  val comprehension = for {
+    a <- doSomething
+    b <- doSomething
+  } yield (a, b)
+
+  val otherComprehension = for {
+    // this gets a compile error:
+    // could not find implicit value for parameter M: scalaz.Monoid[com.seattleglassware.StateProblem.MyLeftType]
+    (x, y) <- comprehension
+
+    z <- doSomething
+  } yield (x, y, z)
+}
+
+  implicit val partialMonoidForEarlyReturn = new Monoid[EarlyReturn] {
+    case object NoOp extends EarlyReturn
+    def zero = NoOp
+    def append(a: EarlyReturn, b: => EarlyReturn) =
+      (a, b) match {
+        case (NoOp, b) => b
+        case (a, NoOp) => a
+        case _         => throw new RuntimeException("""this isnt really a Monoid, I just want to use it on the left side of a \/""")
+      }
+  }
+

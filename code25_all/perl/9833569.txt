@@ -1,0 +1,109 @@
+#!/usr/bin/perl -w
+use strict;
+use warnings;
+use Mail::POP3Client;
+use MIME::Parser;
+use MIME::Entity;
+use File::Copy;
+use File::Glob ':glob';
+
+my ($DAY,$MONTH,$YEAR);
+my $host   = 'pop.gmail.com';
+my $user   = $ARGV[0];
+my $passwd = $ARGV[1];
+my $sender =$ARGV[2];
+my $outputloc=$ARGV[3];
+my $subject=$ARGV[4];
+my $attachedfile=$ARGV[5];
+my $outfile=$ARGV[6];
+my $today=return_time();
+my $flag=0;
+
+$attachedfile =~s/date/$today/g;
+$outfile =~s/date/$today/g;
+
+
+my $client = new Mail::POP3Client(
+    USER     => $user,
+    PASSWORD => $passwd,
+    HOST     => "pop.gmail.com",
+    PORT     => 995,
+    USESSL   => 'true',
+);
+my $parser = MIME::Parser->new;
+$parser->output_dir("T:/dailyfiles/TEMP");
+my $mgrnum = $client->Count;
+print "There are [$mgrnum] emails!\n";
+
+for ( my $i = 1 ; $i <= $mgrnum ; $i++ ) {
+    my $headandbody = $client->HeadAndBody($i);
+    my $entity = $parser->parse_data($headandbody);
+    $parser->decode_headers(1);
+    my $Subject=$entity->head->get('Subject');
+    my $From=$entity->head->get('From');
+    my $To=$entity->head->get('To');
+    my $Date=$entity->head->get('Date');
+    my $MIME_type=$entity->mime_type;
+    print "From      = ",$From;
+    print "To        = ",$To;
+    print "Cc        = ",$entity->head->get('Cc'),"\n";
+    print "Subject   = ",$Subject;
+    print "Date      = ",$Date;
+    print "MIME type = ",$entity->mime_type,"\n";
+    print "Parts     = ",scalar $entity->parts,"\n";
+    print "=========================================================\n";
+    exit if ( (scalar $entity->parts) == 1 );
+    chomp($Subject);
+    chomp($From);
+
+    if($Subject eq $subject && $From eq $sender) {
+      chdir "T:/dailyfiles/TEMP"; 
+      my @list = bsd_glob('*.txt');
+      my @list2 = bsd_glob('*.html');
+      unlink(@list,@list2); 
+      my $dir="T:/dailyfiles/TEMP/";
+      opendir(DIR,$dir) or die$!;
+      while(defined(my $file=readdir DIR)){
+       my $oldfile=$file;
+       if($file =~/$attachedfile/){
+        $flag=1;
+        print "Original Attachment: $oldfile\n";
+        print "Renamed Attachment: ",$outfile,"\n";
+        if (-e $outfile) {
+          warn "can't rename $oldfile to $outfile: $file exists ";
+       } elsif (rename $oldfile, $outfile) {
+       } else {
+         warn "rename $oldfile to $outfile failed:$! ";
+      }
+       ## copy and move files
+       move("T:/dailyfiles/TEMP/$outfile",$outputloc.$outfile);
+       print "STATUS: Required email arrival. Expected attachment forwarded to $outputloc.\n";
+       print "=========================================================\n";
+    }
+} 
+     if($flag==0){
+     print "STATUS: Required email arrival. However, attachment is disqualified.\n";    
+    }
+    }
+    else{
+     print "STATUS: Required email not yet come. Try later.\n";
+    }
+}
+
+delete_dir();  
+
+##subroutines go here
+sub return_time{
+    ($DAY,$MONTH,$YEAR)=(gmtime)[3,4,5];
+     $today=sprintf("%04d%02d%02d",$YEAR+1900,$MONTH+1,$DAY);
+     return $today;  
+}
+
+sub delete_dir{
+my $dir="T:/dailyfiles/TEMP/";
+opendir(DIR,$dir) or die$!;
+while(defined(my $file=readdir DIR)){
+    unlink($dir.$file);
+ }  
+}
+

@@ -1,0 +1,108 @@
+class CreatePosts < ActiveRecord::Migration
+  def self.up
+    create_table :posts do |t|
+      t.string :name
+      t.string :title
+      t.text :content
+      t.hideable
+      t.tracks_hidden_at
+      t.timestamps
+    end
+  end
+end
+
+require 'orm_adapter/adapters/active_record'
+
+module HiddenRecord
+  module Orm
+    # This module contains some helpers and handle schema (migrations):
+    #
+    #   create_table :accounts do |t|
+    #     t.hideable
+    #     t.tracks_hidden_timestamp
+    #   end
+    #
+    module ActiveRecord
+      module Schema
+        include HiddenRecord::Schema
+
+        # Tell how to apply schema methods.
+        def apply_hiddenrecord_schema(name, type, options={})
+          column name, type.to_s.downcase.to_sym, options
+        end
+      end
+    end
+  end
+end
+ActiveRecord::Base.extend HiddenRecord::Models
+ActiveRecord::ConnectionAdapters::Table.send :include, HiddenRecord::Orm::ActiveRecord::Schema
+ActiveRecord::ConnectionAdapters::TableDefinition.send :include, HiddenRecord::Orm::ActiveRecord::Schema
+
+module HiddenRecord
+  # Holds schema definition for hiddenrecord model options.
+  module Schema
+    # Sets the model as having hidable rows
+    #
+    # == Options
+    # * :null - When true, allows the hidden row flag to be null
+    # * :default - Used to set default hidden status to true. If not set, default is false (rows are not hidden)
+    def hideable(options={})
+      null = options[:null] || false
+      default = options[:default] || false
+
+      apply_hiddenrecord_schema :hiddenrecord_is_row_hidden, Boolean, :null => null, :default => default
+    end
+
+    # Sets the model to record the timestamp when a row was hidden
+    def tracks_hidden_timestamp()
+      apply_hiddenrecord_schema :hiddenrecord_hidden_at, DateTime
+    end
+  end
+end
+
+module HiddenRecord
+  module Models
+    # This module implements the hideable API
+    module Hideable
+      def self.included(base)
+        base.class_eval do
+          extend ClassMethods
+        end
+      end
+
+      scope :visible, where(:hiddenrecord_is_row_hidden => true)
+
+      def hidden?
+        return hiddenrecord_is_row_hidden || false
+      end
+
+      def hide
+        hiddenrecord_is_row_hidden = true
+      end
+
+      def hide!
+        hiddenrecord_is_row_hidden = true
+        save!
+      end
+
+      def unhide
+        hiddenrecord_is_row_hidden = false
+      end
+
+      def unhide!
+        hiddenrecord_is_row_hidden = false
+        save!
+      end
+
+    end
+  end
+end
+
+module HiddenRecord
+  autoload :Schema, 'hiddenrecord/schema'
+  autoload :Models, 'hiddenrecord/models'
+  ...
+end
+require 'hiddenrecord/models/hideable'
+require 'hiddenrecord/models/tracks_hidden_timestamp'
+

@@ -1,0 +1,105 @@
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TypeFamilies #-}
+
+import Control.Monad.Free
+import Control.Monad.Identity
+import Control.Monad.Writer
+
+-- Things which can happen to an entity
+data Order = Order deriving Show
+data Damage = Damage deriving Show
+
+class Entity a where
+    evolve :: Double -> a -> a
+    order :: Order -> a -> a
+    damage :: Damage -> a -> a
+
+-- Make a trivial entity for testing purposes
+data Example = Example deriving Show
+instance Entity Example where
+    evolve _ a = a
+    order _ a = a
+    damage _ a = a
+
+-- A type to hold all the possible update types
+data EntityUpdate = 
+      UpdateTime Double
+    | UpdateOrder Order
+    | UpdateDamage Damage
+    deriving (Show)
+
+-- Wrap UpdateMessage to create a Functor for constructing the free monad
+data UpdateFunctor cont = 
+    UpdateFunctor {updateMessage :: EntityUpdate, continue :: cont} deriving (Show, Functor)
+
+-- Type synonym for the free monad
+type Update = Free UpdateEntity
+
+liftF = wrap . fmap Pure
+
+updateTime :: Double -> Update ()
+updateTime t = liftUpdate $ UpdateTime t
+
+updateOrder :: Order -> Update ()
+updateOrder o = liftUpdate $ UpdateOrder o
+
+updateDamage :: Damage -> Update ()
+updateDamage d = liftUpdate $ UpdateDamage d
+
+test :: Update ()
+test = do
+    updateTime 8.0
+    updateOrder Order
+    updateDamage Damage
+    updateTime 4.0
+    updateDamage Damage
+    updateTime 6.0
+    updateOrder Order
+    updateTime 8.0
+
+test
+interpret :: (Monad m, Functor f, fm ~ Free f c) => (f fm -> fm) -> (f fm -> a -> m a) -> fm -> a -> m a
+interpret _ _ (Pure _  ) entity = return entity
+interpret c f (Impure u) entity = f u entity >>= interpret c f (c u)
+
+update (UpdateTime t) = evolve t
+update (UpdateOrder o) = order o
+update (UpdateDamage d) = damage d
+
+eval :: Entity a => Update () -> a -> a
+eval updates entity = runIdentity $ interpret continue update' updates entity where
+    update' u entity = return $ update (updateMessage u) entity
+
+logMessage (UpdateTime t) = "Simulating time for " ++ show t ++ " seconds.\n"
+logMessage (UpdateOrder o) = "Giving an order.\n"
+logMessage (UpdateDamage d) = "Applying damage.\n"
+
+evalLog :: Entity a => Update () -> a -> Writer String a
+evalLog = interpret continue $ \u entity -> do
+    let m = updateMessage u
+    tell $ logMessage m
+    return $ update m entity
+
+> eval test Example
+Example
+> putStr . execWriter $ evalLog test Example
+Simulating time for 8.0 seconds.
+Giving an order.
+Applying damage.
+Simulating time for 4.0 seconds.
+Applying damage.
+Simulating time for 6.0 seconds.
+Giving an order.
+Simulating time for 8.0 seconds.
+
+interpret
+foldFree
+induce
+Semantic
+interpret :: (Functor m, Monad m) => (forall x. f x -> m x) -> Free f a -> m a
+interpret evalF = retract . hoistFree evalF
+
+retract
+hoistFree
+pipes
+operational

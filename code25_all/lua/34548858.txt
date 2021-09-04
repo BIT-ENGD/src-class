@@ -1,0 +1,126 @@
+local IcoSignature = string.char(0,0,1,0);
+local PngSignature = string.char(137,80,78,71,13,10,26,10);
+
+local AlphaByte = string.char(255);
+local TransparentPixel = string.char(0,0,0,0);
+
+function ParseCur(FilePath)
+    if (fileExists(FilePath) == true) then
+        local File = fileOpen(FilePath);
+        if (File ~= false) and (fileRead(File,4) == IcoSignature) then
+            local Icons = {}
+            for i = 1,fileReadInteger(File,2) do -- number of icons in file
+                local SizeX = fileReadInteger(File,1); -- icon width
+                if (SizeX == 0) then
+                    SizeX = 256;
+                end
+                local SizeY = fileReadInteger(File,1); -- icon height
+                if (SizeY == 0) then
+                    SizeY = 256;
+                end
+
+                fileRead(File,2); -- skip ColorCount and Reserved
+
+                local PlanesNumber = fileReadInteger(File,2);
+                local BitsPerPixel = fileReadInteger(File,2);
+
+                local Size = fileReadInteger(File); -- bytes occupied by icon
+                local Offset = fileReadInteger(File); -- icon data offset
+
+                Icons[i] = {
+                    PlanesNumber = PlanesNumber,
+                    BitsPerPixel = BitsPerPixel,
+
+                    SizeX = SizeX,
+                    SizeY = SizeY,
+
+                    Texture = true
+                }
+
+                local PreviousPosition = fileGetPos(File);
+
+                fileSetPos(File,Offset);
+                if (fileRead(File,8) == PngSignature) then -- check data format (png or bmp)
+                    fileSetPos(File,Offset);
+
+                    -- to do
+                else
+                    fileSetPos(File,Offset+4); -- skip BITMAPINFOHEADER Size
+
+                    local SizeX = fileReadInteger(File);
+                    local SizeY = fileReadInteger(File)/2;
+
+                    local PlanesNumber = fileReadInteger(File,2);
+                    local BitsPerPixel = fileReadInteger(File,2);
+
+                    fileRead(File,24); -- skip rest of BITMAPINFOHEADER
+
+                    local Pixels = {}
+                    if (BitsPerPixel == 1) or (BitsPerPixel == 4) or (BitsPerPixel == 8) then
+                        local Colors = {}
+                        for j = 1,2^(PlanesNumber*BitsPerPixel) do
+                            Colors[j] = fileRead(File,3)..AlphaByte;
+                            fileRead(File,1);
+                        end
+
+                        local PixelsPerByte = 8/BitsPerPixel;
+                        local CurrentByte;
+
+                        for y = 1,SizeY do -- XOR mask
+                            Pixels[y] = {}
+
+                            local CurrentRow = Pixels[y];
+                            for x = 0,SizeX-1 do
+                                local CurrentBit = x%PixelsPerByte;
+                                if (CurrentBit == 0) then
+                                    CurrentByte = fileReadInteger(File,1);
+                                end
+
+                                CurrentRow[x+1] = Colors[bitExtract(
+                                    CurrentByte,
+                                    (PixelsPerByte-1-CurrentBit)*BitsPerPixel,BitsPerPixel
+                                )+1];
+                            end
+                        end
+
+                        for y = 1,SizeY do -- AND mask
+                            local CurrentRow = Pixels[y];
+                            for x = 0,SizeX-1 do
+                                local CurrentBit = x%8;
+                                if (CurrentBit == 0) then
+                                    CurrentByte = fileReadInteger(File,1);
+                                end
+
+                                if (bitExtract(CurrentByte,7-CurrentBit,1) == 1) then
+                                    CurrentRow[x+1] = TransparentPixel;
+                                end
+                            end
+                        end
+
+                        for y = 1,SizeY do -- concatenate rows into strings
+                            Pixels[y] = table.concat(Pixels[y]);
+                        end
+
+
+                        Icons[i].Texture = dxCreateTexture(
+                            table.concat(Pixels)..string.char(
+                                bitExtract(SizeX,0,8),bitExtract(SizeX,8,8),
+                                bitExtract(SizeY,0,8),bitExtract(SizeY,8,8)
+                            ), -- plain pixels
+                            nil,
+                            false
+                        );
+                    elseif (BitsPerPixel == 16) or (BitsPerPixel == 24) or (BitsPerPixel == 32) then
+                        -- to do
+                    end
+                end
+
+                fileSetPos(File,PreviousPosition); -- continue reading next ICO header
+            end
+            fileClose(File);
+
+            return Icons;
+        end
+    end
+end
+

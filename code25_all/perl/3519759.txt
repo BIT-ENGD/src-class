@@ -1,0 +1,75 @@
+use Capture::Tiny qw/capture/;
+use threads;
+use threads::shared;
+
+my $stderr :shared;
+my $thread1 = threads->create(\&ffmpeg);
+my $threads = threads->create(\&time_info,$thread1);
+$threads->join();
+
+sub ffmpeg {
+    ($stdout, $stderr) = capture {
+    system "ffmpeg -i source_video.flv -vcodec wmv2 -acodec wmav2 output_video.wmv";
+    };
+}
+
+sub time_info {
+    while(1){
+        $|=1;
+        $stderr =~ m{time=(\d+\.\d+)}msg;
+        print $1,"\n";
+        sleep(1);
+    }
+}
+
+3.28
+7.56
+11.64
+15.80
+20.88
+25.76
+30.84
+35.88
+40.76
+45.80
+50.88
+55.88
+60.88
+65.88
+71.08
+76.32
+79.46
+3.28
+7.56
+
+use strict;
+use warnings;
+use IPC::Run qw(start pump);
+use Term::ProgressBar;
+
+my @cmd = qw(ffmpeg -i source_video.flv -vcodec wmv2 -acodec wmav2 output_video.wmv);
+
+my ($in, $out, $err);
+
+my $harness = start \@cmd, \$in, \$out, \$err;
+
+#Captures the duration of the video...
+#Converts hh:mm:ss format to seconds only
+pump $harness until ($err =~ m{time=(\d+\.\d+)}msg);
+$err =~ m{Duration: (\d+:\d+:\d+\.\d+)}ms;
+my $duration = $1;
+my ($h, $m, $s) = split /:/, $duration;
+$duration = $h * 3600 + $m * 60 + $s;
+
+
+my $progress = Term::ProgressBar->new ({count => $duration});
+
+#Builds an infinite loop...
+#Stops at intervals to print progress information
+while(1){
+    pump $harness until ($err =~ m{time=(\d+\.\d+)}msg);
+    my $so_far = $1;
+    $progress->update ($so_far);
+    last if ( $duration - $so_far <= 0.5);
+    }
+

@@ -1,0 +1,62 @@
+with (TABLOCKX)
+CREATE PROCEDURE [dbo].[CreateFutures]
+@code varchar(5),
+@month int,
+@year int,
+@currency varchar(3)
+AS
+BEGIN
+SET NOCOUNT ON;
+BEGIN TRANSACTION
+
+declare @ticker varchar(7)
+declare @yearCode char(1)
+declare @res as Table (id int)
+declare @n as int
+
+set @yearCode = convert(char(1), @year % 10)
+
+set @ticker = (
+    select @code + futures + @yearCode
+    from FuturesMonthCodes 
+    where month = @month
+)
+
+insert into @res
+select top 1 instrument
+from InstrumentFutures // This is a view that joins InstrumentText and InstrumentNumber data
+where ticker = @ticker
+and code = @code
+and month = @month
+and year = @year
+and currency = @currency
+order by instrument
+
+set @n = (select COUNT(id) from @res)
+
+if @n = 0
+    begin
+        print 'Creating Future'
+        declare @id int
+        declare @stamp datetime
+        set @stamp = CURRENT_TIMESTAMP
+        insert into Instrument with (TABLOCKX) (insertTime) values (@stamp)
+        set @id = (select SCOPE_IDENTITY());
+
+        insert into InstrumentText      (instrumentId, name, value) values (@id, 'type',    'futures')
+        insert into InstrumentText      (instrumentId, name, value) values (@id, 'ticker',  @ticker)
+        insert into InstrumentText      (instrumentId, name, value) values (@id, 'code',    @code)
+        insert into InstrumentText      (instrumentId, name, value) values (@id, 'currency',@currency)
+        insert into InstrumentNumber    (instrumentId, name, value) values (@id, 'month',   @month)
+        insert into InstrumentNumber    (instrumentId, name, value) values (@id, 'year',    @year)
+
+        insert into @res (id) values (@id)
+    end
+commit transaction
+
+if @n = 0 --instrument created
+    select top 1 id, 1 from @res order by id
+else --returning existing instrument
+    select top 1 id, 0 from @res order by id
+END
+

@@ -1,0 +1,331 @@
+#include <stdio.h>
+#include <stdlib.h> 
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <limits.h>        
+int status, cpid; int child = 1;
+char mode = 'c';
+
+sigset_t sigMask;
+void childHandler(){
+    sigprocmask(SIG_BLOCK,&sigMask,NULL);
+    int i = waitpid(-1,&status,WNOHANG);
+    if(i){
+        fprintf(stderr, "The child <%d> has terminated with code <%d>\n",cpid,         WEXITSTATUS(status));
+        child = 0;
+        mode = 'c';
+    }
+    sigprocmask(SIG_UNBLOCK,&sigMask,NULL);
+ }
+
+
+ int DEBUG = 0;
+ int SLOW = 1;
+
+ fd_set readfds,writefds,errorfds;
+ struct timeval timeout;
+ int numready;
+ int cin,cout,cerr,in,out,err;
+ int dcout = 0;
+ int dcerr = 0;
+ int p2c_in[2], c2p_out[2], c2p_err[2];
+ int maxfd = 2;
+ int tout = 0;
+
+void doSelect(){
+    FD_ZERO(&writefds);
+    FD_ZERO(&readfds);
+
+    FD_SET(fileno(stdin), &readfds);
+    FD_SET(fileno(stdout), &writefds);
+    FD_SET(fileno(stderr), &writefds);
+
+    FD_SET(p2c_in[1], &writefds);
+    FD_SET(c2p_out[0], &readfds);
+    FD_SET(c2p_err[0], &readfds);
+
+    if(!tout) {
+        numready = select((maxfd + 1),&readfds,&writefds,NULL,NULL);
+    }
+    else numready = select((maxfd + 1),&readfds,&writefds,NULL,&timeout);
+
+    in = FD_ISSET(fileno(stdin), &readfds);
+    out = FD_ISSET(fileno(stdout), &writefds);
+    err = FD_ISSET(fileno(stderr), &writefds);
+
+    cin = FD_ISSET(p2c_in[1], &writefds);
+    if(dcout) cout = 0;
+    else cout = FD_ISSET(c2p_out[0], &readfds);
+    if(dcerr) cerr = 0;
+    else cerr = FD_ISSET(c2p_err[0], &readfds);
+
+    if(DEBUG){
+        fprintf(stderr,"\nstdin: %d\n",in);
+        fprintf(stderr,"stdout: %d\n",out);
+        fprintf(stderr,"stderr: %d\n",err);
+        fprintf(stderr,"p2c_in[1]: %d\n",cin);
+        fprintf(stderr,"c2p_out[0]: %d\n",cout);
+        fprintf(stderr,"c2p_err[0]: %d\n\n",cerr);
+        if(SLOW)sleep(2);
+    }
+ }
+
+
+
+  int main(int agrc, char* argv[]){
+    //Naming convention of pipes: int [intial of write-end process]2[intial of read-end process] & 
+    //_err represents the file descriptor  which the pipe is suppose to 'filter'
+
+    int val = 0, dblval = 0;
+    int pipe_result,signal_result,close_result;
+
+
+      //This pipe has the parent writing and the child reading from the parent's input this pipe is to filter the child's stdin
+     if((pipe_result = pipe(p2c_in)) < 0){
+        perror("Creation of the pipe for the child's stdin has failed");
+        return pipe_result;
+     }
+    if(p2c_in[1] > maxfd) maxfd = p2c_in[1];
+
+     //This pipe has the child writing and the parent reading from the child's input this pipe is to filter the child's stdout
+    if((pipe_result = pipe(c2p_out)) < 0){
+            perror("Creation of the pipe for the child's stdout has failed");
+        return pipe_result;
+    }
+    if(c2p_out[0] > maxfd) maxfd = c2p_out[0];
+     //This pipe has the child writing and the parent reading from the child's input this pipe is to filter the child's stderr
+    if((pipe_result = pipe(c2p_err)) < 0){
+        perror("Creation of the pipe for the child's stderr has failed");
+        return pipe_result;
+    }
+    if(c2p_err[0] > maxfd) maxfd = c2p_err[0];
+    if(DEBUG){
+        fprintf(stderr,"stdin: %d\n",fileno(stdin));
+        fprintf(stderr,"stdout: %d\n",fileno(stdout));
+        fprintf(stderr,"stderr: %d\n",fileno(stderr));
+        fprintf(stderr,"p2c_in[0]: %d\n",p2c_in[0]);
+        fprintf(stderr,"p2c_in[1]: %d\n",p2c_in[1]);
+        fprintf(stderr,"c2p_out[0]: %d\n",c2p_out[0]);
+        fprintf(stderr,"c2p_out[1]: %d\n",c2p_out[1]);
+        fprintf(stderr,"c2p_err[0]: %d\n",c2p_err[0]);
+        fprintf(stderr,"c2p_err[1]: %d\n",c2p_err[1]);
+    }
+
+
+    sigemptyset(&sigMask);
+    sigaddset(&sigMask,SIGCHLD);
+    if((signal_result = signal(SIGCHLD, childHandler)) == SIG_ERR){
+        perror("Signal handler binding has failed");
+        return signal_result;
+    }
+
+    //This creates the child process
+    if((cpid = fork()) < 0){
+        perror("Creation of the child process has failed");
+        return cpid;
+    }
+
+    if(!cpid){ //Child-exclusive code
+        //This makes it so the child can only read input from the stdin pipe
+        if((close_result = close(p2c_in[1])) < 0){
+            perror("Closing the write end of the child's stdin pipe has failed");
+            exit(close_result);
+        }
+
+        //This makes it so the child can only write input to the stdout pipe
+        if((close_result = close(c2p_out[0])) < 0){
+            perror("Closing the read end of the child's stdout pipe has failed");
+            exit(close_result);
+        }
+
+        //This makes it so the child can only write input to the stderr pipe
+        if((close_result = close(c2p_err[0])) < 0){
+            perror("Closing the read end of the child's stderr pipe has failed");
+            exit(close_result);
+        }
+
+        //This closes the child's standard input
+        if((close_result = close(0)) < 0){
+            perror("Closing the child's standard input has failed");
+            exit(close_result);
+        }
+
+        int dup_result;
+        if((dup_result = dup(p2c_in[0])) < 0){
+            perror("Duplication of the read end of the child's stdin pipe has failed");
+            exit(dup_result);
+        }
+
+        //This closes the child's standard output
+        if((close_result = close(1)) < 0){
+            perror("Closing the child's standard output has failed");
+            exit(close_result);
+        }
+
+        if((dup_result = dup(c2p_out[1])) < 0){
+            perror("Duplication of the write end of the child's stdout pipe has failed"); 
+            exit(dup_result);
+        }
+
+        //This closes the child's standard error
+        if((close_result = close(2)) < 0){
+            perror("Closing the child's standard error has failed");
+            exit(close_result);
+        }
+
+        if((dup_result = dup(c2p_err[1])) < 0){
+            perror("Duplication of the write end of the child's stderr pipe has failed");
+            exit(dup_result);
+        }
+
+        execvp(argv[1], &argv[1]);
+        perror("execvp has failed:");
+
+        if((close_result = close(p2c_in[0])) < 0){
+            perror("Closing the write end of the child's stdin pipe has failed");
+            exit(close_result);
+        }
+
+        if((close_result = close(c2p_out[1])) < 0){
+            perror("Closing the read end of the child's stdout pipe has failed");
+            exit(close_result);
+        }
+
+        if((close_result = close(c2p_err[1])) < 0){
+            perror("Closing the read end of the child's stderr pipe has failed");
+            exit(close_result);
+        }
+
+        exit(66); //This occurs after p2c_in's write end is closed
+    } else { //Parent-exclusive code
+
+        //This makes it so the parent can only write input to the stdin pipe
+        if((close_result = close(p2c_in[0])) < 0){
+            perror("Closing the read end of the child's stdin pipe has failed");
+            return close_result;
+        }
+
+        //This makes it so the parent can read only input from the stdout pipe
+        if((close_result = close(c2p_out[1])) < 0){
+            perror("Closing the write end of the child's stdout pipe has failed");
+            return close_result;
+        }
+
+        //This makes it so the parent can read only input from the stderr pipe
+        if((close_result = close(c2p_err[1])) < 0){
+            perror("Closing the write end of the child's stderr pipe has failed");
+            return close_result;
+        }
+
+
+
+        timeout.tv_sec = 1; timeout.tv_usec = 0;
+        char mode = 'c';
+        char t_mode;
+        int maxlines = 20;
+        int sig; int lcount = 0; int fill = 0;
+        char buf_err;
+        char buf_in[MAX_CANON];
+        char buf_out;
+        int read_resultin,read_resultout,read_resulterr;
+                int write_resultin,write_resultout,write_resulterr;
+
+        while(1){
+            if(DEBUG)fprintf(stderr,"<%d> While Begin \n",getpid());
+            doSelect();
+
+            if(in && cin){
+                if(((read_resultin = read(fileno(stdin), &buf_in, MAX_CANON)) > 0) && child){
+                    //write(2, &buf_in, read_resultin);
+                    if((write_resultin = write(p2c_in[1], &buf_in, read_resultin)) > -1){
+                        fill = write_resultin;
+                        if(DEBUG)fprintf(stderr,"<%d> Input \n",getpid());
+                        doSelect();
+                        while(cin && child && (fill < read_resultin)){
+                            if(DEBUG)fprintf(stderr,"<%d> Input Loop \n",getpid());
+                            write_resultin = write(p2c_in[1], &buf_in, read_resultin - fill);
+                            fill += write_resultin;
+                            doSelect();
+                        }
+                        //if(read_resultin < 0) perror("read from stdin without a / failed");
+                    }
+                    else perror("Reading to child's stdin has failed");
+
+                }
+
+            }
+            if(DEBUG)fprintf(stderr,"<%d> Input Loop End \n",getpid());
+            doSelect();
+
+            if (out && cout){
+                if(DEBUG)fprintf(stderr,"<%d> Output \n",getpid());
+                while(out && cout){
+                    if(DEBUG)fprintf(stderr,"<%d> Output Loop \n",getpid());
+                    if((read_resultout = read(c2p_out[0], &buf_out, 1)) == 1)
+                        write(fileno(stdout), &buf_out, 1);
+                    else if(!read_resultout && !child/**/){
+                        if(DEBUG)fprintf(stderr,"<%d> No More Output \n",getpid());
+                        dcout = 1;
+                    }
+                    else if(read_resultout < 0)
+                        perror("Output Read");
+
+                    doSelect();
+                }
+
+
+            }
+
+            if(DEBUG)fprintf(stderr,"<%d> Output End \n",getpid());
+            doSelect();
+            if (err && cerr){
+                /**/if(DEBUG)fprintf(stdout,"<%d> Error \n",getpid());
+                while(err && cerr){
+                    /**/if(DEBUG)fprintf(stdout,"<%d> Error Loop \n",getpid());
+                    if((read_resulterr = read(c2p_err[0], &buf_err, 1)) == 1){
+                        write_resulterr = write(fileno(stderr), &buf_err, 1);
+                        if(write_resulterr < 0) perror("Error Wirte");
+                    }else if(!read_resulterr&& !child/**/){
+                        dcerr = 1;
+                        if(DEBUG)fprintf(stderr,"<%d> No More Error \n",getpid());
+                    }
+                    else if(read_resulterr < 1) perror("Error Read");
+                    doSelect();
+                }
+                /**/if(DEBUG)fprintf(stdout,"<%d> Error Loop End \n",getpid());
+                if(read_resulterr < 0) perror("Reading from child's stdout has failed");
+                /**/if(DEBUG)fprintf(stdout,"<%d> Error End \n",getpid());
+
+            }
+
+            if(!child && dcout && dcerr) break;
+        }
+
+
+
+
+        //This closes up the write end of p2c_in that way the child will be able to terminate for it will recieve an EOF
+        if((close_result = close(p2c_in[1])) < 0){
+            perror("The last closing of the write end of the child's stdin pipe has failed");
+            exit(close_result);
+        }
+
+        //This closes up the read end of c2p_out
+        if((close_result = close(c2p_out[0])) < 0){
+            perror("The last closing of the read end of the child's stdout pipe has failed");
+            exit(close_result);
+        }
+
+        //This closes up the read end of c2p_err
+        if((close_result = close(c2p_err[0])) < 0){
+            perror("The last closing of the read end of the child's stderr pipe has failed");
+            exit(close_result);
+        }
+
+
+
+    }
+   }
+

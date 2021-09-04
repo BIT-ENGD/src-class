@@ -1,0 +1,373 @@
+od -c .DS_Store
+>charlist_v4 .DS_Store
+utf8 "\x80" does not map to Unicode at /Users/ericdp/bin/charlist_v4 line 210.
+utf8 "\x80" does not map to Unicode at /Users/ericdp/bin/charlist_v4 line 210.
+utf8 "\x80" does not map to Unicode at /Users/ericdp/bin/charlist_v4 line 210.
+utf8 "\x80" does not map to Unicode at /Users/ericdp/bin/charlist_v4 line 210.
+utf8 "\x80" does not map to Unicode at /Users/ericdp/bin/charlist_v4 line 210.
+utf8 "\x80" does not map to Unicode at /Users/ericdp/bin/charlist_v4 line 210.
+               Dec     Hex  Letter   Count  Desc
+
+     1       0  0x0000  [NUL]        6,020  C0 Control Character Set - Null (^@ \0)                                         
+     2       1  0x0001  [SOH]           59  C0 Control Character Set - Start of Header (^A)                                 
+     3       2  0x0002  [STX]            8  C0 Control Character Set - Start of Text (^B)                                   
+     4       3  0x0003  [ETX]            1  C0 Control Character Set - End of Text (^C)                                     
+     5       4  0x0004  [EOT]            7  C0 Control Character Set - End of Transmission (^D)                             
+     6       8  0x0008  [BS]             9  C0 Control Character Set - Backspace (^H \b)                                    
+     7      11  0x000B  [VT]             2  C0 Control Character Set - Vertical Tabulation (^K \v)                          
+     8      16  0x0010  [DLE]            9  C0 Control Character Set - Data Line Escape (^P)                                
+     9      24  0x0018  [CAN]            1  C0 Control Character Set - Cancel (^X)                                          
+    10      32  0x0020  [SP]             7  Space                                                                           
+    11      37  0x0025  [%]          2  PERCENT SIGN                                                                    
+    12      48  0x0030  [ ]          6  DIGIT ZERO                                                                      
+    13      49  0x0031  [1]          1  DIGIT ONE                                                                       
+    14      56  0x0038  [8]          6  DIGIT EIGHT                                                                     
+    15      64  0x0040  [@]          7  COMMERCIAL AT                                                                   
+    16      66  0x0042  [B]          2  LATIN CAPITAL LETTER B                                                          
+    17      68  0x0044  [D]          2  LATIN CAPITAL LETTER D                                                          
+    18      69  0x0045  [E]          1  LATIN CAPITAL LETTER E                                                          
+    19      83  0x0053  [S]          1  LATIN CAPITAL LETTER S                                                          
+    20      92  0x005C  [\]          6  REVERSE SOLIDUS                                                                 
+    21      96  0x0060  [`]          1  GRAVE ACCENT                                                                    
+    22     100  0x0064  [d]          1  LATIN SMALL LETTER D                                                            
+    23     117  0x0075  [u]          1  LATIN SMALL LETTER U                                                            
+    24     120  0x0078  [x]          6  LATIN SMALL LETTER X     
+
+  #!/usr/bin/perl
+  # ========== ========== ========== ========== ========== ========== ==========
+  # charlist2.pl
+  #
+  # count every character in a file
+  #
+  # Version 1: 16 Aug 05  bb
+  # Version 2: 21 Sep 05 jw v2 modified layout of output file
+  # Version 3: 2005-10-15 bh Added -f and -r options
+  # Version 4: 31 Jan 2010 EDP - added UTF-8 functionality
+  # ========== ========== ========== ========== ========== ========== ==========
+  $| = 1;             # Do not buffer output
+  use strict;
+  use warnings;
+  use Encode qw(encode :fallbacks);
+
+
+  #use open IO => ':utf8'; # all I/O in utf8
+  #no warnings 'utf8'; # but ignore utf-8 warnings
+  #binmode( STDIN, ":utf8" );
+  #binmode( STDOUT, ":utf8" );
+  #binmode( STDERR, ":utf8" );
+
+  use Unicode::UCD 'charinfo';
+  use Cwd 'abs_path'; # get full absolute path to files, regardless of where it is ran from
+  {
+    no warnings;      # warnings doesn't like $0 below
+    use constant {
+      PROGRAM  => abs_path( $0 ),  # get full path, not relative path
+      DEBUG    => $ENV{ 'DEBUG' }  # to turn on debugging:  export DEBUG=1
+    };
+  }
+
+  # ---------- ---------- ----------
+  our $Version = "4.0";
+
+
+  # ---------- ---------- ----------
+  use Getopt::Std;
+  our ( $opt_f, $opt_r );
+  getopts( 'fr' );
+
+  # ---------- ---------- ----------
+  die <<"eof" unless $#ARGV >= 0;
+  Usage:
+    charlist2.pl [-f] [-r]  infile > outfile
+
+  Given a text file, count the number of times each character occurs.
+  Print out the count, also giving the decimal equivalent of each character.
+
+  -f sort by frequency
+
+  -r reverse sort order
+
+  Version $Version
+  eof
+  my $file = $ARGV[0];
+  my %ctrls;
+
+
+
+
+    sub commify {
+    # ---------- ---------- ---------- ---------- ---------- ---------- ----------
+    # Description : commify a number
+    #
+    # Arguments   : number
+    #
+    # Returns     : string equivalent with commas every three numbers to the
+    #               left of the decimal
+    #
+    # Example     : $num_str = commify 1234.5678  # == 1,234.5678
+    # ---------- ---------- ---------- ---------- ---------- ---------- ----------
+
+      my $text = reverse $_[0];
+      $text =~ s/(\d\d\d)(?=\d)(?!\d*\.)/$1,/g;
+      return scalar reverse $text;
+
+    } # commify
+
+
+    sub trim {
+    # ---------- ---------- ---------- ---------- ---------- ---------- ----------
+    # Description : Trim spaces before and after a string
+    #
+    # Arguments   : string
+    #
+    # Returns     : regex out any leading/trailing spaces
+    #
+    # Example     : print trim( '     a  ' )  # 'a'
+    # ---------- ---------- ---------- ---------- ---------- ---------- ----------
+
+      my ( $str ) = shift =~ m!^\s*(.+?)\s*$!i;
+      defined $str ? return $str : return '';
+
+    } # trim
+
+    sub ident {
+    # ---------- ---------- ---------- ---------- ---------- ---------- ----------
+    # Description : Identify everything about this character
+    #
+    # Arguments   : line counter
+    #               character code (i.e. space = 32)
+    #               count of how many we found
+    #
+    # Returns     : output line to STDOUT
+    #
+    # Example     : ident( line_num=>$cnt,
+    #                      char_code=>$idx,
+    #                      count=>$count[$idx] );
+    # ---------- ---------- ---------- ---------- ---------- ---------- ----------
+
+    my %args = @_;
+    my $line_num = $args{line_num} || die 'ident( line_num=> ) paramer required';
+    my $char_code = $args{char_code} ;#|| die 'ident( char_code=> ) paramer required';
+    my $count = $args{count} || die 'ident( count=> ) paramer required';
+
+    my ( $c, $h, $n );
+
+    # ---------- ---------- ----------
+    # Gather what unicode information about this character
+    # ---------- ---------- ----------
+    my $info=eval { charinfo( $char_code ) };
+
+    # ---------- ---------- ----------
+    # and we find something
+    # ---------- ---------- ----------
+    if ( defined $info )
+    {
+
+      # ---------- ---------- ----------
+      # what if it is one of the control
+      # characters defined at the end of
+      # this file?
+      # ---------- ---------- ----------
+      if ( defined $ctrls{$char_code} )
+      {
+
+        $c = trim( $ctrls{$char_code}[0] );
+        $h = $info->{code};
+        $n = trim( $ctrls{$char_code}[1] );
+
+      }
+      else
+      {
+
+        # ---------- ---------- ----------
+        # what did we find?
+        # ---------- ---------- ----------
+        $c = chr( $char_code ) || ' ';
+        eval {
+
+          no warnings;
+          if ( $info->{combining} > 0 )
+          {
+            $c = ' ' . $c;
+          }
+
+        };
+        $h = $info->{code} || ' ';
+        $n = trim( $info->{name} ) || ' ';
+
+      }
+
+    }
+    else
+    {
+
+      # ---------- ---------- ----------
+      # we didn't find anything in the system files.
+      # it may not be up-to-date
+      # ---------- ---------- ----------
+      $n = '<undef>';
+
+    }
+    print sprintf( "%6d", $line_num ) . "\t";
+    print sprintf( "%6d", $char_code ) ."\t";
+    print '0x' . $h . "\t";
+    print sprintf( "[%-1s]\t", $c );
+    print sprintf( "%10s", commify( $count ) ) . "\t";
+    print sprintf( "%-80s", $n );
+    print "\n";
+    } # ident
+
+
+
+  # ---------- ---------- ----------
+  # Load special control characters from DATA below
+  # ---------- ---------- ----------
+  while ( <DATA> )
+  {
+
+    chomp;
+    last unless /\S/;
+    my ( $key, @data ) = split /,/;
+    $ctrls{$key} = \@data;
+
+  }
+
+
+
+  # ---------- ---------- ----------
+  # Read the file
+  # ---------- ---------- ----------
+  my $line;
+  my @count;
+
+  #open( my $fh, '<', $file ) or die "Unable to open $file - $!\n";
+  #while ( $line = <$fh> )
+
+  open( my $fh, '<:encoding( UTF-8 )', $file ) or die "Unable to open $file - $!\n";
+  while ( $line = encode( 'UTF-8', <$fh>, FB_PERLQQ ) )
+  {
+
+    my @chars = split( //, $line );
+    foreach my $char ( @chars )
+    {
+
+  #    utf8::decode( $char ) or die "unable to change [$char] to utf8";
+      $count[ ord( $char ) ]++;
+
+    }
+
+  }
+  close $fh or die "Unable to close $file: $!\n";
+
+
+  # ---------- ---------- ----------
+  #  http://unicode.org/faq/utf_bom.html#gen6
+  #  1114111 = 0x10FFFF - max possible value in Unicode UTF-8 v.5.2.
+  # ---------- ---------- ----------
+  my @list = ( 0 .. 1114111 );
+  @list = sort { $count[$a] || 0 <=> $count[$b] || 0 } @list if $opt_f;
+  @list = reverse @list if $opt_r;
+
+  # ---------- ---------- ----------
+  # Show what we found
+  # ---------- ---------- ----------
+  print "\t   Dec\t   Hex\tLetter\t Count\tDesc\n\n";
+  my $cnt = 1;
+  for my $idx ( @list )
+  {
+
+    if ( $count[$idx] )
+    {
+
+      print "line_num=>$cnt\tchar_code=>$idx\tcount=>$count[$idx]\n" if DEBUG;
+      ident( line_num=>$cnt,
+             char_code=>$idx,
+             count=>$count[$idx] );
+      $cnt++;
+
+    }
+
+  }
+
+  # ---------- ---------- ----------
+  # All done
+  # ---------- ---------- ----------
+  exit;
+
+  # ========== ========== ========== ========== ========== ========== ==========
+
+  # ---------- ---------- ----------
+  # These special characters don't have all
+  # this extra definition, so let's make this list
+  # ---------- ---------- ----------
+  __DATA__
+  0,NUL,C0 Control Character Set - Null (^@ \0)
+  1,SOH,C0 Control Character Set - Start of Header (^A)
+  2,STX,C0 Control Character Set - Start of Text (^B)
+  3,ETX,C0 Control Character Set - End of Text (^C)
+  4,EOT,C0 Control Character Set - End of Transmission (^D)
+  5,ENQ,C0 Control Character Set - Enquiry (^E)
+  6,ACK,C0 Control Character Set - Acknowledge (^F)
+  7,BEL,C0 Control Character Set - Bell(^G \a)
+  8,BS,C0 Control Character Set - Backspace (^H \b)
+  9,HT,C0 Control Character Set - Horizontal Tabulation (^I \t)
+  10,LF,C0 Control Character Set - Line Feed (^J \n)
+  11,VT,C0 Control Character Set - Vertical Tabulation (^K \v)
+  12,FF,C0 Control Character Set - Form Feed (^L \f)
+  13,CR,C0 Control Character Set - Carriage Return (^M \r)
+  14,SO,C0 Control Character Set - Shift Out (^N)
+  15,SI,C0 Control Character Set - Shift In (^O)
+  16,DLE,C0 Control Character Set - Data Line Escape (^P)
+  17,DC1,C0 Control Character Set - Device Control One (^Q) - XON
+  18,DC2,C0 Control Character Set - Device Control Two (^R)
+  19,DC3,C0 Control Character Set - Device Control Three (^S) - XOFF
+  20,DC4,C0 Control Character Set - Device Control Four (^T)
+  21,NAK,C0 Control Character Set - Negative Acknowledge (^U)
+  22,SYN,C0 Control Character Set - Synchronous Idle (^V)
+  23,ETB,C0 Control Character Set - End of Transmission Block (^W)
+  24,CAN,C0 Control Character Set - Cancel (^X)
+  25,EM,C0 Control Character Set - End of Medium (^Y)
+  26,SUB,C0 Control Character Set - Substitute (^Z)
+  27,ESC,C0 Control Character Set - Escape (^[, \e)
+  28,FS,C0 Control Character Set - File Separator (^\)
+  29,GS,C0 Control Character Set - Group Separator (^])
+  30,RS,C0 Control Character Set - Record Separator (^^)
+  31,US,C0 Control Character Set - Unit Separator (^_)
+  32,SP,Space
+  127,DEL,Delete (^?)
+  128,PAD,C1 Control Character Set - Padding Character
+  129,HOP,C1 Control Character Set - High Octet Preset
+  130,BPH,C1 Control Character Set - Break Permitted Here
+  131,NBH,C1 Control Character Set - No Break Here
+  132,IND,C1 Control Character Set - Index
+  133,NEL,C1 Control Character Set - Next Line
+  134,SSA,C1 Control Character Set - Start of Selected Area
+  135,ESA,C1 Control Character Set - End of Selected Area
+  136,HTS,C1 Control Character Set - Horizontal Tabulation Set
+  137,HTJ,C1 Control Character Set - Horizontal Tabulation with Justification
+  138,VTS,C1 Control Character Set - Vertical Tabulation Set
+  139,PLD,C1 Control Character Set - Partial Line Down
+  140,PLU,C1 Control Character Set - Partial Line Up
+  141,RI,C1 Control Character Set - Reverse Index
+  142,SS2,C1 Control Character Set - Single-Shift Two
+  143,SS3,C1 Control Character Set - Single-Shift Three
+  144,DCS,C1 Control Character Set - Device Control String
+  145,PU1,C1 Control Character Set - Private Use One
+  146,PU2,C1 Control Character Set - Private Use Two
+  147,STS,C1 Control Character Set - Set Transmit State
+  148,CCH,C1 Control Character Set - Cancel Character
+  149,MW,C1 Control Character Set - Message Waiting
+  150,SPA,C1 Control Character Set - Start of Guarded Protected Area
+  151,EPA,C1 Control Character Set - End of Guarded Protected Area
+  152,SOS,C1 Control Character Set - Start of String
+  153,SGCI,C1 Control Character Set - Single Graphic Character Introducer
+  154,SCI,C1 Control Character Set - Single Character Introducer
+  155,CSI,C1 Control Character Set - Control Sequence Introducer
+  156,ST,C1 Control Character Set - String Terminator
+  157,OSC,C1 Control Character Set - Operating System Command
+  158,PM,C1 Control Character Set - Privacy Message
+  159,APC,C1 Control Character Set - Application Program Command
+  __END__
+
+  # ========== ========== ========== ========== ========== ========== ==========
+

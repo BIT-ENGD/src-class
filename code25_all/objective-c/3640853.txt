@@ -1,0 +1,316 @@
+pthread_once()
+sem_wait()
+#import <Foundation/Foundation.h>
+#import <dispatch/dispatch.h>
+#include <semaphore.h>
+#include <pthread.h>
+#include <time.h>
+#include <mach/mach_time.h>  
+
+// *sigh* OSX does not have pthread_barrier (you can ignore the pthread_barrier 
+// code, the interesting stuff is lower)
+typedef int pthread_barrierattr_t;
+typedef struct
+{
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int count;
+    int tripCount;
+} pthread_barrier_t;
+
+
+int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
+{
+    if(count == 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    if(pthread_mutex_init(&barrier->mutex, 0) < 0)
+    {
+        return -1;
+    }
+    if(pthread_cond_init(&barrier->cond, 0) < 0)
+    {
+        pthread_mutex_destroy(&barrier->mutex);
+        return -1;
+    }
+    barrier->tripCount = count;
+    barrier->count = 0;
+
+    return 0;
+}
+
+int pthread_barrier_destroy(pthread_barrier_t *barrier)
+{
+    pthread_cond_destroy(&barrier->cond);
+    pthread_mutex_destroy(&barrier->mutex);
+    return 0;
+}
+
+int pthread_barrier_wait(pthread_barrier_t *barrier)
+{
+    pthread_mutex_lock(&barrier->mutex);
+    ++(barrier->count);
+    if(barrier->count >= barrier->tripCount)
+    {
+        barrier->count = 0;
+        pthread_cond_broadcast(&barrier->cond);
+        pthread_mutex_unlock(&barrier->mutex);
+        return 1;
+    }
+    else
+    {
+        pthread_cond_wait(&barrier->cond, &(barrier->mutex));
+        pthread_mutex_unlock(&barrier->mutex);
+        return 0;
+    }
+}
+
+//
+// ok you can start paying attention now...
+//
+
+void onceFunction(void)
+{
+}
+
+@interface SemaphoreTester : NSObject
+{
+    sem_t *sem1;
+    sem_t *sem2;
+    pthread_barrier_t *startBarrier;
+    pthread_barrier_t *finishBarrier;
+}
+@property (nonatomic, assign) sem_t *sem1;
+@property (nonatomic, assign) sem_t *sem2;
+@property (nonatomic, assign) pthread_barrier_t *startBarrier;
+@property (nonatomic, assign) pthread_barrier_t *finishBarrier;
+@end
+@implementation SemaphoreTester
+@synthesize sem1, sem2, startBarrier, finishBarrier;
+- (void)thread1
+{
+    pthread_barrier_wait(startBarrier);
+    for(int i = 0; i < 100000; i++)
+    {
+        sem_wait(sem1);
+        sem_post(sem2);
+    }
+    pthread_barrier_wait(finishBarrier);
+}
+
+- (void)thread2
+{
+    pthread_barrier_wait(startBarrier);
+    for(int i = 0; i < 100000; i++)
+    {
+        sem_wait(sem2);
+        sem_post(sem1);
+    }
+    pthread_barrier_wait(finishBarrier);
+}
+@end
+
+
+int main (int argc, const char * argv[]) 
+{
+    NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
+    int64_t start;
+    int64_t stop;
+
+    // semaphore non contention test
+    {
+        // grrr, OSX doesn't have sem_init
+        sem_t *sem1 = sem_open("sem1", O_CREAT, 0777, 0);
+
+        start = mach_absolute_time();
+        for(int i = 0; i < 100000; i++)
+        {
+            sem_post(sem1);
+            sem_wait(sem1);
+        }
+        stop = mach_absolute_time();
+        sem_close(sem1);
+
+        NSLog(@"0 Contention time                         = %d", stop - start);
+    }
+
+    // semaphore contention test
+    {
+        __block sem_t *sem1 = sem_open("sem1", O_CREAT, 0777, 0);
+        __block sem_t *sem2 = sem_open("sem2", O_CREAT, 0777, 0);
+        __block pthread_barrier_t startBarrier;
+        pthread_barrier_init(&startBarrier, NULL, 3);
+        __block pthread_barrier_t finishBarrier;
+        pthread_barrier_init(&finishBarrier, NULL, 3);
+
+        dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0);
+        dispatch_async(queue, ^{
+            pthread_barrier_wait(&startBarrier);
+            for(int i = 0; i < 100000; i++)
+            {
+                sem_wait(sem1);
+                sem_post(sem2);
+            }
+            pthread_barrier_wait(&finishBarrier);
+        });
+        dispatch_async(queue, ^{
+            pthread_barrier_wait(&startBarrier);
+            for(int i = 0; i < 100000; i++)
+            {
+                sem_wait(sem2);
+                sem_post(sem1);
+            }
+            pthread_barrier_wait(&finishBarrier);
+        });
+        pthread_barrier_wait(&startBarrier);
+        // start timing, everyone hit this point
+        start = mach_absolute_time();
+        // kick it off
+        sem_post(sem2);
+        pthread_barrier_wait(&finishBarrier);
+        // stop timing, everyone hit the finish point
+        stop = mach_absolute_time();
+        sem_close(sem1);
+        sem_close(sem2);
+        NSLog(@"2 Threads always contenting time          = %d", stop - start);
+        pthread_barrier_destroy(&startBarrier);
+        pthread_barrier_destroy(&finishBarrier);
+    }   
+
+    // NSTask semaphore contention test
+    {
+        sem_t *sem1 = sem_open("sem1", O_CREAT, 0777, 0);
+        sem_t *sem2 = sem_open("sem2", O_CREAT, 0777, 0);
+        pthread_barrier_t startBarrier;
+        pthread_barrier_init(&startBarrier, NULL, 3);
+        pthread_barrier_t finishBarrier;
+        pthread_barrier_init(&finishBarrier, NULL, 3);
+
+        SemaphoreTester *tester = [[[SemaphoreTester alloc] init] autorelease];
+        tester.sem1 = sem1;
+        tester.sem2 = sem2;
+        tester.startBarrier = &startBarrier;
+        tester.finishBarrier = &finishBarrier;
+        [NSThread detachNewThreadSelector:@selector(thread1) toTarget:tester withObject:nil];
+        [NSThread detachNewThreadSelector:@selector(thread2) toTarget:tester withObject:nil];
+        pthread_barrier_wait(&startBarrier);
+        // start timing, everyone hit this point
+        start = mach_absolute_time();
+        // kick it off
+        sem_post(sem2);
+        pthread_barrier_wait(&finishBarrier);
+        // stop timing, everyone hit the finish point
+        stop = mach_absolute_time();
+        sem_close(sem1);
+        sem_close(sem2);
+        NSLog(@"2 NSTasks always contenting time          = %d", stop - start);
+        pthread_barrier_destroy(&startBarrier);
+        pthread_barrier_destroy(&finishBarrier);
+    }   
+
+    // dispatch_semaphore non contention test
+    {
+        dispatch_semaphore_t sem1 = dispatch_semaphore_create(0);
+
+        start = mach_absolute_time();
+        for(int i = 0; i < 100000; i++)
+        {
+            dispatch_semaphore_signal(sem1);
+            dispatch_semaphore_wait(sem1, DISPATCH_TIME_FOREVER);
+        }
+        stop = mach_absolute_time();
+
+        NSLog(@"Dispatch 0 Contention time                = %d", stop - start);
+    }
+
+
+    // dispatch_semaphore non contention test
+    {   
+        __block dispatch_semaphore_t sem1 = dispatch_semaphore_create(0);
+        __block dispatch_semaphore_t sem2 = dispatch_semaphore_create(0);
+        __block pthread_barrier_t startBarrier;
+        pthread_barrier_init(&startBarrier, NULL, 3);
+        __block pthread_barrier_t finishBarrier;
+        pthread_barrier_init(&finishBarrier, NULL, 3);
+
+        dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0);
+        dispatch_async(queue, ^{
+            pthread_barrier_wait(&startBarrier);
+            for(int i = 0; i < 100000; i++)
+            {
+                dispatch_semaphore_wait(sem1, DISPATCH_TIME_FOREVER);
+                dispatch_semaphore_signal(sem2);
+            }
+            pthread_barrier_wait(&finishBarrier);
+        });
+        dispatch_async(queue, ^{
+            pthread_barrier_wait(&startBarrier);
+            for(int i = 0; i < 100000; i++)
+            {
+                dispatch_semaphore_wait(sem2, DISPATCH_TIME_FOREVER);
+                dispatch_semaphore_signal(sem1);
+            }
+            pthread_barrier_wait(&finishBarrier);
+        });
+        pthread_barrier_wait(&startBarrier);
+        // start timing, everyone hit this point
+        start = mach_absolute_time();
+        // kick it off
+        dispatch_semaphore_signal(sem2);
+        pthread_barrier_wait(&finishBarrier);
+        // stop timing, everyone hit the finish point
+        stop = mach_absolute_time();
+
+        NSLog(@"Dispatch 2 Threads always contenting time = %d", stop - start);
+        pthread_barrier_destroy(&startBarrier);
+        pthread_barrier_destroy(&finishBarrier);
+    }   
+
+    // pthread_once time
+    {
+        pthread_once_t once = PTHREAD_ONCE_INIT;
+        start = mach_absolute_time();
+        for(int i = 0; i <100000; i++)
+        {
+            pthread_once(&once, onceFunction);
+        }
+        stop = mach_absolute_time();
+
+        NSLog(@"pthread_once time  = %d", stop - start);
+    }
+
+    // dispatch_once time
+    {
+        dispatch_once_t once = 0;
+        start = mach_absolute_time();
+        for(int i = 0; i <100000; i++)
+        {
+            dispatch_once(&once, ^{});
+        }
+        stop = mach_absolute_time();
+
+        NSLog(@"dispatch_once time = %d", stop - start);
+    }
+
+    [pool drain];
+    return 0;
+}
+
+sem_wait()
+sem_post()
+sem_wait()
+sem_post()
+sem_wait()
+sem_post()
+dispatch_semaphore_wait()
+dispatch_semaphore_signal()
+dispatch_semaphore_wait()
+dispatch_semaphore_signal()
+sem_wait()
+sem_post()
+dispatch_once()
+pthread_once()
+dispatch_once()
+pthread_once()

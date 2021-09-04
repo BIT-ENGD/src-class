@@ -1,0 +1,79 @@
+    {- 2012-05-16
+
+    ghc --make -optl-mwindows fileName.hs
+
+option -mwindows is passed to the linker!
+attempting to read from stdin with -mwindows may cause a runtime error
+any output on stdout/stderr will be lost.
+ghc links console app with stdout/stderr as default
+-}
+
+
+
+--import Graphics.Win32
+import Graphics.Win32 hiding (messageBox, c_MessageBox) -- bugfix
+import System.Win32.DLL
+import Control.Exception (bracket)
+import Foreign
+import System.Exit
+
+
+
+
+-- bugfix whole msg box
+messageBox :: HWND -> String -> String -> MBStyle -> IO MBStatus
+messageBox wnd text caption style =
+  withTString text $ \ c_text ->
+  withTString caption $ \ c_caption ->
+  failIfZero "MessageBox" $ c_MessageBox wnd c_text c_caption style
+foreign import stdcall safe "windows.h MessageBoxW"
+  c_MessageBox :: HWND -> LPCTSTR -> LPCTSTR -> MBStyle -> IO MBStatus
+
+
+main :: IO ()
+main = do
+    mainInstance <- getModuleHandle Nothing
+    hwnd <- createWindow_ 200 200 wndProc mainInstance
+    createButton_ hwnd mainInstance
+    messagePump hwnd
+
+wndProc :: HWND -> WindowMessage -> WPARAM -> LPARAM -> IO LRESULT
+wndProc hwnd wmsg wParam lParam
+    | wmsg == wM_DESTROY = do
+        sendMessage hwnd wM_QUIT 1 0
+        return 0
+    | wmsg == wM_COMMAND && wParam == 3 = do
+        messageBox nullPtr "You pressed me." "Haskell msg" 0
+        return 0
+    | otherwise = defWindowProc (Just hwnd) wmsg wParam lParam
+
+
+createWindow_ :: Int -> Int -> WindowClosure -> HINSTANCE -> IO HWND
+createWindow_ width height wndProc mainInstance = do
+    let winClass = mkClassName "Window Empty"
+    icon <- loadIcon Nothing iDI_APPLICATION
+    cursor <- loadCursor Nothing iDC_ARROW
+    bgBrush <- createSolidBrush (rgb 255 0 0)
+    registerClass (cS_VREDRAW + cS_HREDRAW, mainInstance, Just icon, Just cursor, Just bgBrush, Nothing, winClass)
+    w <- createWindow winClass "Window Empty" wS_OVERLAPPEDWINDOW Nothing Nothing (Just width) (Just height) Nothing Nothing mainInstance wndProc
+    showWindow w sW_SHOWNORMAL
+    updateWindow w
+    return w
+
+
+createButton_ :: HWND -> HINSTANCE -> IO ()
+createButton_ hwnd mainInstance = do
+    hBtn <- createButton "Button test" wS_EX_CLIENTEDGE (bS_PUSHBUTTON + wS_VISIBLE + wS_CHILD) (Just 50) (Just 80) (Just 80) (Just 20) (Just hwnd) (Just (castUINTToPtr 3)) mainInstance
+    return ()
+
+
+messagePump :: HWND -> IO ()
+messagePump hwnd = allocaMessage $ \ msg ->
+    let pump = do
+        getMessage msg (Just hwnd) `catch` \ _ -> exitWith ExitSuccess
+        translateMessage msg
+        dispatchMessage msg
+        pump
+    in pump
+
+ghc --make -optl-mwindows fileName.hs

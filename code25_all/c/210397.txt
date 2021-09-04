@@ -1,0 +1,61 @@
+#include <kvm.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/sysctl.h>
+#include <paths.h>
+
+int
+main(void) {
+    char errbuf[1024];
+    kvm_t *kd = kvm_openfiles(_PATH_DEVNULL, NULL, _PATH_DEVNULL, O_RDONLY, errbuf);
+    int num_procs;
+    if (!kd) { fprintf(stderr, "kvm_openfiles failed : %s\n", errbuf); return 0; }
+    struct kinfo_proc *proc_table = kvm_getprocs(kd, KERN_PROC_ALL, 0, &num_procs);
+
+    for (int i = 0; i < num_procs; i++) {
+        struct kinfo_proc *pproc = &proc_table[i];
+        char **proc_argv = kvm_getargv(kd, pproc, 0);
+        printf("%p\n", proc_argv);
+    }
+
+    kvm_close(kd);
+    return 0;
+}
+
+kvm_getargv()
+kvm_openfiles()
+/dev/mem: No such file
+or directory
+#include <sys/sysctl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#define pid_of(pproc) pproc->kp_proc.p_pid
+
+int
+main(void) {
+
+   int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+   int buffer_size;
+   sysctl(mib, 4, NULL, &buffer_size, NULL, 0);
+
+   struct kinfo_proc *result = malloc(buffer_size);
+   sysctl(mib, 4, result, &buffer_size, NULL, 0);
+
+   int num_procs = buffer_size / sizeof(struct kinfo_proc);
+   for (int i = 0; i < num_procs; i++) {
+       struct kinfo_proc *pproc = result + i;
+       int mib[3] = { CTL_KERN, KERN_PROCARGS, pid_of(pproc) }; // KERN_PROC_ARGS is not defined
+       char *proc_argv;
+       int argv_len;
+       sysctl(mib, 3, NULL, &argv_len, NULL, 0);
+       proc_argv = malloc(sizeof(char) * argv_len);
+       sysctl(mib, 3, proc_argv, &argv_len, NULL, 0);
+       fwrite(proc_argv, sizeof(char), argv_len, stdout);
+       printf("\n");
+       free(proc_argv);
+   }
+
+   return 0;
+}
+

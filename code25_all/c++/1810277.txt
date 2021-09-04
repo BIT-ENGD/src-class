@@ -1,0 +1,108 @@
+// Interpret the command line arguments
+unsigned short port = 8080;
+
+if ( (argc != 1) && (argc != 3) && (argc != 5) ) {
+  cerr << "Usage: " << argv[0];
+  cerr << " -p <port number> -d <base directory>" << endl;
+  return 1;
+}
+else {
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "-p") == 0)
+      port = (unsigned short) atoi(argv[++i]);
+    else if (strcmp(argv[i], "-d") == 0)
+      base_directory = argv[++i];
+  }
+}
+// if base_directory was not given, set it to current working directory
+if ( !base_directory ) {
+  base_directory = getcwd(base_directory, 100);
+}
+
+// Create TCP socket
+int tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
+if (tcp_sock < 0) {
+  cerr << "Unable to create TCP socket." << endl;
+  return 2;
+}
+
+// Create server socket
+sockaddr_in server;
+server.sin_family = AF_INET;
+server.sin_port = htons( port );
+server.sin_addr.s_addr = INADDR_ANY;
+
+// Bind the socket
+if (bind(tcp_sock, (sockaddr*)&server, sizeof(server)) < 0) {
+  cerr << "Unable to bind TCP socket." << endl;
+  return 3;
+}
+
+// Listen for a connection request on TCP port
+listen(tcp_sock, 5);
+
+// Create HTTP_Request object and start a while loop of accepting connections
+char buffer[2000];
+int bytes_recv = 0;
+int recv_len = 0;
+string error_reply;
+
+HTTP_Response* response;
+
+while (true) {
+  int acc_tcp_sock = accept(tcp_sock, NULL, NULL);
+  if (acc_tcp_sock == -1) {
+    cerr << "Unable to open TCP connection with client." << endl;
+  }
+  do {
+    // may want to do just one recv
+    recv_len = recv( acc_tcp_sock, buffer + bytes_recv,
+      2000 - bytes_recv, 0 );
+    bytes_recv += recv_len;
+  } while (false);
+  bytes_recv = 0;
+  // may want to see if this causes a memory leak
+  HTTP_Request* request = HTTP_Request::Parse(buffer, 2000);
+
+  response = handle_request(request); // function to handle the request
+
+  // Put response header into buffer
+  response->Print( buffer, 2000 );
+
+  // if 200 and GET then send header with file
+  if ( response->Get_code() == 200 ) {
+    // send response header
+    if ( send( acc_tcp_sock, buffer, strlen(buffer), 0 ) < 0 ) {
+      cerr << "Unable to send response header to client." << endl;
+    }
+    if ( method == "GET" ) {
+      // send file
+      while ( true ) {
+        fgets( buffer, 2000, returned_file );
+        if ( feof( returned_file ) ) break;
+        if ( send( acc_tcp_sock, buffer, strlen(buffer), 0 ) < 0 ) {
+          cerr << "Unable to send file in response to client." << endl;
+        }
+      }
+    }
+    fclose( returned_file ); // close file
+  }
+  else {
+    if ( method == "GET" ) {
+      error_reply = buffer + error_page;
+      if ( send( acc_tcp_sock, error_reply.c_str(), error_reply.length(), 0 ) < 0 ) {
+        cerr << "Unable to send response to client." << endl;
+      }
+    }
+    else {
+      if ( send( acc_tcp_sock, buffer, strlen(buffer), 0 ) < 0 ) {
+        cerr << "Unable to send respone header to client." << endl;
+      }
+    }
+  }
+
+  close( acc_tcp_sock ); // close the connection
+}
+
+return 0;
+

@@ -1,0 +1,64 @@
+1
+2
+3
+.
+.
+.
+n
+
+class WorkerThread(threading.Thread):
+    def __init__(self):
+        self.completed = 0
+        self.process = None
+        self.lock = threading.RLock()
+        threading.Thread.__init__(self)
+
+    def run(self):
+        cmd = ["/path/to/script", "arg1", "arg2"]
+        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, shell=False)
+        #flags = fcntl.fcntl(self.process.stdout, fcntl.F_GETFL)
+        #fcntl.fcntl(self.process.stdout.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    def get_completed(self):
+        self.lock.acquire();
+        fd = select.select([self.process.stdout.fileno()], [], [], 5)[0]
+        if fd:
+            self.data += os.read(fd, 1)
+            try:
+                self.completed = int(self.data.split("\n")[-2])
+            except IndexError:
+                pass
+        self.lock.release()
+        return self.completed
+
+class ThreadManager():
+    def __init__(self):
+        self.pool = []
+        self.running = []
+        self.lock = threading.Lock()
+
+    def clean_pool(self, pool):
+        for worker in [x for x in pool is not x.isAlive()]:
+            worker.join()
+            pool.remove(worker)
+            del worker
+        return pool
+
+    def run(self, concurrent=5):
+        while len(self.running) + len(self.pool) > 0:
+            self.clean_pool(self.running)
+            n = min(max(concurrent - len(self.running), 0), len(self.pool))
+            if n > 0:
+                for worker in self.pool[0:n]:
+                    worker.start()
+                self.running.extend(self.pool[0:n])
+                del self.pool[0:n]
+            time.sleep(.01)
+         for worker in self.running + self.pool:
+             worker.join()
+
+threadManager = ThreadManager()
+for i in xrange(0, 5):
+    threadManager.pool.append(WorkerThread())
+threadManager.run()
+

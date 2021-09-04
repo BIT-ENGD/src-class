@@ -1,0 +1,506 @@
+
+
+
+class PremiumSitesController extends AppController {
+
+    var $name = 'PremiumSites';
+
+    function index() {
+        $cost = 5;
+
+        //TODO: Add no site check
+
+        if (!empty($this->data)) {
+            if($this->data['PremiumSite']['type'] == "1") {
+                $length = (int) $this->data['PremiumSite']['length'];
+                $length++;
+                $this->data['PremiumSite']['upfront_weeks'] = $length;
+                $this->data['PremiumSite']['upfront_expiration'] = date('Y-m-d H:i:s', strtotime(sprintf('+%s weeks', $length)));
+                $this->data['PremiumSite']['cost'] = $cost * $length;
+            } else {
+                $this->data['PremiumSite']['cost'] = $cost;
+            }
+
+            $this->PremiumSite->create();
+            if ($this->PremiumSite->save($this->data)) {
+                $this->redirect(array('controller' => 'paypal_notifications', 'action' => 'send', $this->PremiumSite->getLastInsertID()));
+            } else {
+                $this->Session->setFlash('Please fix the problems below', true, array('class' => 'error'));
+            }
+        }
+
+        $this->set('sites',$this->PremiumSite->Site->find('list',array('conditions' => array('User.id' => $this->Auth->user('id'), 'Site.is_deleted' => 0), 'recursive' => 0)));
+    }
+
+}
+
+
+
+class PremiumSitesController extends AppController {
+
+    var $name = 'PremiumSites';
+
+    function index() {
+        $cost = 5;
+
+        //TODO: Add no site check
+
+        if (!empty($this->data)) {
+            if($this->data['PremiumSite']['type'] == "1") {
+                $length = (int) $this->data['PremiumSite']['length'];
+                $length++;
+                $this->data['PremiumSite']['upfront_weeks'] = $length;
+                $this->data['PremiumSite']['upfront_expiration'] = date('Y-m-d H:i:s', strtotime(sprintf('+%s weeks', $length)));
+                $this->data['PremiumSite']['cost'] = $cost * $length;
+            } else {
+                $this->data['PremiumSite']['cost'] = $cost;
+            }
+
+            $this->PremiumSite->create();
+            if ($this->PremiumSite->save($this->data)) {
+                $this->redirect(array('controller' => 'paypal_notifications', 'action' => 'send', $this->PremiumSite->getLastInsertID()));
+            } else {
+                $this->Session->setFlash('Please fix the problems below', true, array('class' => 'error'));
+            }
+        }
+
+        $this->set('sites',$this->PremiumSite->Site->find('list',array('conditions' => array('User.id' => $this->Auth->user('id'), 'Site.is_deleted' => 0), 'recursive' => 0)));
+    }
+
+}
+
+
+
+
+
+class PaypalNotificationsController extends AppController {
+
+    var $name = 'PaypalNotifications';
+
+    function beforeFilter() {
+        parent::beforeFilter();
+        $this->Auth->allow('process');
+    }
+
+    /**
+     * Compiles premium info and send the user to Paypal
+     * 
+     * @param integer $premiumID an id from PremiumSite 
+     * @return null
+     */
+    function send($premiumID) {
+
+        if(empty($premiumID)) {
+            $this->Session->setFlash('There was a problem, please try again.', true, array('class' => 'error'));
+            $this->redirect(array('controller' => 'premium_sites', 'action' => 'index'));
+        }
+
+        $data = $this->PaypalNotification->PremiumSite->find('first', array('conditions' => array('PremiumSite.id' => $premiumID), 'recursive' => 0));
+
+        if($data['PremiumSite']['type'] == '0') {
+            //Subscription
+            $paypalData = array(
+                'cmd' => '_xclick-subscriptions',
+                'business'=> '',
+                'notify_url' => '',
+                'return' => '',
+                'cancel_return' => '',
+                'item_name' => '',
+                'item_number' => $premiumID,
+                'currency_code' => 'USD',
+                'no_note' => '1',
+                'no_shipping' => '1',
+                'a3' => $data['PremiumSite']['cost'],
+                'p3' => '1',
+                't3' => 'W',
+                'src' => '1',
+                'sra' => '1'
+            );
+
+            if($data['Site']['is_premium_used'] == '0') {
+                //Apply two week trial if unused
+                $trialData = array(
+                    'a1' => '0',
+                    'p1' => '2',
+                    't1' => 'W',
+                );
+                $paypalData = array_merge($paypalData, $trialData);
+            }
+        } else {
+            //Upfront payment
+
+            $paypalData = array(
+                'cmd' => '_xclick',
+                'business'=> '',
+                'notify_url' => '',
+                'return' => '',
+                'cancel_return' => '',
+                'item_name' => '',
+                'item_number' => $premiumID,
+                'currency_code' => 'USD',
+                'no_note' => '1',
+                'no_shipping' => '1',
+                'amount' => $data['PremiumSite']['cost'],
+            );
+        }
+
+        $this->layout = null;
+        $this->set('data', $paypalData);
+    }
+
+    /**
+     * IPN Callback from Paypal. Validates data, inserts it
+     * into the db and triggers __processTransaction()
+     * 
+     * @return null
+     */
+    function process() {
+        //Original code from http://www.studiocanaria.com/articles/paypal_ipn_controller_for_cakephp
+        //Have we been sent an IPN here...
+        if (!empty($_POST)) {
+            //...we have so add 'cmd' 'notify-validate' to a transaction variable
+            $transaction = 'cmd=_notify-validate';
+            //and add everything paypal has sent to the transaction
+            foreach ($_POST as $key => $value) {
+                $value = urlencode(stripslashes($value));
+                $transaction .= "&$key=$value";
+            }
+            //create headers for post back
+            $header = "POST /cgi-bin/webscr HTTP/1.0\r\n";
+            $header .= "Content-Type: application/x-www-form-urlencoded\r\n";
+            $header .= "Content-Length: " . strlen($transaction) . "\r\n\r\n";
+            //If this is a sandbox transaction then 'test_ipn' will be set to '1'
+            if (isset($_POST['test_ipn'])) {
+                $server = 'www.sandbox.paypal.com';
+            } else {
+                $server = 'www.paypal.com';
+            }
+            //and post the transaction back for validation
+            $fp = fsockopen('ssl://' . $server, 443, $errno, $errstr, 30);
+            //Check we got a connection and response...
+            if (!$fp) {
+                //...didn't get a response so log error in error logs
+                $this->log('HTTP Error in PaypalNotifications::process while posting back to PayPal: Transaction=' .
+                    $transaction);
+            } else {
+                //...got a response, so we'll through the response looking for VERIFIED or INVALID
+                fputs($fp, $header . $transaction);
+                while (!feof($fp)) {
+                    $response = fgets($fp, 1024);
+                    if (strcmp($response, "VERIFIED") == 0) {
+                        //The response is VERIFIED so format the $_POST for processing
+                        $notification = array();
+
+                        //Minor change to use item_id as premium_site_id
+                        $notification['PaypalNotification'] = array_merge($_POST, array('premium_site_id' => $_POST['item_number']));
+                        $this->PaypalNotification->save($notification);
+
+                        $this->__processTransaction($this->PaypalNotification->id);
+                    } else
+                        if (strcmp($response, "INVALID") == 0) {
+                            //The response is INVALID so log it for investigation
+                            $this->log('Found Invalid:' . $transaction);
+                        }
+                }
+                fclose($fp);
+            }
+        }
+        //Redirect
+        $this->redirect('/');
+    }
+
+    /**
+     * Enables premium site after payment
+     * 
+     * @param integer $id uses id from PaypalNotification
+     * @return null
+     */
+    function __processTransaction($id) {
+        $transaction = $this->PaypalNotification->find('first', array('conditions' => array('PaypalNotification.id' => $id), 'recursive' => 0));
+        $txn_type = $transaction['PaypalNotification']['txn_type'];
+
+        if($txn_type == 'subscr_signup' || $transaction['PaypalNotification']['payment_status'] == 'Completed') {
+            //New subscription or payment
+            $data = array(
+                'PremiumSite' => array(
+                    'id' => $transaction['PremiumSite']['id'],
+                    'is_active' => '1',
+                    'is_paid' => '1'
+                ),
+                'Site' => array(
+                    'id' => $transaction['PremiumSite']['site_id'],
+                    'is_premium' => '1'
+                )
+            );
+
+            //Mark trial used only on subscriptions
+            if($txn_type == 'subscr_signup') $data['Site']['is_premium_used'] = '1';
+
+            $this->PaypalNotification->PremiumSite->saveAll($data);
+
+        } elseif($txn_type == 'subscr-cancel' || $txn_type == 'subscr-eot') {
+            //Subscription cancellation or other problem
+            $data = array(
+                'PremiumSite' => array(
+                    'id' => $transaction['PremiumSite']['id'],
+                    'is_active' => '0',
+                ),
+                'Site' => array(
+                    'id' => $transaction['PremiumSite']['site_id'],
+                    'is_premium' => '0'
+                )
+            );
+
+            $this->PaypalNotification->PremiumSite->saveAll($data);
+        }
+
+
+    }
+
+    /**
+     * Used for testing
+     * 
+     * @return null
+     */
+    function index() {
+        $this->__processTransaction('3');
+    }
+}
+
+
+
+class PaypalNotificationsController extends AppController {
+
+    var $name = 'PaypalNotifications';
+
+    function beforeFilter() {
+        parent::beforeFilter();
+        $this->Auth->allow('process');
+    }
+
+    /**
+     * Compiles premium info and send the user to Paypal
+     * 
+     * @param integer $premiumID an id from PremiumSite 
+     * @return null
+     */
+    function send($premiumID) {
+
+        if(empty($premiumID)) {
+            $this->Session->setFlash('There was a problem, please try again.', true, array('class' => 'error'));
+            $this->redirect(array('controller' => 'premium_sites', 'action' => 'index'));
+        }
+
+        $data = $this->PaypalNotification->PremiumSite->find('first', array('conditions' => array('PremiumSite.id' => $premiumID), 'recursive' => 0));
+
+        if($data['PremiumSite']['type'] == '0') {
+            //Subscription
+            $paypalData = array(
+                'cmd' => '_xclick-subscriptions',
+                'business'=> '',
+                'notify_url' => '',
+                'return' => '',
+                'cancel_return' => '',
+                'item_name' => '',
+                'item_number' => $premiumID,
+                'currency_code' => 'USD',
+                'no_note' => '1',
+                'no_shipping' => '1',
+                'a3' => $data['PremiumSite']['cost'],
+                'p3' => '1',
+                't3' => 'W',
+                'src' => '1',
+                'sra' => '1'
+            );
+
+            if($data['Site']['is_premium_used'] == '0') {
+                //Apply two week trial if unused
+                $trialData = array(
+                    'a1' => '0',
+                    'p1' => '2',
+                    't1' => 'W',
+                );
+                $paypalData = array_merge($paypalData, $trialData);
+            }
+        } else {
+            //Upfront payment
+
+            $paypalData = array(
+                'cmd' => '_xclick',
+                'business'=> '',
+                'notify_url' => '',
+                'return' => '',
+                'cancel_return' => '',
+                'item_name' => '',
+                'item_number' => $premiumID,
+                'currency_code' => 'USD',
+                'no_note' => '1',
+                'no_shipping' => '1',
+                'amount' => $data['PremiumSite']['cost'],
+            );
+        }
+
+        $this->layout = null;
+        $this->set('data', $paypalData);
+    }
+
+    /**
+     * IPN Callback from Paypal. Validates data, inserts it
+     * into the db and triggers __processTransaction()
+     * 
+     * @return null
+     */
+    function process() {
+        //Original code from http://www.studiocanaria.com/articles/paypal_ipn_controller_for_cakephp
+        //Have we been sent an IPN here...
+        if (!empty($_POST)) {
+            //...we have so add 'cmd' 'notify-validate' to a transaction variable
+            $transaction = 'cmd=_notify-validate';
+            //and add everything paypal has sent to the transaction
+            foreach ($_POST as $key => $value) {
+                $value = urlencode(stripslashes($value));
+                $transaction .= "&$key=$value";
+            }
+            //create headers for post back
+            $header = "POST /cgi-bin/webscr HTTP/1.0\r\n";
+            $header .= "Content-Type: application/x-www-form-urlencoded\r\n";
+            $header .= "Content-Length: " . strlen($transaction) . "\r\n\r\n";
+            //If this is a sandbox transaction then 'test_ipn' will be set to '1'
+            if (isset($_POST['test_ipn'])) {
+                $server = 'www.sandbox.paypal.com';
+            } else {
+                $server = 'www.paypal.com';
+            }
+            //and post the transaction back for validation
+            $fp = fsockopen('ssl://' . $server, 443, $errno, $errstr, 30);
+            //Check we got a connection and response...
+            if (!$fp) {
+                //...didn't get a response so log error in error logs
+                $this->log('HTTP Error in PaypalNotifications::process while posting back to PayPal: Transaction=' .
+                    $transaction);
+            } else {
+                //...got a response, so we'll through the response looking for VERIFIED or INVALID
+                fputs($fp, $header . $transaction);
+                while (!feof($fp)) {
+                    $response = fgets($fp, 1024);
+                    if (strcmp($response, "VERIFIED") == 0) {
+                        //The response is VERIFIED so format the $_POST for processing
+                        $notification = array();
+
+                        //Minor change to use item_id as premium_site_id
+                        $notification['PaypalNotification'] = array_merge($_POST, array('premium_site_id' => $_POST['item_number']));
+                        $this->PaypalNotification->save($notification);
+
+                        $this->__processTransaction($this->PaypalNotification->id);
+                    } else
+                        if (strcmp($response, "INVALID") == 0) {
+                            //The response is INVALID so log it for investigation
+                            $this->log('Found Invalid:' . $transaction);
+                        }
+                }
+                fclose($fp);
+            }
+        }
+        //Redirect
+        $this->redirect('/');
+    }
+
+    /**
+     * Enables premium site after payment
+     * 
+     * @param integer $id uses id from PaypalNotification
+     * @return null
+     */
+    function __processTransaction($id) {
+        $transaction = $this->PaypalNotification->find('first', array('conditions' => array('PaypalNotification.id' => $id), 'recursive' => 0));
+        $txn_type = $transaction['PaypalNotification']['txn_type'];
+
+        if($txn_type == 'subscr_signup' || $transaction['PaypalNotification']['payment_status'] == 'Completed') {
+            //New subscription or payment
+            $data = array(
+                'PremiumSite' => array(
+                    'id' => $transaction['PremiumSite']['id'],
+                    'is_active' => '1',
+                    'is_paid' => '1'
+                ),
+                'Site' => array(
+                    'id' => $transaction['PremiumSite']['site_id'],
+                    'is_premium' => '1'
+                )
+            );
+
+            //Mark trial used only on subscriptions
+            if($txn_type == 'subscr_signup') $data['Site']['is_premium_used'] = '1';
+
+            $this->PaypalNotification->PremiumSite->saveAll($data);
+
+        } elseif($txn_type == 'subscr-cancel' || $txn_type == 'subscr-eot') {
+            //Subscription cancellation or other problem
+            $data = array(
+                'PremiumSite' => array(
+                    'id' => $transaction['PremiumSite']['id'],
+                    'is_active' => '0',
+                ),
+                'Site' => array(
+                    'id' => $transaction['PremiumSite']['site_id'],
+                    'is_premium' => '0'
+                )
+            );
+
+            $this->PaypalNotification->PremiumSite->saveAll($data);
+        }
+
+
+    }
+
+    /**
+     * Used for testing
+     * 
+     * @return null
+     */
+    function index() {
+        $this->__processTransaction('3');
+    }
+}
+
+
+
+
+
+echo "<html>\n";
+echo "<head><title>Processing Payment...</title></head>\n";
+echo "<body onLoad=\"document.form.submit();\">\n";
+echo "<center><h3>Redirecting to paypal, please wait...</h3></center>\n";
+
+echo $form->create(null, array('url' => 'https://www.sandbox.paypal.com/cgi-bin/webscr', 'type' => 'post', 'name' => 'form'));
+
+foreach ($data as $field => $value) {
+    //Using $form->hidden sends in the cake style, data[PremiumSite][whatever]
+    echo "<input type=\"hidden\" name=\"$field\" value=\"$value\">";
+}
+
+echo $form->end();
+
+echo "</form>\n";
+echo "</body></html>\n";
+
+
+
+echo "<html>\n";
+echo "<head><title>Processing Payment...</title></head>\n";
+echo "<body onLoad=\"document.form.submit();\">\n";
+echo "<center><h3>Redirecting to paypal, please wait...</h3></center>\n";
+
+echo $form->create(null, array('url' => 'https://www.sandbox.paypal.com/cgi-bin/webscr', 'type' => 'post', 'name' => 'form'));
+
+foreach ($data as $field => $value) {
+    //Using $form->hidden sends in the cake style, data[PremiumSite][whatever]
+    echo "<input type=\"hidden\" name=\"$field\" value=\"$value\">";
+}
+
+echo $form->end();
+
+echo "</form>\n";
+echo "</body></html>\n";
+
+

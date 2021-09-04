@@ -1,0 +1,76 @@
+#!/usr/bin/perl
+
+use strict;
+
+my $qtool = "/usr/local/bin/qtool.pl";
+my $mqueue_directory = "/var/spool/mqueue";
+my $messages_removed = 0;
+my @rf_id;
+my @date;
+my $temp
+my @write_array;
+my $to;
+my $from;
+use Untaint;
+use File::Find;
+# Recursively find all files and directories in $mqueue_directory
+use Untaint;
+find(\&wanted, $mqueue_directory);
+
+sub wanted {
+   # Is this a qf* file?
+   if ( /^qf(\w{14})/ ) {
+      my $qf_file = $_;
+      my $queue_id = $1;
+      my $deferred = 0;
+      my $from_postmaster = 0;
+      my $delivery_failure = 0;
+      my $junk_mail = 0;
+      open (QF_FILE, $_);
+      while(<QF_FILE>) {
+         $deferred = 1 if ( /^MTemporarily/ | /^Mhost map: lookup/ | /^MUser unknown/ );
+         $delivery_failure = 1 if \
+            ( /^H\?\?Subject: DELIVERY FAILURE: (User|Recipient)/ );
+         if ( $deferred && $from_postmaster && $delivery_failure ) {
+            $junk_mail = 1;
+                     }
+      $temp=$qf_file.':';
+      if($junk_mail){
+      while(<QF_FILE>){
+      chomp;
+      if(/rRFC822;/){
+      $temp.=subdtr($_,9)
+      }
+      if(/H?D?Date:/){
+      $temp.=':'.substr($_,10);
+      push @write_array, $temp."\n";
+      }
+      }
+      }
+      }
+      close (QF_FILE);
+      my $subqueue_id = substr($queue_id,9);
+      if ($junk_mail) {
+         print "Removing $queue_id...\n";
+         system "perl $qtool -d $mqueue_directory*$queue_id";
+         $messages_removed++;
+      }
+   }
+}
+open (MYFILE,">/scripts/mail.txt");
+print MYFILE "@write_array";
+close (MYFILE);
+$to='yagya@mydomain.in';
+$from='system@mydomain.in';
+$subject='deleted mails';
+
+open(MAIL,"|/usr/sbin/sendmail -t");
+print MAIL "To: $to\n";
+print MAIL "From: $from\n";
+print MAIL "Subject: $subject\n\n";
+print MAIL "@write_array\n";
+close(MAIL);
+
+print "\n$messages_removed total \"double bounce\" message(s) removed from ";
+print "mail queue.\n";
+

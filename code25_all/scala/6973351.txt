@@ -1,0 +1,55 @@
+Actor
+GibberishException
+"""throw a GibberishException for unrecognized messages""" in {
+  //define a service that creates gibberish-speaking repositories
+  val stubs = new svcStub(
+    actorOf(new Actor{
+      def receive = { case _ => {
+          self.channel ! "you're savage with the cabbage"
+        }
+      }
+    })
+  )
+  val model = actorOf(new HomeModel(stubs.svc,stubs.store))
+  val supervisor = Supervisor(
+    SupervisorConfig(
+      OneForOneStrategy(List(classOf[Exception]), 3, 1000),
+      Supervise(model,Permanent) :: Nil
+    )
+  )
+  try{
+    intercept[GibberishException] {
+      supervisor.start
+      model !! "plan"
+    }
+  } finally {
+    supervisor.shutdown
+  }
+  stubs.store.plan should equal (null)
+  stubs.svcIsOpen should be (false)
+}
+
+class HomeModel(service: PlanService, store: HomeStore)
+extends Actor {
+  private val loaderRepo = service.getRepo()
+  private var view: Channel[Any] = null
+
+  override def postStop() = {
+    service.close()
+  }
+
+  def receive = {
+    case "plan" => {
+      view=self.channel
+      loaderRepo ! LoadRequest()
+    }
+    case p: Plan => {
+      store.plan=p
+      view ! store.plan
+    }
+    case _ => throw new GibberishException(_)
+  }
+}
+
+Supervisor
+Supervisor

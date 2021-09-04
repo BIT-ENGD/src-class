@@ -1,0 +1,105 @@
+onsets
+{-# LANGUAGE ScopedTypeVariables #-}
+module Main where
+
+import GHC.Float
+import Debug.Trace
+import Control.Concurrent
+import Control.Monad.Fix
+import Control.Monad
+
+import Graphics.Gloss
+import Graphics.Gloss.Interface.Pure.Simulate
+import Graphics.Gloss.Data.Color
+
+import qualified Sound.File.Sndfile as Snd
+import qualified Sound.File.Sndfile.Buffer.Vector as B
+import qualified Graphics.UI.SDL as SDL
+import qualified Graphics.UI.SDL.Mixer as Mix
+
+--My own libraries
+import Sound.Analysis.Spectrum
+import Sound.Analysis.SpectralFlux
+import Sound.Analysis.Onset
+import Sound.Data.Buffers
+
+--(TimeElapsed, ToDraw, ToBeDrawn)
+type Time = Float
+type DrawableOnsets = (Time, Onset, OnsetStream)
+
+main = do
+    --bs holds our BufferS
+    (info, Just (bs :: B.Buffer Double)) <- Snd.readFile "./downtheroad.wav"
+    --Convert to an unboxed array
+    let b = sterilize bs
+
+    --Grab all of the sound file
+    let ct = (truncate $ (fromIntegral $ Snd.frames info)/2048)
+    let i = StreamInfo 1024 44100 2
+
+    let b' = sampleRawPCM 0 ct (i, b)
+    let s = pcmStream b'
+
+    --Very expensive computations
+    let freqs   = freqStream s --Get frequency bins
+    let fluxes  = fluxStream freqs --Get spectral flux
+    let onsets = onset fluxes --Get onsets based on spectral flux
+
+    let onsetModel = makeModel onsets
+
+    let dispWin = InWindow "Onset Test" (1440, 300) (0,0)
+
+    forkIO playSound
+    simulate dispWin white 45 onsetModel drawOnsets stepWorld
+
+    print "done"
+
+playSound = do
+    SDL.init [SDL.InitAudio]
+    result <- Mix.openAudio 44100 Mix.AudioS16LSB 2 4096
+    toPlay <- Mix.loadWAV "./downtheroad.wav"
+    ch1 <- Mix.playChannel (-1) toPlay 0
+    fix $ \loop -> do
+        SDL.delay 50
+        stillPlaying <- Mix.numChannelsPlaying
+        when (stillPlaying /= 0) loop
+
+
+
+makeModel :: OnsetStream -> DrawableOnsets
+makeModel (i, os) = (0.0, Onset 0 0.0, (i, os))
+
+drawOnsets :: DrawableOnsets -> Picture
+drawOnsets (t, o, os) = translate x 50 $ color red $ circleSolid rad
+    where   rad = (double2Float $ power o)*0.01
+            x   = (fromIntegral $ frame o)
+
+stepWorld :: ViewPort -> Float -> DrawableOnsets -> DrawableOnsets
+stepWorld vp t' (t, o, (i, os)) = (elapsed, o', (i, os'))
+    where   o'  | elapsed > nextTime = head os
+                | otherwise          = o
+
+            os' | (elapsed > nextTime) = tail os
+                | otherwise          = os
+
+            elapsed = t+t'*1000
+            interval = (fromIntegral $ sampleRate i)/(fromIntegral $ fftWindow i)
+            nextTime = (fromIntegral $ frame o) * 86
+
+evaluate
+Control.Exception
+makeModel :: DrawableOnsets -> IO DrawableOnsets
+makeModel  (i, os) = do evaluate (0.0, Onset 0 0.0, os)
+
+makeModel
+let
+main
+...
+let !freqs = freqStream s
+let !fluxes = fluxStream freqs
+...
+
+makeModel (i, !os) = (0.0, Onset 0 0.0, os)
+
+playSound
+simulate

@@ -1,0 +1,163 @@
+<?php
+/**
+ * Pars----
+ * Classified --- Application
+ *
+ * @author Sallar Kaboli (me@sallar.ir)
+ * @copyright Copyright (C) 2009 - 2010 -----CO (dev@------.us)
+ * @package Pars---
+ * @version 1.0
+ */
+
+class ParsUser {
+
+    public $userID = false;
+
+    private $_p = null;
+    public $userData = null;
+
+    public function __construct() {
+        $this->_p = ParsRegistry::getInstance();
+        if( $this->_p->sess->isVarSet('parsUser') ) {
+            $this->loadUser($this->_p->sess->getVar('parsUser'));
+        }
+
+        if( isset($_COOKIE['parsUser']) and !$this->isLoggedIn() ) {
+            $userFromCookie = unserialize(base64_decode($_COOKIE['parsUser']));
+            $this->checkLogin($userFromCookie['username'], $userFromCookie['password'], true, false);
+        }
+    }
+
+    public function checkLogin($username, $password, $remember = true, $hash = true) {
+
+        if(!empty($username) and !empty($password)) {
+
+            $password = $hash ? $this->_p->valid->hash($password) : $password;
+            $qData = array('user' => $username, 'pass' => $password);
+            $query = 'SELECT * FROM people WHERE `username` = :user AND `password` = :pass';
+
+            $user = $this->_p->db->getRow($query, $qData);
+
+            if(is_object($user) AND !empty($user->id)) {
+
+                $this->userID = $user->id;
+                $this->userData = $user;
+
+                if( $hash ) {
+                    $this->_p->db->execute('UPDATE people SET `last_login` = ? WHERE `id` = ?', array( time(), $this->userID ));
+                }
+
+                $this->loginTheUser($remember);
+                return true;
+
+            }
+            else {
+                return false;
+            }
+        }
+        else {
+            return false;
+        }
+    }
+
+    private function loginTheUser($remember = true) {
+        $this->_p->sess->setVar('parsUser', $this->userID);
+
+        if( $remember ){
+            $rememberPeriod = $this->_p->conf->c['cookie_remember_period'];
+            $cookie = array(
+                      'username' => $this->userData->username,
+                      'password' => $this->userData->password
+                      );
+
+            $cookie = base64_encode(serialize($cookie));
+            setcookie('parsUser', $cookie, time() + $rememberPeriod/*, '/', $_SERVER['HTTP_HOST']*/);
+        }
+        return false;
+    }
+
+    private function loadUser($userID){
+
+        $user = $this->_p->db->getRow('SELECT * FROM people WHERE `id` = ?', $userID);
+
+        if( is_object($user) and ( $user->id == $userID ) ){
+
+            $this->userID = $user->id;
+            $this->userData = $user;
+            $this->_p->sess->setVar('parsUser', $this->userID);
+
+            return true;
+        }
+        else return false;
+
+    }
+
+    public function logout($redirectTo = false) {
+        setcookie('parsUser', '', mktime(12,0,0,1, 1, 1990));
+        unset($_COOKIE['parsUser']);
+        $this->_p->sess->sessionDrop();
+        $this->userData = null;
+        $this->userID = false;
+
+        if ( !empty($redirectTo) ){
+               $this->_p->core->redirect($redirectTo);
+               exit;
+            }
+    }
+
+    public function isLoggedIn() {
+        //return ( empty($this->userID) OR !$this->userID ) ? false : true;
+
+        if( $this->userID > 0 and $this->userID != false and !empty($this->userID) )
+            return true;
+        else return false;
+    }
+
+    public function checkAccess($level) {
+        if($level == 0) {
+            return true;
+        }
+        elseif($this->isLoggedIn()) {
+            if( $this->userData->level <= $level ) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+        else {
+            return false;
+        }
+    }
+
+    public function getUserData() {
+
+        $args = func_get_args();
+
+        if( empty($this->userID) )
+           throw new Exception('User is not loaded.');
+
+        if( is_array($args) and count($args) > 0){
+            foreach( $args as $arg ){
+                if( !isset($this->userData->$arg) )
+                    throw new Exception('Unknown property: <b>' . $property . '</b>');
+                else
+                    $props[$arg] = $this->userData->$arg;
+            }
+
+            if( count($args) == 1 )
+                return $props[$args[0]];
+            else
+                return $props;
+        }
+        else{
+            $props = $this->userData;
+            unset($props->password);
+            return $props;
+        }
+
+    }
+
+
+}
+

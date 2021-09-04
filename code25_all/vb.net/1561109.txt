@@ -1,0 +1,163 @@
+Public Class RmaValidationCode
+    ' Values for test type
+    Public Const SOFTWARE_TEST_TYPE = 0
+    Public Const FIRMWARE_TEST_TYPE = 1
+    ' Values for test length
+    Public Const SHORT_TEST_LENGTH = 0
+    Public Const LONG_TEST_LENGTH = 1
+    ' Values for test result
+    Public Const PASS_TEST_RESULT = 0
+    Public Const FAIL_TEST_RESULT = 1
+    Public Const ABORT_TEST_RESULT = 2
+    Public Const CAUTION_TEST_RESULT = 3
+    ' GetRMAValidationCode function bit mapped return values
+    Public Const RMA_VC_RET_PASS = 0
+    Public Const RMA_VC_RET_NULL_PTR_PARAMETER = 1
+    Public Const RMA_VC_RET_INVALID_STR_LENGTH = 2
+    Public Const RMA_VC_RET_INVALID_SN_STRING = 4
+    Public Const RMA_VC_RET_INVALID_TEST_TYPE = 8
+    Public Const RMA_VC_RET_INVALID_TEST_LENGTH = 16
+    Public Const RMA_VC_RET_INVALID_TEST_RESULT = 32
+
+    Private Const RMA_LENGTH = 8
+
+    Private rmaValidationCode As String
+
+    ' This function will return the warranty validation code based on serial number, test type, 
+    ' test result, test software and test length.
+    ' Test type - Generic=0, DST=1
+    ' Test result - Pass=0, FAIL=1
+    ' Test Software - DOS=0, Windows=1
+    ' Test Length - Short=0 Long=1
+    Public Function GetRMAValidationCode(ByVal serialNumber As String, ByVal testType As Byte, _
+        ByVal testResult As Byte, ByVal testSoftware As Byte, ByVal testLength As Byte)
+
+        Dim returnValue As UInt32
+        Dim tempRMACode As String
+        Dim tempRMAEnumerator As CharEnumerator
+        Dim temp8Bit As Byte
+
+        returnValue = RMA_VC_RET_PASS
+        temp8Bit = 0
+
+        ' Make sure we were passed valid strings
+        If String.IsNullOrEmpty(serialNumber) OrElse _
+           String.IsNullOrEmpty(rmaValidationCode) Then
+            returnValue = returnValue Or RMA_VC_RET_NULL_PTR_PARAMETER
+        End If
+
+        ' Make sure our strings are big enough
+        If serialNumber.Length < RMA_LENGTH OrElse _
+           rmaValidationCode.Length < RMA_LENGTH Then
+            returnValue = returnValue Or RMA_VC_RET_INVALID_STR_LENGTH
+        End If
+
+        ' Assure that valid test types were passed in
+        If testType <> SOFTWARE_TEST_TYPE AndAlso _
+           testType <> FIRMWARE_TEST_TYPE Then
+            returnValue = returnValue Or RMA_VC_RET_INVALID_TEST_TYPE
+        End If
+
+        ' Assure that valid test lengths were passed in
+        If testLength <> SHORT_TEST_LENGTH AndAlso _
+           testLength <> LONG_TEST_LENGTH Then
+            returnValue = returnValue Or RMA_VC_RET_INVALID_TEST_LENGTH
+        End If
+
+        ' Assure that valid test results were passed in
+        If testResult <> PASS_TEST_RESULT AndAlso _
+           testResult <> FAIL_TEST_RESULT AndAlso _
+           testResult <> ABORT_TEST_RESULT AndAlso _
+           testResult <> CAUTION_TEST_RESULT Then
+            returnValue = returnValue Or RMA_VC_RET_INVALID_TEST_RESULT
+        End If
+
+        If returnValue = RMA_VC_RET_PASS Then
+            ' Trim leading and trailing whitespace
+            serialNumber.Trim()
+            ' Check to see if the serialNumber string is long enough
+            ' after whitespace is removed
+            If serialNumber.Length < RMA_LENGTH Then
+                Return RMA_VC_RET_INVALID_SN_STRING
+            End If
+
+            tempRMACode = serialNumber.ToLower()
+            tempRMAEnumerator = tempRMACode.GetEnumerator()
+
+            While (tempRMAEnumerator.MoveNext())
+                If Not Char.IsLetterOrDigit(tempRMAEnumerator.Current) Then
+                    Return RMA_VC_RET_INVALID_SN_STRING
+                End If
+            End While
+
+            ' Initialize the rmaValidationCode
+            rmaValidationCode = ""
+
+            ' Compute and save the first 6 bytes of RMA Validation Code
+            temp8Bit = 0
+            temp8Bit = Convert.ToByte(tempRMACode.ToCharArray().GetValue(0)) + Convert.ToByte((tempRMACode.ToCharArray()).GetValue(7))
+            rmaValidationCode += String.Format("{0:X2}", temp8Bit)
+
+            temp8Bit = 0
+            temp8Bit = Convert.ToByte((tempRMACode.ToCharArray()).GetValue(1)) + Convert.ToByte((tempRMACode.ToCharArray()).GetValue(6))
+            rmaValidationCode += String.Format("{0:X2}", temp8Bit)
+
+            temp8Bit = 0
+            temp8Bit = Convert.ToByte((tempRMACode.ToCharArray()).GetValue(2)) + Convert.ToByte((tempRMACode.ToCharArray()).GetValue(5))
+            rmaValidationCode += String.Format("{0:X2}", temp8Bit)
+
+            ' Byte 6 is the Test & Result byte.
+            temp8Bit = 0
+            temp8Bit = (testSoftware << 3) Or (testResult << 2) Or (testType << 1) Or testLength
+            rmaValidationCode += String.Format("{0:X1}", temp8Bit)
+
+            ' Compute the parity byte
+            temp8Bit = 0
+            Dim mychar As Char
+            mychar = rmaValidationCode.ToCharArray().GetValue(3)
+
+            If ((Convert.ToInt32(rmaValidationCode.ToCharArray().GetValue(3), 16) Mod 2) = 1) Then
+                temp8Bit = temp8Bit Or (1 << 3)
+            Else
+                temp8Bit = temp8Bit Or (0 << 3)
+            End If
+
+            Dim value As Integer
+            mychar = rmaValidationCode.ToCharArray().GetValue(2)
+            value = System.Convert.ToInt32(mychar, 16)
+            If ((Convert.ToInt32(rmaValidationCode.ToCharArray().GetValue(2), 16) Mod 2) = 1) Then
+                temp8Bit = temp8Bit Or (1 << 2)
+            Else
+                temp8Bit = temp8Bit Or (0 << 2)
+            End If
+
+            mychar = rmaValidationCode.ToCharArray().GetValue(1)
+
+            If ((Convert.ToInt32(rmaValidationCode.ToCharArray().GetValue(1), 16) Mod 2) = 1) Then
+                temp8Bit = temp8Bit Or (1 << 1)
+            Else
+                temp8Bit = temp8Bit Or (0 << 1)
+            End If
+
+            mychar = rmaValidationCode.ToCharArray().GetValue(0)
+
+            If ((Convert.ToInt32(rmaValidationCode.ToCharArray().GetValue(0), 16) Mod 2) = 1) Then
+                temp8Bit = temp8Bit Or 1
+            Else
+                temp8Bit = temp8Bit Or 0
+            End If
+            rmaValidationCode += String.Format("{0:X1}", temp8Bit)
+        End If
+
+        Return rmaValidationCode
+    End Function
+
+    Public Sub New()
+        '    serialNumber = "                    "
+        rmaValidationCode = "        "
+        '  testType = 0
+        'testLength = 0
+        'testResult = 0
+    End Sub
+End Class
+

@@ -1,0 +1,165 @@
+local sqrt = math.sqrt
+local physics = require("physics")
+physics.start()
+physics.setGravity(0,0)
+physics.setDrawMode("debug")
+
+
+local source
+local target
+
+-- Track velocity
+local velocityTracker = {
+    points = {}    
+}
+
+function velocityTracker:reset()
+    self.points = {}
+end
+
+function velocityTracker:addPoint(time, x, y)   
+    -- Only keep 10 points
+    local count = #self.points + 1
+    if count == 11 then
+        count = 10
+        for i=1,10 do
+            -- Move older points to top
+            self.points[i] = self.points[i+1]
+        end 
+    end
+    self.points[count] = {time = time, x = x, y = y}
+end
+
+function velocityTracker:getVelocity(moves)
+    if #self.points < 2 then
+        return 0
+    end
+
+    local start = self.points[1]
+    local totalVelocity = 0
+    local now = system.getTimer()
+    for i=2,#self.points do
+        local finish = self.points[i]
+        -- Use a vector to determine velocity
+        local timePassed = finish.time - start.time
+        local age = now - finish.time
+        -- Only use recent points
+        if age < 200 then
+            local vector = {x = finish.x - start.x, y = finish.y - start.y}
+            local distance = sqrt(vector.x^2 + vector.y^2)
+            -- Calculate velocity
+            totalVelocity = totalVelocity + (distance / timePassed)
+        end
+        start = finish
+    end
+    return totalVelocity
+end
+
+local function onPuckCollision( event )    
+    if event.phase == "began" and event.other.isBall then
+        -- Puck just hit a ball        
+        local ball = event.other
+        local puck = event.target
+
+        -- Use a vector to determine direction of hit
+        local vector = {x = ball.x - puck.x, y = ball.y - puck.y}
+        -- normalize vector
+        local magnitude = sqrt(vector.x^2 + vector.y^2)
+        if magnitude > 0 then
+            vector.x = vector.x / magnitude
+            vector.y = vector.y / magnitude
+        end        
+
+        -- Use velocity to determine force
+        local force = 10 * velocityTracker:getVelocity()
+
+        local function smack()
+            ball:applyForce(vector.x * force, vector.y * force, ball.x, ball.y)
+        end
+
+        -- We can't modify phyiscs in a collision handler so we
+        -- `performWithDelay` to cause it to execute after this function
+        timer.performWithDelay(0, smack)
+    end
+end
+
+local function movePuck( event )
+    local t = event.target
+    local phase = event.phase
+    if "began" == phase then
+        local parent = t.parent
+        display.getCurrentStage():setFocus( t )
+        t.isFocus = true
+        -- Store initial position
+        t.x0 = event.x - t.x
+        t.y0 = event.y - t.y
+        -- Save velocity tracking state
+        velocityTracker:reset()
+        velocityTracker:addPoint(event.time, event.x, event.y)
+    elseif t.isFocus then
+        if "moved" == phase then
+            t.x = event.x - t.x0
+            t.y = event.y - t.y0
+
+            -- Track a movement
+            velocityTracker:addPoint(event.time, event.x, event.y)
+        elseif "ended" == phase or "cancelled" == phase then
+            display.getCurrentStage():setFocus( nil )
+            t.isFocus = false
+            velocityTracker:reset()
+        end
+    end
+    return true
+end
+
+
+target = display.newCircle( 250, 250, 60 )
+target.x = display.contentCenterX
+target.y = display.contentCenterY
+target:setFillColor(240, 200, 0)
+target.isBall = true
+-- Don't allow sleeping because a moving static body
+-- won't always wake it if it's asleep
+target.isSleepingAllowed = false 
+physics.addBody(target,"dynamic",{radius = target.width / 2})
+
+
+source = display.newCircle( 250, 250, 60 )
+source.x = display.contentCenterX
+source.y = display.contentHeight - 100
+source:setFillColor( 240,125,0 )
+source.isPuck = true
+-- Use static body if you're going to move the object instead of
+-- letting the physics engine move it
+physics.addBody(source,"static", {radius = source.width / 2})
+
+source:addEventListener("collision", onPuckCollision)
+
+source:addEventListener("touch", movePuck)
+
+local bounds = {
+    left = -target.width,
+    top = -target.height,
+    right = display.contentWidth + target.width,
+    bottom = display.contentHeight + target.height,
+}
+
+-- Reset ball position if it leaves screen
+local function resetBall()
+    if target.x < bounds.left or target.x > bounds.right or
+        target.y < bounds.top or target.y > bounds.bottom
+        then
+        target.bodyType = 'static' -- Stop current movement
+        target.x = display.contentCenterX
+        target.y = display.contentCenterY                
+        target.bodyType = 'dynamic' -- Make movable again
+
+        source.x = display.contentCenterX
+        source.y = display.contentHeight - 100        
+
+        display.getCurrentStage():setFocus( nil )
+    end
+end
+
+timer.performWithDelay(500, resetBall, 0)
+

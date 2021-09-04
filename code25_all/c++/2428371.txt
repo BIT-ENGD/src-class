@@ -1,0 +1,148 @@
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+
+#include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/phoenix.hpp>
+#include <boost/spirit/include/classic_position_iterator.hpp>
+
+using namespace boost::spirit;
+using namespace boost::spirit::ascii;
+using namespace boost::spirit::qi;
+using namespace boost::spirit::qi::labels;
+
+using boost::phoenix::function;
+using boost::phoenix::ref;
+using boost::spirit::qi::eol;
+using boost::spirit::qi::fail;
+using boost::spirit::qi::lit;
+using boost::spirit::qi::on_error;
+
+using BOOST_SPIRIT_CLASSIC_NS::file_position;
+using BOOST_SPIRIT_CLASSIC_NS::position_iterator;
+
+position_iterator
+std::ostream&
+operator<<(std::ostream& o, const file_position &fp)
+{
+  o << fp.file << ": " << fp.line << ',' << fp.column;
+  return o;
+}
+
+err_t
+template <typename Exception>
+struct err_t {
+  template <typename, typename, typename>
+  struct result { typedef void type; };
+
+  template <typename Iterator>
+  void operator() (info const &what, Iterator errPos, Iterator last) const
+  {
+    std::stringstream ss;
+    ss << errPos.get_position()
+       << ": expecting " << what
+       << " near '" << std::string(errPos, last) << "'\n";
+    throw Exception(ss.str());
+  }
+};
+
+err_t
+class MissingA : public std::runtime_error {
+  public: MissingA(const std::string &s) : std::runtime_error(s) {}
+};
+
+class MissingB : public std::runtime_error {
+  public: MissingB(const std::string &s) : std::runtime_error(s) {}
+};
+
+class MissingC : public std::runtime_error {
+  public: MissingC(const std::string &s) : std::runtime_error(s) {}
+};
+
+function<err_t<MissingA> > const missingA = err_t<MissingA>();
+function<err_t<MissingB> > const missingB = err_t<MissingB>();
+function<err_t<MissingC> > const missingC = err_t<MissingC>();
+function<err_t<std::runtime_error> > const other_error =
+  err_t<std::runtime_error>();
+
+eps
+start
+a
+template <typename Iterator, typename Skipper>
+struct my_grammar
+  : grammar<Iterator, Skipper>
+{
+  my_grammar(int &result)
+    : my_grammar::base_type(start)
+    , result(result)
+  {
+    a = eps > lit("Header A") > eol;
+    b = eps > lit("Header B") > eol;
+    c = eps > lit("C:") > int_[ref(result) = _1] > eol;
+    start = a > b > c;
+
+    a.name("A");
+    b.name("B");
+    c.name("C");
+
+    on_error<fail>(start, other_error(_4, _3, _2));
+    on_error<fail>(a, missingA(_4, _3, _2));
+    on_error<fail>(b, missingB(_4, _3, _2));
+    on_error<fail>(c, missingC(_4, _3, _2));
+  }
+
+  rule<Iterator, Skipper> start;
+  rule<Iterator, Skipper> a;
+  rule<Iterator, Skipper> b;
+  rule<Iterator, Skipper> c;
+  int &result;
+};
+
+my_parse
+std::string
+position_iterator
+int
+my_parse(const std::string &path, std::istream &is)
+{
+  std::string buf;
+  is.unsetf(std::ios::skipws);
+  std::copy(std::istream_iterator<char>(is),
+            std::istream_iterator<char>(),
+            std::back_inserter(buf));
+
+  typedef position_iterator<std::string::const_iterator> itertype;
+  typedef my_grammar<itertype, boost::spirit::ascii::space_type> grammar;
+  itertype it(buf.begin(), buf.end(), path);
+  itertype end;
+
+  int result;
+  grammar g(result);
+
+  bool r = phrase_parse(it, end, g, boost::spirit::ascii::space);
+  if (r && it == end) {
+    std::cerr << "success!\n";
+    return result;
+  }
+  else {
+    file_position fpos = it.get_position();
+    std::cerr << "parse failed at " << fpos << '\n';
+    return -9999;
+  }
+}
+
+int main()
+{
+  std::stringstream ss;
+  ss << "Header A\n"
+     << "Header B\n"
+     << "C: 3\n";
+
+  int val = my_parse("path", ss);
+  std::cout << "val = " << val << '\n';
+
+  return 0;
+}
+
+MissingA
+lexeme[eol]

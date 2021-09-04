@@ -1,0 +1,164 @@
+<%@ Page Language="VB" %>
+<%@ Import Namespace="System.Data" %>
+<%@ Import Namespace="System.Data.SqlClient" %>
+
+<script runat="server">
+
+Dim SQLConn As SqlConnection = New SqlConnection()
+Dim strSQL As String
+Dim strFilter As String
+Dim objCmd 
+Dim objReader As SqlDataReader
+Dim DBComm As SqlCommand
+Dim DBAdapt As SqlDataAdapter
+
+Sub DBConnect
+  SQLConn.ConnectionString = ConfigurationSettings.AppSettings("CString")
+  SQLConn.Open()
+End Sub
+
+Sub DBDisconnect
+  SQLConn.close()
+End Sub
+
+Sub Page_Load
+  Dim ThisFilter As Object = ViewState("vsFilter")
+    If Not (ThisFilter Is Nothing) Then
+        strFilter = CStr(ThisFilter)
+    Else
+        strFilter = "All"
+    End If
+    If Not Page.IsPostBack Then
+        BindData(True)
+    End If
+End Sub
+
+Sub BindData(ByVal GetFresh As Boolean)
+    Call DBConnect()
+
+    Dim DTable As DataTable = Nothing
+    If ViewState("vsSortData") Is Nothing Or GetFresh Then
+        If Session("Agency_Name") = "Main Company" Then
+            strSQL = "SELECT LOGIN.Login_ID, LOGIN.Login_Last_Name + ', ' + LOGIN.Login_First_Name + ' ' + CASE WHEN Login_Middle_Name IS NULL THEN '' ELSE CONVERT(varchar, Login_Middle_Name) END AS FullName, AGENCY.Agency_Name, '(' + Substring(Login_Phone, 0, 4) + ') ' + Substring(Login_Phone, 4, 3) + '-' + Substring(Login_Phone, 7, 4) as Phone, LOGIN.Login_Email, CASE WHEN Login_Type = 'U' THEN 'User' WHEN Login_Type = 'I' THEN 'ISC' ELSE CONVERT(varchar, Login_Type) END AS LoginType, CASE WHEN Login_Account_Active = 'T' THEN 'Yes' WHEN Login_Account_Active = 'F' THEN 'No' ELSE CONVERT(varchar, Login_Account_Active) END AS AcctActive FROM LOGIN INNER JOIN AGENCY ON LOGIN.Login_Agency_ID = AGENCY.Agency_ID WHERE LOGIN.Login_Deleted = 'F'"
+        Else
+            strSQL = "SELECT LOGIN.Login_ID, LOGIN.Login_Last_Name + ', ' + LOGIN.Login_First_Name + ' ' + CASE WHEN Login_Middle_Name IS NULL THEN '' ELSE CONVERT(varchar, Login_Middle_Name) END AS FullName, AGENCY.Agency_Name, '(' + Substring(Login_Phone, 0, 4) + ') ' + Substring(Login_Phone, 4, 3) + '-' + Substring(Login_Phone, 7, 4) as Phone, LOGIN.Login_Email, CASE WHEN Login_Type = 'U' THEN 'User' WHEN Login_Type = 'I' THEN 'ISC' ELSE CONVERT(varchar, Login_Type) END AS LoginType, CASE WHEN Login_Account_Active = 'T' THEN 'Yes' WHEN Login_Account_Active = 'F' THEN 'No' ELSE CONVERT(varchar, Login_Account_Active) END AS AcctActive FROM LOGIN INNER JOIN AGENCY ON LOGIN.Login_Agency_ID = AGENCY.Agency_ID WHERE LOGIN.Login_Deleted = 'F' AND AGENCY.Agency_Name='" & Session("Agency_Name") & "'"
+        End If
+        DBComm = New SqlCommand(strSQL, SQLConn)
+        DBAdapt = New SqlDataAdapter(DBComm)
+        Dim DSet As New DataSet()
+        Try
+            DBAdapt.Fill(DSet)
+            DTable = DSet.Tables(0)
+        Catch EXC As SqlException
+            Me.lblMsg2.Text = EXC.Message
+            Return
+        Finally
+            SQLConn.Close()
+        End Try
+        ViewState("vsSortData") = DTable
+    Else
+        DTable = CType(ViewState("vsSortData"), DataTable)
+    End If
+    If strFilter = "All" Then
+        DTable.DefaultView.RowFilter = String.Empty
+    Else
+        DTable.DefaultView.RowFilter = "FullName LIKE '" & strFilter & "%'"
+    End If
+    Me.datagrid.DataSource = DTable.DefaultView
+    Me.datagrid.DataBind()
+    BuildAlphaPager()
+
+    Call DBDisconnect()
+End Sub
+
+Sub BuildAlphaPager()
+    Dim DTable As DataTable
+    If ViewState(("strLetter")) Is Nothing Then
+        Dim arrLetters As String() = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "All"}
+        DTable = New DataTable()
+        DTable.Columns.Add(New DataColumn("Letter", GetType(String)))
+        Dim i As Integer
+        For i = 0 To arrLetters.Length - 1
+            Dim DRow As DataRow = DTable.NewRow()
+            DRow(0) = arrLetters(i)
+            DTable.Rows.Add(DRow)
+        Next i
+        ViewState("strLetter") = DTable
+    Else
+        DTable = CType(ViewState("strLetter"), DataTable)
+    End If
+    Me.rptLetters.DataSource = DTable.DefaultView
+    Me.rptLetters.DataBind()
+End Sub
+
+Protected Sub rptLetters_ItemDataBound(ByVal sender As Object, ByVal e As RepeaterItemEventArgs)
+    If (e.Item.ItemType = ListItemType.Header) Then
+    ElseIf (e.Item.ItemType = ListItemType.Item) Or (e.Item.ItemType = ListItemType.AlternatingItem) Then
+        Dim lnkAlpha As LinkButton = CType(e.Item.FindControl("lnkAlpha"), LinkButton)
+        lnkAlpha.Text = DataBinder.Eval(e.Item.DataItem, "Letter")
+        lnkAlpha.CommandName = "Filter"
+        lnkAlpha.CommandArgument = DataBinder.Eval(e.Item.DataItem, "Letter")
+        Dim DRView As DataRowView = CType(e.Item.DataItem, DataRowView)
+        If CStr(DRView(0)) = strFilter Then
+            lnkAlpha.Enabled = False
+        End If
+    ElseIf (e.Item.ItemType = ListItemType.Footer) Then
+    End If
+End Sub
+
+Protected Sub rptLetters_ItemCommand(ByVal source As Object, ByVal e As RepeaterCommandEventArgs)
+    If e.CommandName = "Filter" Then
+        strFilter = CStr(e.CommandArgument)
+        ViewState("vsFilter") = strFilter
+        BindData(False)
+    End If
+End Sub
+
+</script>
+
+<html>
+<head runat="server">
+    <title>Untitled Page</title>
+</head>
+<body>
+<form runat="server">
+
+<font size="1" color="#FF0000"><strong><asp:label id="lblMsg2" runat="server" /></strong></font>
+
+<div align="center"><h3>
+<asp:Repeater ID="rptLetters" runat="server" OnItemDataBound="rptLetters_ItemDataBound" OnItemCommand="rptLetters_ItemCommand">
+    <ItemTemplate>
+        <asp:LinkButton ID="lnkAlpha" runat="server" />
+    </ItemTemplate>
+</asp:Repeater>
+</h3></div>
+
+<asp:DataGrid ID="datagrid" runat="server" AutoGenerateColumns="False" AllowSorting="true" width="725px" BackColor="Gray" BorderWidth="0" BorderStyle="None" BorderColor="#DEBA84" Font-Size="XX-Small" CellPadding="3" CellSpacing="1">
+    <HeaderStyle font-size="XX-Small" font-names="Verdana" font-bold="True" horizontalalign="Center" forecolor="White" bordercolor="White" backcolor="#1E3769" />
+    <AlternatingItemStyle BackColor = "Gray" CssClass = "row" />
+    <ItemStyle CssClass = "row" />
+    <Columns>
+  <asp:TemplateColumn ItemStyle-Width="200px" ItemStyle-HorizontalAlign="center" HeaderText="Full Name" SortExpression="Login_Last_Name">
+    <ItemTemplate> <a style="color: #000000;" href="mailto:<%# Container.DataItem("Login_Email")%>"> 
+    <%# Container.DataItem("FullName")%> </a> </ItemTemplate>
+  </asp:TemplateColumn>
+  <asp:BoundColumn ItemStyle-Width="160px" ItemStyle-HorizontalAlign="center" DataField="Agency_Name" HeaderText="Agency Name" SortExpression="Agency_Name"></asp:BoundColumn>
+  <asp:BoundColumn ItemStyle-Width="110px" ItemStyle-HorizontalAlign="center" DataField="Phone" HeaderText="Phone Number" SortExpression="Login_Phone"></asp:BoundColumn>
+  <asp:BoundColumn ItemStyle-Width="80px" ItemStyle-HorizontalAlign="center" DataField="LoginType" HeaderText="User Type" SortExpression="Login_Type"></asp:BoundColumn>
+  <asp:BoundColumn ItemStyle-Width="115px" ItemStyle-HorizontalAlign="center" DataField="AcctActive" HeaderText="Account Active" SortExpression="Login_Account_Active"></asp:BoundColumn>
+  <asp:TemplateColumn ItemStyle-Width="40px" ItemStyle-HorizontalAlign="center" HeaderText="Details">
+    <ItemTemplate> 
+    <a style="color: #000000;" href="javascript:openDetail('userDetail.aspx?id=<%# Container.DataItem("Login_ID")%>');">
+    Details </a> </ItemTemplate>
+  </asp:TemplateColumn>
+  <asp:TemplateColumn ItemStyle-Width="25px" ItemStyle-HorizontalAlign="center" HeaderText="Edit">
+    <ItemTemplate> <a style="color: #000000;" href="edAccounts.aspx?f=e&id=<%# Container.DataItem("Login_ID")%>"> 
+    Edit </a> </ItemTemplate>
+  </asp:TemplateColumn>
+</Columns>
+</asp:DataGrid>
+
+</form>
+</body>
+</html>
+

@@ -1,0 +1,453 @@
+Public Class WWGServer
+    Protected portNumber As Integer
+    Protected maxSockets As Integer
+    Protected sockCount As Integer = 0
+    Private convID As Integer = 0
+    Private lostTimer As Threading.Timer
+    Private Const numThreads As Integer = 1
+    Private Const timerTimeout As Integer = 300000
+    Private Const timeoutMinutes As Integer = 3
+    Private ShuttingDown As Boolean = False
+    Protected title As String
+    Protected connectedHT As New Hashtable()
+    Protected connectedSocks As ArrayList
+
+    'Thread signal.
+    Private allDone As New ManualResetEvent(False)
+    Private serverThread As Thread() = New Thread(numThreads - 1) {}
+    Private threadEnd As AutoResetEvent() = New AutoResetEvent(numThreads - 1) {}
+
+    'UI
+    Private _lsvLog As WWG.ListView.GWWList
+    Delegate Sub WriteToLogDelegate(ByVal entry As String)
+
+    Public Sub New(ByVal port As Integer, ByVal title As String, ByVal attr As String, ByVal lsvLog As WWG.ListView.GWWList)
+        Me.portNumber = port
+        Me.title = title
+        Me.maxSockets = 10000
+        _lsvLog = lsvLog
+        connectedSocks = New ArrayList(Me.maxSockets)
+    End Sub
+
+    Public Sub WriteToLogMethod(ByVal entry As String)
+        'log.Text.Insert(log.Text.Length - 2, Chr(13) & entry)
+        If _lsvLog.Count > 1000 Then
+            Dim iIndex As Integer
+
+            For iIndex = 0 To _lsvLog.Items.Count - 1
+                _lsvLog.Items.Remove(iIndex)
+            Next
+        End If
+
+        Dim _lsvLogItem As WWG.ListView.GWWItem = _lsvLog.Items.Add(Now())
+        _lsvLogItem.SubItems(1).Text = entry
+    End Sub
+
+    Public Sub WriteToLog(ByVal entry As String)
+        Dim logDelegate As New WriteToLogDelegate(AddressOf WriteToLogMethod)
+        If _lsvLog.InvokeRequired() Then
+            _lsvLog.Invoke(logDelegate, entry)
+        Else
+            logDelegate(entry)
+        End If
+    End Sub
+
+    ''' 
+    ''' Description: Start the threads to listen to the port and process
+    ''' messages.
+    ''' 
+    Public Sub Start()
+        ' Clear the thread end events
+        For lcv As Integer = 0 To numThreads - 1
+            threadEnd(lcv) = New AutoResetEvent(False)
+        Next
+
+        Dim threadStart1 As New ThreadStart(AddressOf StartListening)
+        serverThread(0) = New Thread(threadStart1)
+        serverThread(0).IsBackground = True
+        serverThread(0).Start()
+
+        ' Create the delegate that invokes methods for the timer.
+        'Dim timerDelegate As New TimerCallback(AddressOf Me.CheckSockets)
+        ' Create a timer that waits one minute, then invokes every 5 minutes.
+        'lostTimer = New Threading.Timer(timerDelegate, Nothing, WWGServer.timerTimeout, WWGServer.timerTimeout)
+        WriteToLogMethod("Started..")
+    End Sub
+
+    ''' 
+    ''' Description: Check for dormant sockets and close them.
+    ''' 
+    ''' <param name="eventState">Required parameter for a timer call back
+    ''' method.</param>
+    Private Sub CheckSockets(ByVal eventState As Object)
+
+        lostTimer.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite)
+
+        Try
+            For Each state As StateObject In connectedSocks
+                If state.workSocket Is Nothing Then
+                    ' Remove invalid state object
+                    Monitor.Enter(connectedSocks)
+                    If connectedSocks.Contains(state) Then
+                        connectedSocks.Remove(state)
+                        Interlocked.Decrement(sockCount)
+                    End If
+                    Monitor.[Exit](connectedSocks)
+                Else
+                    If DateTime.Now.AddTicks(-state.TimeStamp.Ticks).Minute > timeoutMinutes Then
+                        RemoveSocket(state)
+                    End If
+                End If
+            Next
+        Catch generatedExceptionName As Exception
+            lostTimer.Change(WWGServer.timerTimeout, WWGServer.timerTimeout)
+        Finally
+        End Try
+    End Sub
+    ''' 
+    ''' Decription: Stop the threads for the port listener.
+    ''' 
+    Public Sub [Stop]()
+        Dim lcv As Integer
+        lostTimer.Dispose()
+        lostTimer = Nothing
+
+        For lcv = 0 To numThreads - 1
+            If Not serverThread(lcv).IsAlive Then
+                threadEnd(lcv).[Set]()
+                ' Set event if thread is already dead
+            End If
+        Next
+        ShuttingDown = True
+        ' Create a connection to the port to unblock the listener thread
+        Dim sock As New Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+        Dim endPoint As New IPEndPoint(IPAddress.Loopback, Me.portNumber)
+        sock.Connect(endPoint)
+        sock.Close()
+        sock = Nothing
+
+        ' Check thread end events and wait for up to 5 seconds.
+        For lcv = 0 To numThreads - 1
+            threadEnd(lcv).WaitOne(5000, False)
+        Next
+    End Sub
+
+    ''' 
+    ''' Decription: Open a listener socket and wait for a connection.
+    ''' 
+    Private Sub StartListening()
+        ' Establish the local endpoint for the socket.
+        Dim localEndPoint As New IPEndPoint(IPAddress.Any, Me.portNumber)
+        ' Create a TCP/IP socket.
+        Dim listener As New Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+
+        WriteToLog("Started Lisenting")
+
+        ' Bind the socket to the local endpoint and listen for incoming connections.
+
+        Try
+            listener.Bind(localEndPoint)
+            listener.Listen(1000)
+
+            While Not ShuttingDown
+                ' Set the event to nonsignaled state.
+                allDone.Reset()
+                ' Start an asynchronous socket to listen for connections.
+
+                listener.BeginAccept(New AsyncCallback(AddressOf Me.AcceptCallback), listener)
+
+                ' Wait until a connection is made before continuing.
+                allDone.WaitOne()
+            End While
+        Catch e As Exception
+            threadEnd(0).[Set]()
+        End Try
+    End Sub
+
+    ''' 
+    ''' Decription: Call back method to accept new connections.
+    ''' 
+    ''' <param name="ar">Status of an asynchronous operation.</param>
+    Private Sub AcceptCallback(ByVal ar As IAsyncResult)
+        WriteToLog(Now())
+        ' Signal the main thread to continue.
+        allDone.[Set]()
+        ' Get the socket that handles the client request.
+        Dim listener As Socket = DirectCast(ar.AsyncState, Socket)
+        Dim handler As Socket = listener.EndAccept(ar)
+
+        ' Create the state object.
+        Dim state As New StateObject()
+        state.workSocket = handler
+        state.TimeStamp = DateTime.Now
+
+        Try
+
+            Interlocked.Increment(sockCount)
+            Monitor.Enter(connectedSocks)
+            connectedSocks.Add(state)
+            Monitor.[Exit](connectedSocks)
+            Dim socketAddr As System.Net.SocketAddress
+            socketAddr = handler.RemoteEndPoint.Serialize()
+
+            Dim strIP As String = handler.RemoteEndPoint.Serialize(4).ToString() & "." & handler.RemoteEndPoint.Serialize(5).ToString() & "." & handler.RemoteEndPoint.Serialize(6).ToString() & "." & handler.RemoteEndPoint.Serialize(7).ToString()
+
+            handler.BeginReceive(state.buffer, 0, StateObject.BufferSize, 0, New AsyncCallback(AddressOf Me.ReadCallback), state)
+
+            If sockCount > Me.maxSockets Then
+
+                'RemoveSocket(state)
+                handler.Shutdown(SocketShutdown.Both)
+                handler.Close()
+                handler = Nothing
+                state = Nothing
+            End If
+        Catch es As SocketException
+            'RemoveSocket(state)
+        Catch e As Exception            
+            'RemoveSocket(state)
+        End Try
+    End Sub
+
+    ''' 
+    ''' Decription: Call back method to handle incoming data.
+    ''' 
+    ''' <param name="ar">Status of an asynchronous operation.</param>
+    Protected Sub ReadCallback(ByVal ar As IAsyncResult)
+
+        Dim content As [String] = [String].Empty
+        ' Retrieve the state object and the handler socket
+        ' from the async state object.
+        Dim state As StateObject = DirectCast(ar.AsyncState, StateObject)
+        Dim handler As Socket = state.workSocket
+
+        Dim strIP As String = handler.RemoteEndPoint.Serialize(4).ToString() & "." & handler.RemoteEndPoint.Serialize(5).ToString() & "." & handler.RemoteEndPoint.Serialize(6).ToString() & "." & handler.RemoteEndPoint.Serialize(7).ToString()
+
+        Try
+            ' Read data from the client socket.
+            Dim bytesRead As Integer = handler.EndReceive(ar)
+
+            If bytesRead > 0 Then
+                ' There might be more data, so store the data received so far.
+                'Monitor.Enter(state)
+                state.sb.Append(Encoding.ASCII.GetString(state.buffer, 0, bytesRead))
+                'Monitor.[Exit](state)
+                ' Check for end-of-file tag.
+                ' If it is not there, read more data.
+                content = state.sb.ToString()
+                'if (content.IndexOf("") > -1)
+                If (content.Length > 0) AndAlso ((content(0) <> "<"c) OrElse ((content(0) = "<"c) AndAlso (content.IndexOf("") > -1))) Then
+                    'WriteToLog(Dns.GetHostEntry(strIP).HostName & ":" & content)
+                    Send(handler, GameData.GetXML(content))
+                    state.TimeStamp = DateTime.Now
+                Else
+                    ' Not all data received. Get more.
+                    handler.BeginReceive(state.buffer, 0, StateObject.BufferSize, 0, New AsyncCallback(AddressOf Me.ReadCallback), state)
+                End If
+            Else
+                ' Disconnected
+                'RemoveSocket(state)
+            End If
+        Catch es As System.Net.Sockets.SocketException
+            RemoveSocket(state)
+            If es.ErrorCode <> 64 Then
+                Console.WriteLine(String.Format("ReadCallback Socket Exception: {0}, {1}.", es.ErrorCode, es.ToString()))
+            End If
+        Catch e As Exception
+            RemoveSocket(state)
+            If e.[GetType]().FullName <> "System.ObjectDisposedException" Then
+                Console.WriteLine(String.Format("ReadCallback Exception: {0}.", e.ToString()))
+            End If
+        End Try
+    End Sub
+
+    Protected Sub Send(ByVal sock As Socket, ByVal data As String)
+        ' Convert the string data to byte data using ASCII encoding.
+        Dim byteData As Byte() = Encoding.ASCII.GetBytes(data)
+
+        ' Begin sending the data to the remote device.
+        If byteData.Length > 0 Then
+            sock.BeginSend(byteData, 0, byteData.Length, 0, New AsyncCallback(AddressOf Me.SendCallback), sock)
+        End If
+    End Sub
+
+    Protected Sub SendCallback(ByVal ar As IAsyncResult)
+        ' Retrieve the socket from the async state object.
+        Dim handler As Socket = DirectCast(ar.AsyncState, Socket)
+        Try
+            ' Complete sending the data to the remote device.
+            Dim bytesSent As Integer = handler.EndSend(ar)
+        Catch e As Exception
+        End Try
+    End Sub
+
+    Private Function FindID(ByVal id As String) As Socket
+        Dim sock As Socket = Nothing
+        Monitor.Enter(connectedHT)
+        If connectedHT.ContainsKey(id) Then
+            sock = DirectCast(connectedHT(id), Socket)
+        End If
+        Monitor.[Exit](connectedHT)
+        Return sock
+    End Function
+
+    Protected Overridable Function StuffList(ByVal state As StateObject, ByVal command As String, ByRef content As String) As Boolean
+        Dim sock As Socket = state.workSocket
+        Dim hostID As String = ""
+        ' ReadXML(command, Server.msgConnect, this.connectAttr);
+        If hostID IsNot Nothing Then
+            state.id = hostID
+            'if (hostID == Server.webServer)
+            '        {
+            '          Console.WriteLine(string.Format("Host control socket connected {0}!",this.title));
+            '             return true;
+            '        }
+
+
+            ' Add to connected list
+            Monitor.Enter(connectedHT)
+            If connectedHT.ContainsKey(hostID) Then
+                Dim val As Object = connectedHT(hostID)
+                connectedHT(hostID) = sock
+                connectedHT.Add(sock, val)
+                Console.WriteLine(String.Format("Socket found in Hashtable!", Me.title))
+            Else
+                connectedHT.Add(hostID, sock)
+                connectedHT.Add(sock, hostID)
+                Console.WriteLine(String.Format("Socket not found, adding a new socket to hashtable!", Me.title))
+            End If
+            Monitor.[Exit](connectedHT)
+            Console.WriteLine(String.Format("Socket was moved to connected {0} list!", Me.title))
+            Return True
+        End If
+        Return False
+    End Function
+
+    ''' 
+    ''' Description: Remove the socket contained in the given state object
+    ''' from the connected array list and hash table, then close the socket.
+    ''' 
+    ''' <param name="state">The StateObject containing the specific socket
+    ''' to remove from the connected array list and hash table.</param>
+    Protected Overridable Sub RemoveSocket(ByVal state As StateObject)
+        Dim sock As Socket = state.workSocket
+        Monitor.Enter(connectedSocks)
+        If connectedSocks.Contains(state) Then
+            connectedSocks.Remove(state)
+            Interlocked.Decrement(sockCount)
+        End If
+        Monitor.[Exit](connectedSocks)
+        Monitor.Enter(connectedHT)
+
+        If (sock IsNot Nothing) AndAlso (connectedHT.ContainsKey(sock)) Then
+            Dim sockTemp As Object = connectedHT(sock)
+            If connectedHT.ContainsKey(sockTemp) Then
+                If connectedHT.ContainsKey(connectedHT(sockTemp)) Then
+                    connectedHT.Remove(sock)
+                    If sock.Equals(connectedHT(sockTemp)) Then
+                        connectedHT.Remove(sockTemp)
+                    Else
+                        Dim val As Object, key As Object = sockTemp
+                        While True
+                            val = connectedHT(key)
+                            If sock.Equals(val) Then
+                                connectedHT(key) = sockTemp
+                                Exit While
+                            ElseIf connectedHT.ContainsKey(val) Then
+                                key = val
+                            Else
+                                ' The chain is broken
+                                Exit While
+                            End If
+                        End While
+                    End If
+                Else
+                    Console.WriteLine(String.Format("Socket is not in the {0} connected hash table!", Me.title))
+                End If
+            End If
+        End If
+        Monitor.[Exit](connectedHT)
+
+        If sock IsNot Nothing Then
+            'if (sock.Connected)
+            '    sock.Shutdown(SocketShutdown.Both);
+            sock.Close()
+            sock = Nothing
+            state.workSocket = Nothing
+
+            state = Nothing
+        End If
+    End Sub
+End Class
+
+My AS3 Client code is below 
+
+function utilLoadCompleted(event:Event)
+        {
+
+            _connectServer = new GameServer(Main.util.server,Main.util.port);
+
+            _connectServer.addEventListener("onConnectServer",serverRequest);
+            _connectServer.addEventListener("OnServerResponse",serverResponse);
+
+
+        }
+
+        function getDataFromServer(strType:String)
+        {
+            reqType = strType;
+            if (reqType == "SCORE")
+            {
+                _connectServer.sendRequest("GETSCORE," + Main.util.cardNo);
+            }
+            else if (reqType == "PAYTABLE")
+            {
+                _connectServer.sendRequest("PAYTABLE,game6," + String(Main.levelSel));
+            }
+            else if (reqType == "REVEAL")
+            {
+                _connectServer.sendRequest("KENO," + Main.util.cardNo + ",game6," + String(pickTiles.length) + "," + txtPlayLevel.text + "," + txtPlayPoints.text);
+            }
+        }
+
+        function serverRequest(event:Event)
+        {
+            getDataFromServer("SCORE");         
+        }
+
+        function serverResponse(evt:DataEvent)
+        {
+            //trace(evt.data);
+
+            try
+            {
+                if (reqType == "SCORE")
+                {
+                    _xml = XML(evt.data);
+                    var customer:XML = _xml.AccountDetails[0];
+                    txtTotalWin.text = customer.TotalWin;
+                    txtTotalPoints.text = customer.TotalEntries;
+
+                }
+                else if (reqType == "PAYTABLE")
+                {
+                    Main.paytableXml = XML(evt.data);
+                }
+                else if (reqType == "REVEAL")
+                {
+                    xml = XML(evt.data);
+                    Main.gameXml = xml;
+                    trace(xml);
+                    xmlloadComplete(xml);
+                }
+
+                /*_connectServer.Disconnect();
+                _connectServer = null;*/
+
+            }
+            catch (errObject:Error)
+            {
+                fscommand("SERVERERROR","true");
+            }
+        }
+

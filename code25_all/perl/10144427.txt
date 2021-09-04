@@ -1,0 +1,215 @@
+make perl
+perl
+use Socket
+Can't load module Socket, dynamic loading not available in this perl.
+
+use ExtUtils::MakeMaker;
+# See lib/ExtUtils/MakeMaker.pm for details of how to influence
+# the contents of the Makefile that is written.
+WriteMakefile(
+    'NAME'      => 'Udtutil',
+    'VERSION_FROM' => 'Udtutil.pm', # finds $VERSION
+    'LIBS'      => '-L/usr/ud/PFUSION/Udtutil -L/usr/ud/lib -lapidummy ' .
+                   '-lshare -ludsql -ludmach -lbasic ' .
+                   '-lperf -lret1 -lides -lpipe -lfunc -lndx -lrep -lshm ' .
+                   '-lmglm -lulc -lglm -ltpmem2 -lcmn ' .
+                   '-llicn -ludus -lunix -lbci -lunirpc -lxmldl -leda ' .
+                   '-lsslU2097e -lcryptoU2097e ' .
+                   '-lodbc -lstd_v2 -lstream -lCsup -lpthread -lm -lcl ' .
+                   '-ldld ' .
+                   '-lnfaclnt -lodsdummy -lcl ' .
+                   '-lCsup -lcl -lelf -lm -lcurses -lsec -lpam ',
+    'INC'       => '-I/usr/ud/include',     # e.g., '-I/usr/include/other' 
+    'OPTIMIZE'  => '-O -Ae +DD64 -q -z +u4 -w ',
+    'LINKTYPE'  => 'dynamic',
+    'OBJECT'    => '$(BASEEXT)$(OBJ_EXT) funchead.o interfunc.o callcf.o efs_init.o',
+);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+#include "/usr/ud/include/share.h"
+#include "/opt/iibase/PFUSION/Udtutil/udtutil.h"
+#ifdef __cplusplus
+}
+#endif
+
+extern int U_IGNSIGSET;
+
+extern int Iflags[2];
+
+#if OS_NT
+
+#define U_backsig(ignsigcnt) { if (((U_IGNSIGSET=(ignsigcnt)) == 0) && (Iflags[0] || Iflags[1])) U_sig_resend(); if (!U_IGNSIGSET && pU_sigflags && U_sigflags) NT_sig_kill(); }
+
+#else
+
+#define U_backsig(ignsigcnt) { if (((U_IGNSIGSET=(ignsigcnt)) == 0) && (Iflags[0] || Iflags[1])) U_sig_resend(); }
+
+#endif
+
+MODULE = Udtutil                PACKAGE = Udtutil
+
+int startudt(value1,value2)
+    int value1
+    int value2
+
+    CODE:
+    int jmpret, sat;
+
+    U_SET_JMP(jmpret,sat);
+    if (jmpret) {
+            /* proceed with initialization */
+            udtcallbasic_init(value1,value2);
+            RETVAL = 1;
+    } else {
+            /* shutdown unibasic and return unsuccessful value */
+            udtcallbasic_done(1);
+            RETVAL = 0;
+    }
+
+    OUTPUT:
+    RETVAL
+
+void stopudt(status)
+    int status
+
+    CODE:
+    udtcallbasic_done(status);
+
+void calludt(progname, argcount, ...)
+    char * progname
+    int argcount
+
+    PPCODE:
+    char * returnval;
+    int paramspassed = 0;
+    int status = 0;
+    char ** arglist = NULL;
+    int i;
+
+    if (argcount + 2 == items) {
+            /* build the C array from the Perl array */
+            paramspassed = 1;
+            arglist = (char **)malloc(argcount);
+            for (i = 0; i < argcount; i++) {
+                    arglist[i] = (char *)malloc(sv_len(ST(i+2))+1);
+                    strcpy(arglist[i], SvPV(ST(i+2),PL_na));
+            }
+
+            /* make the call into the database */
+            status = U_callbas(&returnval, progname, argcount, arglist);
+
+            for (i = 0; i < argcount; i++) {
+                    free(arglist[i]);
+            }
+            free(arglist);
+
+            /* EXTEND(sp, 2); */
+            XPUSHs(sv_2mortal(newSViv(paramspassed)));
+            XPUSHs(sv_2mortal(newSViv(status)));
+
+            if (status == 0) {
+                    /* EXTEND(sp, 1); */
+                    XPUSHs(sv_2mortal(newSVpv(returnval, 0)));
+                    free(returnval);
+            }
+    } else {
+            /* EXTEND(sp, 1); */
+            XPUSHs(sv_2mortal(newSViv(paramspassed)));
+    }
+
+perl Makefile.PL
+> perl Makefile.PL
+Checking if your kit is complete...
+Looks good
+Writing Makefile for Udtutil
+Writing MYMETA.yml
+
+make
+make perl
+./perl mytest.pl
+mytest.pl
+Can't load module Socket, dynamic loading not available in this perl.
+
+ > perl -V:usedl
+ usedl='define';
+
+ > perl -V
+ Summary of my perl5 (5.0 patchlevel 4 subversion 4) configuration:   Platform:
+     osname=hpux, osvers=10, archname=PA-RISC2.0
+     uname='hp-ux autocrft b.10.20 u 9000893 341130351 unlimited-user license '
+     hint=recommended, useposix=true, d_sigaction=define
+     bincompat3=y useperlio=undef d_sfio=undef   Compiler:
+     cc='cc', optimize='-O', gccversion=
+     cppflags='-D_HPUX_SOURCE -Aa'
+     ccflags ='-D_HPUX_SOURCE -Aa'
+     stdchar='unsigned char', d_stdstdio=define, usevfork=false
+     voidflags=15, castflags=0, d_casti32=define, d_castneg=define
+     intsize=4, alignbytes=8, usemymalloc=y, prototype=define   Linker and Libraries:
+     ld='ld', ldflags ='-L/usr/local/lib -L/usr/ud/lib'
+     libpth=/usr/local/lib /usr/lib/pa1.1 /usr/ud/lib /lib /usr/lib /usr/ccs/lib
+     libs=-lnet -lnsl_s -lndbm -ldld -lm -lc -lndir -lcrypt
+     libc=/lib/libc.sl, so=sl
+     useshrplib=false, libperl=libperl.a
+     Dynamic Linking:
+     dlsrc=dl_hpux.xs, dlext=sl, d_dlsymun=undef, ccdlflags='-Wl,-E -Wl,-B,deferred '
+     cccdlflags='+z', lddlflags='-b -L/usr/local/lib -L/usr/ud/lib'
+
+
+ Characteristics of this binary (from libperl):    Built under hpux  
+ Compiled at May  7 1998 13:59:51   @INC:
+     /opt/perl5/lib/PA-RISC2.0/5.00404
+     /opt/perl5/lib
+     /opt/perl5/lib/site_perl/PA-RISC2.0
+     /opt/perl5/lib/site_perl
+     .
+
+ > ./perl -V:usedl
+ usedl='define';
+
+ > ./perl -V
+ Summary of my perl5 (revision 5 version 14 subversion 2) configuration:
+       Platform:
+     osname=hpux, osvers=11.31, archname=IA64.ARCHREV_0-LP64
+     uname='hp-ux autocrft b.11.31 u ia64 1650208369 unlimited-user license '
+     config_args=''
+     hint=previous, useposix=true, d_sigaction=define
+     useithreads=undef, usemultiplicity=undef
+     useperlio=define, d_sfio=undef, uselargefiles=define, usesocks=undef
+     use64bitint=define, use64bitall=define, uselongdouble=undef
+     usemymalloc=n, bincompat5005=undef   Compiler:
+     cc='cc', ccflags ='+DD64 -Ae -D_HPUX_SOURCE -Wl,+vnocompatwarnings -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64',
+     optimize='+O2 +Onolimit',
+     cppflags='-Aa -D__STDC_EXT__ -D_HPUX_SOURCE +DD64 -Ae -D_HPUX_SOURCE -Wl,+vnocompatwarnings -I/usr/local/include +DD64 -Ae -D_HPUX_SOURCE -Wl,+vnocompatwarn ings -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64'
+     ccversion='B3910B', gccversion='', gccosandvers=''
+     intsize=4, longsize=8, ptrsize=8, doublesize=8, byteorder=87654321
+     d_longlong=define, longlongsize=8, d_longdbl=define, longdblsize=16
+     ivtype='long', ivsize=8, nvtype='double', nvsize=8, Off_t='off_t', lseeksize=8
+     alignbytes=8, prototype=define   Linker and Libraries:
+     ld='/usr/bin/ld', ldflags =' -L/usr/lib/hpux64'
+     libpth=/usr/lib/hpux64
+     libs=-L/usr/lib/hpux64 -lnsl -lnm -ldl -ldld -lm -lsec -lc
+     perllibs=-lnsl -lnm -ldl -ldld -lm -lsec -lc
+     libc=/usr/lib/hpux64/libc.so, so=so, useshrplib=false, libperl=libperl.a
+     gnulibc_version=''
+     Dynamic Linking:
+     dlsrc=dl_hpux.xs, dlext=so, d_dlsymun=undef, ccdlflags='-Wl,-E -Wl,-B,deferred '
+     cccdlflags='+DD64', lddlflags='-b +vnocompatwarnings'
+
+
+ Characteristics of this binary (from libperl):
+ Compile-time options: PERL_DONT_CREATE_GVSV PERL_MALLOC_WRAP
+                         PERL_PRESERVE_IVUV USE_64_BIT_ALL USE_64_BIT_INT
+                         USE_LARGE_FILES USE_PERLIO USE_PERL_ATOF   Built under hpux
+ Compiled at Apr 13 2012 09:27:33
+   @INC:
+     /opt/iibase/perl/lib/site_perl/5.14.2/IA64.ARCHREV_0-LP64
+     /opt/iibase/perl/lib/site_perl/5.14.2
+     /opt/iibase/perl/lib/5.14.2/IA64.ARCHREV_0-LP64
+     /opt/iibase/perl/lib/5.14.2
+     .
+

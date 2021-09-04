@@ -1,0 +1,89 @@
+#import <UIKit/UIKit.h>
+NSInputStream *inputStream;
+NSOutputStream *outputStream;
+@interface ViewController : UIViewController <NSStreamDelegate>
+@property (weak, nonatomic) IBOutlet UIView *secondView;
+@property (weak, nonatomic) IBOutlet UIImageView *imageView;
+
+- (IBAction)sendNullbyte:(id)sender;
+@property (weak, nonatomic) IBOutlet UIView *firstView;
+
+@property (nonatomic, strong, readwrite) NSOutputStream *fileStream;
+
+@end
+
+#import "ViewController.h"
+
+@interface ViewController ()
+
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self initNetworkCommunication];
+}
+
+- (void)didReceiveMemoryWarning {
+    [super didReceiveMemoryWarning];
+}
+
+- (void)initNetworkCommunication {
+    CFReadStreamRef readStream;
+    CFWriteStreamRef writeStream;
+    CFStreamCreatePairWithSocketToHost(NULL, (CFStringRef)@"localhost", 80, &readStream, &writeStream);
+    inputStream = (__bridge NSInputStream *)readStream;
+    outputStream = (__bridge NSOutputStream *)writeStream;
+    [inputStream setDelegate:self];
+    [outputStream setDelegate:self];
+    [inputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+    [outputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+    [inputStream open];
+    [outputStream open];
+}
+
+- (void)stream:(NSStream *)theStream handleEvent:(NSStreamEvent)streamEvent{
+    switch (streamEvent) {
+        case NSStreamEventOpenCompleted:
+            NSLog(@"Stream opened");
+            break;
+        case NSStreamEventHasBytesAvailable:
+            NSLog(@"Has bytes available.");
+            //be sure that event comes from input stream
+            if(theStream == inputStream){
+                UInt8 buffer[500000];
+                long len;
+                BOOL firstbytes = true;
+                 //read method returns 0 when there is nothing left in the stream
+                 len = [inputStream read:buffer maxLength:sizeof(buffer)];
+                 if (len > 0){
+                     NSData *output = [[NSData alloc] initWithBytes:buffer length:len-4];
+                     if (output != nil){
+                         NSLog(@"server said: %@", output);
+                         UIImage *image = [[UIImage alloc] initWithData:output];;
+                         _imageView.image = image;
+                     }
+                 }
+            }
+
+            break;
+        case NSStreamEventErrorOccurred:
+            NSLog(@"Cant not connect to the host");
+            break;
+        case NSStreamEventEndEncountered:
+            break;
+        default:
+            break;
+    }
+}
+
+- (IBAction)sendNullbyte:(id)sender {
+    NSInteger nullbyte = 0x00;
+    NSData *data =[[NSData alloc] initWithBytes:&nullbyte length:1];
+    [outputStream write:[data bytes] maxLength:[data length]];
+    [self.view bringSubviewToFront:_secondView];
+}
+
+@end
+

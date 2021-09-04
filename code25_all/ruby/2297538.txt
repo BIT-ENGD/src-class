@@ -1,0 +1,109 @@
+require 'socket'
+require 'rexml/document'
+include Socket::Constants
+
+def create_xml_msg(msg, parent)
+    el = nil
+    msg.each do |key, value|
+     if parent
+   el = parent.add_element(key)
+  else
+   el = REXML::Element.new(key)
+  end
+  if value.instance_of?(Hash)
+   create_xml_msg(value, el)
+  else
+   el.text = value.to_s
+  end
+ end
+ return el
+end
+
+def worker(client, client_sockaddr, worker_number)
+ $tid << Thread.new([client, client_sockaddr, worker_number]) do |cl|
+  Thread.current[:number] = cl[2]
+        puts("\nThread #{cl[2]} servicing #{Socket.unpack_sockaddr_in(cl[1]).join(':')}")
+ #2
+  seq_no = cl[2] * 10000000
+  loop do
+   begin
+
+    msg1 = {"msg" => {"head" => {"type"  => "frctl", "seq_no" => seq_no, "version" => 1.0},
+         "body" => {"file" => "numbers_odom.swf", "start" => 5, 
+           "end" => 3000, "rate" => 40, "duration" => 60}}}
+    msg2 = {"msg" => {"head" => {"type"  => "frctl", "seq_no" => seq_no, "version" => 1.0},
+         "body" => {"file" => "numbers_fruits.swf", "start" => 5, "end" => 3000, "rate" => 40, "duration" => 60}}}
+    msg3 = {"msg" => {"head" => {"type"  => "frctl", "seq_no" => seq_no, "version" => 1.0},
+         "body" => {"file" => "$mil.swf", "start" => 5, 
+           "end" => 3000, "rate" => 40, "duration" => 60}}}     
+
+    [ msg1, msg2, msg3 ].each do |m|
+     seq_no += 1
+     m["msg"]["head"]["seq_no"] = seq_no
+     xml_msg = create_xml_msg(m, nil)
+     xml_msg.write(cl[0], 0)
+     cl[0].putc 0
+     sleep 10
+    end
+   rescue
+    cl[0].close
+    puts "\nThread #{Thread.current[:number]} exiting..."
+    Thread.exit
+   end
+  end
+ end
+end
+
+$tid = []  # array of active worker thread ids
+$wno = []  # array of active worker numbers
+$worker_count = 0
+$max_workers = 3
+$wlist = Array(1..$max_workers) #array of all possible worker numbers
+
+socket = Socket.new( AF_INET, SOCK_STREAM, 0 )
+sockaddr = Socket.pack_sockaddr_in( 1999, '0.0.0.0' )
+begin
+ socket.bind( sockaddr )
+ socket.listen( 5 )
+rescue
+ print $!.class, " ", $!
+ sleep 3
+ retry
+end 
+
+loop do
+ begin
+  $tid.each do |t|
+   if (t.status == false || t.status == "aborting" )
+    t.join
+    $wno.delete(t[:number])
+    $tid.delete(t)
+    $worker_count -= 1
+    puts("\nWorker count #{$worker_count}")
+   end
+  end
+  client, client_sockaddr = socket.accept_nonblock
+  if (client)
+   if ($worker_count >= $max_workers)
+    puts "\n too many clients...\n"
+    client.puts("<msg>error: too many clients; closing connection...</msg>")
+    client.close
+   else
+    $worker_count += 1
+    $wlist.each do |w| #find a hole in worker number list
+     if (!$wno.include?(w))
+      $wno << w  #add new worker number to the active worker num array
+      worker(client, client_sockaddr, w)
+      break
+     end
+    end
+    puts("\nWorker count #{$worker_count}")
+   end
+  end
+
+ rescue Errno::EAGAIN, Errno::ECONNABORTED, Errno::EINTR, Errno::EWOULDBLOCK
+  IO.select([socket], nil, nil, 1)
+  retry
+ end
+end
+

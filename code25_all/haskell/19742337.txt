@@ -1,0 +1,55 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+
+import           Control.Applicative
+import qualified Control.Monad.State.Strict as S
+import           Data.Binary.Put
+import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Lazy       as BL
+
+data SState = SState {
+   wsPosition :: Int
+   -- plus whatever else
+}
+
+initialState = SState 0
+type StatePut = S.State SState Put
+
+class StateBinary a where
+   sput :: a -> StatePut
+
+incPos :: Int -> S.State SState ()
+incPos amnt = do
+   (SState p) <- S.get
+   S.put $ SState (p + amnt)
+
+writeSized :: Int -> (a -> Put) -> a -> StatePut
+writeSized n f x = do
+                    incPos n
+                    return (f x)
+
+writeInt32 :: Int -> StatePut
+writeInt32 = writeSized 32 putWord32be . fromIntegral
+
+writeBS :: BS.ByteString -> StatePut
+writeBS b = writeSized (BS.length b) putByteString b
+
+data SomeData = SomeData {
+    sdName :: BS.ByteString
+  , sdAge  :: Int
+  , sdN    :: Int
+} deriving (Show, Eq)
+
+instance StateBinary SomeData where
+    sput (SomeData nm a n) = do
+           writeBS nm
+           writeInt32 a
+           writeInt32 n
+
+testData = SomeData "TestName" 30 100
+
+runSPut :: StateBinary a => a -> BL.ByteString
+runSPut a = runPut $ S.evalState (sput a) initialState
+
+-- runSPut testData returns "\NUL\NUL\NULd"
+

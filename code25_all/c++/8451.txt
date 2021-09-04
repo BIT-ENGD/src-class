@@ -1,0 +1,48 @@
+VirtualLock
+//
+template<class _Ty>
+class LockedVirtualMemAllocator : public std::allocator<_Ty>
+{
+public:
+    template<class _Other>
+    LockedVirtualMemAllocator<_Ty>& operator=(const LockedVirtualMemAllocator<_Other>&)
+    {   // assign from a related LockedVirtualMemAllocator (do nothing)
+        return (*this);
+    }
+
+    template<class Other>
+    struct rebind {
+        typedef LockedVirtualMemAllocator<Other> other;
+    };
+
+    pointer allocate( size_type _n )
+    {
+        SIZE_T  allocLen = (_n * sizeof(_Ty));
+        DWORD   allocType = MEM_COMMIT;
+        DWORD   allocProtect = PAGE_READWRITE;
+        LPVOID pMem = ::VirtualAlloc( NULL, allocLen, allocType, allocProtect );
+        if ( pMem != NULL ) {
+            ::VirtualLock( pMem, allocLen );
+        }
+        return reinterpret_cast<pointer>( pMem );
+    }
+    pointer allocate( size_type _n, const void* )
+    {
+        return allocate( _n );
+    }
+
+    void deallocate(void* _pPtr, size_type _n )
+    {
+        if ( _pPtr != NULL ) {
+            SIZE_T  allocLen = (_n * sizeof(_Ty));
+            ::SecureZeroMemory( _pPtr, allocLen );
+            ::VirtualUnlock( _pPtr, allocLen );
+            ::VirtualFree( _pPtr, 0, MEM_RELEASE );
+        }
+    }
+};
+
+ //a memory safe std::string
+ typedef std::basic_string<char, std::char_traits<char>, 
+                           LockedVirtualMemAllocato<char> > modulestring_t;
+

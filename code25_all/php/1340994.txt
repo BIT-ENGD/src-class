@@ -1,0 +1,82 @@
+<?php
+session_start();
+include_once("db_include.php5");
+doDB();
+
+
+if(!$_GET["productid"] || !$_GET["qty"]) {
+//the user has entered the address directly into their address bar, send them away (if=1 to let me know where the script branched)
+header("Location:index.php5?if=1");
+exit();
+}
+
+**//do select query to verify item id is valid, in case they entered data into the query string or the item has been removed from db**
+$check_sql = "SELECT * FROM aromaProducts1 WHERE id='".$_GET["productid"]."'";
+$check_res = mysqli_query($mysqli, $check_sql) or die(mysqli_error($mysqli));
+
+if(mysqli_num_rows($check_res) == 0) {
+**//item doesn't exist, redirect user**
+header("Location:index.php5?if=2");
+exit();
+} else if(mysqli_num_rows($check_res) != 0) {
+**//item exists
+//do select query to check for item id already in basket - if this item is already in the table associated with the user's session id (which will be added every time an item is), then we want to change the quantity only**
+$duplicate_sql = "SELECT qty FROM sessionBasket WHERE product_id='".$_GET["productid"]."' AND usersessid='".$_SESSION["PHPSESSID"]."'";
+$duplicate_res = mysqli_query($mysqli, $duplicate_sql) or die(mysqli_error($mysqli));
+
+if(mysqli_num_rows($duplicate_res) != 0) {
+**//item in basket - add another - fetch current quantity and add new quantity**
+$basketInfo = mysqli_fetch_array($duplicate_res);
+$currQty = $basket_info["qty"];
+$add_sql = "UPDATE sessionBasket SET qty='".($_GET["qty"]+$currQty)."' WHERE usersessid='".$_SESSION["PHPSESSID"]."'AND product_id='".$_GET["productid"]."'";
+$add_res = mysqli_query($mysqli, $add_sql) or die(mysqli_error($mysqli));
+
+if($add_res !== TRUE) {
+**//wasn't updated for some reason - this is where my script currently breaks**
+header("Location:basketfailredirect.php5?error=add");
+exit();
+} else if($add_res === TRUE) {
+**//was updated - send them away**
+header("basket.php5?res=add");
+exit();
+}
+
+
+} else if(mysqli_num_rows($duplicate_res) == 0) {
+**//no existing items in basket, so we want to add the current item info associated with the user's id/session id**
+
+**//fetch product id, passed in query string from the product info page**
+$productid = $_GET["productid"];
+
+**//sanitize possible inputs, if set - notes is a field added to the product info page for custom products, and we want to sanitize it if it's set - note that check_chars_mailto() is a function I have in the db_include file**
+$notes = isset($_GET["notes"])?trim(mysqli_real_escape_string(check_chars_mailto($_GET["notes"]))):"";
+**//if the user is logged in, their userid is stored in the session variable**
+$userid = $_SESSION["userid"]?$_SESSION["userid"]:"";
+**//not sure about the keep alive option - i.e. store basket contents even if the user doesnt register/sign in, but keeping the option there**
+$alive = $_SESSION["alive"]?$_SESSION["alive"]:"no";
+
+
+**//insert query**
+$insert_sql = "INSERT INTO sessionBasket (userid, usersessid, date_added, keep_alive, product_id, qty, notes) VALUES (
+'".$userid."',
+'".$_SESSION["PHPSESSID"]."',
+now(),
+'".$alive."',
+'".$productid."',
+'".$_GET["qty"]."',
+'".htmlspecialchars($notes)."')";
+$insert_res = mysqli_query($mysqli, $insert_sql) or die(mysqli_error($mysqli));
+
+if($insert_res === TRUE) {
+**//success**
+header("Location:basket.php5?res=add");
+exit();
+} else if($insert_res !== TRUE) {
+**//fail**
+header("Location:basketfailredirect.php5?error=add2");
+exit();
+}
+}
+}
+?>
+

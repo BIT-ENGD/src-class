@@ -1,0 +1,52 @@
+{-# LANGUAGE OverloadedStrings, RecordWildCards #-}
+module Main where
+
+--import Data.Conduit.Binary
+import Network.Wai
+import Network.Wai.Handler.Warp
+import Network.HTTP.Types
+import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Char8 as B
+import Control.Monad.Trans
+import System.IO
+import Control.Exception
+import Data.List.Split (splitOn)
+
+video = "videos/big_buck_bunny.mp4"
+
+main = bracket (openFile video ReadMode) (hClose) $ \h ->
+    run 3000 $ \Request{..} -> do
+        liftIO $ putStrLn "Connection"
+        total <- liftIO $ hFileSize h
+        case lookup "Range" requestHeaders of
+            Nothing -> do
+                v <- liftIO $ L.hGetContents h
+                return $ responseLBS ok200 [("Content-Type", "video/mp4"), ("Connection","keep-alive"), ("Content-Length", B.pack $ show total)] v
+            Just r -> do
+                let (starts:ends:_) = splitOn "-" $ drop 6 $ B.unpack r
+                    start = read starts
+                    end = if not (null ends) then read ends else total - 1
+                liftIO $ putStrLn $ "Range request " ++ show start ++ " " ++ show end
+                liftIO $ hSeek h AbsoluteSeek start
+                v <- liftIO $ L.hGetContents h
+                return $ responseLBS partialContent206 [("Content-Type", "video/mp4")
+                                                       , ("Accept-Ranges", "bytes")
+                                                       , ("Content-Length", B.pack . show $ (end - start) + 1)
+                                                       , ("Content-Range", B.pack $ concat ["bytes ", show start, "-", show end, "/", show total])
+                                                       ] v
+
+localhost:3000
+Connection
+send: resource vanished (Connection reset by peer)
+Connection
+Range request 0 159240553
+send: resource vanished (Connection reset by peer)
+Connection
+Range request 158852274 159240553
+Connection
+videos/big_buck_bunny.mp4: hFileSize: illegal operation (handle is closed)
+Connection
+videos/big_buck_bunny.mp4: hFileSize: illegal operation (handle is closed)
+
+resource vanished
+hClose

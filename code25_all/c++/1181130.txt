@@ -1,0 +1,185 @@
+_
+_
+#ifndef CREATOR_HPP
+#define CREATOR_HPP
+
+#include <string>
+
+class Animal {
+
+     public :
+     virtual string operator() (const string &animal_name) const = 0;
+     virtual void eat() const = 0;
+     virtual ~Animal() { }
+};
+
+class AnimalCreator {
+     public :
+     // virtual Animal *create() const = 0;
+     virtual ~AnimalCreator() { }
+};
+
+typedef Animal* create_animal_t();
+typedef void destroy_animal_t(Animal *);
+#endif
+
+#ifndef CAT_HPP
+#define CAT_HPP
+
+#include "creator.hpp"
+#include <iostream>
+#include <string>
+
+class cat : public Animal {
+
+     public :
+          string operator() (const string &animal_name) const { return "In cat () operator"; }
+          void eat() const { cout << "cat is eating" << endl; }
+};
+
+class catCreator : public AnimalCreator {
+     public :
+
+}theCatCreator;
+
+#endif
+
+#include "cat.hpp"
+#include <iostream>
+
+using namespace std;
+
+extern "C" Animal *create() {
+     cout << "Creating cat ..." << endl;
+     return new cat;
+}
+
+extern "C" void destroy(Animal* a) {
+     delete a;
+}
+
+#ifndef DOG_HPP
+#define DOG_HPP
+
+#include <string>
+#include "creator.hpp"
+
+class dog : public Animal {
+     public:
+     string operator() (const string &animal_name) const { return "In dog"; }
+     void eat() const { cout << "Dog is eating" << endl; }
+};
+
+class dogCreator : public AnimalCreator {
+     public:
+}theDogCreator;
+
+#endif
+
+#include "dog.hpp"
+#include <iostream>
+
+using namespace std;
+
+extern "C" Animal *create() {
+     cout << "Creating dog" << endl;
+     return new dog;
+}
+
+extern "C" void destroy(Animal *aa) {
+     delete aa;
+}
+
+main.cpp - 
+
+#include "creator.hpp"
+#include "cat.hpp"
+#include "dog.hpp"
+
+#include <iostream>
+#include <string>
+#include <map>
+#include <dlfcn.h>
+
+map<string, AnimalCreator *> AnimalMap;
+
+void initialize() {
+     AnimalMap["dog"] = &theDogCreator;
+     AnimalMap["cat"] = &theCatCreator;
+}
+
+Animal * new_animal(const string &animal) {
+     static bool isInitialised (false);
+     if (!isInitialised) {
+          initialize();
+          isInitialised = true;
+     }
+
+     AnimalCreator *theAnimalCreator = AnimalMap[animal];
+     if (!theAnimalCreator) {
+          cout << "error: " << animal << " not registerd" << endl;
+          exit(1);
+     }
+
+     Animal *theAnimal = theAnimalCreator->create();
+     return theAnimal;     
+}
+
+int main() {
+
+     void *animal = dlopen("animal", RTLD_LAZY);
+     if (!animal) {
+       cout << "error is dlopen" << endl;
+          exit(1);
+     }
+
+     create_animal_t* new_animal = (create_animal_t*) dlsym(animal, "create");
+      if (!new_animal) {
+          cout << "error is dlsym create" << endl;
+          exit(1);
+     }
+      destroy_animal_t* destroy_animal = (destroy_animal_t*) dlsym(animal, "destroy");
+      if (!destroy_animal) {
+          cout << "error is dlsym destroy" << endl;
+          exit(1);
+     }
+
+     Animal *a = new_animal("dog");
+     Animal *b = new_animal("cat");
+     a->eat();
+     b->eat();
+
+     destroy_animal(a);
+     destroy_animal(b);
+
+     dlclose(animal);
+     return 0;
+}
+
+# macros
+CC = g++
+CFLAGS = -g -Wall
+MODFLAGS = -fpic -shared
+LDFLAGS = -ldl
+OBJECTS = main.o animal
+
+# targets
+all:      foo
+foo:      $(OBJECTS)
+          $(CC) -o foo $(OBJECTS) $(LDFLAGS)
+animal:   dog.cpp cat.cpp
+          $(CC) $(CFLAGS) $(MODFLAGS) dog.cpp cat.cpp -o animal
+clean:
+          rm -f foo $(OBJECTS)
+
+bash-2.05$ make animal
+g++ -g -Wall -fpic -shared dog.cpp cat.cpp -o animal
+ld: fatal: symbol `create' is multiply-defined:
+        (file /var/tmp/ccgDUpwo.o type=FUNC; file /var/tmp/ccv0VjHp.o type=FUNC);
+ld: fatal: symbol `destroy' is multiply-defined:
+        (file /var/tmp/ccgDUpwo.o type=FUNC; file /var/tmp/ccv0VjHp.o type=FUNC);
+ld: fatal: File processing errors. No output written to animal
+collect2: ld returned 1 exit status
+make: *** [animal] Error 1
+
+-

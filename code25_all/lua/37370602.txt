@@ -1,0 +1,113 @@
+require 'torch';
+require 'nn';
+require 'nnx';
+mnist = require 'mnist';
+
+fullset = mnist.traindataset()
+testset = mnist.testdataset()
+trainset = {
+    size = 50000,
+    data = fullset.data[{{1,50000}}]:double(),
+    label = fullset.label[{{1,50000}}]
+}
+validationset = {
+    size = 10000,
+    data = fullset.data[{{50001, 60000}}]:double(),
+    label = fullset.label[{{50001,60000}}]
+}
+-- MNIST Dataset has 28x28 images
+model = nn.Sequential()
+
+model:add(nn.SpatialConvolutionMM(1, 32, 5, 5))         -- 32x24x24
+model:add(nn.ReLU())
+model:add(nn.SpatialMaxPooling(3, 3, 3, 3))             -- 32x8x8
+
+model:add(nn.SpatialConvolutionMM(32, 64, 5, 5))        -- 64x4x4
+model:add(nn.Tanh())
+model:add(nn.SpatialMaxPooling(2, 2, 2, 2))             -- 64x2x2
+model:add(nn.Reshape(64*2*2))
+model:add(nn.Linear(64*2*2, 200))
+model:add(nn.Tanh())
+model:add(nn.Linear(200, 10))
+
+model:add(nn.LogSoftMax())
+
+criterion = nn.ClassNLLCriterion()
+
+x, dldx = model:getParameters()         -- now x stores the trainable parameters and dldx stores the gradient wrt these params in the model above
+
+sgd_params = {
+   learningRate = 1e-2,
+   learningRateDecay = 1e-4,
+   weightDecay = 1e-3,
+   momentum = 1e-4
+}
+
+step = function ( batchsize )
+
+    -- setting up variables
+    local count = 0
+    local current_loss = 0
+    local shuffle = torch.randperm(trainset.size)
+
+    -- setting default batchsize as 200
+    batchsize = batchsize or 200
+
+    -- setting inputs and targets for minibatches
+    for minibatch_number = 1, trainset.size, batchsize do
+
+        local size = math.min( trainset.size - minibatch_number + 1, batchsize )
+        local inputs = torch.Tensor(size, 28, 28)
+        local targets = torch.Tensor(size)
+
+        for index = 1, size do
+            inputs[index] = trainset.data[ shuffle[ index + minibatch_number ]]
+            targets[index] = trainset.label[ shuffle[ index + minibatch_number ] ]
+        end
+
+        -- defining feval function to return loss and gradients of loss w.r.t. params
+        feval = function( x_new )
+        --print ( "---------------------------------safe--------------------")
+
+            if x ~= x_new then x:copy(x_new) end
+
+            -- initializing gradParsams to zero
+             dldx:zero()
+
+            -- calculating loss and param gradients
+            local loss = criterion:forward( model.forward( inputs ), targets )
+            model:backward( inputs, criterion:backward( model.output, targets ) )
+
+            return loss, dldx
+        end
+
+        -- getting loss
+        -- optim returns x*, {fx} where x* is new set of params and {fx} is { loss } => fs[ 1 ]  carries loss from feval
+
+        print(feval ~= nil and x ~= nil and sgd_params ~= nil)
+        _,fs = optim.sgd(feval, x, sgd_params)
+
+        count = count + 1
+        current_loss = current_loss + fs[ 1 ]
+    end
+
+    --returning avg loss over the minibatch
+    return current_loss / count        
+
+end
+
+max_iters = 30
+
+for i = 1 ,max_iters do
+    local loss = step()
+    print(string.format('Epoch: %d Current loss: %4f', i, loss))
+end
+
+/home/afroz/torch/install/bin/luajit: /home/afroz/test.lua:88: attempt to index global 'optim' (a nil value)
+stack traceback:
+    /home/afroz/test.lua:88: in function 'step'
+    /home/afroz/test.lua:102: in main chunk
+    [C]: in function 'dofile'
+    ...froz/torch/install/lib/luarocks/rocks/trepl/scm-1/bin/th:145: in main chunk
+    [C]: at 0x00406670
+

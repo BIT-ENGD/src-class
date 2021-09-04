@@ -1,0 +1,162 @@
+{-# LANGUAGE GADTs #-}
+
+module Dyn ( Dynamic(..), 
+             toDynamic,
+             fromDynamic
+           ) where
+
+import Control.Applicative
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+--
+-- Equality proofs
+--
+
+-- | The type of equality proofs.
+data Equal a b where
+    Reflexivity :: Equal a a
+    -- | Inductive case for parametric types
+    Induction   :: Equal a b -> Equal (f a) (f b)
+
+instance Show (Equal a b) where
+    show Reflexivity = "Reflexivity"
+    show (Induction proof) = "Induction (" ++ show proof ++ ")"
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+--
+-- Type representations
+--
+
+-- | Type representations.  If @x :: TypeRep a@, then @x@ is a singleton
+-- value that stands in for type @a@.
+data TypeRep a where 
+    Integer :: TypeRep Integer
+    Char :: TypeRep Char
+    Maybe :: TypeRep a -> TypeRep (Maybe a)
+    List :: TypeRep a -> TypeRep [a]
+
+-- | Typeclass for types that have a TypeRep
+class Representable a where
+    typeRep :: TypeRep a
+
+instance Representable Integer where typeRep = Integer
+instance Representable Char where typeRep = Char
+
+instance Representable a => Representable (Maybe a) where 
+    typeRep = Maybe typeRep
+
+instance Representable a => Representable [a] where 
+    typeRep = List typeRep
+
+
+-- | Match two types and return @Just@ an equality proof if they are
+-- equal, @Nothing@ if they are not.
+matchTypes :: TypeRep a -> TypeRep b -> Maybe (Equal a b)
+matchTypes Integer Integer = Just Reflexivity
+matchTypes Char Char = Just Reflexivity
+matchTypes (List a) (List b) = Induction <$> (matchTypes a b)
+matchTypes (Maybe a) (Maybe b) = Induction <$> (matchTypes a b)
+matchTypes _ _ = Nothing
+
+
+instance Show (TypeRep a) where
+    show Integer = "Integer"
+    show Char = "Char"
+    show (List a) = "[" ++ show a ++ "]"
+    show (Maybe a) = "Maybe (" ++ show a ++ ")"
+
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+--
+-- Dynamic data
+--
+
+data Dynamic where
+    Dyn :: TypeRep a -> a -> Dynamic
+
+instance Show Dynamic where
+    show (Dyn typ val) = "Dyn " ++ show typ
+
+-- | Inject a value of a @Representable@ type into @Dynamic@.
+toDynamic :: Representable a => a -> Dynamic
+toDynamic = Dyn typeRep
+
+-- | Cast a @Dynamic@ into a @Representable@ type.
+fromDynamic :: Representable a => Dynamic -> Maybe a
+fromDynamic = fromDynamic' typeRep
+
+fromDynamic' :: TypeRep a -> Dynamic -> Maybe a
+fromDynamic' target (Dyn source value) = 
+    case matchTypes source target of
+      Just Reflexivity -> Just value
+      Nothing -> Nothing
+      -- The following pattern causes compilation to fail.
+      Just (Induction _) -> Just value
+
+../src/Dyn.hs:105:34:
+    Could not deduce (a2 ~ b)
+    from the context (a1 ~ f a2, a ~ f b)
+      bound by a pattern with constructor
+                 Induction :: forall a b (f :: * -> *).
+                              Equal a b -> Equal (f a) (f b),
+               in a case alternative
+      at ../src/Dyn.hs:105:13-23
+      `a2' is a rigid type variable bound by
+           a pattern with constructor
+             Induction :: forall a b (f :: * -> *).
+                          Equal a b -> Equal (f a) (f b),
+           in a case alternative
+           at ../src/Dyn.hs:105:13
+      `b' is a rigid type variable bound by
+          a pattern with constructor
+            Induction :: forall a b (f :: * -> *).
+                         Equal a b -> Equal (f a) (f b),
+          in a case alternative
+          at ../src/Dyn.hs:105:13
+    Expected type: a1
+      Actual type: a
+    In the first argument of `Just', namely `value'
+    In the expression: Just value
+    In a case alternative: Just (Induction _) -> Just value
+
+Inductive :: Equal a b -> Equal (f a) (f b)
+a
+b
+Inductive :: Equal a a -> Equal (f a) (f a)
+matchTypes :: TypeRep a -> TypeRep b -> Maybe (Equal a b)
+../src/Dyn.hs:66:60:
+    Could not deduce (a2 ~ a1)
+    from the context (a ~ [a1])
+      bound by a pattern with constructor
+                 List :: forall a. TypeRep a -> TypeRep [a],
+               in an equation for `matchTypes'
+      at ../src/Dyn.hs:66:13-18
+    or from (b ~ [a2])
+      bound by a pattern with constructor
+                 List :: forall a. TypeRep a -> TypeRep [a],
+               in an equation for `matchTypes'
+      at ../src/Dyn.hs:66:22-27
+      `a2' is a rigid type variable bound by
+           a pattern with constructor
+             List :: forall a. TypeRep a -> TypeRep [a],
+           in an equation for `matchTypes'
+           at ../src/Dyn.hs:66:22
+      `a1' is a rigid type variable bound by
+           a pattern with constructor
+             List :: forall a. TypeRep a -> TypeRep [a],
+           in an equation for `matchTypes'
+           at ../src/Dyn.hs:66:13
+    Expected type: TypeRep a1
+      Actual type: TypeRep a
+    In the second argument of `matchTypes', namely `b'
+    In the second argument of `(<$>)', namely `(matchTypes a b)'
+
+matchTypes :: TypeRep a -> TypeRep b -> Maybe (Equal a b)
+matchTypes :: TypeRep a -> TypeRep b -> Maybe (Equal a a)
+matchTypes :: TypeRep a -> TypeRep a -> Maybe (Equal a a)
+fromDynamic' to know the
+in the
+contained in the

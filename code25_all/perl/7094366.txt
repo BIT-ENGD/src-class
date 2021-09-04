@@ -1,0 +1,139 @@
+sub extract_tripwire{
+
+    foreach $server (@servers){
+
+        $server = lc $server;
+
+        my $xlfile = "";
+        $xlfile .= "";
+
+
+        # Open the provided Excel sheet
+        my $book = $xl->Workbooks->Open($xlfile);
+
+        # Setip active worksheet
+        my $sheet = $book->Worksheets(1);
+
+        # Finds the Last row that has data in it
+        my $LastRow = $sheet->UsedRange->Find({What=>"*",
+            SearchDirection=>xlPrevious,
+            SearchOrder=>xlByRows})->{Row};
+
+        my $LastCol = $sheet->UsedRange->Find({What=>"*", 
+              SearchDirection=>xlPrevious,
+              SearchOrder=>xlByColumns})->{Column};
+
+        print "Last Row: $LastRow, Last Column: $LastCol\n";
+
+        #This will be a reference to a hash
+        if($LastRow > 1){
+            my %Data = %{&get_Data($LastRow,$LastCol,$sheet)};
+        }
+        else{
+            print "No program Changes\n";
+        }
+
+        # Close the workbook when done
+        $xl->ActiveWorkbook->Close(0);
+
+        #Maybe Store a reference to the hash?
+        $DataHash{$server} = \%Data;
+    }
+
+    # Get the names of the columns from the given excel file
+    sub get_Data{
+        # Initialization of variables 
+        my @header;
+        my @data;
+        my %Data;
+
+        # Print out all the data
+        my $array = $_[2]->Range("A1:I1")->{'Value'};
+
+        # Cycle through A1->I1 , A1->B1->C1->D1...
+        foreach my $ref_array (@$array){
+            foreach my $scalar(@$ref_array){
+                    push @header, $scalar;
+            }
+        }
+
+        #The letters that are associated with the columns of the excel file
+        my @letters = ('A','B','C','D','E','F','G','H','I');
+
+        my $counter = 0;
+
+        # Loop through all the columns and store the data within a hash with the specific header as its key
+        for($index = 0; $index < scalar @letters; $index++,$counter++){
+            # The range of the column
+            my $array = $_[2]->Range("$letters[$index]2:$letters[$index]$_[0]")->{'Value'};
+
+            # Cycle through A2->I4 , A2->A3->A4->...->I2->...
+            foreach my $ref_array (@$array){
+                foreach my $scalar(@$ref_array){
+                    if(defined($scalar)){
+                        push @data, $scalar;
+                    }
+                    else{
+                        $scalar = " ";
+                    }
+                }
+            }
+                $Data{$header[$counter]} = @data;
+                @data = ();                             
+        }
+        # Return the data hash
+        return \%Data;
+    }
+
+    &Compare(\%DataHash);
+}
+sub Compare{
+    # Get the hash of a has that was created from the tripwire reports
+    my %Datahash = %{$_[0]};
+
+    # Get the keys of that file
+    @keys = sort keys %DataHash;
+
+    foreach(@keys){
+        print "Keys: $_\n";
+    }
+
+    #Loop through the keys
+    foreach my $key (@keys){
+----------> #This is the Main PROBLEM in the code
+----------> %hash = %{$DataHash{$key}};
+
+        # Get all the keys of that hash
+        @hashKeys = keys %hash;
+
+                    print "Data: ", $hash{ElementName}, "\n";
+
+        #Get the items Programs that has been implemented
+        @hashItems = @{$hash{ElementName}};
+
+        #Try and match them up against the Task from Alfresco
+        for($i = 0; $i < scalar @hashItems;$i++){
+            for($j = 0; $j < scalar @promoCode; $j++){
+                #Split up the PromoCode Here!!!! 0- File name, 1- Task #
+                #If a match has been found
+                if($hashItems[$i] ~~ $promoCode[$j]){
+                    # Extract the row that match
+                    foreach (@hashKeys){
+                        @array = @{$hash{$_}};
+                        #And store it in this array
+                        push @pass, $array[$i];
+                    }
+                    # So that the information can be passed to the Reconcile routine to be added to the Details and Summary reports + Task #
+                    &Reconcile(@pass,$i);
+
+                    #Need insert and empty row
+                    $sheet->Range("A$lastRow:G$LastRow")->Select;
+                    $xl->Selection->Interior->{ColorIndex} = 15;
+                    $xl->Selection->Interior->{Pattern} = xlSolid;
+                }
+            }
+        }
+
+    }
+}'
+

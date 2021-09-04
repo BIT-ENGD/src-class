@@ -1,0 +1,117 @@
+void execute_external()
+{
+    int backgrounding = 0;
+    if (raw_command[strlen(raw_command)-1] == '&')
+    {
+        pmesg(2, "Backgrounding requested.\n");
+        raw_command[strlen(raw_command)-1] = '\0';
+        raw_command = realloc(raw_command, strlen(raw_command)-1);
+        backgrounding = 1;
+    }
+
+    int numCommands = 1;
+    char **commands;
+    commands = malloc(sizeof(char *));
+
+    if(strstr(raw_command, "|") != NULL)        
+    {
+        numCommands = separate_pipeline_commands(commands);
+    }
+    else
+    {
+        commands[0] = malloc(strlen(raw_command) * sizeof(char));
+        commands[0] = raw_command;
+    }
+
+    int i;
+    char *fifo = malloc(MAXFIFOLEN);
+    for (i = 0; i < numCommands; i++)
+    {
+        char **parameters_array = malloc(strlen(commands[i]) * sizeof(char *));
+        int num_params;
+        num_params = str_to_str_array(commands[i], parameters_array);
+        pmesg(2, "Command is %s.\n", commands[i]);
+
+        if (numCommands > 1)
+        {
+            int j;
+            for (j = 0; j < numCommands - 1; j++)
+            {
+                sprintf(fifo, "fifo%i", j);
+                mkfifo(fifo, S_IWUSR | S_IRUSR );
+            }
+        }
+
+        pid_t pid = fork();
+
+        pmesg(2, "Process forked. ID = %i. \n", pid);
+        if (pid < 0)
+        {
+            fprintf(to_write_to, "Could not fork a process to complete the external command.\n");
+            exit(EXIT_FAILURE);
+        }
+        int status;
+        if (pid == 0) // This is the child process
+        {
+            pmesg(1, "input: [%s] output: [%s] input: %d, output: %d backgrounding is %d\n",input_file_name, output_file_name, redirect_input, redirect_output, backgrounding);
+            if (numCommands > 1 && i == 0) // we may be pipelining and this is the first process
+            {
+                sprintf(fifo, "%s%i", "fifo", i);
+                printf("Initial output: %s.\n", fifo);
+                freopen(fifo, "w", stdout);
+                //~ unlink(fifo);
+            }
+            else if (numCommands > 1 && i !=0 && (i != numCommands-1)) // we are pipelining and this is not the first or last process
+            {
+                sprintf(fifo, "%s%i", "fifo", i-1);
+                printf("Input for process %i: %s.\n", i, fifo);
+                freopen(fifo, "r", stdin);
+                //~ unlink(fifo);
+                sprintf(fifo, "%s%i", "fifo", i+1);
+                printf("Output for process %i: %s.\n", i, fifo);
+                freopen(fifo, "w", stdout);
+                //~ unlink(fifo_2);
+            }
+            else if (numCommands != 1 &&i == numCommands)
+            {
+                char *fifo = malloc(strlen("fifo")+2);
+                sprintf(fifo, "%s%i", "fifo", i);
+                freopen(fifo, "r", stdin);  
+                free(fifo);             
+            }
+            if(redirect_output == 1)
+            {
+                freopen(output_file_name, "w", stdout);
+            }
+            if(redirect_input == 1)
+            {
+                freopen(input_file_name, "r", stdin);
+            }
+            if (backgrounding != 0)
+            {
+                freopen("/dev/null", "w", stdout);
+            }
+            pmesg(2, "This is the child process, running execlp.\n");
+            pmesg(1, "Command: [%s]\n", parameters_array[0]);
+            if (execvp(parameters_array[0], parameters_array) < 0)
+            {
+                fprintf(to_write_to, "Could not execute the external command. errno: %i.\n", errno);
+                exit(EXIT_FAILURE);
+            }
+            else    { pmesg(2, "Executed the child process.\n");}
+        }
+        else
+        {
+            if (backgrounding != 0)
+            {
+                enqueue(&process_queue, pid, clock(), 0, 0);
+                printQueue(process_queue);
+            }
+            if (backgrounding == 0) { while(wait(&status) != pid); }// Wait for the child to finish executing
+        } 
+        pmesg(1, "The child has finished executing.\n");
+        free(parameters_array);
+    }
+    free(commands);
+}
+

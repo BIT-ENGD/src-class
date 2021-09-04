@@ -1,0 +1,84 @@
+ALTER PROCEDURE [dbo].[KalenderVullen]
+@park_id numeric,
+@startdate Datetime 
+
+AS
+BEGIN
+
+;WITH Dates AS (
+        SELECT DATEADD(day,DATEDIFF(day,0,@startdate),0) as DateOf,
+            CASE WHEN datename(weekday,@startdate) IN ('Saturday','Sunday') THEN 'Weekend'
+                 ELSE 'Week' 
+            END DayType,
+            datename(weekday,@startdate) DayOfWeekName
+        UNION ALL 
+        SELECT DateOf+1,
+            CASE WHEN datename(weekday,DateOf+1) IN ('Saturday','Sunday') THEN 'Weekend'
+                 ELSE 'Week' 
+            END DayType,
+            datename(weekday,DateOf+1) DayOfWeekName
+        FROM Dates
+        where DateOf < dateadd(yy, 10, @startdate)
+
+
+)
+
+INSERT INTO  kalender (park_id,datum,week_weekend,naam_dag)
+   SELECT @park_id,DateOf,DayType,DayOfWeekName
+    FROM Dates
+    OPTION (MAXRECURSION 4000)
+    SELECT @@IDENTITY AS [@@IDENTITY]
+    print @@IDENTITY
+    set @park_id = @@IDENTITY
+
+
+
+
+END
+
+Public Sub kalender_insert(ByVal i_startdatum As Date, ByVal i_park_id As Int16)
+
+    Dim nwindConn As SqlConnection = New SqlConnection(conStr)
+    Dim adocmd As SqlCommand
+    Dim adopara As New SqlParameter
+
+    Dim mytrans As SqlTransaction
+
+    nwindConn.Open()
+
+    'begin van commitstructuur
+    '‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐
+    mytrans = nwindConn.BeginTransaction(IsolationLevel.ReadCommitted)
+
+    adocmd = New SqlCommand("KalenderVullen", nwindConn)
+    adocmd.CommandType = CommandType.StoredProcedure
+
+    adocmd.Parameters.Add(New SqlParameter("@startdate", SqlDbType.DateTime, 50)).Value = i_startdatum
+    adocmd.Parameters("@startdate").Direction = ParameterDirection.Input
+
+    adocmd.Parameters.Add(New SqlParameter("@park_id", SqlDbType.Int, 50)).Value = i_park_id
+    adocmd.Parameters("@park_id").Direction = ParameterDirection.Input
+
+    '‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐
+    adocmd.Transaction = mytrans
+    'het committen wordt afhankelijk gemaakt van het slagen
+    '‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐
+    Try
+        adocmd.ExecuteNonQuery()
+        mytrans.Commit()
+    Catch ex As Exception
+        mytrans.Rollback()
+    End Try
+
+
+
+    mytrans.Dispose()
+    mytrans = Nothing
+    adocmd.Dispose()
+    adocmd = Nothing
+    nwindConn.Close()
+    nwindConn.Dispose()
+    nwindConn = Nothing
+    MessageBox.Show("kalender is aangemaakt")
+End Sub
+

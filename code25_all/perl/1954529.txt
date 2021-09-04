@@ -1,0 +1,68 @@
+package Testing::MockDir;
+
+use strict;
+use warnings;
+use Exporter();
+use Symbol 'qualify_to_ref';
+
+*import = \&Exporter::import;
+
+our @EXPORT_OK = qw(SetMockDir UnsetMockDir);
+
+our %EXPORT_TAGS = (
+    'all' => \@EXPORT_OK,
+);
+
+my %path2List = ();
+my %handle2List = ();
+
+BEGIN {
+    *CORE::GLOBAL::opendir = \&Testing::MockDir::opendir;
+    *CORE::GLOBAL::readdir = \&Testing::MockDir::readdir;
+    *CORE::GLOBAL::closedir = \&Testing::MockDir::closedir;
+
+    ######################### the "-" is really the problem here
+    *CORE::GLOBAL::-d = \&Testing::MockDir::mock_d; # This does not work <<<<<
+}
+
+sub mock_d ($) {
+    die 'It worked';
+}
+
+sub SetMockDir {
+    my ($path, @files) = @_;
+    $path2List{$path} = [@files];
+}
+
+sub UnsetMockDir {
+    my ($path) = @_;
+    delete $path2List{$path};
+}
+
+sub opendir (*$) {
+    my $handle = qualify_to_ref(shift, caller);
+    my ($path) = @_;
+    return CORE::opendir($handle, $path) unless defined $path2List{$path};
+    $handle2List{$handle} = $path2List{$path};
+    return 1;
+}
+
+sub readdir (*) {
+    my $handle = qualify_to_ref(shift, caller);
+    return CORE::readdir($handle) unless defined $handle2List{$handle};
+    return shift @{$handle2List{$handle}} unless wantarray;
+
+    my @files = @{$handle2List{$handle}};
+    $handle2List{$handle} = [];
+    return @files;
+}
+
+sub closedir (*) {
+    my $handle = qualify_to_ref(shift, caller);
+    return CORE::closedir($handle) unless defined $handle2List{$handle};
+    delete $handle2List{$handle};
+    return 1;
+}
+
+1;
+

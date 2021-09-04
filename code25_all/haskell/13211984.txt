@@ -1,0 +1,85 @@
+0001
+0010
+[0, 1, 2, 3, 0, ...]
+.!.
+Language.KansasLava.Signal
+0001
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DataKinds #-}
+import Language.KansasLava
+import Hardware.KansasLava.Boards.Papilio.LogicStart -- from http://github.com/gergoerdi/kansas-lava-papilio
+import Data.Sized.Matrix
+import Data.Sized.Unsigned as Unsigned
+import Data.Bits
+
+driveSS :: forall clk sig n. (Clock clk, sig ~ Signal clk, Size n, Rep n, Num n, Integral n) => Matrix n (Matrix X7 (sig Bool)) -> SevenSeg clk ActiveLow n
+driveSS segss = SevenSeg (fmap bitNot anodes) segs high
+  where
+    clkAnode :: sig Bool
+    clkAnode = divideClk (Witness :: Witness X8)
+
+    selector :: sig n
+    selector = counter clkAnode
+
+    segss' :: sig (Matrix n (Matrix X7 Bool))
+    segss' = pack . fmap pack $ segss
+
+    segs :: Matrix X7 (sig Bool)
+    segs = unpack $ segss' .!. selector
+
+    anodes :: Matrix n (sig Bool)
+    anodes = rotatorL clkAnode
+
+test_sseg :: Fabric ()
+test_sseg = do
+    sw <- switches
+    let sw' = cropAt sw 1
+    sseg $ driveSS $ matrix [sw', zero, zero, zero]
+  where
+    zero = matrix $ replicate 7 low
+
+divideClk :: forall c sig ix. (Clock c, sig ~ Signal c, Size ix) => Witness ix -> sig Bool
+divideClk _ = counter high .==. (0 :: sig (Unsigned ix))
+
+counter :: (Rep a, Num a, Clock c, sig ~ Signal c) => sig Bool -> sig a
+counter inc = loop
+  where
+    reg = register 0 loop
+    loop = mux inc (reg, reg + 1)
+
+rotatorL :: (Clock c, sig ~ Signal c, Size ix, Integral ix) => sig Bool -> Matrix ix (sig Bool)
+rotatorL step = fromUnsigned loop
+  where
+    reg = register 1 loop
+    loop = mux step (reg, rotateL reg 1)
+
+fromUnsigned :: (sig ~ Signal c, Size ix) => sig (Unsigned ix) -> Matrix ix (sig Bool)
+fromUnsigned = unpack . coerce Unsigned.toMatrix
+
+main :: IO ()
+main = do
+    writeVhdlPrelude "lava-prelude.vhdl"
+    kleg <- reifyFabric $ do
+        board_init
+        test_sseg
+    writeVhdlCircuit "hello" "hello.vhdl" kleg
+    writeUCF "hello.ucf" kleg
+
+ERROR:HDLParsers:800 - "/home/cactus/prog/lava/hello/src/hello.vhdl" Line 85. Type of sig_24_o0 is incompatible with type of sig_28_o0.
+
+hello.vhdl
+type sig_24_o0_type is array (7 downto 0) of std_logic_vector(0 downto 0);
+signal sig_24_o0 : sig_24_o0_type;
+
+signal sig_25_o0 : std_logic_vector(1 downto 0);
+
+type sig_28_o0_type is array (3 downto 0) of std_logic_vector(6 downto 0);
+signal sig_28_o0 : sig_28_o0_type;
+
+sig_24_o0 <= sig_28_o0(to_integer(unsigned(sig_25_o0)));
+
+sig_24_o0
+array (6 downto 0) of std_logic_vector(0 downto 0)
+std_logic_vector(6 downto 0)
+std_logic_vector(0 downto 0)

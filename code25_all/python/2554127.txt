@@ -1,0 +1,187 @@
+"statusmsg": "2 hours_detail found with query: {'empid':'22','datestamp':'2009-03-02',}",
+
+"statusmsg": "1 hours_detail found with query: {'empid':'22','datestamp':'2009-03-02','limit','first',with limit[0,1](limit,None... limit set 1 times),}",
+
+"statusmsg": "1 hours_detail found with query: {'empid':'22','datestamp':'2009-03-02','limit','first',with limit[0,1](limit,None... limit set 10 times),}",
+
+"statusmsg": "1 hours_detail found with query: {'empid':'22','datestamp':'2009-03-02',with limit[0,1](limit,None... limit set 10 times),}",
+"statusmsg": "1 hours_detail found with query: {'empid':'22','datestamp':'2009-03-02',with limit[0,1](limit,None... limit set 8 times),}",
+"statusmsg": "1 hours_detail found with query: {'empid':'22','datestamp':'2009-03-02',with limit[0,1](limit,None... limit set 9 times),}",
+
+    #hours_detail/id/{id}/empid/{empid}/projid/{projid}/datestamp/{datestamp}/daterange/{fromdate}to{todate}
+    #empid is required
+    url(r'^api/hours_detail/(?:' + \
+        r'(?:[/]?id/(?P<id>\d+))?' + \
+        r'(?:[/]?empid/(?P<empid>\d+))?' + \
+        r'(?:[/]?projid/(?P<projid>\d+))?' + \
+        r'(?:[/]?datestamp/(?P<datestamp>\d{4,}[-/\.]\d{2,}[-/\.]\d{2,}))?' + \
+        r'(?:[/]?daterange/(?P<daterange>(?:\d{4,}[-/\.]\d{2,}[-/\.]\d{2,})(?:to|/-)(?:\d{4,}[-/\.]\d{2,}[-/\.]\d{2,})))?' + \
+        r')+' + \
+        r'(?:/limit/(?P<limit>(?:first|last)))?' + \
+        r'(?:/(?P<exact>exact))?$', hours_detail_resource),
+
+class ResponseLimit(object):
+    def __init__(self):
+        self._min = 0
+        self._max = 0
+        self._islimit = 0
+
+    @property
+    def min(self):
+        if self.islimit == 0:
+            raise LookupError("trying to access min when no limit has been set")
+        return self._min
+
+    @property
+    def max(self):
+        if self.islimit == 0:
+            raise LookupError("trying to access max when no limit has been set")
+        return self._max
+
+    @property
+    def islimit(self):
+        return self._islimit
+
+    def setlimit(self, min, max):
+        self._min = min
+        self._max = max
+        # incrementing _islimit instead of using a bool so I can try and see why it's broken
+        self._islimit += 1
+
+class BaseApiHandler(BaseHandler):
+    limit = ResponseLimit()
+    def __init__(self):
+        self._post_name = 'base'
+
+    @property
+    def post_name(self):
+        return self._post_name
+
+    @post_name.setter
+    def post_name(self, value):
+        self._post_name = value
+
+    def process_kwarg_read(self, key, value, d_post, b_exact):
+        """
+        this should be overridden in the derived classes to process kwargs
+        """
+        pass
+
+    # override 'read' so we can better handle our api's searching capabilities
+    def read(self, request, *args, **kwargs):
+        d_post = {'status':0,'statusmsg':'Nothing Happened'}
+        try:
+            # setup the named response object
+            # select all employees then filter - querysets are lazy in django
+            # the actual query is only done once data is needed, so this may
+            # seem like some memory hog slow beast, but it's actually not.
+            d_post[self.post_name] = self.queryset(request)
+            s_query = ''
+
+            b_exact = False
+            if 'exact' in kwargs and kwargs['exact'] <> None:
+                b_exact = True
+                s_query = '\'exact\':True,'
+
+            for key,value in kwargs.iteritems():
+                # the regex url possibilities will push None into the kwargs dictionary
+                # if not specified, so just continue looping through if that's the case
+                if value is None or key == 'exact':
+                    continue
+
+                # write to the s_query string so we have a nice error message
+                s_query = '%s\'%s\':\'%s\',' % (s_query, key, value)
+
+                # now process this key/value kwarg
+                self.process_kwarg_read(key=key, value=value, d_post=d_post, b_exact=b_exact)
+
+            # end of the kwargs for loop
+            else:
+                if self.limit.islimit > 0:
+                    s_query = '%swith limit[%s,%s](limit,%s... limit set %s times),' % (s_query, self.limit.min, self.limit.max, kwargs['limit'],self.limit.islimit)
+                    d_post[self.post_name] = d_post[self.post_name][self.limit.min:self.limit.max]
+                if d_post[self.post_name].count() == 0:
+                    d_post['status'] = 0
+                    d_post['statusmsg'] = '%s not found with query: {%s}' % (self.post_name, s_query)
+                else:
+                    d_post['status'] = 1
+                    d_post['statusmsg'] = '%s %s found with query: {%s}' % (d_post[self.post_name].count(), self.post_name, s_query)
+        except:
+            e = sys.exc_info()[1]
+            d_post['status'] = 0
+            d_post['statusmsg'] = 'error: %s %s' % (e, traceback.format_exc())
+            d_post[self.post_name] = []
+
+        return d_post
+
+
+class HoursDetailHandler(BaseApiHandler):
+    #allowed_methods = ('GET', 'PUT', 'POST', 'DELETE',)
+    model = HoursDetail
+    exclude = ()
+
+    def __init__(self):
+        BaseApiHandler.__init__(self)
+        self._post_name = 'hours_detail'
+
+    def process_kwarg_read(self, key, value, d_post, b_exact):
+        # each query is handled slightly differently... when keys are added
+        # handle them in here.  python doesn't have switch statements, this
+        # could theoretically be performed using a dictionary with lambda
+        # expressions, however I was affraid it would mess with the way the
+        # filters on the queryset work so I went for the less exciting
+        # if/elif block instead
+
+        # querying on a specific row
+        if key == 'id':
+            d_post[self.post_name] = d_post[self.post_name].filter(pk=value)
+
+        # filter based on employee id - this is guaranteed to happen once
+        # per query (see read(...))
+        elif key == 'empid':
+            d_post[self.post_name] = d_post[self.post_name].filter(emp__id__exact=value)
+
+        # look for a specific project by id
+        elif key == 'projid':
+            d_post[self.post_name] = d_post[self.post_name].filter(proj__id__exact=value)
+
+        elif key == 'datestamp' or key == 'daterange':
+            d_from = None
+            d_to = None
+            # first, regex out the times in the case of range vs stamp
+            if key == 'daterange':
+                m = re.match('(?P<daterangefrom>\d{4,}[-/\.]\d{2,}[-/\.]\d{2,})(?:to|/-)(?P<daterangeto>\d{4,}[-/\.]\d{2,}[-/\.]\d{2,})', \
+                             value)
+                d_from = datetime.strptime(m.group('daterangefrom'), '%Y-%m-%d')
+                d_to = datetime.strptime(m.group('daterangeto'), '%Y-%m-%d')
+            else:
+                d_from = datetime.strptime(value, '%Y-%m-%d')
+                d_to = datetime.strptime(value, '%Y-%m-%d')
+
+            # now min/max to get midnight on day1 through just before midnight on day2
+            # note: this is a hack because as of the writing of this app,
+            # __date doesn't yet exist as a queryable field thus any
+            # timestamps not at midnight were incorrectly left out
+            d_from = datetime.combine(d_from, time.min)
+            d_to = datetime.combine(d_to, time.max)
+
+            d_post[self.post_name] = d_post[self.post_name].filter(clock_time__gte=d_from)
+            d_post[self.post_name] = d_post[self.post_name].filter(clock_time__lte=d_to)
+
+        elif key == 'limit':
+            order_by = 'clock_time'
+            if value == 'last':
+                order_by = '-clock_time'
+            d_post[self.post_name] = d_post[self.post_name].order_by(order_by)
+            self.limit.setlimit(0, 1)
+
+        else:
+            raise NameError
+
+    def read(self, request, *args, **kwargs):
+        # empid is required, so make sure it exists before running BaseApiHandler's read method
+        if not('empid' in kwargs and kwargs['empid'] <> None and kwargs['empid'] >= 0):
+            return {'status':0,'statusmsg':'empid cannot be empty'}
+        else:
+            return BaseApiHandler.read(self, request, *args, **kwargs)
+

@@ -1,0 +1,157 @@
+Uncaught exception: malformed UTF-8 character in JSON string
+
+Uncaught exception: Wide character in subroutine entry
+
+(hlovdal) localhost:/work/2011/perl_unicode>cat json_malformed_utf8.pl 
+#!/usr/bin/perl -w -CSAD
+
+### BEGIN ###
+# Apparently the very best perl unicode boiler template code that exist,
+# https://stackoverflow.com/questions/6162484/why-does-modern-perl-avoid-utf-8-by-default/6163129#6163129
+# Slightly modified.
+
+use v5.12; # minimal for unicode string feature
+#use v5.14; # optimal for unicode string feature
+
+use utf8;                                                 # Declare that this source unit is encoded as UTF‑8. Although
+                                                          # once upon a time this pragma did other things, it now serves
+                                                          # this one singular purpose alone and no other.
+use strict;
+use autodie;
+
+use warnings;                                             # Enable warnings, since the previous declaration only enables
+use warnings    qw< FATAL  utf8     >;                    # strictures and features, not warnings. I also suggest
+                                                          # promoting Unicode warnings into exceptions, so use both
+                                                          # these lines, not just one of them. 
+
+use open        qw( :encoding(UTF-8) :std );              # Declare that anything that opens a filehandles within this
+                                                          # lexical scope but not elsewhere is to assume that that
+                                                          # stream is encoded in UTF‑8 unless you tell it otherwise.
+                                                          # That way you do not affect other module’s or other program’s code.
+
+use charnames   qw< :full >;                              # Enable named characters via \N{CHARNAME}.
+use feature     qw< unicode_strings >;
+
+use Carp                qw< carp croak confess cluck >;
+use Encode              qw< encode decode >;
+use Unicode::Normalize  qw< NFD NFC >;
+
+END { close STDOUT }
+
+if (grep /\P{ASCII}/ => @ARGV) { 
+   @ARGV = map { decode("UTF-8", $_) } @ARGV;
+}
+
+$| = 1;
+
+binmode(DATA, ":encoding(UTF-8)");                        # If you have a DATA handle, you must explicitly set its encoding.
+
+# give a full stack dump on any untrapped exceptions
+local $SIG{__DIE__} = sub {
+    confess "Uncaught exception: @_" unless $^S;
+};
+
+# now promote run-time warnings into stackdumped exceptions
+#   *unless* we're in an try block, in which 
+#   case just generate a clucking stackdump instead
+local $SIG{__WARN__} = sub {
+    if ($^S) { cluck   "Trapped warning: @_" } 
+    else     { confess "Deadly warning: @_"  }
+};
+
+### END ###
+
+
+use JSON;
+use Encode;
+
+use Getopt::Long;
+use Encode;
+
+my $use_nfd = 0;
+my $use_water = 0;
+GetOptions("nfd" => \$use_nfd, "water" => \$use_water );
+
+print "JSON->backend->is_pp = ", JSON->backend->is_pp, ", JSON->backend->is_xs = ", JSON->backend->is_xs, "\n";
+
+sub check {
+        my $text = shift;
+        return "is_utf8(): " . (Encode::is_utf8($text) ? "1" : "0") . ", is_utf8(1): " . (Encode::is_utf8($text, 1) ? "1" : "0"). ". ";
+}
+
+my $json_text = "{ \"my_test\" : \"hei på deg\" }\n";
+if ($use_water) {
+        $json_text = "{ \"water\" : \"水\" }\n";
+}
+if ($use_nfd) {
+        $json_text = NFD($json_text);
+}
+
+print check($json_text), "\$json_text = $json_text";
+
+# test from perluniintro(1)
+if (eval { decode_utf8($json_text, Encode::FB_CROAK); 1 }) {
+        print "string is valid utf8\n";
+} else {
+        print "string is not valid utf8\n";
+}
+
+my $hash_ref1 = JSON->new->utf8->decode($json_text);
+my $hash_ref2 = decode_json( $json_text );
+
+__END__
+
+(hlovdal) localhost:/work/2011/perl_unicode>./json_malformed_utf8.pl 
+JSON->backend->is_pp = 0, JSON->backend->is_xs = 1
+is_utf8(): 1, is_utf8(1): 1. $json_text = { "my_test" : "hei på deg" }
+string is valid utf8
+Uncaught exception: malformed UTF-8 character in JSON string, at character offset 20 (before "\x{5824}eg" }\n") at ./json_malformed_utf8.pl line 96.
+ at ./json_malformed_utf8.pl line 46
+        main::__ANON__('malformed UTF-8 character in JSON string, at character offset...') called at ./json_malformed_utf8.pl line 96
+(hlovdal) localhost:/work/2011/perl_unicode>./json_malformed_utf8.pl | ./uniquote 
+Uncaught exception: malformed UTF-8 character in JSON string, at character offset 20 (before "\x{5824}eg" }\n") at ./json_malformed_utf8.pl line 96.
+ at ./json_malformed_utf8.pl line 46
+        main::__ANON__('malformed UTF-8 character in JSON string, at character offset...') called at ./json_malformed_utf8.pl line 96
+JSON->backend->is_pp = 0, JSON->backend->is_xs = 1
+is_utf8(): 1, is_utf8(1): 1. $json_text = { "my_test" : "hei p\N{U+E5} deg" }
+string is valid utf8
+(hlovdal) localhost:/work/2011/perl_unicode>./json_malformed_utf8.pl -nfd | ./uniquote 
+Uncaught exception: Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.
+ at ./json_malformed_utf8.pl line 46
+        main::__ANON__('Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.\x{a}') called at ./json_malformed_utf8.pl line 96
+JSON->backend->is_pp = 0, JSON->backend->is_xs = 1
+is_utf8(): 1, is_utf8(1): 1. $json_text = { "my_test" : "hei pa\N{U+30A} deg" }
+string is valid utf8
+(hlovdal) localhost:/work/2011/perl_unicode>./json_malformed_utf8.pl -water 
+JSON->backend->is_pp = 0, JSON->backend->is_xs = 1
+is_utf8(): 1, is_utf8(1): 1. $json_text = { "water" : "水" }
+string is valid utf8
+Uncaught exception: Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.
+ at ./json_malformed_utf8.pl line 46
+        main::__ANON__('Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.\x{a}') called at ./json_malformed_utf8.pl line 96
+(hlovdal) localhost:/work/2011/perl_unicode>./json_malformed_utf8.pl -water | ./uniquote 
+Uncaught exception: Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.
+ at ./json_malformed_utf8.pl line 46
+        main::__ANON__('Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.\x{a}') called at ./json_malformed_utf8.pl line 96
+JSON->backend->is_pp = 0, JSON->backend->is_xs = 1
+is_utf8(): 1, is_utf8(1): 1. $json_text = { "water" : "\N{U+6C34}" }
+string is valid utf8
+(hlovdal) localhost:/work/2011/perl_unicode>./json_malformed_utf8.pl -water --nfd | ./uniquote 
+Uncaught exception: Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.
+ at ./json_malformed_utf8.pl line 46
+        main::__ANON__('Wide character in subroutine entry at ./json_malformed_utf8.pl line 96.\x{a}') called at ./json_malformed_utf8.pl line 96
+JSON->backend->is_pp = 0, JSON->backend->is_xs = 1
+is_utf8(): 1, is_utf8(1): 1. $json_text = { "water" : "\N{U+6C34}" }
+string is valid utf8
+(hlovdal) localhost:/work/2011/perl_unicode>rpm -q perl perl-JSON perl-JSON-XS
+perl-5.12.4-159.fc15.x86_64
+perl-JSON-2.51-1.fc15.noarch
+perl-JSON-XS-2.30-2.fc15.x86_64
+(hlovdal) localhost:/work/2011/perl_unicode>
+
+json_text
+json_bytes
+my $json_bytes = encode('UTF-8', $json_text);
+my $hash_ref1 = JSON->new->utf8->decode($json_bytes);
+
+$perl_scalar = decode_json $json_text

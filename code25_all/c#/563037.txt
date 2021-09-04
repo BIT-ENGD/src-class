@@ -1,0 +1,137 @@
+public class CentralAuthCredentials : ClientCredentials
+{
+    public override System.IdentityModel.Selectors.SecurityTokenManager CreateSecurityTokenManager()
+    {
+        return new CentralAuthTokenManager(this);
+    }
+}
+
+public class CentralAuthTokenManager : ClientCredentialsSecurityTokenManager
+{
+    private CentralAuthCredentials credentials;
+
+    public CentralAuthTokenManager(CentralAuthCredentials creds) : base(creds)
+    {
+        this.credentials = creds;
+    }
+
+    public override SecurityTokenProvider CreateSecurityTokenProvider(SecurityTokenRequirement tokenRequirement)
+    {
+        if (this.IsIssuedSecurityTokenRequirement(tokenRequirement) || tokenRequirement.TokenType == CentralAuthToken.TOKEN_TYPE)
+            return new CentralAuthTokenProvider(credentials.UserId, credentials.UserPassword, credentials.ImpersonateId, credentials.LoginType);
+        else
+            return base.CreateSecurityTokenProvider(tokenRequirement);
+    }
+
+    public override SecurityTokenAuthenticator CreateSecurityTokenAuthenticator(SecurityTokenRequirement tokenRequirement, out SecurityTokenResolver outOfBandTokenResolver)
+    {
+        outOfBandTokenResolver = null;
+        if (this.IsIssuedSecurityTokenRequirement(tokenRequirement) || tokenRequirement.TokenType == CentralAuthToken.TOKEN_TYPE)
+            return new CentralAuthTokenAuthenticator();
+        else
+            return base.CreateSecurityTokenAuthenticator(tokenRequirement, out outOfBandTokenResolver);
+    }
+
+    public override SecurityTokenSerializer CreateSecurityTokenSerializer(SecurityTokenVersion version)
+    {
+        return new CentralAuthTokenSerializer();
+    }
+}
+
+CreateSecurityTokenProvider(SecurityTokenRequirement tokenRequirement)
+{
+    ...
+}
+
+public override SecurityTokenSerializer CreateSecurityTokenSerializer(SecurityTokenVersion version)
+{
+    return new CentralAuthTokenSerializer();
+}
+
+public class CentralAuthorizationManagerClient : ClientBase<ICentralAuthorizationManager>, ICentralAuthorizationManager, IDisposable
+{
+    public PFPrincipal GenerateToken()
+    {
+        if (!this.ChannelFactory.Endpoint.Behaviors.Contains(typeof(CentralAuthCredentials)))
+            throw new ArgumentException("Must set CentralAuthCredentials before calling this method.");
+        return base.Channel.GenerateToken();
+    }
+
+    public PFPrincipal GenerateToken(CentralAuthToken token)
+    {
+        this.ChannelFactory.Endpoint.Behaviors.Remove<ClientCredentials>();
+        this.ChannelFactory.Endpoint.Behaviors.Add(new CentralAuthCredentials(token));
+        return this.GenerateToken();
+    }
+
+    <behaviors>
+        <endpointBehaviors>
+            <behavior name="Server2ServerEndpointBehavior">
+                <clientCredentials type="MyApp.Security.CentralAuthCredentials, MyApp">
+                    <clientCertificate findValue="localhost" x509FindType="FindBySubjectName" storeLocation="CurrentUser" storeName="My" />
+                    <serviceCertificate>
+                        <authentication certificateValidationMode="None" revocationMode="NoCheck" />
+                    </serviceCertificate>
+                </clientCredentials>
+            </behavior>
+        </endpointBehaviors>
+    </behaviors>
+
+    <bindings>
+        <wsHttpBinding>
+            <binding name="wsHttpServer2Server">
+                <security mode="Message">
+                    <message clientCredentialType="UserName" />
+                </security>
+            </binding>
+        </wsHttpBinding>
+    </bindings>
+
+public sealed class CentralAuthTokenBindingExtension : BindingElementExtensionElement
+{
+    public CentralAuthTokenBindingExtension()
+        : base()
+    {
+    }
+
+    public override Type BindingElementType
+    {
+        get { return typeof(SymmetricSecurityBindingElement); }
+    }
+
+    protected override System.ServiceModel.Channels.BindingElement CreateBindingElement()
+    {
+        X509SecurityTokenParameters protectionParams = new X509SecurityTokenParameters();
+        protectionParams.InclusionMode = SecurityTokenInclusionMode.Never;
+
+        SymmetricSecurityBindingElement innerBindingElement = new SymmetricSecurityBindingElement();
+        innerBindingElement.EndpointSupportingTokenParameters.SignedEncrypted.Add(new CentralAuthTokenParameters());
+        //innerBindingElement.MessageProtectionOrder = MessageProtectionOrder.SignBeforeEncrypt;
+        innerBindingElement.ProtectionTokenParameters = protectionParams;
+
+        return innerBindingElement;
+    }
+}
+
+    <extensions>
+        <bindingElementExtensions>
+            <add name="CentralAuthCreds" type="MyApp.Security.Configuration.CentralAuthTokenBindingExtension, MyApp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null" />
+        </bindingElementExtensions>
+    </extensions>
+
+    <bindings>
+        <customBinding>
+            <binding name="wsHttpServer2Server">
+                <CentralAuthCreds />
+                <binaryMessageEncoding />
+                <httpTransport />
+            </binding>
+        </customBinding>
+    </bindings>
+
+"The security token manager cannot create a token authenticator for requirement ..."
+
+<endpointBehaviors>
+    <behavior name="Server2ServerEndpointBehavior">
+        <clientCredentials type="MyApp.Security.CentralAuthCredentials, MyApp">
+

@@ -1,0 +1,66 @@
+    mSceneMgr->setWorldGeometry("terrain.cfg" );
+    mTSM=static_cast<TerrainSceneManager*>(sceneMgr);
+
+    TerrainOptions mTerrainOptions = mTSM->getOptions();
+
+    //load heihgtmap
+    Image mImage;
+    mImage.load("isl_h_ph.png", ResourceGroupManager::getSingleton().getWorldResourceGroupName()); //load image
+
+    //write image buffer to pOrigSrc 
+    const uchar* pOrigSrc = mImage.getData();
+    const uchar* pSrc;
+    // image size to mPageSize
+    size_t   mPageSize  = mTerrainOptions.pageSize;
+
+    NxActorDesc ActorDesc;
+
+    //set number of segments
+    heightFieldDesc = new NxHeightFieldDesc;
+    heightFieldDesc->nbColumns      = mPageSize;
+    heightFieldDesc->nbRows         = mPageSize;
+    heightFieldDesc->verticalExtent   = -1000; 
+    heightFieldDesc->convexEdgeThreshold    = 0;
+
+    heightFieldDesc->samples      = new NxU32[mPageSize*mPageSize];   //constructor for every sample?
+    heightFieldDesc->sampleStride   = sizeof(NxU32);                    //some sample step = number of samples
+
+    pSrc = pOrigSrc;
+    char* currentByte = (char*)heightFieldDesc->samples;     //current sample mb?
+    LogManager::getSingletonPtr()->logMessage("+++Heightmap---");
+    for (NxU32 row = 0; row < mPageSize; row++)
+    {
+        for (NxU32 column = 0; column < mPageSize; column++)   //cycle around samples
+        {
+            pSrc = pOrigSrc + column*mPageSize +row;
+
+            //NxReal s = NxReal(row) / NxReal(mPageSize);
+            //NxReal t = NxReal(column) / NxReal(mPageSize);
+
+            NxI16 height = (NxI32)(*pSrc++);
+        NxU32 matrixOffset = (row % gMatrixSize) * gMatrixSize + (column % gMatrixSize);
+
+            //LogManager::getSingletonPtr()->logMessage(Ogre::StringConverter::toString(height));
+            NxHeightFieldSample* currentSample = (NxHeightFieldSample*)currentByte;
+            currentSample->height = height;
+        currentSample->materialIndex0 = gMatrix[matrixOffset][1];
+        currentSample->materialIndex1 = gMatrix[matrixOffset][2];
+        currentSample->tessFlag = gMatrix[matrixOffset][0];
+            currentByte += heightFieldDesc->sampleStride;
+        }
+    }
+
+    heightField = mScene->getPhysicsSDK().createHeightField(*heightFieldDesc);
+
+    NxHeightFieldShapeDesc heightFieldShapeDesc;
+    heightFieldShapeDesc.heightField   = heightField;
+    heightFieldShapeDesc.shapeFlags      = NX_SF_FEATURE_INDICES | NX_SF_VISUALIZATION;
+    heightFieldShapeDesc.group   = 1;
+    heightFieldShapeDesc.heightScale   = 18.8f;//1 в Physx = 255 в огре
+    heightFieldShapeDesc.rowScale      = mTerrainOptions.scale.x;
+    heightFieldShapeDesc.columnScale   = mTerrainOptions.scale.z;
+    heightFieldShapeDesc.meshFlags   = NX_MESH_SMOOTH_SPHERE_COLLISIONS;
+    heightFieldShapeDesc.materialIndexHighBits = 0;
+    heightFieldShapeDesc.holeMaterial = 2;
+    ActorDesc.shapes.pushBack(&heightFieldShapeDesc);
+

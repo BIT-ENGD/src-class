@@ -1,0 +1,131 @@
+int main(){
+    //Cria processo para o Data Viewer Unit
+        LPSTARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+
+    // Start the child process. 
+    if(!CreateProcessA( 
+                "E:\\Documents\\Faculdade\\Matérias\\Automação em Tempo Real\\TP 3\\DataViewerUnit\\Debug\\DataViewerUnit.exe", // Module name
+                NULL,                                   // Command line
+                NULL,                                   // Process handle not inheritable
+                NULL,                                   // Thread handle not inheritable
+                FALSE,                              // Set handle inheritance to FALSE
+                CREATE_NEW_CONSOLE,   // No creation flags
+                NULL,                                   // Use parent's environment block
+                NULL,                                   // Use parent's starting directory 
+                si,                                     // Pointer to STARTUPINFO structure
+                &pi )                                   // Pointer to PROCESS_INFORMATION structure
+    ) 
+    {
+        printf( "CreateProcess failed (%d).\n", GetLastError() );
+        return 0;
+    }
+
+  // Wait until child process exits.
+  WaitForSingleObject( pi.hProcess, INFINITE );
+
+    LOG("Traffic System initiating...");
+    LOG("Keyboard commands:\n"
+        "0              - Changes the system mode to manual.\n"
+        "1              - Changes the system mode to automatic.\n"
+        "Spacebar - Swaps between buffer lock and unlock.\n"
+        "ESC            - Terminates the program."
+        );
+
+    system("PAUSE");
+    isAutoMode = TRUE;
+    terminate_progam = FALSE;
+    terminate_TOU = FALSE;
+    bufferSpace = BUFFER_SIZE;
+    InitializeCriticalSection(&bufferCS);
+    system("PAUSE");
+    hMailslot = CreateFile(MAILSLOT, GENERIC_WRITE, FILE_SHARE_READ, 
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    ASSERT(hMailslot, "Mailslot couldn't be created");
+
+    hHasPosition = CreateSemaphore(NULL, BUFFER_SIZE, BUFFER_SIZE, 
+        (LPCWSTR)"HAS_POSITION");
+    ASSERT(hHasPosition, "Positions to write semaphore couldn't be created.");
+
+    hHasMsg = CreateSemaphore(NULL, 0, BUFFER_SIZE, (LPCWSTR)"HAS_MSG");
+    ASSERT(hHasMsg, "Messages to read semaphore couldn't be created.");
+
+    hBufferLockStatus = CreateEvent(NULL, true, true, 
+        (LPCWSTR)"BUFFER_LOCK_STATUS");
+    ASSERT(hBufferLockStatus, "Lock status semaphore couldn't be created.");
+
+    hTimer = CreateSemaphore(NULL, 0, 1, (LPCWSTR)"REMOTE_UNITS_TIMER");
+    ASSERT(hTimer, "Timer semaphore couldn't be created.");
+
+    nextMsgToRead = 0;
+    nextPositionToWrite = 0;
+
+    for (int i = 0;i < RU_QUANTITY;i++) {
+        hRUs[i] = (HANDLE) _beginthreadex(NULL, 0, (CAST_FUNCTION)RUAction, (LPVOID)i, 0, NULL);
+        ASSERT(hRUs[i], "RU " << i << "could not be created.");
+        DEBUG("RU " << i << " created.");
+        RUTime[i] = generateTime(100, 200);
+    DEBUG("Remote Unit " << i << " interval: " <<
+        RUTime[i]);
+    }
+
+    HANDLE hTOU = (HANDLE) _beginthreadex(NULL, 0, (CAST_FUNCTION)TOUAction, NULL, 0, NULL);
+    ASSERT(hTOU, "Traffic Optimization Unit couldn't be created.");
+
+    bool isLocked = false;
+    int typed;
+    do{
+        typed = _getch();
+        switch(typed){
+        case CHAR0:         
+            if(isAutoMode)
+                LOG("You changed the mode to manual.")
+            else
+                LOG("Mode is already manual.")
+                isAutoMode = false;
+            break;
+        case CHAR1:         
+            if(!isAutoMode)
+                LOG("You changed the mode to automatic.")
+            else
+                LOG("Mode is already automatic.")
+            isAutoMode = true;
+            break;
+        case SPACEBAR :
+            if(isLocked){
+                isLocked = false;
+                SetEvent(hBufferLockStatus);
+                LOG("You unlocked the buffer.");
+            } else {
+                isLocked = true;
+                ResetEvent(hBufferLockStatus);
+                LOG("You locked the buffer.");
+            }
+            break;
+        Default:
+            break;
+        }
+    } while (typed!=ESC);
+    LOG("You typed ESC, the program will be finished.");
+    //Pede o fim das threads
+
+    terminate_progam = true;
+    // Importante para que as threads não fiquem 
+    // travadas sem poder terminar.
+    SetEvent(hBufferLockStatus);
+    WaitForMultipleObjects(RU_QUANTITY, hRUs, TRUE, INFINITE);
+    terminate_TOU = true;
+    WaitForSingleObject(hTOU, INFINITE);
+
+
+    // Close process and thread handles. 
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+    CloseHandle(hHasMsg);
+    CloseHandle(hHasPosition);
+    CloseHandle(hBufferLockStatus);
+    CloseHandle(hTimer);
+
+    return 0;
+}
+

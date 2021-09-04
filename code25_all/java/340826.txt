@@ -1,0 +1,133 @@
+public class MultiCallManager<T>
+{
+
+private ExecutorService service;
+private Map<String, Future<T>> futureResults;
+private Map<String, T> results;
+private Map<String, Exception> errors;
+
+public MultiCallManager(ExecutorService inService)
+{
+    service = inService;
+    futureResults = new LinkedHashMap<String, Future<T>>();
+    results = new LinkedHashMap<String, T>();
+    errors = new LinkedHashMap<String, Exception>();
+}
+
+public void add(String key, Callable<T> task)
+{
+    Future<T> result = service.submit(task);
+    futureResults.put(key, result);
+}
+
+public boolean hasErrors()
+{
+    return !errors.isEmpty();
+}
+
+public T getResult(String key)
+{
+    return results.get(key);
+}
+
+public Exception getException(String key)
+{
+    return errors.get(key);
+}
+
+public void waitUntilDone(long timeout)
+{
+    for (Entry<String, Future<T>> entry : futureResults.entrySet())
+    {
+        if (timeout < 0)
+        {
+            timeout = 0;
+        }
+        long start = System.currentTimeMillis();
+        try
+        {
+            results.put(entry.getKey(), entry.getValue().get(timeout, TimeUnit.MILLISECONDS));
+        }
+        catch (Exception e)
+        {
+            errors.put(entry.getKey(), e);
+        }
+        long end = System.currentTimeMillis();
+        long time = end - start;
+        timeout = timeout - time;
+    }
+}
+
+public static void main(String[] args) throws Exception
+{
+    ExecutorService service = Executors.newFixedThreadPool(5);
+
+    MultiCallManager sandbox = new MultiCallManager(service);
+
+    final String value = "AWESOME!";
+
+    Callable<Object> c1 = new Callable<Object>()
+    {
+
+        @Override
+        public String call() throws Exception
+        {
+            Thread.sleep(5000);
+            return value;
+        }
+    };
+
+    Callable<Object> c2 = new Callable<Object>()
+    {
+
+        @Override
+        public Object call() throws Exception
+        {
+            Thread.sleep(6000);
+            return value;
+        }
+    };
+
+    Callable<Object> c3 = new Callable<Object>()
+    {
+
+        @Override
+        public Object call() throws Exception
+        {
+            Thread.sleep(2000);
+            return value;
+        }
+    };
+
+    sandbox.add("c1", c1);
+    sandbox.add("c2", c2);
+    sandbox.add("c3", c3);
+    sandbox.waitUntilDone(5000);
+
+    if (sandbox.getResult("c1") != null)
+    {
+        System.out.println(sandbox.getResult("c1"));
+    }
+    else
+    {
+        sandbox.getException("c1").printStackTrace();
+    }
+    if (sandbox.getResult("c2") != null)
+    {
+        System.out.println(sandbox.getResult("c2"));
+    }
+    else
+    {
+        sandbox.getException("c2").printStackTrace();
+    }
+    if (sandbox.getResult("c3") != null)
+    {
+        System.out.println(sandbox.getResult("c3"));
+    }
+    else
+    {
+        sandbox.getException("c3").printStackTrace();
+    }
+    service.shutdownNow();
+}
+

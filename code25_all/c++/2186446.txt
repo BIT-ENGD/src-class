@@ -1,0 +1,132 @@
+#include <boost/signal.hpp>
+#include <utility>
+
+class Sensor;
+
+class Recorder : public ::boost::signals::trackable {
+ public:
+   explicit Recorder(int id) : id_(id) {}
+
+   // Cannot be copied
+   Recorder(const Recorder &) = delete;
+   Recorder &operator =(const Recorder &) = delete;
+
+   // But can be moved so it can be stored in a vector.
+   // There's a proposal for having a compiler generated default for this that would be
+   // very convenient.
+   Recorder(Recorder &&b) : id_(b.id_) {
+      b.id_ = -1;
+   }
+   Recorder &operator =(Recorder &&b) {
+      id_ = b.id_;
+      b.id_ = -1;
+      return *this;
+   }
+
+   void recordSensor(const Sensor &s);
+   void addSensor(Sensor &s);
+
+ private:
+   int id_;
+   char space_[1312];
+};
+
+class Sensor {
+ public:
+   typedef ::boost::signal<void (const Sensor &)> sigtype_t;
+
+   explicit Sensor(int id) : val_(0), id_(id) { }
+
+   void notify(const sigtype_t::slot_type &slot) { signal_.connect(slot); }
+   void updateSensor(double newval) { val_ = newval; signal_(*this); }
+   double getValue() const { return val_; }
+   int getId() const { return id_; }
+
+ private:
+   sigtype_t signal_;
+   double val_;
+   const int id_;
+};
+
+#include "test_header.hpp"
+#include <boost/bind.hpp>
+#include <boost/shared_ptr.hpp>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <sstream>
+
+void Recorder::addSensor(Sensor &s)
+{
+   ::std::cout << "Recorder #" << id_
+               << " now recording Sensor #" << s.getId() << '\n';
+   ::std::cout.flush();
+   s.notify(::boost::bind(&Recorder::recordSensor, this, _1));
+}
+
+void Recorder::recordSensor(const Sensor &s)
+{
+   ::std::cout << "Recorder #" << id_ << " - new value for sensor named Sensor #"
+               << s.getId() << ": " << s.getValue() << '\n';
+   ::std::cout.flush();
+}
+
+
+int main(int argc, const char *argv[])
+{
+   using ::boost::shared_ptr;
+   using ::std::vector;
+   vector<Recorder> recorders;
+   vector<shared_ptr<Sensor> > sensors;
+   double val = 0.1;
+   static const unsigned int recorder_every = 4;
+   static const unsigned int sensor_every = 2;
+
+   for (unsigned int i = 0; i < 9; ++i) {
+      if (i % recorder_every == 0) {
+         recorders.push_back(Recorder(i / recorder_every));
+      }
+      if (i % sensor_every == 0) {
+         shared_ptr<Sensor> sp(new Sensor(i / sensor_every));
+         sensors.push_back(sp);
+         for (auto r = recorders.begin(); r != recorders.end(); ++r) {
+            r->addSensor(*sp);
+         }
+      }
+      for (auto s = sensors.begin(); s != sensors.end(); ++s, val *= 1.001) {
+         (*s)->updateSensor(val);
+      }
+   }
+}
+
+Recorder #0 now recording Sensor #0
+Recorder #0 - new value for sensor named Sensor #0: 0.1
+Recorder #0 - new value for sensor named Sensor #0: 0.1001
+Recorder #0 now recording Sensor #1
+Recorder #0 - new value for sensor named Sensor #0: 0.1002
+Recorder #0 - new value for sensor named Sensor #1: 0.1003
+Recorder #0 - new value for sensor named Sensor #0: 0.100401
+Recorder #0 - new value for sensor named Sensor #1: 0.100501
+Recorder #0 now recording Sensor #2
+Recorder #1 now recording Sensor #2
+Recorder #0 - new value for sensor named Sensor #2: 0.100803
+Recorder #1 - new value for sensor named Sensor #2: 0.100803
+Recorder #0 - new value for sensor named Sensor #2: 0.101106
+Recorder #1 - new value for sensor named Sensor #2: 0.101106
+Recorder #0 now recording Sensor #3
+Recorder #1 now recording Sensor #3
+Recorder #0 - new value for sensor named Sensor #2: 0.101409
+Recorder #1 - new value for sensor named Sensor #2: 0.101409
+Recorder #0 - new value for sensor named Sensor #3: 0.101511
+Recorder #1 - new value for sensor named Sensor #3: 0.101511
+Recorder #0 - new value for sensor named Sensor #2: 0.101815
+Recorder #1 - new value for sensor named Sensor #2: 0.101815
+Recorder #0 - new value for sensor named Sensor #3: 0.101917
+Recorder #1 - new value for sensor named Sensor #3: 0.101917
+Recorder #0 now recording Sensor #4
+Recorder #1 now recording Sensor #4
+Recorder #2 now recording Sensor #4
+Recorder #0 - new value for sensor named Sensor #4: 0.102428
+Recorder #1 - new value for sensor named Sensor #4: 0.102428
+Recorder #2 - new value for sensor named Sensor #4: 0.102428
+

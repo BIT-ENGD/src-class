@@ -1,0 +1,209 @@
+org.springframework.beans.factory.BeanNotOfRequiredTypeException: Bean named 'org.springframework.transaction.interceptor.TransactionInterceptor#0' must be of type [org.aopalliance.aop.Advice], but was actually of type [org.springframework.transaction.interceptor.TransactionInterceptor]
+
+<tx:annotation-driven transaction-manager="transactionManager/>
+  <bean id="dataSource" class="org.apache.commons.dbcp.BasicDataSource">
+    <property name="driverClassName"   value="com.mysql.jdbc.Driver" />
+    <property name="url"     value="jdbc:mysql://${db.host}:{db.port}/{db.name}" />
+    <property name="username" value="{db.username}" />
+    <property name="password" value="{db.password}" />
+    <property name="initialSize" value="{db.minConnections}" />
+    <property name="maxActive" value="{db.maxConnections}" />
+  </bean>
+
+  <bean id="sessionFactory" class="org.springframework.orm.hibernate3.annotation.AnnotationSessionFactoryBean">
+    <property name="dataSource" ref="dataSource"/>
+    <property name="annotatedClasses">
+      <list>
+       <value>tld.mydomain.data.entities.User</value>
+      </list>
+    </property>
+    <property name="hibernateProperties">
+      <props>
+        <prop key="hibernate.dialect">org.hibernate.dialect.MySQLDialect</prop>
+        <prop key="hibernate.show_sql">false</prop>
+      </props>
+    </property>
+  </bean>
+
+  <bean id="transactionManager" class="org.springframework.orm.hibernate3.HibernateTransactionManager">
+    <property name="sessionFactory" ref="sessionFactory"/>
+  </bean>
+
+  <tx:annotation-driven transaction-manager="transactionManager"/>
+
+  <bean class="org.springframework.dao.annotation.PersistenceExceptionTranslationPostProcessor"/>
+
+  <bean name="openSessionInViewInterceptor" class="org.springframework.orm.hibernate3.support.OpenSessionInViewInterceptor">
+    <property name="sessionFactory" ref="sessionFactory"/>
+    <property name="flushMode" value="0" />
+  </bean> 
+
+<!--
+
+  <bean id="txProxyTemplate" class="org.springframework.transaction.interceptor.TransactionProxyFactoryBean" abstract="true">
+    <property name="transactionManager" ref="transactionManager"/>
+    <property name="transactionAttributes">
+      <props>
+        <prop key="create*">PROPAGATION_REQUIRED</prop>
+        <prop key="update*">PROPAGATION_REQUIRED</prop>
+        <prop key="delete*">PROPAGATION_REQUIRED</prop>
+        <prop key="*">PROPAGATION_SUPPORTS,readOnly</prop>
+      </props>
+    </property>
+  </bean>
+-->
+  <context:component-scan base-package="tld.mydomain.business"/>
+
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.transaction.annotation.Transactional;
+
+import tld.mydomain.data.entities.User;
+import tld.mydomain.data.entities.keys.UserId;
+
+public interface UserService extends UserDetailsService, CRUDService<User, UserId> {
+
+    @Transactional(readOnly = true)
+    public User lookupUser(String username);
+
+    @Transactional(readOnly = true)
+    public User publicAliasForUser(String username);
+}
+
+import java.util.List;
+
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import tld.mydomain.commons.RandomString;
+import tld.mydomain.data.entities.User;
+
+@Service("userService")
+public class UserServiceImpl extends AbstractCRUDServiceImpl<User, String> implements UserService {
+
+    @Autowired
+    private LogService logService;
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public User lookupUser(String username) {
+
+        if(username == null || username.equals("") || username.equals("anonymousUser"))
+            return null;
+
+        try {
+          List<User> matchingUsers = (List<User>) DAO.getSession().createCriteria(User.class).add(Restrictions.eq("username", username)).list();
+          int n = matchingUsers.size();
+          if(n == 0) return null;
+          if(n > 1) logService.logWarning("Got " + n + " users back, expected just one. Data inconsistency, multiple users with username = " + username);
+          return matchingUsers.get(0);
+        } catch (Exception ex) {
+          logService.logException(ex);
+          return null;
+        }
+    }
+
+    @Override
+    public UserDetails loadUserByUsername(String username)
+            throws UsernameNotFoundException, DataAccessException {
+        if(username == null || username.equals("") || username.equals("anonymousUser"))
+            return null;
+
+        User user = this.lookupUser(username);
+        if(user == null) {
+            logService.logWarning("Couldn't find a user to match, throw out a garbage object");
+            user = new User();
+            user.setUsername(RandomString.getString(30));
+            user.setPassword(RandomString.getString(30));
+        }
+
+        return user.getUserDetails();
+    }
+
+    @SuppressWarnings("unchecked")
+    public User publicAliasForUser(String alias) {
+        List<User> publicUsers = DAO.getSession().createCriteria(User.class)
+        .add(Restrictions.eq("alias", alias))
+        .list();
+
+        if(publicUsers.size() <= 0) return null;
+        if(publicUsers.size() > 1) logService.logWarning("Data inconsistency: More than one alias for a user with alias " + alias);
+        return publicUsers.get(0);
+    }
+
+}
+
+org.springframework.beans.factory.BeanNotOfRequiredTypeException: Bean named 'org.springframework.transaction.interceptor.TransactionInterceptor#0' must be of type [org.aopalliance.aop.Advice], but was actually of type [org.springframework.transaction.interceptor.TransactionInterceptor]
+    at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:347)
+    at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:192)
+    at org.springframework.aop.support.AbstractBeanFactoryPointcutAdvisor.getAdvice(AbstractBeanFactoryPointcutAdvisor.java:77)
+    at org.springframework.aop.framework.adapter.DefaultAdvisorAdapterRegistry.getInterceptors(DefaultAdvisorAdapterRegistry.java:78)
+    at org.springframework.aop.framework.DefaultAdvisorChainFactory.getInterceptorsAndDynamicInterceptionAdvice(DefaultAdvisorChainFactory.java:61)
+    at org.springframework.aop.framework.AdvisedSupport.getInterceptorsAndDynamicInterceptionAdvice(AdvisedSupport.java:481)
+    at org.springframework.aop.framework.JdkDynamicAopProxy.invoke(JdkDynamicAopProxy.java:188)
+    at $Proxy28.loadUserByUsername(Unknown Source)
+    at org.springframework.security.authentication.dao.DaoAuthenticationProvider.retrieveUser(DaoAuthenticationProvider.java:83)
+    at org.springframework.security.authentication.dao.AbstractUserDetailsAuthenticationProvider.authenticate(AbstractUserDetailsAuthenticationProvider.java:125)
+    at org.springframework.security.authentication.ProviderManager.doAuthentication(ProviderManager.java:121)
+    at org.springframework.security.authentication.AbstractAuthenticationManager.authenticate(AbstractAuthenticationManager.java:49)
+    at org.springframework.security.authentication.ProviderManager.doAuthentication(ProviderManager.java:139)
+    at org.springframework.security.authentication.AbstractAuthenticationManager.authenticate(AbstractAuthenticationManager.java:49)
+    at org.springframework.security.web.authentication.www.BasicAuthenticationFilter.doFilter(BasicAuthenticationFilter.java:142)
+    at org.springframework.security.web.FilterChainProxy$VirtualFilterChain.doFilter(FilterChainProxy.java:356)
+    at org.springframework.security.web.authentication.ui.DefaultLoginPageGeneratingFilter.doFilter(DefaultLoginPageGeneratingFilter.java:92)
+    at org.springframework.security.web.FilterChainProxy$VirtualFilterChain.doFilter(FilterChainProxy.java:356)
+    at org.springframework.security.web.authentication.AbstractAuthenticationProcessingFilter.doFilter(AbstractAuthenticationProcessingFilter.java:188)
+    at org.springframework.security.web.FilterChainProxy$VirtualFilterChain.doFilter(FilterChainProxy.java:356)
+    at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:106)
+    at org.springframework.security.web.FilterChainProxy$VirtualFilterChain.doFilter(FilterChainProxy.java:356)
+    at org.springframework.security.web.context.SecurityContextPersistenceFilter.doFilter(SecurityContextPersistenceFilter.java:80)
+    at org.springframework.security.web.FilterChainProxy$VirtualFilterChain.doFilter(FilterChainProxy.java:356)
+    at org.springframework.security.web.access.channel.ChannelProcessingFilter.doFilter(ChannelProcessingFilter.java:110)
+    at org.springframework.security.web.FilterChainProxy$VirtualFilterChain.doFilter(FilterChainProxy.java:356)
+    at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:150)
+    at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:237)
+    at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:167)
+    at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:235)
+    at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:206)
+    at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:233)
+    at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:191)
+    at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:128)
+    at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:102)
+    at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:109)
+    at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:293)
+    at org.apache.coyote.http11.Http11Processor.process(Http11Processor.java:849)
+    at org.apache.coyote.http11.Http11Protocol$Http11ConnectionHandler.process(Http11Protocol.java:583)
+    at org.apache.tomcat.util.net.JIoEndpoint$Worker.run(JIoEndpoint.java:454)
+    at java.lang.Thread.run(Thread.java:637)
+
+ <aop:config>
+  <aop:pointcut id="serviceMethods" expression="execution(* tld.mydomain.business..*(..))" />
+  <aop:advisor  advice-ref="txAdvice" pointcut-ref="serviceMethods" />
+ </aop:config>
+
+ <tx:advice id="txAdvice" transaction-manager="transactionManager" >
+  <tx:attributes>
+   <tx:method name="*" propagation="REQUIRES_NEW" />
+  </tx:attributes>
+ </tx:advice>
+
+Caused by: org.springframework.beans.factory.BeanNotOfRequiredTypeException: Bean named 'txAdvice' must be of type [org.aopalliance.aop.Advice], but was actually of type [org.springframework.transaction.interceptor.TransactionInterceptor]
+    at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:347)
+    at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:192)
+    at org.springframework.aop.support.AbstractBeanFactoryPointcutAdvisor.getAdvice(AbstractBeanFactoryPointcutAdvisor.java:77)
+    at org.springframework.aop.aspectj.AspectJProxyUtils.isAspectJAdvice(AspectJProxyUtils.java:67)
+    at org.springframework.aop.aspectj.AspectJProxyUtils.makeAdvisorChainAspectJCapableIfNecessary(AspectJProxyUtils.java:49)
+    at org.springframework.aop.aspectj.autoproxy.AspectJAwareAdvisorAutoProxyCreator.extendAdvisors(AspectJAwareAdvisorAutoProxyCreator.java:101)
+    at org.springframework.aop.framework.autoproxy.AbstractAdvisorAutoProxyCreator.findEligibleAdvisors(AbstractAdvisorAutoProxyCreator.java:88)
+    at org.springframework.aop.framework.autoproxy.AbstractAdvisorAutoProxyCreator.getAdvicesAndAdvisorsForBean(AbstractAdvisorAutoProxyCreator.java:68)
+    at org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator.wrapIfNecessary(AbstractAutoProxyCreator.java:359)
+    at org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator.postProcessAfterInitialization(AbstractAutoProxyCreator.java:322)
+    at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.applyBeanPostProcessorsAfterInitialization(AbstractAutowireCapableBeanFactory.java:404)
+    at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1401)
+    at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:512)
+    ... 26 more
+

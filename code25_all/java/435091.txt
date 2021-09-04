@@ -1,0 +1,101 @@
+Server { 
+    com.sun.security.auth.module.Krb5LoginModule 
+        required 
+        isInitiator=false 
+        doNotPrompt=true 
+        useKeyTab=true 
+        keyTab="gssdemo.keytab" 
+        storeKey=true 
+        principal="HTTP/xxx0815.domain.net@DOMAIN.NET" 
+        debug=true; 
+};
+
+    GSSManager manager = GSSManager.getInstance();
+    GSSName serverName = manager.createName(getServerName(), null);
+    GSSCredential serverCred = manager.createCredential(serverName,
+                                                        GSSCredential.INDEFINITE_LIFETIME,
+                                                        createKerberosOid(),
+                                                        GSSCredential.ACCEPT_ONLY);
+    GSSContext context = manager.createContext(serverCred);
+    System.out.println("Context created successfully. Now incoming tokens could be accepted.");
+
+    ServerSocket serverSocket = new ServerSocket(55555);
+    SocketAdapter ca = new SocketAdapter(serverSocket.accept());
+
+    while (!context.isEstablished()) {
+        byte[] inToken = ca.readToken();
+        byte[] outToken = context.acceptSecContext(inToken, 0, inToken.length);
+
+        if (outToken != null) {
+            ca.sendToken(outToken);
+        }
+    }
+
+    System.out.println("Context established");
+    System.out.println("Connected user is: " + context.getSrcName());
+    context.dispose();
+
+Client {
+    com.sun.security.auth.module.Krb5LoginModule
+        required
+        useTicketCache=true
+        debug=true;
+};
+
+    GSSManager manager = GSSManager.getInstance();
+    GSSName clientName = manager.createName(getClientName(), null);
+    GSSCredential clientCred = manager.createCredential(clientName,
+                                                        8 * 3600,
+                                                        createKerberosOid(),
+                                                        GSSCredential.INITIATE_ONLY);
+    GSSName serviceName = manager.createName("HTTP/xxx0815.domain.net@DOMAIN.NET", null);
+
+    GSSContext context = manager.createContext(serviceName,
+                                               createKerberosOid(),
+                                               clientCred,
+                                               GSSContext.DEFAULT_LIFETIME);
+    context.requestMutualAuth(true);
+    context.requestConf(false);
+    context.requestInteg(true);
+
+    System.out.println("Establishing context");
+    SocketAdapter ca = new SocketAdapter(new Socket("localhost", 55555));
+
+    byte[] inToken = new byte[0];
+    while (true) {
+        byte[] outToken = context.initSecContext(inToken, 0, inToken.length);
+
+        if (outToken != null) {
+            ca.sendToken(outToken);
+        }
+
+        if (context.isEstablished()) {
+            break;
+        }
+
+        inToken = ca.readToken();
+    }
+
+    System.out.println("Context established: " + context.isEstablished());
+
+    context.dispose();
+
+Caused by: GSSException: Failure unspecified at GSS-API level (Mechanism level: Integrity check on decrypted field failed (31))
+    at sun.security.jgss.krb5.Krb5Context.acceptSecContext(Krb5Context.java:741)
+    at sun.security.jgss.GSSContextImpl.acceptSecContext(GSSContextImpl.java:323)
+    at sun.security.jgss.GSSContextImpl.acceptSecContext(GSSContextImpl.java:267)
+    at de.westlb.mrm.sandbox.gss.GssServer.acceptAndEstablish(GssServer.java:88)
+    at de.westlb.mrm.sandbox.gss.GssServer.run(GssServer.java:66)
+    ... 4 more
+Caused by: KrbException: Integrity check on decrypted field failed (31)
+    at sun.security.krb5.internal.crypto.DesCbcEType.decrypt(DesCbcEType.java:154)
+    at sun.security.krb5.internal.crypto.DesCbcMd5EType.decrypt(DesCbcMd5EType.java:33)
+    at sun.security.krb5.internal.crypto.DesCbcEType.decrypt(DesCbcEType.java:125)
+    at sun.security.krb5.internal.crypto.DesCbcMd5EType.decrypt(DesCbcMd5EType.java:33)
+    at sun.security.krb5.EncryptedData.decrypt(EncryptedData.java:168)
+    at sun.security.krb5.KrbApReq.authenticate(KrbApReq.java:267)
+    at sun.security.krb5.KrbApReq.<init>(KrbApReq.java:134)
+    at sun.security.jgss.krb5.InitSecContextToken.<init>(InitSecContextToken.java:79)
+    at sun.security.jgss.krb5.Krb5Context.acceptSecContext(Krb5Context.java:724)
+    ... 8 more
+

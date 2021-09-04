@@ -1,0 +1,103 @@
+        package Class::Foo::Partners;
+
+    use Carp;
+    use Data::Dumper;
+    # Sanity check and Blessing
+    sub new ($) {
+        my $class = shift;
+        my %attr = @_;
+        Carp::confess('Config undefined') unless defined $attr{cfg};
+        my $self = bless({}, $class);
+        %$self = @_;
+        return $self;
+    }
+
+    sub process {
+        my $self = shift;
+
+        my %filestoupload = ();
+        if ($self->{dbh}->sql($sql, \%filestoupload)) {
+            my $stats;
+            if (defined $self->{cfg}->{$self->{section}}->{pdf_email_rcpt}) {
+                $stats = Class::Foo::Email->new(section => $self->{cfg}->{$self->{section}}, filestoupload => \%filestoupload);
+                $stats->sendfiles;
+            } else {
+                $stats = Class::Foo::FTP->new(section => $self->{cfg}->{$self->{section}}, filestoupload => \%filestoupload);
+                $stats->sendfiles;
+            }
+        } elsif ($self->{dbh}->{_error}) {
+            Carp::confess($self->{dbh}->{_error});
+        } else {
+            print "NO FILES";
+        }
+    }
+
+
+    package Class::Foo::FTP;
+
+    use Carp;
+    use Data::Dumper;
+    use POSIX qw( strftime );
+    use File::Temp qw (tempdir) ;
+    use File::Copy;
+    use Net::FTP;
+
+    # Sanity check and Blessing
+    sub new ($) {
+        my $class = shift;
+        my %attr = @_;
+        Carp::confess('Section undefined') unless defined $attr{section};
+        Carp::confess('undefined ftp_host') unless defined $attr{section}->{ftp_host};
+
+
+        my $self = bless({}, $class);
+        %$self = @_;
+
+        return $self;
+    }
+
+    sub sendfiles {
+        my $self = shift;
+        return unless(keys %{$self->{filestoupload}});
+        #DO SOME COMMON TASK
+        ..
+        $self->ftp_connect();
+        ..
+        ..
+    }
+
+    package Class::Foo::Email;
+
+    use Data::Dumper;
+    use Mail::Sender;
+    use POSIX qw( strftime );
+    use File::Temp qw (tempdir) ;
+    use File::Copy;
+
+    sub new ($) {
+        my $class = shift;
+        my %attr = @_;
+        Carp::confess('Config: undefined pdf_email_subject') unless defined $attr{section}->{pdf_email_subject};
+        Carp::confess('Config: undefined pdf_email_from') unless defined $attr{section}->{pdf_email_from};
+        my $self = bless({}, $class);
+        %$self = @_;
+
+        return $self;
+    }
+
+    sub sendfiles {
+        my $self = shift;
+        return unless(keys %{$self->{filestoupload}});
+        #DO SOME COMMON TASK
+        ..
+        my $mailrcpt = $self->{section}->{pdf_email_rcpt};
+        my $sender = new Mail::Sender {smtp => 'localhost', from => $self->{section}->{pdf_email_from}};
+        $sender->MailFile({ to => $mailrcpt, 
+                            subject => $self->{section}->{pdf_email_subject}, 
+                            msg => "Attached is A1 of today's WSJE. ",
+                            ctype => 'application/pdf',
+                            file => @files } );
+
+        $self->{uploaded_count} = @files;
+    }
+

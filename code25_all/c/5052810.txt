@@ -1,0 +1,111 @@
+#include "event.h"
+#include "memory.h"
+#include "thread.h"
+
+#include <stdio.h>
+#include <time.h>
+#include <assert.h>
+
+bool running;
+
+typedef struct Event {
+    event_callback_t cb;
+    time_t delay;
+    void* p;
+    struct Event* next;
+} Event;
+
+Event* g_events;
+
+void _remove_event           __P((Event**, Event *));
+void event_dispatch_internal        __P(());
+void add_event_internal             __P((Event**, Event *));
+
+void
+event_dispatch()
+{
+    g_events = (Event *)MyMalloc(sizeof(*g_events));
+    create_thread((callback_t)event_dispatch_internal, (void *)NULL);
+}
+
+void
+add_event_internal(Event** events, Event* event)
+{
+    event->next = *events;
+    *events = event;
+}
+
+void
+add_event(callback, param, delay)
+    event_callback_t callback;
+    void *param;
+    time_t delay;
+{
+    Event* event;
+    event = (Event *)MyMalloc(sizeof(*event));
+    assert(0 != event);
+
+    event->delay = time(NULL) + delay;
+    event->p = param;
+    event->cb = callback;
+    add_event_internal(&g_events, event);
+}
+
+void
+_remove_event(Event** events, Event* event)
+{
+    event = *events;
+    *events = event->next;
+}
+
+void
+event_dispatch_internal()
+{
+#ifdef _DEBUG
+    fprintf(stderr, "Events started\n");
+#endif
+    while (true) {
+        Event* tmp;
+        for (tmp = g_events; tmp; tmp = tmp->next) {
+            if (time(NULL) >= tmp->delay) {
+                tmp->cb(tmp->p);
+#ifdef _DEBUG
+                fprintf(stderr, "Executed event %p:%u\n", (void *)tmp, (unsigned int)tmp->delay);
+#endif
+                _remove_event(&g_events, tmp);
+            }
+        }
+    }
+}
+
+            for (tmp = g_events; tmp; tmp = tmp->next) {
+            if (time(NULL) >= tmp->delay) {
+                if (!tmp->cb) {
+                    tmp->cb(tmp->p);
+#ifdef _DEBUG
+                    fprintf(stderr, "Executed event %p:%u\n", (void *)tmp, (unsigned int)tmp->delay);
+#endif
+                } else {
+                    fprintf(stderr, "Couldnt execute event %p:%u\n", (void *)tmp, (unsigned int)tmp->delay);
+                }
+            }
+        }
+
+void test_(void *);
+
+void
+test_(void *p)
+{
+    fprintf(stderr, "test(): %d\n", *(int *)p);
+}
+
+int main()
+{
+    int test;
+    test = 5;
+    event_dispatch();
+    add_event(test_, (void *)&test, 1);
+    do { } while (1);
+    return 0;
+}
+

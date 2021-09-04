@@ -1,0 +1,138 @@
+CREATE TABLE `category` (
+  `category_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `category_name` varchar(100) NOT NULL,
+  `parent_id` int(10) unsigned DEFAULT NULL,
+  PRIMARY KEY (`category_id`),
+  UNIQUE KEY `category_name_UNIQUE` (`category_name`,`parent_id`),
+  KEY `fk_category_category1` (`parent_id`,`category_id`),
+  CONSTRAINT `fk_category_category1` FOREIGN KEY (`parent_id`) REFERENCES `category` (`category_id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish_ci
+
+SELECT category_id, category_name, parent_id
+FROM category
+ORDER BY level -- No `level` column so far :(
+
+DROP TRIGGER IF EXISTS `category_before_insert`;
+
+DELIMITER //
+
+CREATE TRIGGER `category_before_insert` BEFORE INSERT ON `category` FOR EACH ROW BEGIN
+    IF NEW.parent_id IS NULL THEN
+        SET @parent_level = 0;
+    ELSE
+        SELECT level INTO @parent_level
+        FROM category
+        WHERE category_id = NEW.parent_id;
+    END IF;
+
+    SET NEW.level = @parent_level+1;
+END//
+
+DELIMITER ;
+
+
+DROP TRIGGER IF EXISTS `category_before_update`;
+
+DELIMITER //
+
+CREATE TRIGGER `category_before_update` BEFORE UPDATE ON `category` FOR EACH ROW BEGIN
+    IF NEW.parent_id IS NULL THEN
+        SET @parent_level = 0;
+    ELSE
+        SELECT level INTO @parent_level
+        FROM category
+        WHERE category_id = NEW.parent_id;
+    END IF;
+
+    SET NEW.level = @parent_level+1;
+END//
+
+DELIMITER ;
+
+ON UPDATE CASCADE
+categories
+DROP TRIGGER IF EXISTS `category_after_delete`;
+
+DELIMITER //
+
+CREATE TRIGGER `category_after_delete` AFTER DELETE ON `category` FOR EACH ROW BEGIN
+    /*
+     * Raises an error, see below
+     */
+    UPDATE category SET parent_id=NULL
+    WHERE parent_id = OLD.category_id;
+END//
+
+DELIMITER ;
+
+CREATE TABLE `category_level` (
+  `category_id` int(10) NOT NULL,
+  `parent_id` int(10) DEFAULT NULL, -- Not really necesary
+  `level` int(10) NOT NULL,
+  PRIMARY KEY (`category_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish_ci
+
+CREATE FUNCTION `category_connect_by_parent_eq_prior_id`(`value` INT) RETURNS int(10)
+    READS SQL DATA
+BEGIN
+    DECLARE _id INT;
+    DECLARE _parent INT;
+    DECLARE _next INT;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET @category_id = NULL;
+
+    SET _parent = @category_id;
+    SET _id = -1;
+
+    IF @category_id IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    LOOP
+        SELECT  MIN(category_id)
+        INTO    @category_id
+        FROM    category
+        WHERE   COALESCE(parent_id, 0) = _parent
+            AND category_id > _id;
+        IF @category_id IS NOT NULL OR _parent = @start_with THEN
+            SET @level = @level + 1;
+            RETURN @category_id;
+        END IF;
+        SET @level := @level - 1;
+        SELECT  category_id, COALESCE(parent_id, 0)
+        INTO    _id, _parent
+        FROM    category
+        WHERE   category_id = _parent;
+    END LOOP;
+END
+
+CREATE PROCEDURE `update_category_level`()
+    SQL SECURITY INVOKER
+BEGIN
+    DELETE FROM category_level;
+
+    INSERT INTO category_level (category_id, parent_id, level)
+    SELECT hi.category_id, parent_id, level
+    FROM (
+        SELECT category_connect_by_parent_eq_prior_id(category_id) AS category_id, @level AS level
+        FROM (
+            SELECT  @start_with := 0,
+                @category_id := @start_with,
+                @level := 0
+            ) vars, category
+        WHERE @category_id IS NOT NULL
+        ) ho
+    JOIN category hi ON hi.category_id = ho.category_id;
+END
+
+CREATE TRIGGER `category_after_insert` AFTER INSERT ON `category` FOR EACH ROW BEGIN
+    call update_category_level();
+END
+
+CREATE TRIGGER `category_after_update` AFTER UPDATE ON `category` FOR EACH ROW BEGIN
+    call update_category_level();
+END
+
+CREATE TRIGGER `category_after_delete` AFTER DELETE ON `category` FOR EACH ROW BEGIN
+    call update_category_level();
+END
+

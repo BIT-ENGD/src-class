@@ -1,0 +1,113 @@
+package de.samedi.searcher;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+
+import java.io.IOException;
+
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.CorruptIndexException;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.queryParser.QueryParser;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.store.FSDirectory;
+import org.junit.Test;
+
+public class LuceneReload {
+
+    private IndexSearcher searcher1;
+    private IndexSearcher searcher2;
+    private FSDirectory directory1, directory2;
+    private IndexWriter writer1, writer2;
+
+
+    @Test
+    public void testReload() throws Exception {
+        String home = System.getProperty("user.home");
+        this.directory1 = FSDirectory.getDirectory(home + "/testIndex");
+        this.directory2 = FSDirectory.getDirectory(home + "/testIndex");
+        this.writer1 = new IndexWriter(this.directory1, new StandardAnalyzer(), true, IndexWriter.MaxFieldLength.LIMITED);
+        this.writer2 = new IndexWriter(this.directory2, new StandardAnalyzer(), true, IndexWriter.MaxFieldLength.LIMITED);
+
+        // assert that we're empty
+        assertFound(getSearcher1(), "test", 0);
+        assertFound(getSearcher2(), "test", 0);
+
+        add(this.writer1, "test");
+        assertFound(getSearcher1(), "test", 1);
+        assertFound(getSearcher2(), "test", 1);
+
+        add(this.writer2, "foobar");
+        assertFound(getSearcher1(), "foobar", 1);
+        assertFound(getSearcher2(), "foobar", 1);
+    }
+
+    public void assertFound(IndexSearcher searcher, String q, int expected_number) {
+        try {
+            QueryParser parser = new QueryParser("name", new StandardAnalyzer());
+            Query query = parser.parse(q);
+            TopDocs t = searcher.search(query, null, 50);
+            assertEquals(expected_number, t.totalHits);
+        } catch (Exception e) {
+            e.printStackTrace();
+            fail();
+        }
+
+    }
+
+    public IndexSearcher getSearcher1() throws CorruptIndexException, IOException {
+        if (this.searcher1 == null) {
+            this.searcher1 = new IndexSearcher(IndexReader.open(this.directory1));
+        } else {
+            IndexReader new_reader, old_reader;
+
+            old_reader = this.searcher1.getIndexReader();
+            new_reader = old_reader.reopen();
+
+            if (new_reader != old_reader) {
+                System.err.println("index1 changed");
+                this.searcher1.close();
+                old_reader.close();
+                this.searcher1 = new IndexSearcher(new_reader);
+            }
+        }
+
+        return this.searcher1;
+    }
+
+    public IndexSearcher getSearcher2() throws CorruptIndexException, IOException {
+        if (this.searcher2 == null) {
+            this.searcher2 = new IndexSearcher(this.directory2);
+        } else {
+            IndexReader new_reader, old_reader;
+
+            old_reader = this.searcher2.getIndexReader();
+            new_reader = old_reader.reopen();
+
+            if (new_reader != old_reader) {
+                System.err.println("index2 changed");
+                this.searcher2.close();
+                old_reader.close();
+                this.searcher2 = new IndexSearcher(new_reader);
+            }
+        }
+
+        return this.searcher2;
+    }
+
+    public void add(IndexWriter writer, String name) throws CorruptIndexException, IOException {
+        Document d = new Document();
+        d.add(new Field("name", name, Field.Store.YES, Field.Index.ANALYZED));
+        writer.addDocument(d);
+        writer.commit();
+        IndexWriter.unlock(writer.getDirectory());
+    }
+}
+
+new_reader = IndexReader.open(this.directory1);
+

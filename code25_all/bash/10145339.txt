@@ -1,0 +1,361 @@
+ #This file is a combination of NEWlen to bbdist as of now 4/5/2012
+ #M. Conley
+
+ ####################################################################################
+ ##################### Please input all of your back break      #####################
+ ##################### parameters in the block bellow!          #####################
+ ####################################################################################
+ project="Cobre Panama, Botija -2012"
+
+ #Example of format
+ #sec1="lwmin lwmax rwmin rwmax numberofcells"
+ #----------------------------
+ #| S |M |Max|Max| M| N |S
+ #| e |i |Lft|Pln| a| u |e
+ #| c |n |Wed|   | x| m |c
+ #| t |  |   |   |  | b |t
+ #| o |L |or |or | R| e |o
+ #| r |e |   |   | i| r |r
+ #|   |f |Min|Min| g|   |
+ #|   |t |PS |Rgt| h| o |
+ #| v |  |   |Wed| t| f |D
+ #| a |W |   |   |  |   |D
+ #| r |e |   |   | W| c |R
+ #|   |d |   |   | e| e |
+ #|   |  |   |   | d| ls|
+ #---------------------------
+ sec1="96 166 206 276 20 186"
+ sec2="127 197 237 307 20 217"
+ sec3="178 248 288 358 12 268"
+ sec4="225 295 335 45 21 315"
+ sec5="258 328 368 78 14 348"
+ sec6="297 7 47 117 31 27"
+ sec7="315 25 65 135 32 45"
+ sec8="342 52 92 162 18 72"
+ sec9="12 82 122 192 12 102"
+ sec10="30 100 140 210 18 120"
+ sec11="45 115 155 225 22 135"
+
+ numofsec=2
+ cmaxdip=90
+ cmindip=0
+
+ smaxdip=90
+ smindip=20
+
+ den=165.0
+
+ l1r1prob=0.2000
+ p1prob=0.2000
+ jslf=001.00
+
+ cellwidth=30
+ ####################################################################################
+ ##################### Start of Automation Loop. All Parameters #####################
+ ##################### Have already been defined above!         #####################
+ ##################### DO NOT WRITE BELOW THIS POINT!!!!!!!!    #####################
+ ####################################################################################
+
+ ########## Check for celdisx in directory #######
+ if [ ! -e celdisx ]; then
+ echo -e "\a""\x1b[31;01m""You are missing the CNI celdisx program from your directory!"
+ echo -e "\a""\x1b[32;01m""Terminating Script - No results calculated."
+ tput sgr0
+     exit 0
+ fi
+
+ ########### Get Length and Spacing ###########
+ echo "Please enter desired Mean Joint Lenght in meters, use 2 decimal places (#.##)"
+ read jlen
+ echo "Please enter desired Joint Spacing in meters, use 2 decimal places (#.##)"
+ read jspace
+ temp=$jlen
+ jlen=$(echo "$temp" | awk '{ printf "%6s", $1}')
+ temp=$jspace
+ jspace=$(echo "$temp" | awk '{ printf "%5s", $1}')
+ replace=$jlen$jspace
+ #####
+
+ ########### Get and Make new directory ##########
+ echo "Please type the name of the new folder you wish to create to place this"
+ echo "iteration of back break into."
+ echo "No spaces please. Use _ or - in place of spaces."
+ read dirname
+ if [ -d $dirname ]; then
+ rm -r $dirname
+ fi
+ mkdir $dirname
+ cd $dirname
+ for (( id = 1 ; id <= $numofsec ; id++ ))
+ do
+ if [ -d sec_$id ]; then
+ rm -r sec_$id
+ fi
+ mkdir sec_$id
+ done
+ cd ..
+
+ ########### Copy origional .dgl files into sec dir ####
+ for (( id = 1 ; id <= $numofsec ; id ++ ))
+ do
+ cp s${id}.gld ${dirname}/sec_$id
+ cp celdisx ${dirname}/sec_$id
+ cp KNRST ${dirname}/sec_$id
+ done
+
+ ####################################################################################
+ ##################### Start of Back break Programs. All Dir &  #####################
+ ##################### Root .gld  have been placed.             #####################
+ ####################################################################################
+ cd $dirname
+
+
+ for (( id = 1 ; id <= ${numofsec} ; id++ ))
+ do
+
+ #### Change into iteration and sector dir ###
+ cd sec_$id
+
+ #### change 1 to 01 bb prog very specific about 6 char strings wtf #####
+ ida=${id}
+ if [ ${#id} -eq 1 ]; then
+ ida=0${id}
+ fi
+
+
+ ########## Check for celdisx in directory #######
+ if [ ! -e celdisx ]; then
+ echo -e "\a""\x1b[31;01m""You are missing the CNI celdisx program from your directory!"
+ echo -e "\a""\x1b[32;01m""Terminating Script - No results calculated."
+ tput sgr0
+     exit 0
+ fi
+
+ #Creates Length File w/ user input Length & Spacing
+ sed -r "2,$ s/^(.{73})(.{11})/\1$replace/" <s${id}.gld >s${ida}LeN
+
+
+ ################### Runs Cell programs #######
+ secid=sec${id}
+ set ${!secid}
+
+ celsrt<<xxxxx
+ s${ida}LeN
+
+ sec_${ida}.srt
+ sec_${ida}.f
+ Y
+
+ TEST sec_${ida}
+ 3
+ 1
+ ${2},${1},${cmaxdip},${cmindip}
+ N
+
+ 2
+ ${3},${2},${cmaxdip},${cmindip}
+ N
+
+ 3
+ ${4},${3},${cmaxdip},${cmindip}
+ N
+
+ sec_${ida}mv.met
+
+ xxxxx
+ met2acad <<xxxxx
+ sec_${ida}mv.met
+ e
+ 1
+
+ xxxxx
+ celdisx<<xxxxx
+ sec_${ida}.srt
+ sec_${ida}.dis
+ m
+ sec_${ida}.tbl
+ ${5}
+
+
+
+
+ xxxxx
+
+
+ ############# run bbstdi ################
+ rm -f s${ida}sdi
+
+ bbstdi<<xxxxx
+ 1
+ s${ida}sdi
+ y
+ ${id}sdi.rpt
+ sec_${ida}.dis
+
+ xxxxx
+
+
+
+ ########### Run bbhst #######
+ var=sec${id}
+ set ${!var}
+
+ bbhst<<xxxxx
+ ${prjt} - ${area} - Sector ${ida}
+ 99
+ 99
+ 1
+ s${ida}LeN
+ ${3},${2}
+ ${smaxdip},${smindip}
+ s${ida}P1h
+ Sec${ida}_hist.met
+ xxxxx
+ met2acad<<xxxxx
+ Sec${ida}_hist.met
+ e
+ 1
+
+ xxxxx
+
+
+ ######### Getting the DIST! ##########
+ echo "Processing Sector ${ida}!!!"
+ bbdist<<xxxxx
+ s${ida}P1h
+ s${ida}P1d
+
+ xxxxx
+
+
+ ########## Get set Numbers and run bbrsco ########
+
+ lw1setn=$(sed -n "1p" s${ida}sdi | cut -c 11-14)
+ ps1setn=$(sed -n "2p" s${ida}sdi | cut -c 11-14)
+ rw1setn=$(sed -n "3p" s${ida}sdi | cut -c 11-14)
+
+ #echo -e "$lw1setn\n$ps1setn\n$rw1setn"
+
+ bbrsco<<xxxxx
+ s${ida}rs ${ida}
+ QUIT ,0.0
+ GRD,${lw1setn} 100
+ GRD,${ps1setn} 100
+ GRD,${rw1setn} 100
+ END
+ xxxxx
+
+ ############ Run bbpldc, create plan shear In ####
+ var=sec${id}
+ set ${!var}
+
+ bbpldc<<xxxxx
+ s${ida}rs
+ ${ida},${6}
+ s${ida}sdi,s${ida}P1d
+ 2,${den}
+ 1
+ 090.
+ s${ida}P1c,$ps1setn
+ STOP
+ NO
+ xxxxx
+
+ ########### Calc Plane Shear bbplaf #######
+
+ bbplaf<<xxxxx
+ s${ida}P1c,s${ida}P1f,${ps1setn}
+ R,090.,090.,001.
+ R,009.,018.,009.
+ T
+ N
+ xxxxx
+
+ ######### Compute wedges ##################
+ var=sec${id}
+ set ${!var}
+
+ bbwedc<<xxxxx
+ s${ida}rs
+ ${ida},${6}
+ s${ida}sdi
+ 2,${den}
+ 1
+ 009.
+ L1R1wc,${lw1setn},${rw1setn}
+ ${2},${1},${smaxdip},${smindip}
+ ${4},${3},${smaxdip},${smindip}
+ STOP
+ NO
+ xxxxx
+
+ for infile in L{1..1}R{1..1}wc
+ do
+ oufile=$(echo $infile | sed "s/c/f/g")
+
+ bbwedf<<xxxxx
+ ${infile},${oufile},4657,1500
+ R,090.,090.,001.
+ R,009.,018.,009.
+ T
+ M,M
+ xxxxx
+
+ done
+
+ ######### combine Plane & Wedge Failures ####
+
+ bf7com<<xxxxx
+ YES
+ ${ida}theo
+ D,${ida}pred,${jslf}
+ W,L1R1wf,${l1r1prob}
+ P,s${ida}P1f,${p1prob}
+
+ ${cellwidth}
+
+
+ xxxxx
+
+ ######## Plot the Curve ############
+ var=sec${id}
+ set ${!var}
+
+ bfaplt<<xxxxx
+ ${ida}theo
+ 1
+ 18
+ DRY
+ ${project} - Backbreak Results
+ Sector ${ida} Wall Orientation DDR ${6}
+ Joint Set Lenght Factor ${jslf}
+ April 2012
+ Trial Runs
+ ${ida}bfa.met
+ ${ida}theo
+ 9
+ ${ida}pred
+ 18
+ ${ida}pred
+ 9
+
+
+ xxxxx
+ met2acad <<xxxxx
+ ${ida}bfa.met
+ e
+ 1
+
+ xxxxx
+
+ ######## Make Table ####
+
+ #### Change out of sector name
+
+ cd ..
+
+ #END LOOP
+ done
+
+ cd ..
+

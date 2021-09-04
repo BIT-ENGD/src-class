@@ -1,0 +1,69 @@
+StdFBShmem_t
+0xAARRGGBB
+0x00FFFFFF
+NSAutoreleasePool *autoReleasePool = [[NSAutoreleasePool alloc] init];
+
+NSPoint mouseLocation = [NSEvent mouseLocation];
+NSArray *allScreens = [NSScreen screens];
+NSEnumerator *screensEnum = [allScreens objectEnumerator];
+NSScreen *screen;
+NSDictionary *screenDesc = nil;
+while ((screen = [screensEnum nextObject]))
+{
+    NSRect screenFrame = [screen frame];
+    screenDesc = [screen deviceDescription];
+    if (NSMouseInRect(mouseLocation, screenFrame, NO))
+        break;
+}
+
+if (screen)
+{
+    kern_return_t err;
+
+    CGDirectDisplayID displayID = (CGDirectDisplayID) [[screenDesc objectForKey:@"NSScreenNumber"] pointerValue];
+    task_port_t taskPort = mach_task_self();
+    io_service_t displayServicePort = CGDisplayIOServicePort(displayID);
+    io_connect_t displayConnection =0;
+    err = IOFramebufferOpen(displayServicePort,
+                            taskPort,
+                            kIOFBSharedConnectType,
+                            &displayConnection);
+    if (KERN_SUCCESS == err)
+    {
+        union
+        {
+            vm_address_t vm_ptr;
+            StdFBShmem_t *fbshmem;
+        } cursorInfo;
+        vm_size_t size;
+
+        err = IOConnectMapMemory(displayConnection,
+                                 kIOFBCursorMemory,
+                                 taskPort,
+                                 &cursorInfo.vm_ptr,
+                                 &size,
+                                 kIOMapAnywhere | kIOMapDefaultCache | kIOMapReadOnly);
+        if (KERN_SUCCESS == err)
+        {
+            // For some reason, cursor data is not always in the same format as
+            // the frame buffer. For this reason, we need some way to detect
+            // which structure we should be reading.
+            QByteArray pixData(
+              (const char*)cursorInfo.fbshmem->cursor.rgb24.image[currentFrame],
+              m_mouseInfo.currentSize.width() * m_mouseInfo.currentSize.height() * 4);
+
+            IOConnectUnmapMemory(displayConnection,
+                                 kIOFBCursorMemory,
+                                 taskPort,
+                                 cursorInfo.vm_ptr);
+        } // IOConnectMapMemory
+        else
+            qDebug() << "IOConnectMapMemory Failed:" << err;
+        IOServiceClose(displayConnection);
+    } // IOServiceOpen
+    else
+        qDebug() << "IOFramebufferOpen Failed:" << err;
+}// if screen
+[autoReleasePool release];
+
+bm18Cursor

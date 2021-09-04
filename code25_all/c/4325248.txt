@@ -1,0 +1,249 @@
+mem 0x1000 0x3fffffff cache
+mem 0x40000000 0xffffffff none
+mem 0x00000000 0x0fff none
+run
+Running…
+[Switching to thread 11523]
+[Switching to thread 11523]
+Re-enabling shared library breakpoint 1
+continue
+warning: Unable to read symbols for /Developer/Platforms/iPhoneOS.platform/DeviceSupport/4.2.1 (8C148)/Symbols/usr/lib/info/dns.so (file not found).
+
+#pragma mark -
+#pragma mark Callback setup & control
+
+- (void) setupCallback
+
+{
+    OSStatus status;
+
+
+    // Describe audio component
+    AudioComponentDescription desc;
+    desc.componentType = kAudioUnitType_Output;
+    desc.componentSubType = kAudioUnitSubType_RemoteIO;
+    desc.componentFlags = 0;
+    desc.componentFlagsMask = 0;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+
+    // Get component
+    AudioComponent inputComponent = AudioComponentFindNext(NULL, &desc);
+
+    // Get audio units
+    status = AudioComponentInstanceNew(inputComponent, &audioUnit);
+
+    UInt32 flag = 1;
+    // Enable IO for playback
+    status = AudioUnitSetProperty(audioUnit, 
+                                  kAudioOutputUnitProperty_EnableIO, 
+                                  kAudioUnitScope_Output, 
+                                  kOutputBus,
+                                  &flag, 
+                                  sizeof(flag));
+
+    //Apply format
+    status = AudioUnitSetProperty(audioUnit, 
+                                  kAudioUnitProperty_StreamFormat, 
+                                  kAudioUnitScope_Input, 
+                                  kOutputBus, 
+                                  &stereoStreamFormat, 
+                                  sizeof(stereoStreamFormat));
+
+    // Set up the playback  callback
+    AURenderCallbackStruct callbackStruct;
+    callbackStruct.inputProc = playbackCallback; //!!****assignment from incompatible pointer warning here *****!!!!!!
+    //set the reference to "self" this becomes *inRefCon in the playback callback
+    callbackStruct.inputProcRefCon = self;
+
+    status = AudioUnitSetProperty(audioUnit, 
+                                  kAudioUnitProperty_SetRenderCallback, 
+                                  kAudioUnitScope_Global, 
+                                  kOutputBus,
+                                  &callbackStruct, 
+                                  sizeof(callbackStruct));
+
+    // Initialise
+    status = AudioUnitInitialize(audioUnit); // error check this status
+
+
+}
+
+static OSStatus playbackCallback (
+
+                                     void                        *inRefCon,      // A pointer to a struct containing the complete audio data 
+                                     //    to play, as well as state information such as the  
+                                     //    first sample to play on this invocation of the callback.
+                                     AudioUnitRenderActionFlags  *ioActionFlags, // Unused here. When generating audio, use ioActionFlags to indicate silence 
+                                     //    between sounds; for silence, also memset the ioData buffers to 0.
+                                      AudioTimeStamp        *inTimeStamp,   // Unused here.
+                                     UInt32                      inBusNumber,    // The mixer unit input bus that is requesting some new
+                                     //        frames of audio data to play.
+                                     UInt32                      inNumberFrames, // The number of frames of audio to provide to the buffer(s)
+                                     //        pointed to by the ioData parameter.
+                                     AudioBufferList             *ioData         // On output, the audio data to play. The callback's primary 
+                                     //        responsibility is to fill the buffer(s) in the 
+                                     //        AudioBufferList.
+                                     ) {
+
+
+    Engine *remoteIOplayer = (Engine *)inRefCon;
+    AudioUnitSampleType *outSamplesChannelLeft;
+    AudioUnitSampleType *outSamplesChannelRight;
+
+    outSamplesChannelLeft                 = (AudioUnitSampleType *) ioData->mBuffers[0].mData;
+     outSamplesChannelRight  = (AudioUnitSampleType *) ioData->mBuffers[1].mData;
+
+    int thetime =0;
+    thetime=remoteIOplayer.sampletime;
+
+
+        for (int frameNumber = 0; frameNumber < inNumberFrames; ++frameNumber)
+        {
+            // get NextPacket returns a 32 bit value, one frame.
+            AudioUnitSampleType *suml=0;
+            AudioUnitSampleType *sumr=0;
+
+            //NSLog (@"frame number -  %i", frameNumber);
+            for(int j=0;j<10;j++)
+
+            {
+
+
+                AudioUnitSampleType valuetoaddl=0;
+                AudioUnitSampleType valuetoaddr=0;
+
+
+                //valuetoadd = [remoteIOplayer getSample:j ];
+                valuetoaddl = [remoteIOplayer getNonInterleavedSample:j currenttime:thetime channel:0 ];
+                //valuetoaddl = [remoteIOplayer getSample:j];
+                valuetoaddr = [remoteIOplayer getNonInterleavedSample:j currenttime:thetime channel:1 ];
+
+                suml = suml+(valuetoaddl/10);
+                sumr = sumr+(valuetoaddr/10);
+
+            }
+
+
+            outSamplesChannelLeft[frameNumber]=(AudioUnitSampleType) suml;
+            outSamplesChannelRight[frameNumber]=(AudioUnitSampleType) sumr;
+
+
+            remoteIOplayer.sampletime +=1;
+
+
+        }
+
+    return noErr;
+}
+
+-(AudioUnitSampleType) getNonInterleavedSample:(int) index currenttime:(int)time channel:(int)ch;
+
+{
+
+    AudioUnitSampleType returnvalue= 0;
+
+    soundStruct snd=soundStructArray[index];    
+    UInt64 sn= snd.frameCount;  
+    UInt64 st=sampletime;
+    UInt64 read= (UInt64)(st%sn);
+
+
+    if(ch==0)
+    {
+        if (snd.sendvalue==1) {
+            returnvalue = snd.audioDataLeft[read];
+
+        }else {
+            returnvalue=0;
+        }
+
+    }else if(ch==1)
+
+    {
+        if (snd.sendvalue==1) {
+        returnvalue = snd.audioDataRight[read];
+        }else {
+            returnvalue=0;
+        }
+
+        soundStructArray[index].sampleNumber=read;
+    }
+
+
+    if(soundStructArray[index].sampleNumber >soundStructArray[index].frameCount)
+    {
+        soundStructArray[index].sampleNumber=0;
+
+    }
+
+    return returnvalue;
+
+
+}
+
+static OSStatus playbackCallback (
+
+                                     void                        *inRefCon,      // A pointer to a struct containing the complete audio data 
+                                     //    to play, as well as state information such as the  
+                                     //    first sample to play on this invocation of the callback.
+                                     AudioUnitRenderActionFlags  *ioActionFlags, // Unused here. When generating audio, use ioActionFlags to indicate silence 
+                                     //    between sounds; for silence, also memset the ioData buffers to 0.
+                                      AudioTimeStamp        *inTimeStamp,   // Unused here.
+                                     UInt32                      inBusNumber,    // The mixer unit input bus that is requesting some new
+                                     //        frames of audio data to play.
+                                     UInt32                      inNumberFrames, // The number of frames of audio to provide to the buffer(s)
+                                     //        pointed to by the ioData parameter.
+                                     AudioBufferList             *ioData         // On output, the audio data to play. The callback's primary 
+                                     //        responsibility is to fill the buffer(s) in the 
+                                     //        AudioBufferList.
+                                     ) {
+
+
+    Engine *remoteIOplayer = (Engine *)inRefCon;
+    AudioUnitSampleType *outSamplesChannelLeft;
+    AudioUnitSampleType *outSamplesChannelRight;
+
+    outSamplesChannelLeft                 = (AudioUnitSampleType *) ioData->mBuffers[0].mData;
+     outSamplesChannelRight  = (AudioUnitSampleType *) ioData->mBuffers[1].mData;
+
+    int thetime =0;
+    thetime=remoteIOplayer.sampletime;
+
+
+        for (int frameNumber = 0; frameNumber < inNumberFrames; ++frameNumber)
+        {
+            // get NextPacket returns a 32 bit value, one frame.
+            AudioUnitSampleType suml=0;
+            AudioUnitSampleType sumr=0;
+
+            //NSLog (@"frame number -  %i", frameNumber);
+            for(int j=0;j<16;j++)
+
+            {
+
+
+
+                soundStruct snd=remoteIOplayer->soundStructArray[j];
+                UInt64 sn= snd.frameCount;  
+                UInt64 st=remoteIOplayer.sampletime;
+                UInt64 read= (UInt64)(st%sn);
+
+                suml+=  snd.audioDataLeft[read];
+                suml+= snd.audioDataRight[read];
+
+
+            }
+
+
+            outSamplesChannelLeft[frameNumber]=(AudioUnitSampleType) suml;
+            outSamplesChannelRight[frameNumber]=(AudioUnitSampleType) sumr;
+
+
+            remoteIOplayer.sampletime +=1;
+
+
+        }
+
+    return noErr;
+}
+

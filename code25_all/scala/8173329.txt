@@ -1,0 +1,117 @@
+object Terms {
+    type Term = Int
+    @inline final def isV( t : Term ) = ((t & 3) == 0x3)
+    @inline final def isC(t : Term) = ((t & 3) == 0x2)
+}
+object MERGEException extends Exception
+
+final case class Subst( _data : List[ Tuple2[Int, Int] ] ) {
+    type Term = Int
+    type PairType = Tuple2[Term, Term]
+    type ListType = List[PairType]
+
+    // Find a pair in the list, which the first element matches the query t
+    // Returns the second element if found; t if no match
+    private final def find(t : Term, list : ListType) : Term =
+        list match {
+            case List() => t
+            case h :: list2 =>
+                val cmp = h._1 - t
+                if(cmp < 0) find(t, list2)
+                else if(cmp == 0) h._2
+                else t
+        }
+    // Replace s for t in the substitution (right part)
+    private final def replace_helper(s : Term, t : Term, list : ListType) : ListType =
+        list.map( h => if(h._2 equals s) (h._1, t) else h).distinct
+    // Assume: s in not in the list
+    private final def add(s : Term, t : Term, list : ListType) : ListType = {
+        var wlist = list
+        var rlist : ListType = List.empty
+        while(wlist != List.empty) {
+            val h = wlist.head
+            if(h._1 < s) {
+                rlist = rlist ::: List(h)
+                wlist = wlist.tail
+            } else
+                return rlist ::: ( (s, t) :: wlist )
+        }
+        return rlist ::: List( (s, t) )
+    }
+    private final def merge_helper(e : PairType, list : ListType) : ListType = {
+        // Orient the pair of SubTerms
+        def orient(s : Term, t : Term) : PairType = 
+        if( Terms.isC(s) && !Terms.isC(t) ) (t, s)
+            else (s, t)
+
+        // Orientation
+        var (s, t) = orient(e._1, e._2)
+        // Remove identical pair
+        if(s equals t) return list
+        // Constant
+        if(Terms.isC(s) && Terms.isC(t)) throw MERGEException
+
+        if(list == List.empty) return List((s, t))
+
+        // If t exists in the left part of one pair, replace it by the right part of the pair
+        t = find(t, list)
+        if(s equals t) list
+        // now t is not in the left part of any pair
+
+        val t2 = find(s, list)
+        if(t2 equals s) {
+            // s doesn't appear in the left part of existed elements
+            add( s, t, replace_helper(s, t, list) )
+        } else {
+            // s appears in the left part of existed elements
+            if( t2 equals t ) list
+            else {
+                // s appear in the left part of existed elements
+                // then s doesn't appear in the right part of existed elements
+                // and isDirected = false
+                //merge_helper( (t, t2), list, isDirected )
+                if(Terms.isC(t) && Terms.isC(t2)) throw MERGEException
+                else if(Terms.isC(t)) {
+                    add( t2, t, replace_helper(t2, t, list) )
+                }
+                else add( t, t2, replace_helper(t, t2, list) )
+            }
+        }
+    }
+    // Merge a pair into the substitution
+    final def merge( e : PairType ) : Option[Subst] = {
+        try {
+            val ret = merge_helper(e, _data)
+            return Some( Subst(ret) )
+        } catch {
+            case MERGEException => return None
+        }
+    }
+    // Union a new substitution together
+    final def union(s : Subst) : Option[Subst] = {
+        try {
+            if(_data.isEmpty) return Some(s)
+            else if(s.isEmpty) return Some(this)
+            else {
+                var ret = _data
+                var Subst(slist) = s
+                slist.foreach( e =>
+                    ret = merge_helper(e, ret) )
+                return Some( Subst(ret) )
+            }
+        } catch {
+            case e => return None
+        }
+    }
+    final def isEmpty = _data.isEmpty
+}
+
+// Test case 1
+val s1 = Subst( List( (7, 6), (11, 10) ) )  // {v1->c1, v2->c2}
+val s2 = Subst( List( (7, 11) ) )  // {v1->v2}
+val s3 = s1.union(s2)  // none
+// Test case 2
+val s12 = Subst( List( (7, 6), (11, 6), (23, 19), (27, 15), (31, 35) ) ) // {v1->c1, v2->c1, v5->v4, v6->v3, v7->v8}
+val s22 = Subst( List( (11, 7), (15, 7), (19, 10) ) ) // {v2->v1, v3->v1, v4->c2}
+val s32 = s12.union(s22)  // Some( Subst( List( (7, 6), (11, 6), (15, 6), (19, 10), (23, 10), (27, 6), (31, 35) ) ) )
+

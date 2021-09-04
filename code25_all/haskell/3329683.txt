@@ -1,0 +1,56 @@
+decodeFile' path = withBinaryFile path ReadMode doDecode
+  where
+    doDecode h = do c <- LBS.hGetContents h
+                    return $! decode c
+
+decodeFile' path = decode . LBS.fromChunks . return <$> BS.readFile path
+
+decodeFile' path = fmap (decode . LBS.fromChunks . return) $! BS.readFile path
+
+safeEncodeFile path value = do
+    fd <- openFd path WriteOnly (Just 0o600) (defaultFileFlags {trunc = True})
+    waitToSetLock fd (WriteLock, AbsoluteSeek, 0, 0)
+    let cs = encode value
+    let outFn = LBS.foldrChunks (\c rest -> writeChunk fd c >> rest) (return ()) cs
+    outFn
+    closeFd fd
+  where
+    writeChunk fd bs = unsafeUseAsCString bs $ \ptr ->
+                         fdWriteBuf fd (castPtr ptr) (fromIntegral $ BS.length bs)
+
+safeDecodeFile def path = do
+    e <- doesFileExist path
+    if e
+      then do fd <- openFd path ReadOnly Nothing
+                           (defaultFileFlags{nonBlock=True})
+              waitToSetLock fd (ReadLock, AbsoluteSeek, 0, 0)
+              c  <- fdGetContents fd
+              let !v = decode $! c
+              return v
+      else return def
+
+fdGetContents fd = lazyRead
+  where
+    lazyRead = unsafeInterleaveIO loop
+
+    loop = do blk <- readBlock fd
+              case blk of
+                Nothing -> return LBS.Empty
+                Just c  -> do cs <- lazyRead
+                              return (LBS.Chunk c cs)
+
+readBlock fd = do buf <- mallocBytes 4096
+                  readSize <- fdReadBuf fd buf 4096
+                  if readSize == 0
+                    then do free buf
+                            closeFd fd
+                            return Nothing
+                    else do bs <- unsafePackCStringFinalizer buf
+                                         (fromIntegral readSize)
+                                         (free buf)
+                            return $ Just bs
+
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Internal as LBS
+

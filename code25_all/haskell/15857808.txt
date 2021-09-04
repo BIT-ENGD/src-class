@@ -1,0 +1,80 @@
+IORef
+MVar
+TVar
+IORef
+IORef
+IORef
+modifyMVar
+MVar
+modifyMVar
+getMVar
+putMVar
+takeMVar
+putMVar
+modifyMVar
+TVar
+{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+
+module Data.Graph.Par.Class where
+
+import Data.Ix
+import Data.Monoid
+import Control.Concurrent
+import Control.Concurrent.MVar
+import Control.Monad
+import Control.Monad.Trans.State
+
+class (Ix (Vertex g), Ord (Edge g), Ord (Path g)) => ParGraph g where
+  type Vertex g :: *
+  type Edge g :: * 
+  -- type Path g :: *           -- useless
+  type VertexProperty g :: *
+  type EdgeProperty g :: *
+  edges :: g a -> IO [Edge g]
+  vertexes :: g a -> IO [Vertex g]
+  adjacencies :: g a -> Vertex g -> IO [Vertex g]
+  vertexProperty :: Vertex g -> g a -> IO (VertexProperty g)
+  edgeProperty :: Edge g -> g a -> IO (EdgeProperty g)
+  atomicModifyVertexProperty :: (VertexProperty g -> IO (VertexProperty g)) -> 
+                                Vertex g -> g a -> IO (g a) -- fixed 
+
+spanForest :: ParGraph g => [Vertex g] -> StateT (g a) IO ()
+spanForest roots = parallelise (map spanTree roots) -- parallel version
+
+spanForestSeq :: ParGraph g => [Vertex g] -> StateT (g a) IO ()
+spanForestSeq roots = forM_ roots spanTree -- sequencial version
+
+spanTree :: ParGraph g => Vertex g -> StateT (g a) IO ()
+spanTree root = spanTreeOneStep root >>= \res -> case res of
+  [] -> return ()
+  adjs -> spanForestSeq adjs
+
+spanTreeOneStep :: ParGraph g => Vertex g -> StateT (g a) IO [Vertex g]
+spanTreeOneStep v = StateT $ \g -> adjacencies g v >>= \adjs -> return (adjs, g)
+
+parallelise :: (ParGraph g, Monoid b) => [StateT (g a) IO b] -> StateT (g a) IO b
+parallelise [] = return mempty
+parallelise ss = syncGraphOp $ map forkGraphOp ss
+
+forkGraphOp :: (ParGraph g, Monoid b) => StateT (g a) IO b -> StateT (g a) IO (MVar b)
+forkGraphOp t = do 
+  s <- get
+  mv <- mapStateT (forkHelper s) t
+  return mv
+  where
+    forkHelper s x = do
+      mv <- newEmptyMVar
+      forkIO $ x >>= \(b, s) -> putMVar mv b
+      return (mv, s)
+
+syncGraphOp :: (ParGraph g, Monoid b) => [StateT (g a) IO (MVar b)] -> StateT (g a) IO b
+syncGraphOp [] = return mempty
+syncGraphOp ss = collectMVars ss >>= waitResults
+  where
+    collectMVars [] = return []
+    collectMVars (x:xs) = do
+      mvx <- x
+      mvxs <- collectMVars xs
+      return (mvx:mvxs)
+    waitResults mvs = StateT $ \g -> forM mvs takeMVar >>= \res -> return ((mconcat res), g)
+

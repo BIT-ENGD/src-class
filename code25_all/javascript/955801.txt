@@ -1,0 +1,263 @@
+{
+    key: 'Repeating',
+    type: 'repeating',
+    category: 'Category A',
+    options: {
+        dataArray: [
+            {key: 'key A', value: 'value A'}, 
+            {key: 'key B', value: 'value B'}, 
+            {key: 'key C', value: 'value C'}
+        ]
+    }
+}
+
+Ext.form.customFields = {
+    'repeating': Ext.extend(Ext.form.TriggerField, {
+        triggerClass: 'x-form-edit-trigger',
+        enableKeyEvents: true
+    })
+};
+
+Ext.form.customFields['repeating'] = Ext.extend(Ext.form.customFields['repeating'], {
+    onTriggerClick: function()
+    {
+        this.editorWindow.show();
+    },
+
+    listeners: {
+        'render': function(field)
+        {
+            field.editorWindow = new Ext.MultiSelectWindow({
+                data: field.dataArray,
+                parent: field
+            });
+        },
+        'keydown': function(field, event)
+        {
+            event.stopEvent();
+        },
+        'beforerender': function()
+        {
+            for (i in this.opt) {
+                if (i != 'store') {
+                    this[i] = this.opt[i];
+                }
+                else {
+                    this.store.loadData(this.opt.store);
+                }
+            }
+
+            if (this.regex != undefined) {
+                this.validator = function(value)
+                {
+                    return this.regex.test(value);
+                };
+            }
+        }
+    }
+});
+
+Ext.MultiSelectWindow = function(args)
+{
+    var obj = this;
+
+    obj.args = args;
+
+    obj.KeyValue = new Ext.data.Record.create([{
+        name: 'key'
+    }, {
+        name: 'value'
+    }]);
+
+    obj.gridStore = new Ext.data.Store({
+        data: obj.args.data,
+        reader: new Ext.data.JsonReader({}, obj.KeyValue),
+        autoLoad: true
+    });
+
+    obj.cm = new Ext.grid.ColumnModel([{
+        id: 'key',
+        header: "Key",
+        dataIndex: 'key',
+        editor: new Ext.form.TextField({
+            allowBlank: false
+        }),
+        hideable: false,
+        sortable: false,
+        menuDisabled: true,
+        css: 'font-weight: bold;'
+    }, {
+        id: 'value',
+        header: "Value",
+        dataIndex: 'value',
+        editor: new Ext.form.TextField({}),
+        hideable: false,
+        sortable: false,
+        menuDisabled: true
+    }]);
+
+    obj.gridEditor = new Ext.grid.EditorGridPanel({
+        cm: obj.cm,
+        height: 280,
+        store: obj.gridStore,
+        autoExpandColumn: 'value',
+
+        listeners: {
+            'render': function()
+            {
+                // set up local aliases
+                obj.a = new Array();
+                obj.a.grid = obj.gridEditor;
+                obj.a.store = obj.a.grid.getStore();
+                obj.a.sel = obj.a.grid.getSelectionModel();
+            }
+        },
+
+        bbar: [{
+            text: 'Add',
+            cls: 'x-btn-text-icon',
+            icon: '/lib/images/add.png',
+
+            listeners: {
+                'click': function()
+                {
+                    var kv = new obj.KeyValue({
+                        key: '',
+                        value: ''
+                    });
+
+                    var row = obj.a.store.data.items.length;
+
+                    obj.a.grid.stopEditing();
+                    obj.a.store.insert(row, kv);
+                    obj.a.grid.startEditing(row, 0);
+                }
+            }
+        }, {
+            text: 'Delete',
+            cls: 'x-btn-text-icon',
+            icon: '/lib/images/delete.png',
+
+            listeners: {
+                'click': function()
+                {
+                    if (obj.a.sel.selection) 
+                        obj.a.store.remove(obj.a.sel.selection.record);
+                }
+            }
+        }]
+    });
+
+    obj.panelAll = new Ext.Panel({
+        border: false,
+        layout: 'absolute',
+        items: [new Ext.Panel({
+            width: 250,
+            border: false,
+            x: 0,
+            y: 0,
+            items: obj.gridEditor
+        }), new Ext.Panel({
+            border: false,
+            x: 254,
+            y: 0,
+            items: [new Ext.Button({
+                cls: 'x-btn-icon-side',
+                icon: '/lib/images/arrow_up.png',
+
+                listeners: {
+                    'click': function()
+                    {
+
+                        if (obj.a.sel.selection) {
+                            var row = obj.a.sel.selection.cell[0];
+                            var rec = obj.a.store.getAt(row);
+
+                            if (row >= 1) {
+                                obj.a.store.remove(rec);
+                                obj.a.store.insert(row - 1, rec);
+                                obj.a.grid.startEditing(row - 1, 0);
+                            }
+                        }
+                    }
+                }
+            }), new Ext.Button({
+                cls: 'x-btn-icon-side',
+                icon: '/lib/images/arrow_down.png',
+
+                listeners: {
+                    'click': function()
+                    {
+                        if (obj.a.sel.selection) {
+                            var row = obj.a.sel.selection.cell[0];
+                            var rec = obj.a.store.getAt(row);
+                            var len = obj.a.store.data.items.length;
+
+                            if (row < len - 1) {
+                                obj.a.store.remove(rec);
+                                obj.a.store.insert(row + 1, rec);
+                                obj.a.grid.startEditing(row + 1, 0);
+                            }
+                        }
+                    }
+                }
+            })]
+        })]
+    });
+
+    obj.win = new Ext.Window({
+        title: 'Repeating Value Editor',
+        layout: 'fit',
+        closeAction: 'hide',
+        border: false,
+        items: obj.panelAll,
+        width: 300,
+        height: 350,
+        resizable: false,
+        shadow: false,
+        buttonAlign: 'left',
+
+        buttons: [{
+            text: 'OK',
+            handler: function()
+            {
+                // reset the repeating field data array
+                obj.args.parent.dataArray = [];
+
+                for (r in obj.a.store.data.items) 
+                    obj.args.parent.dataArray[r] = obj.a.store.data.items[r].data;
+
+                obj.args.parent.setRawValue(attrValueToString(obj.args.parent.dataArray));
+                obj.win.hide();
+            }
+        }, {
+            text: 'Cancel',
+            handler: function()
+            {
+                obj.win.hide();
+            }
+        }]
+    });
+
+    obj.show = function()
+    {
+        obj.win.show();
+        obj.a.store.loadData(obj.args.parent.dataArray);
+    }
+}
+
+Ext.form.customFields['repeating'] = Ext.extend(Ext.form.customFields['repeating'], {
+    setFieldValue: function(value){
+        this.setValue(value);
+    }
+});
+
+var sample = new Ext.form.customFields['repeating']({
+    renderTo: Ext.getBody(),
+    dataArray: [
+        {key: 'key A', value: 'value A'}, 
+        {key: 'key B', value: 'value B'}, 
+        {key: 'key C', value: 'value C'}
+    ]
+});
+

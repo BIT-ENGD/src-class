@@ -1,0 +1,127 @@
+for (id object in objectArray) {    
+     Model *currentItem = object;
+    /* do something with currentItem */
+    [currentItem release];
+}
+
+Model *model = [unarchiver decodeObjectForKey:@"ARCHIVED_MODEL_OBJECT"];
+// it has to be here, because (I was told) unarchiver will return autorelease object    
+[model retain]; 
+label.text = model.data;
+
+- (IBAction) loadXMLButtonClicked:(id) sender {
+    objectArray = [self loadData]; // 1 - objectArray is instance var
+    NSArray *objectArray = [self loadData]; // 2 - objectArray is local var
+
+    // loadXMLButtonClicked is called on button click, here the method finishes
+    // and control goes back to application, autorelease pool is cleaned?
+
+    // case 1 - objectArray stays retained in instance variable? (because setter was used)
+    // case 2 - objectArray is soon to be released, there were no retains? 
+    // (ignore the fact that it's local var, just hypothetically)
+
+}
+
+- (NSArray *) loadData {
+    NSArray *objectArray = [[NSArray alloc] init];
+    // populate array here
+    return [objectArray autorelease];
+}
+
+gdb
+- (NSArray *) loadData {
+(...)
+NSXMLParser *parser = [[NSXMLParser alloc] initWithData:data];
+ModelXMLParser *parserDelegate = [[ModelXMLParser alloc] init];
+[parser setDelegate:parserDelegate];
+[parser parse];
+
+objectArray = [[parserDelegate objectArray] copy]; 
+// is this ok? *i* don't need the parser object so I think I should get rid of it
+// and copy the data. How this copy works, is it shallow (only new reference to array)
+// or deep copy (objects allocated again as well)?
+// how to do deep copy of NSArray?
+
+[parserDelegate release];
+[parser release];
+}
+
+@implementation ModelXMLParser
+
+@synthesize objectArray; // array of objects
+@synthesize currentObject; // temporary object
+@synthesize currentChars; // temporary chars
+@synthesize parseChars; // parse chars only when there's need, leave those /t/n etc
+
+- parser didStartElement (...) {
+    if ([elementName isEqualToString:@"objects"]) {
+        objectArray = [[NSMutableArray alloc] init];
+    }
+    else if ([elementName isEqualToString:@"object"]) {
+        currentObject = [[Model alloc] init];
+    }
+    else if ([elementName isEqualToString:@"name"]) {
+        // do I have to init currentObject.name (NSString) here? I guess not
+        [self setParseChars:YES]; // just set the flag to make parse control easier
+    }
+    else if ([elementName isEqualToString:@"number"]) {
+        // int isn't object anyway, no init
+        [self setParseChars:YES]; // just set the flag to make parse control easier
+    }   
+}
+
+- parser foundCharacters (...) {
+    if (parseChars) {
+        currentChars = [[NSString alloc] initWithString:string];
+        // why is currentChars retainCount = 2 here?
+        // is it like currentChars = [NSString new] and then currentChars = string? (so retain once more)
+        // is it good way to control parser? (please ignore the NSMutableString and appending example, try this one)
+        // should I just do currentChars = string here?
+
+        [currentChars autorelease]; // this is currently my solution, because there's no leak, but I feel it's incorrect
+    }
+}
+
+-  parser didEndElement (...) {
+    if ([elementName isEqualToString:@"object"]) {
+        [objectArray addObject:[currentObject copy]]; // should I copy here or just addObject, it retains anyway?
+        [currentObject release]; // I've initialized currentObject before, now I don't need it, so I guess retainCount goes to 0 here?
+    }
+    else if ([elementName isEqualToString:@"name"]) {
+        currentObject.name = currentChars; // is this correct, or shoud I do [currentChars copy] as well?
+        [self setParseChars:NO];
+        [currentChars release]; // as before, initialized, now releasing, but is this really correct?
+    }
+    else if ([elementName isEqualToString:@"number"]) {
+        currentObject.number = [currentChars intValue]; // is this correct, or shoud I do [currentChars copy] as well?
+        [self setParseChars:NO];
+        [currentChars release]; // as before, initialized, now releasing, but is this really correct?
+    }   
+}
+
+- (void) dealloc {
+    // I shouldn't release currentChars or currentObject, those (I suppose) should be freed after parsing done,
+    // as a result of earlier releases?
+
+    [objectArray release];
+    [super dealloc];
+}
+
+@implementation Model
+
+@synthesize name; // this is NSString
+@synthesize number; // this is int
+
+- (id) copyWithZone:(NSZone *) zone {
+    Model *copy = [[[self class] allocWithZone:zone] init];
+    copy.name = [self.name copy];
+    copy.number = self.number;
+    return copy;
+}
+
+- (void) dealloc {
+    [name release];
+    // I don't have to release int, right? it's not an object
+    [super dealloc];
+}
+

@@ -1,0 +1,93 @@
+struct arguments {
+    int n_threads;
+    int rays;
+    int hits_in;
+    pthread_mutex_t *mutex;
+};
+
+
+void *threadFunc(void *arg)
+{
+    struct arguments* args=(struct arguments*)arg;
+
+    int n = 0;
+    int local_hits_in = 0;
+    double x;
+    double y;
+    double r;
+    while (n < args->rays)
+    {
+        n++;
+        x = ((double)rand())/((double)RAND_MAX);
+        y = ((double)rand())/((double)RAND_MAX);
+        r = (double)sqrt(pow(x, 2) + pow(y, 2)); 
+        if (r < 1.0){
+            local_hits_in++;
+        }
+    }
+
+    pthread_mutex_lock(args->mutex);
+    args->hits_in += local_hits_in;
+    pthread_mutex_unlock(args->mutex);
+
+    return NULL;
+}
+
+
+double calculate_pi_mt(int rays, int threads){
+    double answer;
+    int c;
+    unsigned int iseed = (unsigned int)time(NULL);
+    srand(iseed);
+
+    if ( (float)(rays/threads) != ((float)rays)/((float)threads) ){
+        printf("Error: number of rays is not evenly divisible by threads\n");
+    }
+
+    /* argument initialization */
+    struct arguments* args = malloc(sizeof(struct arguments));
+    args->hits_in = 0;
+    args->rays = rays/threads;
+    args->n_threads = 0;
+    args->mutex = malloc(sizeof(pthread_mutex_t));
+    if (pthread_mutex_init(args->mutex, NULL)){
+        printf("Error creating mutex!\n");
+    }
+
+
+    pthread_t thread_ary[MAXTHREADS];
+
+    c=0;
+    while (c < threads){
+        args->n_threads += 1;
+        if (pthread_create(&(thread_ary[c]),NULL,threadFunc, args)){
+            printf("Error when creating thread\n");
+        }
+        printf("Created Thread: %d\n", args->n_threads);
+        c+=1;
+    }
+
+
+    c=0;
+    while (c < threads){
+        printf("main waiting for thread %d to terminate...\n", c+1);
+        if (pthread_join(thread_ary[c],NULL)){
+            printf("Error while waiting for thread to join\n");
+        }
+        printf("Destroyed Thread: %d\n", c+1);
+
+        c+=1;
+    }
+
+    printf("Hits in %d\n", args->hits_in);
+    printf("Rays: %d\n", rays);
+    answer = 4.0 * (double)(args->hits_in)/(double)(rays);
+
+    //freeing everything!
+    pthread_mutex_destroy(args->mutex);
+    free(args->mutex);
+    free(args);
+
+    return answer;
+}
+

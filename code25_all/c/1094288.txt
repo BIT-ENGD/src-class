@@ -1,0 +1,117 @@
+BAMid = -1;
+struct termios options;
+struct termios originalTTYAttrs;
+
+// Open the serial port read/write, nonblocking, with no controlling terminal, and don't wait for a connection.
+BAMid = open(strPath, O_RDWR | O_NOCTTY | O_NONBLOCK);
+if (BAMid == -1)
+{
+    printf("Error opening serial port %s - %s(%d).\n",
+           strPath, strerror(errno), errno);
+    goto error;
+}
+
+// Issue TIOCEXCL ioctl to prevent additional opens except by root-owned processes.
+if (ioctl(BAMid, TIOCEXCL) == -1)
+{
+    printf("Error setting TIOCEXCL on %s - %s(%d).\n",
+  strPath, strerror(errno), errno);
+    goto error;
+}
+
+// Get the current options and save them so we can restore the default settings later.
+if (tcgetattr(BAMid, &originalTTYAttrs) == -1)
+{
+    printf("Error getting tty attributes %s - %s(%d).\n",
+  strPath, strerror(errno), errno);
+    goto error;
+}
+
+// The serial port attributes such as timeouts and baud rate are set by modifying the termios
+// structure and then calling tcsetattr() to cause the changes to take effect. Note that the
+// changes will not become effective without the tcsetattr() call.
+
+options = originalTTYAttrs;
+
+// Set raw input (non-canonical) mode, with reads blocking until either a single character 
+// has been received or a one second timeout expires. [should be moot since we are leaving it as nonblocking]
+
+cfmakeraw(&options);
+options.c_cc[VMIN] = 1;
+options.c_cc[VTIME] = 10;
+cfsetspeed(&options, B57600);  // Set 57600 baud    
+options.c_cflag |= CS8;    // Use 8 bit words
+
+// Cause the new options to take effect immediately.
+if (tcsetattr(BAMid, TCSANOW, &options) == -1)
+{
+    printf("Error setting tty attributes %s - %s(%d).\n",
+  strPath, strerror(errno), errno);
+    goto error;
+}
+
+
+
+//flush old transmissions
+if (tcflush(BAMid,TCIOFLUSH) == -1) {
+    printf("Error flushing BAM serial port - %s(%d).\n",
+    strerror(errno), errno);
+}  
+
+oBufLength = 0;
+
+// Ask it to start
+if (! qwbyte(CmdStart) ) {
+    goto error;
+}
+
+if (! qwbyte(CmdFull) ) {
+    goto error;
+} 
+//this transmit works
+txbytes();
+
+printf("success opening port!");
+return -1;
+   // Failure path
+error:
+ if (BAMid != -1) {
+        close(BAMid);
+    }
+ printf("returning an error--%d",errno);
+   return errno;
+}
+
+int i, bufSize, numBytes;
+
+if(oBufLength != 0) { //if the output array isn't empty
+
+        //duplicating the output array and its size so it can 
+        //be overwritten while this write is occuring
+        printf("about to transmit: ");
+  for(i = 0; i < oBufLength; i++) {
+   printf(" %u",oBuf[i]);
+   tempBuf[i] = oBuf[i];
+  }
+  printf("\n");
+
+
+
+
+ bufSize = oBufLength;
+ oBufLength = 0; 
+
+ numBytes = write(BAMid, &tempBuf, bufSize);
+
+ printf("bytes written = %d\n",numBytes);
+
+ if (numBytes == -1) {
+     printf("Error writing to port - %s(%d).\n", strerror(errno), errno);
+ }
+
+ return (numBytes > 0);
+}
+else {
+  return 0;
+}
+

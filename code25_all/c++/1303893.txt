@@ -1,0 +1,96 @@
+function valueChanged(property, value) {
+    if(property == xPosProp) {
+        foreach(selectedObj as obj) {
+            obj->setXPos(value);
+        }
+    } else if(property == ...
+
+function xPosChanged(property, value) {
+    foreach(selectedObj as obj) {
+        obj->setXPos(value);
+    }
+}
+
+/* 
+ * File:   PropertyBrowser.cpp
+ * Author: mark
+ * 
+ * Created on August 23, 2009, 10:29 PM
+ */
+
+#include <QtCore/QMetaProperty>
+#include "PropertyBrowser.h"
+
+PropertyBrowser::PropertyBrowser(QWidget* parent)
+: QtTreePropertyBrowser(parent), m_variantManager(new QtVariantPropertyManager(this)) {
+    setHeaderVisible(false);
+    setPropertiesWithoutValueMarked(true);
+    setIndentation(10);
+    setResizeMode(ResizeToContents);
+    setFactoryForManager(m_variantManager, new QtVariantEditorFactory);
+    setAlternatingRowColors(false);
+
+}
+
+void PropertyBrowser::valueChanged(QtProperty *property, const QVariant &value) {
+    if(m_propertyMap.find(property) != m_propertyMap.end()) { 
+        foreach(QObject *obj, m_selectedObjects) {
+            obj->setProperty(m_propertyMap[property], value);
+        }
+    }
+}
+
+QString PropertyBrowser::humanize(QString str) const {
+    return str.at(0).toUpper() + str.mid(1).replace(QRegExp("([a-z])([A-Z])"), "\\1 \\2");
+}
+
+void PropertyBrowser::setSelectedObjects(QList<QObject*> objs) {
+    foreach(QObject *obj, m_selectedObjects) {
+        obj->disconnect(this);
+    }
+    clear();
+    m_variantManager->clear();
+    m_selectedObjects = objs;
+    m_propertyMap.clear();
+    if(objs.isEmpty()) {
+        return;
+    }
+    for(int i = 0; i < objs.first()->metaObject()->propertyCount(); ++i) {
+        QMetaProperty metaProperty(objs.first()->metaObject()->property(i));
+        QtProperty * const property
+                = m_variantManager->addProperty(metaProperty.type(), humanize(metaProperty.name()));
+        property->setEnabled(metaProperty.isWritable());
+        m_propertyMap[property] = metaProperty.name();
+        addProperty(property);
+    }
+    foreach(QObject *obj, m_selectedObjects) {
+        connect(obj, SIGNAL(propertyChanged()), SLOT(objectUpdated()));
+    }
+    objectUpdated();
+}
+
+void PropertyBrowser::objectUpdated() {
+    if(m_selectedObjects.isEmpty()) {
+        return;
+    }
+    disconnect(m_variantManager, SIGNAL(valueChanged(QtProperty*, QVariant)), 
+            this, SLOT(valueChanged(QtProperty*, QVariant)));
+    QMapIterator<QtProperty*, QByteArray> i(m_propertyMap);
+    bool diff;
+    while(i.hasNext()) {
+        i.next();
+        diff = false;
+        for(int j = 1; j < m_selectedObjects.size(); ++j) {
+            if(m_selectedObjects.at(j)->property(i.value()) != m_selectedObjects.at(j - 1)->property(i.value())) {
+                diff = true;
+                break;
+            }
+        }
+        if(diff) setBackgroundColor(topLevelItem(i.key()), QColor(0xFF,0xFE,0xA9));
+        else setBackgroundColor(topLevelItem(i.key()), Qt::white);
+        m_variantManager->setValue(i.key(), m_selectedObjects.first()->property(i.value()));
+    }
+    connect(m_variantManager, SIGNAL(valueChanged(QtProperty*, QVariant)), 
+            this, SLOT(valueChanged(QtProperty*, QVariant)));
+}
+

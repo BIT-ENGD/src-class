@@ -1,0 +1,50 @@
+/* ctsw.c : context switcher
+ */
+
+#include <kernel.h>
+
+static void *kstack;
+extern int set_evec(int, long);
+
+/* contextswitch - saves kernel context, switches to proc */
+enum proc_req contextswitch(struct proc_ctrl_blk *proc) {
+  enum proc_req call;
+
+  kprintf("switching to %d\n", getpid(proc));
+
+  asm volatile("pushf\n"          // save kernel flags
+               "pusha\n"          // save kernel regs
+               "movl %%esp, %0\n" // save kernel %esp
+               "movl %1, %%esp\n" // load proc %esp
+               "popa\n"           // load proc regs (from proc stack)
+               "iret"             // switch to proc
+               : "=g" (kstack)
+               : "g" (proc->esp)
+               );
+
+_entry_point:
+  asm volatile("pusha\n"          // save proc regs
+               "movl %%esp, %0\n" // save proc %esp
+               "movl %2, %%esp\n" // restore kernel %esp
+               "movl %%eax, %1\n" // grabs syscall from process
+               "popa\n"           // restore kernel regs (from kstack)
+               "popf"             // restore kernel flags
+               : "=g" (proc->esp), "=g" (call)
+               : "g" (kstack)
+               );
+  kprintf("back to the kernel!\n");
+
+  return call;
+}
+
+void contextinit() {
+  set_evec(49, (long)&&_entry_point);
+}
+
+contextswitch()
+dispatcher()
+iret
+contextswitch()
+iret
+dispatcher()
+_entry_point

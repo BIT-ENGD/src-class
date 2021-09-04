@@ -1,0 +1,103 @@
+function CreateWMVWriter(VideoQuality, AudioQuality: Cardinal; videoInfo: PVideoInfoHeader; audioInfo: PWaveFormatEx; hasAudio: Boolean): IBaseFilter;
+const
+  PROFILE_NAME = 'WMV AutoProfile';
+  // BUFFER_WINDOW = $FFFFFFFF;  // auto buffer
+  BUFFER_WINDOW = 1000;  // 1 second
+  MAX_KEY_FRAME_SPACING = 10000000; // 1 seconds
+var
+  configWriter : IConfigAsfWriter;
+  profileManager : IWMProfileManager;
+  profile : IWMProfile;
+  stream : IWMStreamConfig;
+  mediaProps : IWMMediaProps;
+  vmediaProps : IWMVideoMediaProps;
+  pmt : PWMMediaType;
+  msize : Cardinal;
+  vih : PVideoInfoHeader;
+  wfe: PWaveFormatEx;
+  hr : HRESULT;
+  videoBitRate, audioBitRate: Cardinal;
+  width, height: Integer;
+begin
+  videoBitRate := VideoQuality * 1000; // kbits
+  // create the profile
+  CheckDSError(WMCreateProfileManager(profileManager));
+  CheckDSError(profileManager.CreateEmptyProfile(WMT_VER_9_0, profile));
+  CheckDSError(profile.SetName(StringToOleStr(PROFILE_NAME)));
+  CheckDSError(profile.SetDescription(StringToOleStr(PROFILE_NAME)));
+  CheckDSError(profile.CreateNewStream(WMMEDIATYPE_Video, stream));
+  CheckDSError(stream.SetStreamName(StringToOleStr('Video')));
+  CheckDSError(stream.SetBitrate(videoBitRate));
+  CheckDSError(stream.SetBufferWindow(BUFFER_WINDOW));
+  // config video media type
+  stream.QueryInterface(IID_IWMMediaProps, mediaProps);
+  CheckDSError(mediaProps.GetMediaType(nil, msize));
+  GetMem(pmt, msize);
+  CheckDSError(mediaProps.GetMediaType(pmt, msize));
+  with pmt^ do
+  begin
+    majortype := WMMEDIATYPE_Video;
+    subtype := WMMEDIASUBTYPE_WMV3;
+    bFixedSizeSamples := True;
+    bTemporalCompression := True;
+    pUnk := nil;
+    vih := PVideoInfoHeader(pbFormat);
+    // copy video info header (the same as with the original - copy: rcSource, rcTarget, AvgTimePerFrame, biWidth, biHeight)
+    CopyMemory(vih, videoInfo, SizeOf(TVideoInfoHeader));
+    // set bit rate at the same value
+    vih.dwBitRate := videoBitRate;
+    // set new compression ('WMV3')
+    vih.bmiHeader.biCompression := MAKEFOURCC('W', 'M', 'V', '3');
+  end;
+  CheckDSError(mediaProps.SetMediaType(pmt));
+  FreeMem(pmt, msize);
+  // set media props
+  stream.QueryInterface(IID_IWMVideoMediaProps, vmediaProps);
+  CheckDSError(vmediaProps.SetQuality(100));
+  CheckDSError(vmediaProps.SetMaxKeyFrameSpacing(0));
+  // CheckDSError(vmediaProps.SetMaxKeyFrameSpacing(MAX_KEY_FRAME_SPACING));
+  // add video stream
+  CheckDSError(profile.AddStream(stream));
+  // add audio stream (if needed)
+  if hasAudio then
+  begin
+    CheckDSError(profile.CreateNewStream(WMMEDIATYPE_Audio, stream));
+    CheckDSError(stream.SetStreamName(StringToOleStr('Audio')));
+    audioBitRate := audioInfo.nSamplesPerSec * audioInfo.nChannels * audioInfo.wBitsPerSample;
+    CheckDSError(stream.SetBitrate(audioBitRate));
+    CheckDSError(stream.SetBufferWindow(BUFFER_WINDOW)); // auto
+    // config video media type
+    stream.QueryInterface(IID_IWMMediaProps, mediaProps);
+    CheckDSError(mediaProps.GetMediaType(nil, msize));
+    GetMem(pmt, msize);
+    hr := mediaProps.GetMediaType(pmt, msize);
+    with pmt^ do
+    begin
+      // uncompressed audio
+      majortype := WMMEDIATYPE_Audio;
+      subtype := WMMEDIASUBTYPE_PCM;
+      formattype := WMFORMAT_WaveFormatEx;
+      cbFormat := sizeof(TWaveFormatEx);
+      bFixedSizeSamples := True;
+      bTemporalCompression := False;
+      lSampleSize := audioInfo.nChannels * audioInfo.wBitsPerSample div 8;
+      pUnk := nil;
+      wfe := PWaveFormatEx(pbFormat);
+      // copy video info header (the same as with the original)
+      CopyMemory(wfe, audioInfo, SizeOf(TWaveFormatEx));
+    end;
+    CheckDSError(mediaProps.SetMediaType(pmt));
+    FreeMem(pmt, msize);
+    // add video stream
+    CheckDSError(profile.AddStream(stream));
+  end;
+
+  // create the writer
+  Result := AddFilterGUID(CLSID_WMAsfWriter, 'WmvWriter');
+
+  // config the writer
+  configWriter := Result as IConfigAsfWriter;
+  CheckDSError(configWriter.SetIndexMode(True));
+  CheckDSError(configWriter.ConfigureFilterUsingProfile(profile));
+end;
+

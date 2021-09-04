@@ -1,0 +1,70 @@
+/**
+ * Writes the array to a text file in /path/to/gallery/needsThumbs.txt for batch processing.
+ * Runs the thumbnail generator script in the background.
+ *
+ * @param array $_needsThumbs the array of images needing thumbnails
+ */
+private function generateThumbnails($_needsThumbs)
+{
+    file_put_contents($this->_realpath.DIRECTORY_SEPARATOR.'needsThumbs.txt',serialize($_needsThumbs));
+
+    $Command = realpath(dirname(__FILE__)).DIRECTORY_SEPARATOR.'EGalleryProcessQueue.php '.$this->_realpath.' '.$this->thumbnailWidth.' '.$this->thumbnailHeight;
+
+    if(PHP_SHLIB_SUFFIX == 'so')// *nix (aka NOT windows)
+    {
+        /*
+         * We need to make sure we are using the right PHP version
+         * (problems with shared hosts that have PHP4 and PHP5 installed,
+         * but PHP4 set as default).
+         */
+        $phpPaths = array('php', '/usr/local/bin/php', '/usr/local/php5/bin/php', '/usr/bin/php', '/usr/bin/php5');
+        foreach($phpPaths as $path)
+        {
+            exec("echo '<?php echo version_compare(PHP_VERSION, \"5.0.0\", \">=\"); ?>' | $path", $result);
+            if($result)
+            {
+                shell_exec("nohup $path $Command 2> /dev/null > /dev/null &");
+                break;
+            }
+        }
+    }
+    else // Windows
+    {
+        $WshShell = new COM("WScript.Shell");
+        $WshShell->Run("php.exe $Command", 0, false);
+    }
+}
+
+#!/usr/bin/php
+<?php
+
+if ($argc === 4 && strstr($argv[0], basename(__FILE__))) {
+    // File is being called by the CLI and has not been included by another script
+
+    if(!file_exists($argv[1].DIRECTORY_SEPARATOR.'needsThumbs.txt'))
+    {
+        // Either no thumbnails need to be created or a wrong directory has been supplied
+        exit;
+    }
+
+    include(realpath(dirname(__FILE__)).DIRECTORY_SEPARATOR.'EGalleryThumbGenerator.php');
+
+    $generator = new EGalleryThumbGenerator;
+    $generator->directory = $argv[1];
+    $generator->thumbnailWidth = is_int($argv[2]) ? $argv[2] : 128;
+    $generator->thumbnailHeight = is_int($argv[3]) ? $argv[3] : 128;
+
+    // $generator->processImages() returns the number of images left to process (it does them in blocks of 10)
+    while (($i = $generator->processImages()) > 0)
+    {
+        /*
+         * TODO Can we get some sort of feedback to the user here?
+         * Possibly so that we can display a progress bar in the management section.
+         * Probably have to write $i to a file to be read by the main script.
+         */
+    }
+
+    exit;
+}
+?>
+

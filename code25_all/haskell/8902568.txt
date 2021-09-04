@@ -1,0 +1,114 @@
+threaded
+f
+create_threads
+f
+create_threads
+f
+{-# LANGUAGE BangPatterns #-}
+import qualified Data.Vector.Storable as SV
+import Control.Monad (mapM, mapM_)
+import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr)
+import Foreign.C.Types (CInt)
+
+f :: CInt -> ()
+f x = ()
+
+-- "wrapper" import is a converter for converting a Haskell function to a foreign function pointer
+foreign import ccall "wrapper"
+  wrap :: (CInt -> ()) -> IO (FunPtr (CInt -> ()))
+
+foreign import ccall safe "mt.h create_threads"
+  createThreads :: Ptr (FunPtr (CInt -> ())) -> Ptr CInt -> CInt -> IO()
+
+main = do
+  -- set threads=[1..5], l=1000000 for multi-threaded FFI callback testing
+  let threads = [1..1]
+      l = 5000000
+      vl = SV.replicate (length threads) (fromIntegral l) -- make a vector of l
+  lf <- mapM (\x -> wrap f ) threads -- wrap f into a funPtr and create a list
+  let vf = SV.fromList lf -- create vector of FunPtr to f
+  -- pass vector of function pointer to f, and vector of l to create_threads
+  -- create_threads will spawn threads (equal to length of threads list)
+  -- each pthread will call back f l times - then we can check the overhead
+  SV.unsafeWith vf $ \x ->
+    SV.unsafeWith vl $ \y -> createThreads x y (fromIntegral $ SV.length vl)
+  SV.mapM_ freeHaskellFunPtr vf
+
+#include <pthread.h>
+#include <stdio.h>
+
+typedef void(*FunctionPtr)(int);
+
+/** Struct for passing argument to thread
+**
+**/
+typedef struct threadArgs{
+   int  threadId;
+   FunctionPtr fn;
+   int length;
+} threadArgs;
+
+
+/* This is our thread function.  It is like main(), but for a thread*/
+void *threadFunc(void *arg);
+void create_threads(FunctionPtr*,int*,int);
+
+#include "mt.h"
+
+
+/* This is our thread function.  It is like main(), but for a thread*/
+void *threadFunc(void *arg)
+{
+  FunctionPtr fn;
+  threadArgs args = *(threadArgs*) arg;
+  int id = args.threadId;
+  int length = args.length;
+  fn = args.fn;
+  int i;
+  for (i=0; i < length;){
+    fn(i++); //call haskell function
+  }
+}
+
+void create_threads(FunctionPtr* fp, int* length, int numThreads )
+{
+  pthread_t pth[numThreads];  // this is our thread identifier
+  threadArgs args[numThreads];
+  int t;
+  for (t=0; t < numThreads;){
+    args[t].threadId = t;
+    args[t].fn = *(fp + t);
+    args[t].length = *(length + t);
+    pthread_create(&pth[t],NULL,threadFunc,&args[t]);
+    t++;
+  }
+
+  for (t=0; t < numThreads;t++){
+    pthread_join(pth[t],NULL);
+  }
+  printf("All threads terminated\n");
+}
+
+ $ ghc -O2 t.hs mt.c -lpthread -threaded -rtsopts -optc-O2
+
+create_threads
+$ ./t +RTS -s -N5 -g1
+INIT  time    0.00s  (  0.00s elapsed)
+  MUT   time    1.04s  (  1.05s elapsed)
+  GC    time    0.28s  (  0.28s elapsed)
+  EXIT  time    0.00s  (  0.00s elapsed)
+  Total time    1.32s  (  1.34s elapsed)
+
+  %GC time      21.1%  (21.2% elapsed)
+
+main
+t.hs
+$ ./t +RTS -s -N5 -g1
+INIT  time    0.00s  (  0.00s elapsed)
+  MUT   time    7.42s  (  2.27s elapsed)
+  GC    time    0.36s  (  0.37s elapsed)
+  EXIT  time    0.00s  (  0.00s elapsed)
+  Total time    7.79s  (  2.63s elapsed)
+
+  %GC time       4.7%  (13.9% elapsed)
+

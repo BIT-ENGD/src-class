@@ -1,0 +1,81 @@
+6543L, 'moretesting.com', 'smtp')
+(6543L, 'moretesting.com', 'ping')
+(6543L, 'moretesting.com', 'http')
+
+
+from commands import getstatusoutput
+import MySQLdb
+import threading
+import Queue
+import time
+
+def checkHost(x, service):
+    command = {}
+    command['http'] = './plugins/check_http -t 1 -H '
+    command['smtp'] = './plugins/check_smtp -t 1 -H '
+
+    cmd = command[service]
+    cmd += x
+    retval = getstatusoutput(cmd)
+    if retval[0] == 0:
+        return 0
+    else: 
+        return retval[1]
+
+def fetchHosts():
+    hostList = []
+    cur.execute('SELECT veid, hostname, service from service_list')
+    for row in cur.fetchall():
+        hostList.append(row)
+    return hostList
+
+def insertFailure(veid, hostname, service, error):
+    query = 'INSERT INTO failures (veid, hostname, service, error) '
+    query += "VALUES ('%s', '%s', '%s', '%s')" % (veid, hostname, service, error)
+    cur.execute(query)
+    cur.execute('COMMIT')
+
+
+def processCheck(host):
+    #If I print the host tuple here I get all hosts/services
+    retval = checkHost(host[1], host[2])
+    #If I print the host tuple here, I get one host maybe two
+    if retval != 0:
+        try:
+            insertFailure(host[0], host[1], host[2], retval)
+        except:
+            pass
+    else:
+        try:
+            #if service is back up, remove old failure entry
+            query = "DELETE FROM failures WHERE veid='%s' AND service='%s' AND hostname='%s'" % (host[0], host[2], host[1])
+            cur.execute(query)
+            cur.execute('COMMIT')
+        except:
+            pass
+    return 0
+
+class ThreadClass(threading.Thread):
+
+    def __init__(self, queue):
+        threading.Thread.__init__(self)
+        self.queue = queue
+
+    def run(self):
+        processCheck(queue.get())
+        time.sleep(1)
+
+def main():
+    for host in fetchHosts():
+        queue.put(host)
+        t = ThreadClass(queue)
+        t.setDaemon(True)
+        t.start()
+
+if __name__ == '__main__':
+    conn = MySQLdb.connect('localhost', 'root', '', 'testing')
+    cur = conn.cursor()
+    queue = Queue.Queue()
+    main()
+    conn.close()
+

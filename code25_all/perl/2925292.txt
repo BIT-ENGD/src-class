@@ -1,0 +1,73 @@
+CORE::system
+qx
+serial
+POSIX::mkfifo
+run
+system
+package main;
+
+my $obj1 = System::Wrapper->new(
+    interpreter => 'perl',
+    arguments   => [-pe => q{''}],
+    input       => ['input.txt'],
+    description => 'Concatenate input.txt to STDOUT',
+);
+
+my $obj2 = System::Wrapper->new(
+    interpreter => 'perl',
+    arguments   => [-pe => q{'$_ = reverse $_}'}],
+    description => 'Reverse lines of input input',
+    output      => { '>' => 'output' },
+);
+
+$obj1->serial( $obj2 );
+
+
+package System::Wrapper;
+
+#...
+
+sub serial {
+    my ($self, @commands) = @_;
+
+    eval {
+        require POSIX; POSIX->import();
+        require threads;
+    };
+
+    my $tmp_dir = File::Spec->tmpdir();
+
+    my $last = $self;
+
+    my @threads;
+
+    push @commands, $self;
+
+    for my $command (@commands) {
+
+        croak sprintf
+        "%s::serial: type of args to serial must be '%s', not '%s'",
+        ref $self, ref $self, ref $command || $command
+        unless ref $command eq ref $self;
+
+        my $named_pipe = File::Spec->catfile( $tmp_dir, int \$command );
+
+        POSIX::mkfifo( $named_pipe, 0777 )
+          or croak sprintf
+          "%s::serial: couldn't create named pipe %s: %s",
+          ref $self, $named_pipe, $!;
+
+        $last->output( { '>' => $named_pipe } );
+        $command->input( $named_pipe );
+
+        push @threads, threads->new( sub{ $last->run } );
+        $last = $command;
+    }
+
+    $_->join for @threads;
+}
+
+#...
+
+POSIX::mkfifo
+-p

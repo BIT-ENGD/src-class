@@ -1,0 +1,218 @@
+<?php
+$long_url = 'http://www.news.com/story/1';
+$account_id = 1;
+
+$use_this_url = $long_url;
+
+$meta = array(
+    'account_id' => $account_id,
+    // OPTIONS
+    // 'service_id' => $service_id,
+    // 'account_id' => $account_id,
+);
+$shortener = new Shortener_Factory($long_url, $meta);
+if ($shortener->shorten_long_url() AND $shortener->save_short_url())
+{
+                $use_this_url = $shortener->short_url;      
+}
+
+echo $use_this_url;
+
+<?php
+interface ShortenerServiceInterface {
+    public function save_short_url();
+    public function shorten_long_url();
+}
+
+abstract class ShortenerServiceAbstract implements ShortenerServiceInterface {
+
+    // Url to be shortened
+    public $long_url = '';
+
+    // Long url unique id
+    public $url_id = 0;
+
+    // Service unique id
+    public $shorturlservice_id = 0;
+
+    // Service account unique id
+    public $shorturlserviceaccount_id = 0;    
+
+    // Short url service unique API login
+    public $api_login = '';
+
+    // Short url service unique API key
+    public $api_key = '';
+
+    // Short url service unique hash which maps to original url value
+    public $hash = '';
+
+    // Shortened url string
+    public $short_url = '';
+
+
+    // Attempt to call shortner service three times before failing
+    public $attempts = 3;
+
+    // Shorten long url with specific service API/logic
+    public function shorten_long_url()
+    {
+        // Can't save a short url when one doesn't exist
+        if (!$this->long_url OR !$this->api_login OR !$this->api_key) {
+            log('error', 'ShortenerServiceAbstract::shorten_long_url - no long url to shorten - '.var_export($this, TRUE));
+            return FALSE;
+        }        
+    }
+
+    // Save short url and related meta-data to shorturls table
+    public function save_short_url()
+    {
+        // Can't save a short url when one doesn't exist
+        if (!$this->url_id OR !$this->hash OR !$this->shorturlservice_id OR !$this->shorturlserviceaccount_id) {
+            log('error', 'ShortenerServiceAbstract::save_short_url - no short url to save - '.var_export($this, TRUE));
+            return FALSE;
+        }
+
+        // Insert a new short url, or update an existing record
+        $saved = Shorturl_Model::insert_on_dup_key_update($this->url_id, $this->hash, $this->shorturlservice_id, $this->shorturlserviceaccount_id);
+
+        if (!$saved) {
+            log('error', 'ShortenerServiceAbstract::save_short_url - short url record can not be saved - '.var_export($this, TRUE));
+            return FALSE;
+        } else {
+            return TRUE;
+        }        
+    }
+
+}
+
+// Bitly, a simple url shortener
+// @link http://code.google.com/p/bitly-api/wiki/ApiDocumentation
+class ShortenerServiceBitly extends ShortenerServiceAbstract {
+
+    public function shorten_long_url()
+    {
+        // Make sure we have required members set
+        parent::shorten_long_url();
+
+        $urlencoded = urlencode($this->long_url);
+        $bitlyurl = 'http://api.bit.ly/shorten?version=2.0.1&longUrl='.$urlencoded.'&login='.$this->api_login.'&apiKey='.$this->api_key.'&history=1';
+
+        $attempts = 1;
+        while ($attempts <= 3) {
+            $json_result = file_get_contents($bitlyurl);        
+            if ($json_result) {                                 
+                // Return an assoc array
+                $json_decode =    json_decode($json_result, TRUE);
+                if (is_array($json_decode) AND isset($json_decode['errorCode']) AND $json_decode['errorCode'] == 0) {
+                    // Don't compare sent URL with returned URL
+                    // Bitly removes invalid poritions of URLs
+                    // The camparison might fail even though the URLs are the "same"
+                    $shortened = current($json_decode['results']);
+                    break;
+                } else {
+                    log('error', 'ShortenerServiceBitly::shorten_long_url - bit.ly json decoded - '.var_export($json_decode, TRUE));
+                }
+            } else {
+                    log('error', 'ShortenerServiceBitly::shorten_long_url - bit.ly http response - '.var_export($json_result, TRUE));
+            }
+            $attempts++;
+        }
+
+        if (isset($shortened)) {
+            $this->short_url = $shortened['shortUrl'];
+            $this->hash = $shortened['userHash'];
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+    }
+
+}
+
+// Shortener Factory
+class Shortener_Factory {
+
+    // Shortener service account parameter object
+    // @param object shortener account properties
+    private $_account;
+
+    // Shortener service object created by factory
+    //@param object shorterner service functions
+    private $_service; 
+
+    // Url to be shortened
+    private $_long_url;
+
+    // Set url members, service parameter object and finally the service itself 
+    public function __construct($long_url, $meta=array())
+    {
+        $this->_long_url = $long_url;
+
+        $this->_set_account($meta);
+        $this->_set_service();                
+    }
+
+    // Set shortener service account parameter object
+    // @param $meta array determine parameters for the current service object
+    private function _set_account($meta=array())
+    {                    
+        $s = FALSE;
+
+        // Get shorturl service account
+        if (isset($meta['account_id'])) {
+            $s = Shorturlserviceaccount_Model::get_by_account_id($meta['account_id']);
+        } elseif (isset($meta['service_id'])) {
+            $s = Shorturlserviceaccount_Model::get_by_service_id($meta['service_id']);
+        }
+
+        // Account not found, lets use default
+        if (!$s) {
+            $s = Shorturlserviceaccount_Model::get_default();
+        }
+
+        // Must have a service to use
+        if ($s === FALSE) {
+            log('error', 'Shortener_Core::_set_account - _account not found - '.var_export($this, TRUE));
+            return FALSE;
+        } else {
+            $this->_account = $s;
+        }        
+    }
+
+    // Use shortener service account parameter object to set shortener service object
+    private function _set_service()
+    {
+        switch ($this->_account->name) {
+            case 'bitly':
+                $this->_service = new ShortenerServiceBitly;
+    break;
+            default:
+                log('error', 'Shortener_Core::_set_service - _account not set - '.var_export($this, TRUE));
+    return FALSE;
+        }
+
+        $this->_service->long_url = $this->_long_url;        
+        $this->_service->shorturlserviceaccount_id = $this->_account->id;    
+        $this->_service->shorturlservice_id = $this->_account->shorturlservice_id;
+        $this->_service->api_login = $this->_account->api_login;
+        $this->_service->api_key = $this->_account->api_key;
+    }
+
+    // Public API for shortener service object methods
+    public function __call($name, $arguments)
+    {
+        if (!$this->_service) {
+                log('error', 'Shortener_Core::__call - _service not set - '.var_export($this, TRUE));
+    return FALSE;            
+        }
+        return $this->_service->$name();
+    }
+
+    // Public API for shortener service object members
+    public function __get($name)
+    {
+        return ($this->_service->$name) ? $this->_service->$name : NULL;
+    }
+}
+

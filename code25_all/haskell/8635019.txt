@@ -1,0 +1,48 @@
+rogueWriter
+runMyWriter rogueWriter
+runWriter rogueWriter
+SomeMonadT
+SomeMonadT Writer w
+WriterT w SomeMonad
+w `mappend` ws  resp.  ws `mappend` w
+
+{-# LANGUAGE GADTs, FlexibleContexts, TypeSynonymInstances,
+                    FlexibleInstances, MultiParamTypeClasses #-}
+
+module Writer where
+
+import Control.Monad.Identity
+import Control.Monad.Operational
+import Control.Monad.Writer
+import Data.Monoid
+
+data MyWriterI w a where
+    Tell :: w -> MyWriterI w ()
+
+type MyWriterT w = ProgramT (MyWriterI w)
+
+type MyWriter w = (MyWriterT w) Identity
+
+runMyWriterT :: (Monad m, Monoid w) => MyWriterT w m a -> m (a, w)
+runMyWriterT prog = run prog mempty
+  where
+    run prog ws = viewT prog >>= flip eval ws
+    eval (Return a)       ws = return (a, ws)
+    eval (Tell w :>>= is) ws = run (is ()) (ws `mappend` w)
+
+runMyWriter :: (Monoid w) => MyWriter w a -> (a, w)
+runMyWriter prog = runIdentity (runMyWriterT prog)
+
+instance (Monad m, Monoid w) => MonadWriter w (MyWriterT w m) where
+    tell   = singleton . Tell
+    listen = undefined
+    pass   = undefined
+
+-- Demonstration of the problem:
+
+rogueWriter :: MonadWriter String m => m ()
+rogueWriter = mapM_ (tell . show) [1..]
+
+main = let (_, infiniteOutput) = runMyWriter rogueWriter
+       in putStrLn (take 20 infiniteOutput)
+

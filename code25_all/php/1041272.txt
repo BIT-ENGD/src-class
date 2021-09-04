@@ -1,0 +1,66 @@
+<?php
+// config
+$timelimit = 60; // amount of seconds the server should run for, 0 = run indefintely
+$port = 9000; // the port to listen on
+$address = $_SERVER['SERVER_ADDR']; // the server's external IP
+$backlog = SOMAXCONN; // the maximum of backlog  incoming connections that will be queued for processing
+
+// configure custom PHP settings
+error_reporting(1); // report all errors
+ini_set('display_errors', 1); // display all errors
+set_time_limit($timelimit); // timeout after x seconds
+ob_implicit_flush(); // results in a flush operation after every output call
+
+//create master IPv4 based TCP socket
+if (!($master = socket_create(AF_INET, SOCK_STREAM, SOL_TCP))) die("Could not create master socket, error: ".socket_strerror(socket_last_error()));
+
+// set socket options (local addresses can be reused)
+if (!socket_set_option($master, SOL_SOCKET, SO_REUSEADDR, 1)) die("Could not set socket options, error: ".socket_strerror(socket_last_error()));
+
+// bind to socket server
+if (!socket_bind($master, $address, $port)) die("Could not bind to socket server, error: ".socket_strerror(socket_last_error()));
+
+// start listening
+if (!socket_listen($master, $backlog)) die("Could not start listening to socket, error: ".socket_strerror(socket_last_error()));
+
+//display startup information
+echo "[".date('Y-m-d H:i:s')."] SERVER CREATED (MAXCONN: ".SOMAXCONN.").\n"; //max connections is a kernel variable and can be adjusted with sysctl
+echo "[".date('Y-m-d H:i:s')."] Listening on ".$address.":".$port.".\n";
+$time = time(); //set startup timestamp
+
+// init read sockets array 
+$read_sockets = array($master);
+
+// continuously handle incoming socket messages, or close if time limit has been reached
+while ((!$timelimit) or (time() - $time < $timelimit)) {
+    $changed_sockets = $read_sockets;
+    socket_select($changed_sockets, $write = null, $except = null, null);
+    foreach($changed_sockets as $socket) {
+        if ($socket == $master) {
+            if (($client = socket_accept($master)) < 0) {
+                continue;
+            } else {
+                array_push($read_sockets, $client);
+            }
+        } else {
+            $data = @socket_read($socket, 1024, PHP_NORMAL_READ); //read a maximum of 1024 bytes until a new line has been sent
+            if ($data === false) { //the client disconnected
+                $index = array_search($socket, $read_sockets);
+                unset($read_sockets[$index]);
+                socket_close($socket);
+            } elseif ($data = trim($data)) { //remove whitespace and continue only if the message is not empty
+                echo "we received: ".$data."\n\n";
+                //handleData($data, $socket);
+            }
+        }
+    }
+}
+socket_close($master); //close the socket
+echo "[".date('Y-m-d H:i:s')."] SERVER CLOSED.\n";
+
+//function to write to the flash client
+function flash_write($socket, $msg) {
+    socket_write($socket, $msg.chr(0x0));
+}
+?>
+

@@ -1,0 +1,41 @@
+val modelPath = file("llda-cvb0-59ea15c7-31-61406081-75faccf7");
+
+val model = LoadCVB0LabeledLDA(modelPath);`
+
+val source = CSVFile("pubmed-oa-subset.csv") ~> IDColumn(1);
+
+val text = {
+  source ~>                              // read from the source file
+  Column(4) ~>                           // select column containing text
+  TokenizeWith(model.tokenizer.get)      //tokenize with model's tokenizer
+ }
+
+ val labels = {
+  source ~>                              // read from the source file
+  Column(2) ~>                           // take column two, the year
+  TokenizeWith(WhitespaceTokenizer())     
+ }
+
+ val outputPath = file(modelPath, source.meta[java.io.File].getName.replaceAll(".csv",""));
+
+ val dataset = LabeledLDADataset(text,labels,model.termIndex,model.topicIndex);
+
+ val perDocTopicDistributions =  InferCVB0LabeledLDADocumentTopicDistributions(model, dataset);
+
+ val perDocTermTopicDistributions =EstimateLabeledLDAPerWordTopicDistributions(model, dataset, perDocTopicDistributions);
+
+ TSVFile(outputPath+"-word-topic-distributions.tsv").write({
+  for ((terms,(dId,dists)) <- text.iterator zip perDocTermTopicDistributions.iterator) yield {
+    require(terms.id == dId);
+    (terms.id,
+     for ((term,dist) <- (terms.value zip dists)) yield {
+       term + " " + dist.activeIterator.map({
+         case (topic,prob) => model.topicIndex.get.get(topic) + ":" + prob
+       }).mkString(" ");
+     });
+  }
+});
+
+found   : scalanlp.collection.LazyIterable[(String, Array[Double])]
+required: Iterable[(String, scalala.collection.sparse.SparseArray[Double])]
+EstimateLabeledLDAPerWordTopicDistributions(model, dataset, perDocTopicDistributions);

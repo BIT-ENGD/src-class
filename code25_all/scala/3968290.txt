@@ -1,0 +1,31 @@
+class Foo extends Mapper[Foo] {
+  def getSingleton = Foo
+}
+
+object Foo extends Foo with MetaMapper[Foo] {
+}
+
+case class Audited(name: String, url: Box[String])
+def getAudited : Box[Audited] = {
+  // OBJECT_OID and OBJECT_TYPE are for the audited record we are trying to find
+  (OBJECT_OID.is, OBJECT_TYPE.is) match {
+    case (ooid, otype) if List(ooid,otype).forall(s => StringUtils.isNotBlank(s)) => {
+      // maintain a list of objects that are metamappers
+      val metas = List(Client)
+      (for {
+        // create a new instance and check its class name
+        meta <- metas.find(meta => meta.create.getClass.getName == otype)
+        mapper <- meta.find(By(meta.primaryKeyField, ooid))
+      } yield {
+        val nameFieldNames = List("NAME")
+        val name = mapper.allFields.find(f => nameFieldNames.contains(f.name)) match {
+          case Some(field) => tryo(field.is.toString).openOr("")
+          case _ => mapper.getClass.getName.split(".").last
+        }
+        Full(Audited(name, Empty))
+      }) openOr Empty
+    }
+    case _ => Empty
+  }
+}
+

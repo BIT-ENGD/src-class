@@ -1,0 +1,243 @@
+socket(PF_INET, SOCK_RAW, IPPROTO_UDP)
+setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(int))
+sendto()
+val
+int
+#include <unistd.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
+
+#include <string.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+
+#include <netinet/in.h>
+
+//The packet length in byes
+#define PCKT_LEN 50
+
+//Date size in bytes
+#define DATA_SIZE 12
+
+//PseudoHeader struct used to calculate UDP checksum.
+typedef struct PseudoHeader{    
+    unsigned long int source_ip;
+    unsigned long int dest_ip;
+    unsigned char reserved;
+    unsigned char protocol;
+    unsigned short int udp_length;
+}PseudoHeader;
+
+// Ripped from Richard Stevans Book
+unsigned short ComputeChecksum(unsigned char *data, int len)
+{
+    long sum = 0;  /* assume 32 bit long, 16 bit short */
+    unsigned short *temp = (unsigned short *)data;
+
+    while(len > 1){
+        sum += *temp++;
+        if(sum & 0x80000000)   /* if high order bit set, fold */
+            sum = (sum & 0xFFFF) + (sum >> 16);
+        len -= 2;
+    }
+
+    if(len)       /* take care of left over byte */
+        sum += (unsigned short) *((unsigned char *)temp);
+
+    while(sum>>16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+
+    return ~sum;
+}
+
+int BindRawSocketToInterface(int rawsock, char *addr, short int port)
+{
+    struct sockaddr_in s_addr;
+    s_addr.sin_family = AF_INET;
+    s_addr.sin_addr.s_addr = inet_addr(addr);
+    s_addr.sin_port = htons(port);
+
+    if((bind(rawsock, (struct sockaddr *)&s_addr, sizeof(s_addr)))== -1)
+    {
+        perror("Error binding raw socket to interface\n");
+        exit(-1);
+    }
+
+    return 1;
+}
+
+
+// Fabricate the IP header or we can use the
+// standard header structures but assign our own values.
+struct ip *CreateIPHeader(char *srcip, char *destip)
+{
+    struct ip *ip_header;
+
+    ip_header = (struct ip *)malloc(sizeof(struct ip));
+
+    ip_header->ip_v = 4;
+    ip_header->ip_hl = 5;
+    ip_header->ip_tos = 0;
+    ip_header->ip_len = htons(sizeof(struct ip) + sizeof(struct udphdr) + DATA_SIZE);
+    ip_header->ip_id = htons(111);
+    ip_header->ip_off = 0;
+    ip_header->ip_ttl = 111;
+    ip_header->ip_p = IPPROTO_TCP;
+    ip_header->ip_sum = 0; /* We will calculate the checksum later */
+    inet_pton(AF_INET, srcip, &ip_header->ip_src);
+    inet_pton(AF_INET, destip, &ip_header->ip_dst);
+
+    /* Calculate the IP checksum now : 
+    The IP Checksum is only over the IP header */
+    ip_header->ip_sum = ComputeChecksum((unsigned char *)ip_header, ip_header->ip_hl*4);
+
+    return (ip_header);
+}
+
+// Creates a the UDP header.
+struct udphdr *CreateUdpHeader(char *srcport, char *destport )
+{
+    struct udphdr *udp_header;
+
+    /* Check netinet/udp.h for header definiation */
+
+    udp_header = (struct udphdr *)malloc(sizeof(struct udphdr));
+
+    udp_header->source = htons(atoi(srcport));
+    udp_header->dest = htons(atoi(destport));
+    udp_header->len = htons(sizeof(struct udphdr) + DATA_SIZE); //TODO: need to specify this
+    udp_header->check = htons(0);
+
+    return (udp_header);
+}
+
+void CreatePseudoHeaderAndComputeUdpChecksum(struct udphdr *udp_header, struct ip *ip_header, unsigned char *data)
+{
+    /*The TCP Checksum is calculated over the PseudoHeader + TCP header +Data*/
+
+    /* Find the size of the TCP Header + Data */
+    int segment_len = ntohs(ip_header->ip_len) - ip_header->ip_hl*4; 
+
+    /* Total length over which TCP checksum will be computed */
+    int header_len = sizeof(PseudoHeader) + segment_len;
+
+    /* Allocate the memory */
+
+    unsigned char *hdr = (unsigned char *)malloc(header_len);
+
+    /* Fill in the pseudo header first */
+
+    PseudoHeader *pseudo_header = (PseudoHeader *)hdr;
+
+    pseudo_header->source_ip = ip_header->ip_src.s_addr;
+    pseudo_header->dest_ip = ip_header->ip_dst.s_addr;
+    pseudo_header->reserved = 0;
+    pseudo_header->protocol = ip_header->ip_p;
+    pseudo_header->udp_length = htons(segment_len);
+
+
+    /* Now copy TCP */
+
+    memcpy((hdr + sizeof(PseudoHeader)), (void *)udp_header, 8);
+
+    /* Now copy the Data */
+
+    memcpy((hdr + sizeof(PseudoHeader) + 8), data, DATA_SIZE);
+
+    /* Calculate the Checksum */
+
+    udp_header->check = ComputeChecksum(hdr, header_len);
+
+    /* Free the PseudoHeader */
+    free(hdr);
+}
+
+// Source IP, source port, target IP, target port from the command line arguments
+int main(int argc, char *argv[])
+{
+    int sd;
+    char buffer[PCKT_LEN];
+    char *data = "Hello World!";
+
+    // Source and destination addresses: IP and port
+    struct sockaddr_in to_addr;
+    int one = 1;
+    const int *val = &one;
+
+    printf("IP Header Size: %lu \n", sizeof(struct ip));
+    printf("UDP Header Size: %lu \n", sizeof(struct udphdr));
+    printf("Data Size: %d\n", DATA_SIZE);
+    printf("IP Total: %lu \n", sizeof(struct ip) + sizeof(struct udphdr) + DATA_SIZE);
+
+    memset(buffer, 0, PCKT_LEN);
+
+    if(argc != 5)
+    {
+        printf("- Invalid parameters!!!\n");
+        printf("- Usage %s <source hostname/IP> <source port> <target hostname/IP> <target port>\n", argv[0]);
+        exit(-1);
+    }
+
+    // Create a raw socket with UDP protocol
+    sd = socket(PF_INET, SOCK_RAW, IPPROTO_UDP);
+    if(sd < 0)
+    {
+        perror("socket() error");
+        exit(-1);
+    }
+    else
+        printf("socket() - Using SOCK_RAW socket and UDP protocol is OK.\n");
+
+    //Bind the socket to the source address and port.
+    BindRawSocketToInterface(sd, argv[1], atoi(argv[2]));
+
+    // Inform the kernel do not fill up the packet structure. we will build our own...
+    if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(int)) < 0)
+    {
+        perror("setsockopt() error");
+        close(sd);
+        exit(-1);
+    }
+    else
+        printf("setsockopt() is OK.\n");
+
+
+    // The source is redundant, may be used later if needed
+    // The address family
+    to_addr.sin_family = AF_INET;
+    to_addr.sin_addr.s_addr = inet_addr(argv[3]);
+    to_addr.sin_port = htons(atoi(argv[4]));
+
+    //Create the IP header.
+    struct ip *ip_header = CreateIPHeader(argv[1], argv[3]);
+    //Create the UDP header.
+    struct udphdr *udp_header = CreateUdpHeader(argv[2], argv[4]);
+    //Compute UDP checksum
+    CreatePseudoHeaderAndComputeUdpChecksum(udp_header, ip_header, (unsigned char*)data);
+
+    //Copy IP header, UDP header, and data to the packet buffer.
+    memcpy(buffer, ip_header, sizeof(struct ip));
+    memcpy(buffer + sizeof(struct ip), udp_header, 8 /*sizeof(struct udphdr)*/);
+    memcpy(buffer + sizeof(struct ip) + 8, data, DATA_SIZE);
+
+    printf("Using raw socket and UDP protocol\n");
+    printf("Using Source IP: %s port: %u, Target IP: %s port: %u.\n", argv[1], atoi(argv[2]), argv[3], atoi(argv[4]));
+
+
+    if(sendto(sd, buffer, htons(20)/*ip_header->ip_len*/, 0, (struct sockaddr *)&to_addr, sizeof(to_addr)) < 0)
+    {
+        perror("sendto() error");
+    }
+    else
+    {
+        printf("sendto() is OK.\n");
+    }
+
+    free(ip_header);
+    free(udp_header);
+    close(sd);
+    return 0;
+}
+

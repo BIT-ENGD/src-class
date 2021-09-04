@@ -1,0 +1,67 @@
+# relevant model #
+class Bookmark(models.Model):
+ account = models.ForeignKey( Delicious )
+ url = models.CharField( max_length=4096 )
+ tags = models.TextField()
+ hash = models.CharField( max_length=32 )
+ meta = models.CharField( max_length=32 )
+
+# bookmark queue reading #
+def scrobble_bookmark(account):
+ try:
+  bookmark = Bookmark.objects.all()[0]
+ except Bookmark.DoesNotExist:
+  return False
+
+ bookmark.delete()
+
+ tags = bookmark.tags.split(' ')
+ user = bookmark.account.user
+
+ for concept in Concepts.extract( bookmark.url ):
+  for tag in tags:
+   Concepts.relate( user, concept['name'], tag )
+
+ return True
+
+def scrobble_bookmarks(account):
+ semaphore = Semaphore(10)
+ for i in xrange(Bookmark.objects.count()):
+  thread = Bookmark_scrobble(account, semaphore)
+  thread.start()
+
+class Bookmark_scrobble(Thread):
+ def __init__(self, account, semaphore):
+  Thread.__init__(self)
+  self.account = account
+  self.semaphore = semaphore
+
+ def run(self):
+  self.semaphore.acquire()
+  try:
+   scrobble_bookmark(self.account)
+  finally:
+   self.semaphore.release()
+
+Exception in thread Thread-65:
+Traceback (most recent call last):
+  File "/usr/lib/python2.6/threading.py", line 525, in __bootstrap_inner
+    self.run()
+  File     "/home/swizec/Documents/trees/bookmarklet_server/../bookmarklet_server/Scrobbler/Scrobbler.py", line 60, in run
+    scrobble_bookmark(self.account)
+  File     "/home/swizec/Documents/trees/bookmarklet_server/../bookmarklet_server/Scrobbler/Scrobbler.py", line 28, in scrobble_bookmark
+    bookmark = Bookmark.objects.all()[0]
+  File "/usr/local/lib/python2.6/dist-packages/django/db/models/query.py", line 152, in __getitem__
+    return list(qs)[0]
+  File "/usr/local/lib/python2.6/dist-packages/django/db/models/query.py", line 76, in __len__
+self._result_cache.extend(list(self._iter))
+  File "/usr/local/lib/python2.6/dist-packages/django/db/models/query.py", line 231, in iterator
+    for row in self.query.results_iter():
+  File "/usr/local/lib/python2.6/dist-packages/django/db/models/sql/query.py", line 281, in results_iter
+    for rows in self.execute_sql(MULTI):
+  File "/usr/local/lib/python2.6/dist-packages/django/db/models/sql/query.py", line 2373, in execute_sql
+cursor.execute(sql, params)
+  File "/usr/local/lib/python2.6/dist-packages/django/db/backends/sqlite3/base.py", line 193, in execute
+    return Database.Cursor.execute(self, query, params)
+OperationalError: no such table: Scrobbler_bookmark
+

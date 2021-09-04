@@ -1,0 +1,266 @@
+NSView
+NSScrollView
+NSView
+    - (void)drawRect:(NSRect)rect {
+        //NSLog(@"OCEditorView:drawRect: START");
+
+        [self setFrame:[[self EditorDocument] DocumentRect]];
+
+        [[NSGraphicsContext currentContext] setShouldAntialias:NO];
+
+        // CLEAR BACKGROUND
+
+        [[[self EditorDocument] ColorWhiteKey] set];
+        NSRectFill(rect);
+
+        // BACKGROUND KEYS
+
+        int firstRowLine = 0; //NSMinY(rect); //<- adding the function results in bad spacing on scrolling
+        int currentRowLine = 0;
+        int lastRowLine = NSMaxY(rect);
+
+        //NSLog(@"lastRowLine:%d", lastRowLine);
+
+        float currentZoomY = [self ZoomY];
+
+        for (currentRowLine = firstRowLine; currentRowLine <= lastRowLine; currentRowLine += currentZoomY) {
+
+            int currentTone = floor(currentRowLine / [self ZoomY]);
+            BOOL isBlackKey = [[self MusicLib] IsBlackKey:currentTone];
+
+            //NSLog(@"%d, tone:%d, black:%d", [self MusicLib], currentTone, isBlackKey);
+
+            if (isBlackKey) {
+                [[[self EditorDocument] ColorBlackKey] set];
+            } else {
+                [[NSColor whiteColor] set];
+            }
+
+            NSBezierPath *rowLine = [NSBezierPath bezierPath];
+
+            NSPoint bottomLeftPoint = NSMakePoint(NSMinX(rect), currentRowLine);
+            NSPoint bottomRightPoint = NSMakePoint(NSMaxX(rect), currentRowLine);
+            NSPoint topRightPoint = NSMakePoint(NSMaxX(rect), currentRowLine + [self ZoomY]);
+            NSPoint topLeftPoint = NSMakePoint(NSMinX(rect), currentRowLine + [self ZoomY]);
+
+            [rowLine moveToPoint:bottomLeftPoint];
+            [rowLine lineToPoint:bottomRightPoint];
+            [rowLine lineToPoint:topRightPoint];
+            [rowLine lineToPoint:topLeftPoint];
+
+            [rowLine closePath];
+
+            [rowLine fill];
+
+            BOOL isOctave = [[self MusicLib] IsOctave:currentTone];
+            if (isOctave) {
+                [[[self EditorDocument] ColorXGrid] set];
+
+                NSBezierPath *octaveLine = [NSBezierPath bezierPath];
+                NSPoint leftPoint = NSMakePoint(NSMinX(rect), currentRowLine);
+                NSPoint rightPoint = NSMakePoint(NSMaxX(rect), currentRowLine);
+                [octaveLine moveToPoint:leftPoint];
+                [octaveLine lineToPoint:rightPoint];
+                [octaveLine stroke];
+            }
+        } 
+
+        // BACKGROUND MEASURES
+
+        //[[self EditorDocument].ColorYGrid setStroke];
+
+        int firstColumnLine = 0;
+        int currentColumnLine = 0;
+        int lastColumnLine = NSMaxX(rect);
+
+        int snapToValueInBeats = [[self EditorDocument] SnapToValue];
+        int snapToValueInPixels = floor(snapToValueInBeats * [self ZoomX]);
+        int measureUnitInBeats = floor([[self EditorDocument] TimeSignatureBeatsPerMeasure] * [[self EditorDocument] TimeSignatureBasicBeat]);
+        int measureUnitInPixels = floor(measureUnitInBeats * [self ZoomX]);
+
+        for (currentColumnLine = firstColumnLine; currentColumnLine <= lastColumnLine; currentColumnLine += snapToValueInPixels) {
+
+            //int currentBeat = floor(currentColumnLine / [self ZoomX]);
+            int isAMeasure = currentColumnLine % measureUnitInPixels;
+            int isAtSnap = currentColumnLine % snapToValueInPixels;
+
+            if ((isAMeasure == 0) || (isAtSnap == 0)) {
+
+                if (isAtSnap == 0) { 
+                    [[NSColor whiteColor] set];                 
+                }
+
+                if (isAMeasure == 0) { 
+                    [[[self EditorDocument] ColorXGrid] set]; 
+                }
+
+                NSBezierPath *columnLine = [NSBezierPath bezierPath];
+
+                NSPoint startPoint = NSMakePoint(currentColumnLine, NSMinY(rect));
+                NSPoint endPoint = NSMakePoint(currentColumnLine, NSMaxY(rect));
+
+                [columnLine moveToPoint:startPoint];
+                [columnLine lineToPoint:endPoint];
+
+                [columnLine setLineWidth:1.0];
+                [columnLine stroke];
+
+            } // isAMeasure or isAtSnap
+         } // currentColumnLine
+
+        // NOTES
+
+        for (OCNoteObject *note in [[self EditorDocument] Notes]) {
+
+            OCNoteObject *currentNote = note;
+
+            NSRect noteBounds = [self GetRectFromNote:currentNote];
+            //NSLog(@"noteBounds:%d", noteBounds);
+
+            // set the color for the note fill
+            // this will have to come from the parent Track
+
+            NSMutableArray *trackColors = [self EditorDocument].TrackColors;
+
+            if (note.Selected) {
+                [[trackColors objectAtIndex:0] set];
+            } else {
+                [[trackColors objectAtIndex:1] set];
+            }
+
+            [NSBezierPath fillRect:noteBounds];
+
+            // outline
+
+            [[NSColor blackColor] set];
+            [NSBezierPath strokeRect:noteBounds];
+
+         } // for each note
+
+        /*
+        if (EditorController.startingUpApplication == YES) {
+            [self setDefaultSettingForApplicationStartUp];
+        }
+         */
+    //NSLog(@"OCEditorView:drawRect: END"); 
+    }
+
+- (void)mouseDown:(NSEvent *)theEvent {
+
+    //NSLog(@"OCEditorObject:mouseDown: START");
+
+    // This converts the click into coordinates
+    MouseDownPoint = [self convertPoint:[theEvent locationInWindow] fromView:nil];
+
+    // Calculate the beat and pitch clicked into...
+
+    float startBeat = floor(MouseDownPoint.x / [self ZoomX]);
+    float pitch = floor(MouseDownPoint.y / [self ZoomY]);
+    float length = [[self EditorDocument] NewNoteLength];
+
+    //NSLog(@"X:%f, Y:%f", MouseDownPoint.x, MouseDownPoint.y);
+    //NSLog(@"beat:%f, pitch:%f", startBeat, pitch);
+
+    LastDragPoint = MouseDownPoint; // save the point just in case.
+
+    OCNoteObject *note = [self GetClickedNoteFromPoint:MouseDownPoint];
+
+    if ([EditorController EditorMode] == AddObjectMode) {
+
+        //NSLog(@"AddObjectMode)");
+
+        float snapToX = [[self EditorDocument] SnapToValue];
+        float snappedStartBeat = floor(startBeat / snapToX) * snapToX;
+
+        //NSLog(@"%f = %f / %f * %f", snappedStartBeat, startBeat, snapToX, snapToX);
+
+        OCNoteObject *newNote = [[self EditorDocument] CreateNote:snappedStartBeat Pitch:pitch Length:length];
+        //NSLog(@"newNote:%d", newNote);
+
+        [newNote Deselect];
+
+    } else if ([EditorController EditorMode] == EditObjectMode) {
+
+        //NSLog(@"EditObjectMode");
+
+        // if nothing was clicked, then clear the selections
+        // else if the shift key was pressed, add to the selection
+
+        if (note == nil) {
+            [self SelectNone];  
+        } else {
+
+            //NSLog(@"mouseDown note.pitch:%f, oldPitch:%f", note.Pitch, note.OldPitch);
+
+            BOOL editingSelection = (([theEvent modifierFlags] & NSShiftKeyMask) ? YES : NO);
+            if (editingSelection) {
+                if (note.Selected) {
+                    [self RemoveFromSelection:note];
+                } else {
+                    [self AddToSelection:note];
+                }
+            } else {
+                if (note.Selected) {
+                    // do nothing
+                } else {
+                    [self SelectNone];
+                    [self AddToSelection:note];
+                }
+            }
+
+            [self SetOldData];
+
+        } // (note == nil)
+
+    } else if ([EditorController EditorMode] == DeleteObjectMode) {
+
+        if (note != nil) {
+            [self RemoveFromSelection:note];
+            [[self EditorDocument] DestroyNote:note];
+        } // (note != nil)
+
+    } // EditorMode
+
+    [self setFrame:[[self EditorDocument] DocumentRect]];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)mouseDragged:(NSEvent *)theEvent {
+    //NSLog(@"mouseDragged");
+
+    NSPoint currentDragPoint = [self convertPoint:[theEvent locationInWindow] fromView:nil];
+    // NSLog(@"currentDragPoint: %d", currentDragPoint)
+
+    float snapToValueInBeats = [[self EditorDocument] SnapToValue];
+
+    int deltaXinPixels = floor(currentDragPoint.x - MouseDownPoint.x);
+    int deltaYinPixels = floor(currentDragPoint.y - MouseDownPoint.y);
+
+    int deltaXinBeats = floor(deltaXinPixels / [self ZoomX]);
+    int deltaY = floor(deltaYinPixels / [self ZoomY]);
+
+    int deltaX = floor(deltaXinBeats / snapToValueInBeats) * snapToValueInBeats;
+
+        for (OCNoteObject *note in [self Selection]) {
+            [self MoveNote:note DeltaX:deltaX DeltaY:deltaY];       
+        }
+
+    LastDragPoint = currentDragPoint;
+
+    [self autoscroll:theEvent];
+
+    [self setNeedsDisplay:YES]; //artifacts are left if this is off.
+}
+
+- (void)mouseUp:(NSEvent *)theEvent {
+    if ([EditorController EditorMode] == AddObjectMode) {
+
+    } else if ([EditorController EditorMode] == EditObjectMode) {
+
+    } else if ([EditorController EditorMode] == DeleteObjectMode) {
+
+    }
+
+    [self setNeedsDisplay:YES];
+}
+

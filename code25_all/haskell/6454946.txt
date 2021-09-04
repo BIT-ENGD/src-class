@@ -1,0 +1,28 @@
+dlCheck
+Data.Set
+Set
+dlsStreamHist
+foldl'
+seen
+-- 'test' applies a step to each process in the state (individually), yielding a set of successor states
+-- ...or not, if a process blocks. Already seen states are in the first component
+-- so that we don't explore them again,
+-- blocked configs go into the second, and new successor states go into the third component.
+-- We produce a potentially infinite stream of sets of blocked/enabled configurations.
+-- This method generates our search space; the transition relation 'step' is in here.
+testHistory :: State a => Set a -> Set a -> [(Set a, Set a, Set a)]
+testHistory seen ps
+  | null ps = []
+  | otherwise = let (ls,rs) = fold (\s lr -> fold (\x (l,r) -> maybe (insert s l,r)
+                                                                     (\c -> (l,insert c r)) x) lr (step s)) (empty,empty) ps
+                    newSeen = seen `union` ps
+                    new = rs `difference` newSeen
+                    in (newSeen,ls,new):(testHistory newSeen new)
+
+-- Take a program, and run it (to infinity). For each blocked configuration, collect all deadlocks (if any).
+-- For infinite streams, you might want to 'nub' the result.
+dlsStreamT :: State a => (Set a -> [(Set a, c)]) -> a -> [Set (Process,Lock,Int)]
+dlsStreamT testF p = concatMap (Data.Set.toList . (fold (union) empty) . (filter (not . null)) . (Data.Set.map (filter (not . null)))) $ map ((filter (not . null)) . (Data.Set.map dlCheck) . fst) (testF (singleton p))
+dlsStreamHist :: State a => a -> [Set (Process,Lock,Int)]
+dlsStreamHist = dlsStreamT (map (\(_,x,y)->(x,y)) . testHistory empty)
+

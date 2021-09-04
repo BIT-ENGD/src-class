@@ -1,0 +1,140 @@
+void    reaper(int sig)
+{
+int status;
+
+while (waitpid(-1, &status, WNOHANG) >= 0)
+    /* empty */;
+}
+
+
+int     errexit(const char *format, ...)
+{
+    va_list args;
+
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    exit(1);
+}
+
+
+
+
+int     errno;
+
+unsigned short  portbase = 0;   /* port base, for non-root servers      */
+
+int     passivesock(const char *service, const char *transport, int qlen)
+
+{
+    struct servent  *pse;   /* pointer to service information entry */
+    struct protoent *ppe;   /* pointer to protocol information entry*/
+    struct sockaddr_in sin; /* an Internet endpoint address         */
+    int     s, type;        /* socket descriptor and socket type    */
+
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = INADDR_ANY;
+
+/* Map service name to port number */
+    if ( pse = getservbyname(service, transport) )
+            sin.sin_port = htons(ntohs((unsigned short)pse->s_port)
+                    + portbase);
+    else if ((sin.sin_port=htons((unsigned short)atoi(service))) == 0)
+            errexit("can't get \"%s\" service entry\n", service);
+
+/* Map protocol name to protocol number */
+    if ( (ppe = getprotobyname(transport)) == 0)
+            errexit("can't get \"%s\" protocol entry\n", transport);
+
+/* Use protocol to choose a socket type */
+    if (strcmp(transport, "udp") == 0)
+            type = SOCK_DGRAM;
+    else
+            type = SOCK_STREAM;
+
+/* Allocate a socket */
+    s = socket(PF_INET, type, ppe->p_proto);
+    if (s < 0)
+            errexit("can't create socket: %s\n", strerror(s));
+
+/* Bind the socket */
+    if (errno=bind(s, (struct sockaddr *)&sin, sizeof(sin)) < 0)
+            errexit("can't bind to %s port: %s\n", service,
+                    strerror(errno));
+    if (type == SOCK_STREAM && listen(s, qlen) < 0)
+            errexit("can't listen on %s port: %s\n", service,
+                    strerror(type));
+    return s;
+}
+
+int     passiveTCP(const char *service, int qlen)
+{
+    return passivesock(service, "tcp", qlen);
+}
+
+
+
+
+#define QLEN              32    /* maximum connection queue length      */
+#define BUFSIZE         4096
+
+
+int     TCPechod(int fd);
+
+int main(int argc, char *argv[])
+{
+    char    *service;      /* service name or port number  */
+    struct  sockaddr_in fsin;       /* the address of a client      */
+    unsigned int    alen;           /* length of client's address   */
+    int     msock;                  /* master server socket         */
+    int     ssock;                  /* slave server socket          */
+
+    if (argc !=2)
+            errexit("usage: %s port\n", argv[0]);
+
+    service = argv[1];
+
+    msock = passiveTCP(service, QLEN);
+
+    (void) signal(SIGCHLD, reaper);
+
+    while (1) {
+            alen = sizeof(fsin);
+            ssock = accept(msock, (struct sockaddr *)&fsin, &alen);
+            if (ssock < 0) {
+                    if (errno == EINTR)
+                            continue;
+                    errexit("accept: %s\n", strerror(ssock));
+            }
+            printf("Accept connection %d from %s:%d\n", ssock, inet_ntoa(fsin.sin_addr), (int)ntohs(fsin.sin_port));
+            switch (fork()){
+            case 0:
+                (void) close(msock);
+                TCPechod(ssock);
+                close(ssock);
+                exit(0);
+            default:
+                close(ssock);
+                break;
+            case -1:
+                errexit("fork: %s\n", strerror(errno));
+            }              
+    }
+}
+
+
+int     TCPechod(int fd)
+{
+    char    buf[BUFSIZE];
+    int     cc;
+
+    while (cc = read(fd, buf, sizeof(buf))) {
+            if (cc < 0)
+                    errexit("echo read: %s\n", strerror(cc));
+            if (errno=write(fd, buf, cc) < 0)
+                    errexit("echo write: %s\n", strerror(errno));
+    }
+    return 0;
+}
+

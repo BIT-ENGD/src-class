@@ -1,0 +1,135 @@
+_completionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+
+WatchData::WatchData(const WCHAR* path, int mask, bool watchSubtree, HANDLE completionPort)
+    :
+    _watchId(++_counter), 
+    _mask(mask), 
+    _watchSubtree(watchSubtree),
+    _byteReturned(0),
+    _completionPort(completionPort)
+{
+    _path = _wcsdup(path); 
+    _hDir = CreateFileW(_path,
+                         FILE_LIST_DIRECTORY | GENERIC_READ | GENERIC_WRITE,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         NULL, //security attributes
+                         OPEN_EXISTING,
+                         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
+    if(_hDir == INVALID_HANDLE_VALUE )  
+    {
+        throw GetLastError();
+    }
+
+    if (NULL == CreateIoCompletionPort(_hDir, _completionPort, (ULONG_PTR)&_watchId, 0))
+    {
+        throw GetLastError();
+    }
+}
+
+int WatchData::watchDirectory()
+{
+    printf("(Re)watching %ls\n", _path);
+    memset(_buffer, 0, sizeof(_buffer));
+    memset(&_overLapped, 0, sizeof(_overLapped));
+    if( !ReadDirectoryChangesW( _hDir,
+                                _buffer,//<--FILE_NOTIFY_INFORMATION records are put into this buffer
+                                sizeof(_buffer),
+                                _watchSubtree,
+                                _mask,
+                                &_byteReturned,
+                                &_overLapped,
+                                NULL))
+
+
+
+    {
+        return GetLastError();
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+DWORD WINAPI Win32FSHook::mainLoop( LPVOID lpParam )
+{
+    debug("mainLoop starts");
+    Win32FSHook* _this = (Win32FSHook*)lpParam;
+
+    HANDLE hPort = _this->_completionPort;
+    DWORD dwNoOfBytes = 0;
+    ULONG_PTR ulKey = 0;
+    OVERLAPPED* pov = NULL;
+    WCHAR name[1024];
+
+    while (_this->_isRunning)
+    {
+        pov = NULL;
+        BOOL fSuccess = GetQueuedCompletionStatus(
+                        hPort,         // Completion port handle
+                        &dwNoOfBytes,  // Bytes transferred
+                        &ulKey,
+                        &pov,          // OVERLAPPED structure
+                        INFINITE       // Notification time-out interval
+                        );
+        if (fSuccess)
+        {
+            if (dwNoOfBytes == 0)
+            {
+                // can happen after a watch is removed
+                continue;
+            }
+            int wd = *(int*)ulKey;
+            EnterCriticalSection(&_this->_cSection);
+            WatchData *watchData = _this->find(wd);
+            if (!watchData)
+            {
+                log("mainLoop : ignoring event for watch id %d, no longer in wid2WatchData map", wd);
+                LeaveCriticalSection(&_this->_cSection);
+                continue;
+            }
+
+            //const char* buffer = watchData->getBuffer();
+            char buffer[watchData->getBufferSize()];
+            memcpy(buffer, watchData->getBuffer(), watchData->getBufferSize());
+            LeaveCriticalSection(&_this->_cSection);
+            FILE_NOTIFY_INFORMATION *event;
+            DWORD i=0;
+            do
+            {
+                event = (FILE_NOTIFY_INFORMATION*)(buffer+i);
+                int action = event->Action;
+                DWORD len = event->FileNameLength / sizeof(WCHAR);
+                for (DWORD k=0;k<len && k < (sizeof(name)-sizeof(WCHAR))/sizeof(WCHAR);k++)
+                {
+                    name[k] = event->FileName[k];
+                }
+                name[len] = 0;
+
+                _this->_callback(watchData->getId(), action, watchData->getPath(), name);
+
+                if (i != 0 && event->NextEntryOffset == i)
+                {
+                    log("should not happen!");
+                    break;
+                }
+
+                i = event->NextEntryOffset;
+            }
+            while (i != 0);
+
+            int res = watchData->watchDirectory();
+            if (res != 0)
+            {
+                log("Error watching dir %s : %d",watchData->getPath(), res);
+            }
+        }
+        else
+        {
+            log("GetQueuedCompletionStatus returned an error");
+        }
+    }
+    debug("mainLoop exits");
+    return 0;
+}
+

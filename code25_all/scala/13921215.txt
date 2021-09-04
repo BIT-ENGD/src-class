@@ -1,0 +1,53 @@
+sealed trait Nested
+case object Leaf extends Nested
+case class Foo(inner: Nested) extends Nested
+case class Bar(inner: Nested) extends Nested
+
+import scalaz.{Node => _, _}; import Scalaz._; import scala.xml._
+case class Parents(foos: Int, bars: Int)
+type ParentsS[X] = State[Parents, X]
+
+def convertFoo(foo: Foo): ParentsS[Seq[Node]] = for {
+  parents <- init[Parents]
+  _ <- put[Parents](Parents(parents.foos + 1, parents.bars))
+  inner <- convert(foo.inner)
+  _ <- put[Parents](parents)
+} yield <foo count={ parents.foos.toString }/>.copy(child=inner)
+
+def convertBar(bar: Bar): ParentsS[Seq[Node]] = for {
+  parents <- init[Parents]
+  _ <- put[Parents](Parents(parents.foos, parents.bars + 1))
+  inner <- convert(bar.inner)
+  _ <- put[Parents](parents)
+} yield <bar count={ parents.bars.toString }/>.copy(child=inner)
+
+def convert(nested: Nested): ParentsS[Seq[Node]] = nested match {
+  case Leaf => Seq[Node]().point[ParentsS]
+  case foo@Foo(_) => convertFoo(foo)
+  case bar@Bar(_) => convertBar(bar)
+}
+
+def nested(n: Int): Nested =
+  if (n == 0) Leaf
+  else {
+    if (n % 2 == 0) Bar(nested(n - 1))
+    else Foo(nested(n - 1))
+  }
+
+convert(nested(1000)).apply(Parents(0, 0))
+nested
+nested
+    at scalaz.IdInstances$$anon$1.bind(Id.scala:20)
+    at scalaz.StateT$$anonfun$flatMap$1.apply(StateT.scala:48)
+    at scalaz.StateT$$anon$7.apply(StateT.scala:72)
+    at scalaz.StateT$$anonfun$flatMap$1.apply(StateT.scala:48)
+    at scalaz.StateT$$anon$7.apply(StateT.scala:72)
+    at scalaz.StateT$$anonfun$flatMap$1$$anonfun$apply$2.apply(StateT.scala:49)
+    at scalaz.StateT$$anonfun$flatMap$1$$anonfun$apply$2.apply(StateT.scala:48)
+
+scalaz.stateT
+import util.control.TailCalls
+def nested2(n: Int, acc: Nested = Leaf): TailCalls.TailRec[Nested] =
+  if (n == 0) TailCalls.done(acc)
+  else TailCalls.tailcall(nested2(n - 1, if (n % 2 == 0) Bar(acc) else Foo(acc)))
+

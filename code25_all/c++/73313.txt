@@ -1,0 +1,117 @@
+#include <windows.h>
+
+#include <sql.h>
+#include <sqlext.h>
+#include <sqltypes.h> 
+#include <sqlncli.h>
+
+#include <cstdio>
+#include <string>
+
+const int MAX_CHAR = 1024;
+
+bool test_retcode( RETCODE my_code, const char* my_message )
+{
+    bool success = ( my_code == SQL_SUCCESS_WITH_INFO || my_code == SQL_SUCCESS );
+    if ( ! success )
+    {
+        printf( "%s", my_message );
+    }
+
+    return success;
+}
+
+int main ( )
+{
+    SQLHENV EnvironmentHandle;
+
+    RETCODE retcode = SQLAllocHandle( SQL_HANDLE_ENV, SQL_NULL_HANDLE, &EnvironmentHandle );
+    test_retcode( retcode, "SQLAllocHandle(Env) failed!" );
+
+    retcode = SQLSetEnvAttr( EnvironmentHandle, SQL_ATTR_ODBC_VERSION, (SQLPOINTER) SQL_OV_ODBC3, SQL_IS_INTEGER );
+    test_retcode( retcode, "SQLSetEnvAttr(ODBC version) Failed" );
+
+    SQLHDBC ConnHandle;
+    retcode = SQLAllocHandle( SQL_HANDLE_DBC, EnvironmentHandle, &ConnHandle );
+    test_retcode( retcode, "Could not allocate MS SQL 2000 connection handle." );
+
+    SQLSMALLINT driver_out_length;
+    retcode = SQLDriverConnect( ConnHandle,
+        NULL, // we're not interested in spawning a window
+        (SQLCHAR*) "DRIVER={SQL Native Client};SERVER=localhost;UID=username;PWD=password;Database=Test;",
+        SQL_NTS,
+        NULL,
+        0,
+        &driver_out_length,
+        SQL_DRIVER_NOPROMPT );
+    test_retcode( retcode, "SQLConnect() Failed" );
+
+    SQLHSTMT StatementHandle;
+    retcode = SQLAllocHandle(SQL_HANDLE_STMT, ConnHandle, &StatementHandle);
+    test_retcode( retcode, "Failed to allocate SQL Statement handle." );
+
+    char* buffer = new char[ MAX_CHAR ];
+    SQLINTEGER length = MAX_CHAR - 1;
+
+    // -- Bind Block
+    retcode = SQLBindCol( StatementHandle, 
+        1,
+        SQL_C_CHAR,
+        (SQLPOINTER) NULL,
+        (SQLINTEGER) SQL_DATA_AT_EXEC,
+        &length );
+
+    test_retcode( retcode, "Failed to bind column." );
+    // -- End Bind Block
+
+    retcode = SQLExecDirect( StatementHandle, (SQLCHAR*) "SELECT VeryLong FROM LongData", SQL_NTS );
+    test_retcode( retcode, "SQLExecDirect failed." );
+
+    // -- Fetch Block
+    retcode = SQLFetch( StatementHandle );
+    if ( retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO && retcode != SQL_NO_DATA )
+    {
+        printf( "Problem fetching row.\n" );
+        return 9;
+    }
+
+    printf( "Fetched data.  length: %d\n", length );
+    // -- End Fetch Block
+
+
+    bool sql_success;
+    std::string data;
+    RETCODE r2;
+    do
+    {
+        r2 = SQLGetData( StatementHandle, 1, SQL_C_CHAR, buffer, MAX_CHAR, &length );
+
+        if ( sql_success = test_retcode( r2, "SQLGetData failed." ) )
+        {
+            data.append( buffer );
+        }
+        else
+        {
+            char* err_msg = new char[ MAX_CHAR ];
+            SQLSMALLINT req = 1;
+            SQLCHAR state[6];
+            SQLINTEGER error;
+            SQLINTEGER output_length;
+
+            int sql_state = SQLGetDiagRec( SQL_HANDLE_STMT, StatementHandle, req, state, &error, (SQLCHAR*) err_msg, (SQLINTEGER) MAX_CHAR, (SQLSMALLINT*) &output_length );
+
+            // state is: 07009, error_msg: "[Microsoft][SQL Native Client]Invalid Descriptor Index"
+            printf( "%s\n", err_msg );
+
+            delete err_msg;
+
+            return 9;
+        }
+    } 
+    while ( sql_success && r2 != SQL_SUCCESS );
+
+    printf( "Done.\n" );
+
+    return 0;
+}
+

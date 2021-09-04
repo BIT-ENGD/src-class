@@ -1,0 +1,107 @@
+import socket
+import threading
+import Queue
+import numpy
+import gtk
+gtk.gdk.threads_init()
+import gtk.glade
+import pygtk
+
+
+class readFromUDPSocket(threading.Thread):
+
+    def __init__(self, socketUDP, readDataQueue, packetSize, numScans):
+        threading.Thread.__init__(self)
+        self.socketUDP = socketUDP
+        self.readDataQueue = readDataQueue
+        self.packetSize = packetSize
+        self.numScans = numScans
+
+    def run(self):
+        for scan in range(1, self.numScans + 1):
+            buffer = self.socketUDP.recv(self.packetSize)
+            self.readDataQueue.put(buffer)
+        self.socketUDP.close()
+        print 'myServer finished!'
+
+
+class displayWithGTK(threading.Thread):
+
+    def __init__(self, displayDataQueue, image, viewArea):
+        threading.Thread.__init__(self)
+        self.displayDataQueue = displayDataQueue
+        self.image = image
+        self.viewWidth = viewArea[0]
+        self.viewHeight = viewArea[1]
+        self.displayData = numpy.zeros((self.viewHeight, self.viewWidth, 3), dtype=numpy.uint16)
+
+    def run(self):
+        scan = 0
+        try:
+            while True:
+                if not scan % self.viewWidth: scan = 0
+                buffer = self.displayDataQueue.get(timeout=0.1)
+                self.displayData[:, scan, 0] = numpy.fromstring(buffer, dtype=numpy.uint16)
+                self.displayData[:, scan, 1] = numpy.fromstring(buffer, dtype=numpy.uint16)
+                self.displayData[:, scan, 2] = numpy.fromstring(buffer, dtype=numpy.uint16)
+                gtk.gdk.threads_enter()
+                self.myPixbuf = gtk.gdk.pixbuf_new_from_data(self.displayData.tostring(), gtk.gdk.COLORSPACE_RGB,
+                                                        False, 8, self.viewWidth, self.viewHeight, self.viewWidth * 3)
+                self.image.set_from_pixbuf(self.myPixbuf)
+                self.image.show()
+                gtk.gdk.threads_leave()
+                scan += 1
+        except Queue.Empty:
+            print 'myDisplay finished!'
+            pass
+
+
+def quitGUI(obj):
+    print 'Currently active threads: %s' % threading.enumerate()
+    gtk.main_quit()
+
+
+if __name__ == '__main__':
+
+    # Create socket (IPv4 protocol, datagram (UDP)) and bind to address
+    socketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    host = '192.168.1.5'
+    port = 1024
+    socketUDP.bind((host, port))
+
+    # Data parameters
+    samplesPerScan = 256
+    packetsPerSecond = 1200
+    packetSize = 512
+    duration = 1  # For now, set a fixed duration to log data
+    numScans = int(packetsPerSecond * duration)
+
+    # Create array to store data
+    data = numpy.zeros((samplesPerScan, numScans), dtype=numpy.uint16)
+
+    # Create queue for displaying from
+    readDataQueue = Queue.Queue(numScans)
+
+    # Build GUI from Glade XML file
+    builder = gtk.Builder()
+    builder.add_from_file('GroundVue.glade')
+    window = builder.get_object('mainwindow')
+    window.connect('destroy', quitGUI)
+    view = builder.get_object('viewport')
+    image = gtk.Image()
+    view.add(image)
+    viewArea = (1200, samplesPerScan)
+
+    # Instantiate & start threads
+    myServer = readFromUDPSocket(socketUDP, readDataQueue, packetSize, numScans)
+    myDisplay = displayWithGTK(readDataQueue, image, viewArea)
+
+    myServer.start()
+    myDisplay.start()
+
+    gtk.gdk.threads_enter()
+    gtk.main()
+    gtk.gdk.threads_leave()
+    print 'gtk.main finished!'
+
+

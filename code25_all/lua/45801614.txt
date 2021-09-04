@@ -1,0 +1,109 @@
+srv=net.createServer(net.TCP)
+srv:listen(80,function(conn)
+
+conn:on("receive", function(client,request)
+    local buf = ""
+    local _, _, method, path, vars = string.find(request, "([A-Z]+) (.+)?(.+) HTTP")
+    if(method == nil)then 
+        _, _, method, path = string.find(request, "([A-Z]+) (.+) HTTP")
+    end
+    local _GET = {}
+    if (vars ~= nil)then
+        for k, v in string.gmatch(vars, "(%w+)=(%w+)&*") do
+            _GET[k] = v
+        end
+    end
+    local _on,_off = "",""
+
+    if(_GET.pin == "ip")then
+        local ip=wifi.sta.getip()
+        local ler_ip=string.sub(ip,1,13)
+        dofile("novolcd.lua").cls()
+        dofile("novolcd.lua").lcdprint("IP="..ler_ip)
+     elseif(_GET.pin == "05a60")then
+        sp_temperaturas[5]=60
+
+     elseif(_GET.pin == "06a60")then
+        sp_temperaturas[6]=60
+
+     elseif(_GET.pin == "Ferias")then
+        dofile("novolcd.lua").cls()
+        dofile("novolcd.lua").lcdprint("  Modo ferias   ")
+        modo_ferias()
+
+     elseif(_GET.pin == "Parar2")then
+       dofile("novolcd.lua").cls()
+        dofile("novolcd.lua").lcdprint("  Parar")
+     end
+
+end)
+conn:on("sent", function (c) c:close() end)
+  end)
+
+     function aquecer()
+
+        local kp=100/10
+        local ki=5
+        local kd=5
+        local tempo_on=0
+        local tempo_off=0
+        i=0
+        local duty=0            
+        erro=sp_temp-t_atual
+        soma_erro = soma_erro + erro/5;
+        dif_erro = (erro - erro_ant)/5;
+        erro_ant = erro;
+        print(erro.."          "..soma_erro.."    "..dif_erro)
+        duty= kp * erro + soma_erro / ki + dif_erro * kd 
+        print(duty)
+
+        tempo_on= duty *50   
+        if (tempo_on > 5000) then
+            tempo_on = 5000
+        end
+
+        tempo_off = 5000 - tempo_on
+
+        repeat
+            i = i + 1
+            tmr.delay(1000)
+        until (i >= tempo_off)               
+
+        gpio.write(8, gpio.HIGH)
+
+        repeat
+            i = i + 1      
+            tmr.delay(1000)       
+        until (i == 5000)
+
+        gpio.mode(8, gpio.INPUT)
+
+    end
+
+    function modo_ferias()
+
+        repeat            
+            sair_ferias=0
+            pressao()
+            if (pressao_psi <=3)
+                sair_ferias=1
+            end 
+            t_atual=ler_temperatura()
+            local int = string.format("%d", t_atual )    -- parte inteira
+            local dec = string.format("%.1d", t_atual % 10000)  -- parte decimal com uma casa
+            t_display = int .. "." .. dec
+            rtc()
+            dofile("novolcd.lua").cls()
+            dofile("novolcd.lua").lcdprint("Temp="..t_display.."  ST="..sp_temp..data_horas)
+            sp_temp=40
+           local horas_ferias=hour
+           if(horas_ferias==0 or horas_ferias==1 or horas_ferias==2 or horas_ferias==3 or horas_ferias==4 or horas_ferias==5 or horas_ferias==6) then
+             sp_temp=70
+           end 
+            if (sp_temp>t_atual) then
+                aquecer()
+
+            end  
+        until (sair_ferias==1)    
+    end
+

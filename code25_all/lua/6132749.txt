@@ -1,0 +1,367 @@
+ import script to lua table
+
+
+--[[ Parses a .bvh (motion capture) file into Lua table format.
+
+--]]
+
+-- A list of valid BVH transform tokens and their -- quaternion sequence equivalents. local xform_tokens = {
+
+}
+
+Xrotation = "rx", Yrotation = "ry", Zrotation = "rz", Xposition = "tx", Yposition = "ty", Zposition = "tz"
+
+-- Main Function
+
+BVH2Table = function(bhvfilename) local bhvfile, linenumber, bvhtable, levels_temp_info, line, rest, _ =
+
+0)
+
+assert(io.open(bhvfilename)), 0, {}, {}
+
+local function readline() repeat
+
+linenumber = linenumber + 1 line = bhvfile:read("*line") -- trim line = line and string.gsub(string.gsub(line,"^[ \t]*", ""), "[ \t\n]*$", "") or nil -- enable comments and while lines
+
+until not line or (line ~= "" and string.sub(line, 1, 1) ~= "#") _,_,token = string.find(line or "","^([%u%l{}:]+)") -- rest of line, stripped _,_,rest = string.find(line or "", "^[%u%l{}:]+[ \t]([%a%d%s%c%p]*)")
+
+end local function parse_error(err, ...)
+
+error(string.format("%s:%d: %s", bhvfilename, linenumber, string.format(err, unpack(arg))),
+
+end
+
+local function checktoken(ctoken) if ctoken ~= token then
+
+parse_error("token %s expected, got %s", ctoken, token) bvhtable.root_segment = {}
+
+end
+
+end
+
+local function read_joint_level(level) local level_temp_info = { rotation_seq = {}, level = level } -- stored info for use at animation frame decoding time table.insert(levels_temp_info, level_temp_info) level.rotation = {} -- one for each animation frame
+
+
+
+checktoken("{") readline() while token ~= "}" do
+
+if token == "OFFSET" then local ox, oy, oz
+
+_, _, ox, oy, oz = string.find(rest, "[ \t]*([%-%+%d%.]+)[ \t]+([%-%+%d%.]+)[ \t]+([%-%+%d%.]+)")
+
+angle
+
+end
+
+table.insert(level_temp_info.rotation_seq, token) table.insert(level_temp_info.rotation_seq, 0)
+
+-- "rx", "ry", or "rz" -- spot to put the
+
+end
+
+level.offset = vec4(ox, oy, oz) elseif token == "CHANNELS" then
+
+local _, e, channelcount = string.find(rest, "([%d]+)[ \t]*") for i=1, channelcount do
+
+local chname -- extract channel name (such as "Xrotation") _, e, chname = string.find(rest, "([%w]+)[ \t]*", e)local token = xform_tokens[chname] or
+
+parse_error("unknown channel type %s", chname or "(nil)") if string.sub(token, 1,1) ~= "t" then -- ignore translation tokens.
+
+end
+
+end elseif token == "JOINT" or token == "End" then
+
+local newlevel = {} level.segments = level.segments or {} -- make sure we have a table therelevel.segments[(token == "End") and "EndSite" or rest] = newlevel -- new level readline() read_joint_level(newlevel)
+
+elseif token ~= "}" then
+
+parse_error("illegal/unknown token '%s'", token) readline()
+
+end
+
+-- Read hierarchy
+
+readline() checktoken("HIERARCHY") readline() checktoken("ROOT") readline() read_joint_level(bvhtable.root_segment) readline()
+
+-- Read frames (insert them into the right places of the hierarchy)
+
+checktoken("MOTION") readline()
+
+checktoken("Frames:") _,_,bvhtable.framecount = string.find(rest, "([%d]+)") readline()
+
+checktoken("Frame") _,_,bvhtable.frametime = string.find(rest, "([%d%.]+)") readline()
+
+for fr = 1, bvhtable.framecount do if token or not line then parse_error("frame data expected") end local e = 1
+
+-- Skip global translation - we don't need it
+
+for l = 1, 3 do local n
+
+end
+
+_,e,n = string.find(line, "([%-%+%d%.]+)[\t ]*", e)
+
+-- fill in the rotation sequence in rotation_seq with -- the right angles, turn it into a quaternion for l = 1,table.getn(levels_temp_info) do
+
+local rs = levels_temp_info[l].rotation_seq for c = 2, table.getn(rs), 2 do
+
+end return bvhtable
+
+end
+
+end
+
+local n _,e,n = string.find(line, "([%-%+%d%.]+)[\t ]*", e) -- capture number rs[c] = math.rad(tonumber(n)) -- insert right number into rotation sequence
+
+-- constructs quad from rotation sequence
+
+levels_temp_info[l].level.rotation[fr] = quat(unpack(rs)) readline()
+
+
+
+end
+
+HIERARCHY
+
+ROOT hip
+
+{
+
+OFFSET 0.000000 0.000000 0.000000 
+
+CHANNELS 6 Xposition Yposition Zposition Xrotation Zrotation Yrotation
+
+JOINT abdomen
+
+{
+
+OFFSET 0.000000 3.402643 0.000000 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT chest
+
+{
+
+OFFSET 0.000000 8.438565 -0.680529 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT neck
+
+{
+
+OFFSET 0.000000 10.207942 -0.272212 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT head
+
+{
+
+OFFSET 0.000000 3.130431 0.000000 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+End Site
+
+{
+
+OFFSET 0.000000 3.130435 0.000000 
+
+}
+
+}
+
+}
+
+JOINT lCollar
+
+{
+
+OFFSET 3.470700 6.669187 -0.816635 
+
+CHANNELS 3 Yrotation Zrotation Xrotation
+
+JOINT lShldr
+
+{
+
+OFFSET 3.198488 0.000000 0.000000 
+
+CHANNELS 3 Zrotation Yrotation Xrotation
+
+JOINT lForeArm
+
+{
+
+OFFSET 10.139888 0.000000 0.000000 
+
+CHANNELS 3 Yrotation Zrotation Xrotation
+
+JOINT lHand
+
+{
+
+OFFSET 8.370511 0.000000 0.000000 
+
+CHANNELS 3 Zrotation Yrotation Xrotation
+
+End Site
+
+{
+
+OFFSET 4.083176 0.000000 0.000000 
+
+}
+
+}
+
+}
+
+}
+
+}
+
+JOINT rCollar
+
+{
+
+OFFSET -3.470700 6.669187 -0.816635 
+
+CHANNELS 3 Yrotation Zrotation Xrotation
+
+JOINT rShldr
+
+{
+
+OFFSET -3.198488 0.000000 0.000000 
+
+CHANNELS 3 Zrotation Yrotation Xrotation
+
+JOINT rForeArm
+
+{
+
+OFFSET -10.139888 0.000000 0.000000 
+
+CHANNELS 3 Yrotation Zrotation Xrotation
+
+JOINT rHand
+
+{
+
+OFFSET -8.370511 0.000000 0.000000 
+
+CHANNELS 3 Zrotation Yrotation Xrotation
+
+End Site
+
+{
+
+OFFSET -4.083176 0.000000 0.000000 
+
+}
+
+}
+
+}
+
+}
+
+}
+
+}
+
+}
+
+JOINT lThigh
+
+{
+
+OFFSET 5.308129 -1.633274 1.361059 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT lShin
+
+{
+
+OFFSET -2.041588 -20.007561 0.000000 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT lFoot
+
+{
+
+OFFSET 0.000000 -19.190928 -1.224953 
+
+CHANNELS 3 Xrotation Yrotation Zrotation
+
+End Site
+
+{
+
+OFFSET 0.000000 -2.449906 4.627600 
+
+}
+
+}
+
+}
+
+}
+
+JOINT rThigh
+
+{
+
+OFFSET -5.308129 -1.633274 1.361059 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT rShin
+
+{
+
+OFFSET 2.041588 -20.007561 0.000000 
+
+CHANNELS 3 Xrotation Zrotation Yrotation
+
+JOINT rFoot
+
+{
+
+OFFSET 0.000000 -19.190928 -1.224953 
+
+CHANNELS 3 Xrotation Yrotation Zrotation
+
+End Site
+
+{
+
+OFFSET 0.000000 -2.449906 4.627600 
+
+}
+
+}
+
+}
+
+}
+
+}
+
+MOTION
+
+Frames: 3
+
+Frame Time: 0.033333
+
+0.334508 49.638664 0.334508 0.000000 0.000000 0.000000 38.066406 -0.007741 -0.006054 -23.085936 -0.009696 0.000434 30.252640 10.959431 -20.480103 10.524219 0.508720 -0.030344 -26.006567 -12.095985 -14.674844 -69.630486 -2.351615 4.234642 -48.221165 -2.682419 1.985076 -59.212875 -62.296707 83.528305 -26.749914 11.561311 -14.691852 55.618294 -19.902231 31.929420 90.271812 3.187478 0.956403 39.090054 47.092247 65.247185 2.376307 2.553305 0.602678 2.310530 -1.853541 -1.517510 -4.662024 0.846682 -0.614829 2.206921 -3.085746 -0.644749 2.650610 1.831281 1.545582 -4.841407 -0.873909 1.111763 
+
+0.334508 49.638664 0.334508 0.000000 0.000000 0.000000 38.066406 -0.007741 -0.006054 -22.246092 -0.009701 0.000292 34.186817 10.756927 -18.382940 10.524219 0.508720 -0.030344 -23.362236 -12.731888 -10.985835 -69.819717 -18.002703 5.484021 -48.221165 -2.682419 1.985076 -59.212875 -62.296707 83.528305 -25.608553 10.831628 -11.038041 64.898254 -5.748130 27.512720 84.760063 3.170111 1.120247 39.090054 47.092247 65.247185 2.376307 2.553305 0.602678 2.310530 -1.853541 -1.517510 -4.662024 0.846682 -0.614829 2.206921 -3.085746 -0.644749 2.650610 1.831281 1.545582 -4.841407 -0.873909 1.111763 
+
+0.334508 49.638664 0.334508 0.000000 0.000000 0.000000 38.066406 -0.007741 -0.006054 -22.246092 -0.009701 0.000292 37.417660 9.695412 -15.840567 10.524219 0.508720 -0.030344 -20.065645 -13.200043 -8.106980 -66.682304 -8.166236 6.721763 -48.221165 -2.682419 1.985076 -59.212875 -62.296707 83.528305 -23.474226 10.225674 -8.213222 75.448418 13.496569 25.332378 71.978508 3.057956 1.458179 39.090054 47.092247 65.247185 2.376307 2.553305 0.602678 2.310530 -1.853541 -1.517510 -4.662024 0.846682 -0.614829 2.206921 -3.085746 -0.644749 2.650610 1.831281 1.545582 -4.841407 -0.873909 1.111763 
+

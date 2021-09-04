@@ -1,0 +1,60 @@
+PowerMod
+RSA
+ghc --make -O2 -O3 -fllvm -optlo-O3 test.hs
+{-# LANGUAGE OverloadedStrings #-}
+
+module Main where
+
+import Control.Monad
+import System.Random
+import Codec.Crypto.RSA
+import Data.ByteString.Lazy
+import Data.ByteString.Char8
+
+import Criterion.Main
+import Criterion.Config
+
+main :: IO ()
+main = do
+  print m1
+  print m4
+  print m8
+  defaultMainWith defaultConfig (return ()) [
+    bgroup "RSA" [
+       bench "1" $ ed m1
+     , bench "4" $ ed m4
+     , bench "8" $ ed m8
+     ]
+   ]
+
+m1 = fromChunks [ Data.ByteString.Char8.replicate (1*1024) '0' ]
+m4 = fromChunks [ Data.ByteString.Char8.replicate (4*1024) '0' ]
+m8 = fromChunks [ Data.ByteString.Char8.replicate (8*1024) '0' ]
+
+ed m = do
+  g1 <- newStdGen
+  let (el,il,g2) = generateKeyPair g1 1024
+  loop 1 g2 el il m
+
+loop :: RandomGen g => Int -> g -> PublicKey -> PrivateKey -> Data.ByteString.Lazy.ByteString -> IO ()
+loop n g e i m = do
+  let   nn     = n-1
+  let  (em,ng) = encrypt g e  m
+  let   dm     = decrypt   i em
+  when (m == dm) $ Data.ByteString.Char8.putStr "1"
+  when (nn > 0 ) $ loop nn ng e i m
+
+{p, q} = Prime[RandomInteger[{10^4, 10^5}, {2}]];
+{p, q, n = p q}
+\[Lambda] = CarmichaelLambda[n]
+d = NestWhile[#1 + 1 & , Round[n/3], GCD[\[Lambda], #1] =!= 1 &]
+e = PowerMod[d, -1, \[Lambda]]
+enc = PowerMod[#, e, n] &;
+dec = PowerMod[#, d, n] &;
+c = ConstantArray[48, 8 1024];
+t = Table[c // enc // dec; // AbsoluteTiming, {10}][[All, 1]]
+
+m8
+{0.313015, 0.302337, 0.303766, 0.303321, 0.303018, 0.302574, \
+0.302511, 0.303958, 0.301411, 0.300820}
+

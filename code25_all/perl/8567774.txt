@@ -1,0 +1,78 @@
+Param 1   filter = ALL_VALUES
+Param 2   filter = ALL_VALUES
+Param 3   filter = ALL_VALUES
+
+Time                     Name     Ty  Value                   
+---------- ---------------------- --- ------------
+1.1        Param 1                UI  5           
+2.23       Param 3                TXT Some Text 1 
+3.2        Param 1                UI  10          
+4.5        Param 2                D   2.1234     
+5.3        Param 1                UI  15         
+6.121      Param 2                D   3.1234     
+7.56       Param 3                TXT Some Text 2 
+
+continue
+#!/usr/bin/perl
+
+$lineArg1 = @ARGV[0];
+open(INFILE, $lineArg1);
+open BINOUT, '>:raw', $lineArg1.".bin";
+open TOCOUT, '>', $lineArg1.".toc";
+
+my $line;
+my $data_start_pos;
+my @param_name;
+my @template;
+while ($line = <INFILE>) {
+    chomp $line;
+    if ($line =~ s/\s+filter = ALL_VALUES//) {
+       $line = =~ s/^\s+//;
+       $line =~ s/\s+$//;
+       push @param_name, $line;
+    }
+    elsif ($line =~ /^------/) {
+        @template = map {'A'.length} $line =~ /(\S+\s*)/g;
+        $template[-1] = 'A*';        
+        $data_start_pos = tell INFILE;
+        last; #Reached start of data exit loop
+    }
+}
+my $template = "@template";
+my @lineData;
+my @param_data;
+my @param_time;
+my $data_type;
+foreach $current_param (@param_name) {
+    @param_time = ();
+    @param_data = ();    
+    seek(INFILE,$data_start_pos,0); #Jump to data start
+    while ($line = <INFILE>) {
+        if($line =~ /$current_param/) {      
+           chomp($line);
+           @lineData = unpack $template, $line;
+           push @param_time, @lineData[0];   
+           push @param_data, @lineData[3];
+        }       
+    } # END WHILE <INFILE>
+} #END FOR EACH NAME
+continue {
+        $data_type = @lineData[2];
+        print TOCOUT $current_param.",".$data_type.",".tell(BINOUT).","; #Write name,type,offset to start time        
+        print BINOUT pack('d*', @param_time);  #Write TimeStamps
+        print TOCOUT tell(BINOUT).","; #offset to end of time/data start
+        if ($data_type eq "TXT") {
+            print BINOUT pack 'A*', join("\n",@param_data);
+        }
+        elsif ($data_type eq "D") {
+            print BINOUT pack('d*', @param_data);
+        }
+        elsif ($data_type eq "UI") {
+            print BINOUT pack('L*', @param_data);
+        }        
+        print TOCOUT tell(BINOUT).","."\n"; #Write memory loc to end data
+}
+close(INFILE);
+close(BINOUT);
+close(TOCOUT);
+

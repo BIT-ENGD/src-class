@@ -1,0 +1,106 @@
+valgrind --tool=drd --read-var-info=yes --trace-mutex=no ./threads
+
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define MAX_THR      12
+#define NEW_THR      2
+
+int wait_time = 0;  // log global wait time
+int num_threads = 0;    // how many threads there are
+pthread_t threads[MAX_THR]; // global array to collect threads
+pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER; // sync
+
+struct thread_data 
+{
+    int nr;             // nr of thread, serves as id
+    int time;           // wait time from rand()
+};
+struct thread_data thread_data_array[MAX_THR+1];
+
+
+void 
+*PrintHello(void *threadarg)
+{
+
+  if(num_threads < MAX_THR){
+    // using the argument
+
+    pthread_mutex_lock(&mut);
+    struct thread_data *my_data;
+    my_data = (struct thread_data *) threadarg;
+
+    // updates
+    my_data->nr = num_threads;
+    my_data->time= rand() % 10 + 1;
+
+    printf("Hello World! It's me, thread #%d and sleep time is %d!\n", 
+                my_data->nr, 
+                my_data->time); 
+
+     pthread_mutex_unlock(&mut);
+
+   // counter
+   long t = 0;
+
+   for(t = 0; t < NEW_THR; t++){
+        pthread_mutex_lock(&mut);
+            num_threads++;
+            wait_time += my_data->time;
+           pthread_mutex_unlock(&mut);
+        pthread_create(&threads[num_threads], NULL, PrintHello, &thread_data_array[num_threads]);
+      sleep(1);
+   }
+    printf("Bye from %d thread\n", my_data->nr);
+
+   pthread_exit(NULL);
+   }
+   return 0;
+}
+
+int 
+main (int argc, char *argv[])
+{
+
+    long t = 0;
+    // srand(time(NULL));
+    if(num_threads < MAX_THR){
+       for(t = 0; t < NEW_THR; t++){
+          // -> 2 threads entry point
+          pthread_mutex_lock(&mut);
+                 // rand time
+                 thread_data_array[num_threads].time  = rand() % 10 + 1;
+           // update global wait time variable
+              wait_time += thread_data_array[num_threads].time;
+              num_threads++;
+        pthread_mutex_unlock(&mut);
+        pthread_create(&threads[num_threads], NULL, PrintHello, &thread_data_array[num_threads]);
+         pthread_mutex_lock(&mut);
+        printf("In main: creating initial thread #%ld\n", t);
+        pthread_mutex_unlock(&mut);
+
+      }
+    }
+
+   for(t = 0; t < MAX_THR; t++){
+        pthread_join(threads[t], NULL);
+    }
+
+    printf("Bye from program, wait was %d\n", wait_time);
+    pthread_exit(NULL);
+}
+
+printf("Bye from %d thread\n", my_data->nr);
+
+In main: creating initial thread #0
+Hello World! It's me, thread #2 and sleep time is 8!
+In main: creating initial thread #1
+[...]
+Hello World! It's me, thread #11 and sleep time is 8!
+Bye from 9 thread
+Bye from 5 thread
+Bye from -1376900240 thread
+[...] 
+

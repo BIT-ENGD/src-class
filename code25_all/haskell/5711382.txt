@@ -1,0 +1,113 @@
+notes''
+buildChord
+buildChord
+import Data.WAVE
+
+import Control.Applicative
+import Data.Char (isDigit)
+import Data.Function (on)
+import Data.Int (Int32)
+import Data.List (transpose, groupBy)
+import Data.List.Split (splitOn, split, oneOf)
+import System.IO (hGetContents, Handle, openFile, IOMode(..))
+
+a4 :: Double
+a4 = 440.0
+
+frameRate :: Int 
+frameRate = 32000
+
+noteLength :: Double
+noteLength = 1
+
+volume :: Int32
+volume = maxBound `div` 2
+
+buildChord :: [[Double]] -> WAVESamples
+buildChord freqs = map ((:[]) . round . sum) $ transpose freqs
+
+generateSoundWave :: Int          -- | Samples Per Second
+                  -> Double       -- | Length of Sound in Seconds
+                  -> Int32        -- | Volume
+                  -> Double       -- | Frequency
+                  -> [Double]
+generateSoundWave sPS len vol freq =
+    take (round $ len * fromIntegral sPS) $
+    map ((* fromIntegral vol) . sin) 
+    [0.0, (freq * 2 * pi / fromIntegral sPS)..]
+
+generateSoundWaves :: Int          -- | Samples Per Second
+                   -> Double       -- | Length of Sound in Seconds
+                   -> Int32        -- | Volume
+                   -> [Double]     -- | Frequency
+                   -> [[Double]]
+generateSoundWaves sPS len vol =
+    map (generateSoundWave sPS len vol)
+
+noteToSine :: String -> WAVESamples
+noteToSine chord =
+    buildChord $ generateSoundWaves frameRate noteLength volume freqs
+    where freqs = getFreqs $ notes chord
+
+notes'' :: String -> [String]
+notes'' = splitOn "/" 
+
+notes' :: [String] -> [[String]]
+notes' = map (split (oneOf "1234567890"))
+
+notes :: String -> [(String, Int)]
+notes chord = concatMap pair $ notes' $ notes'' chord
+    where pair (x:y:ys) = (x, read y :: Int) : pair ys
+          pair _           = []
+
+notesToSines :: String -> WAVESamples
+notesToSines = concatMap noteToSine . splitOn " "
+
+getFreq :: (String, Int) -> Double
+getFreq (note, octave) =
+    if octave >= -1 && octave < 10 && n /= 12.0
+    then a4 * 2 ** ((o - 4.0) + ((n - 9.0) / 12.0))
+    else undefined
+    where o = fromIntegral octave :: Double
+          n = case note of
+                "B#" -> 0.0
+                "C"  -> 0.0
+                "C#" -> 1.0
+                "Db" -> 1.0
+                "D"  -> 2.0
+                "D#" -> 3.0
+                "Eb" -> 3.0
+                "E"  -> 4.0
+                "Fb" -> 4.0
+                "E#" -> 5.0
+                "F"  -> 5.0
+                "F#" -> 6.0
+                "Gb" -> 6.0
+                "G"  -> 7.0
+                "G#" -> 8.0
+                "Ab" -> 8.0
+                "A"  -> 9.0
+                "A#" -> 10.0
+                "Bb" -> 10.0
+                "B"  -> 11.0
+                "Cb" -> 11.0
+                _    -> 12.0
+
+getFreqs :: [(String, Int)] -> [Double]
+getFreqs = map getFreq
+
+header :: WAVEHeader
+header = WAVEHeader 1 frameRate 32 Nothing 
+
+getFileName :: IO FilePath
+getFileName = putStr "Enter the name of the file: " >> getLine
+
+getChordsAndOctaves :: IO String
+getChordsAndOctaves = getFileName >>= \n ->
+                      openFile n ReadMode >>=
+                      hGetContents 
+
+main :: IO ()
+main = getChordsAndOctaves >>= \co ->
+       putWAVEFile "out.wav" (WAVE header $ notesToSines co)
+

@@ -1,0 +1,88 @@
+currentWindow $= Just glWindow
+module Chart.Window where
+
+import Graphics.UI.GLUT hiding (Window, postRedisplay, <etc>)
+import qualified Graphics.UI.GLUT as GLUT
+import qualified Graphics.Rendering.OpenGL as GL
+
+data Window = Window
+  { glWindow :: GLUT.Window
+  , viewListRef :: IORef [Line]
+  }
+
+main = do
+  forkOS start <params1>
+  forkOS start <params2>
+
+start <params> = do
+  win <- new <params>
+  run win
+  mainLoop
+
+new :: Strict -> (Int, Int) -> (Int, Int) -> IO Window
+new name (posx, posy) (w, h) = do
+  initGLUT
+  glWindow <- createWindow name
+  currentWindow $= Just glWindow
+  windowSize $= Size (fromIntegral w) (fromIntegral h)
+  windowPosition $= Position (fromIntegral posx) (fromIntegral posy)
+  return Window {..}
+
+initGLUT :: IO ()
+initGLUT = do
+  beenInit <- get initState
+  unless beenInit $ void getArgsAndInitialize 
+  initialDisplayMode $= [WithDepthBuffer, DoubleBuffered, RGBAMode]
+  initialWindowSize $= Size 100 100
+  initialWindowPosition $= Position 100 100
+  actionOnWindowClose $= ContinueExectuion
+
+run :: Window -> IO ()
+run win@Window{..} = do
+  -- this will fork (with forkIO) threads 
+  -- which will call "repaint" when chart needs to be updated
+  initListeners repaint 
+  initCallbacks win
+  where
+  repaint :: [Line] -> IO ()
+  repaint viewList = do
+    writeIORef viewListRef viewList
+    postRedisplay win
+
+postRedisplay Window{..} = GLUT.postRedisplay $ Just glWindow
+
+initCallbacks win@Window{..} = do
+  currentWindow $= Just glWindow
+  GLUT.displayCallback $= display win
+  GLUT.idleCallback $= Just (postRedisplay win)
+
+display Window{..} = do
+  currentWindow $= Just glWindow
+  Size w h <- get windowSize
+  viewList <- readIORef viewListRef
+  drawChart viewList otherOptions
+
+reshapeCallback :: Window -> GLUT.ReshapeCallback
+reshapeCallback win@Window{..} size@(Size w h) = do
+  currentWindow $= Just glWindow
+  GL.viewport $= (Position 0 0, size)
+  GL.matrixMode $= GL.Projection
+  GL.loadIdentity
+  GL.ortho2D 0 (fromIntegral w) 0 (fromIntegral h)
+  GL.matrixMode $= GL.Modelview 0
+  GL.loadIdentity
+  ... -- send command for listener thread to change internal state and postRedisplay
+
+drawChart viewList otherOptions = do
+  ...
+  -- chart consists of several horizontal panels. Call this for each panel:
+  glViewport 0 panelYPosition width winHeight
+  glScissor 0 panelYPosition (fromIntegral width) (fromIntegral panelHeight)
+  GL.clear [GL.ColorBuffer]
+  ...
+  -- and then for each line=(Vertex2 v1 v2) from viewList
+  GL.renderPrimitive GL.Lines $ do
+    GL.vertex v1
+    GL.vertex v2
+  ...
+

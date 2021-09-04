@@ -1,0 +1,30 @@
+------------------------------------------------------------------------------
+-- | Register a new connection with the TimeoutManager.
+register :: IO ()               -- ^ action to run when the timeout deadline is
+                                -- exceeded.
+         -> TimeoutManager      -- ^ manager to register with.
+         -> IO TimeoutHandle
+register killAction tm = do
+    now <- getTime
+    let !state = Deadline $ now + toEnum defaultTimeout
+    stateRef <- newIORef state
+
+    let !h = TimeoutHandle killAction stateRef getTime
+    atomicModifyIORef connections $ \x -> (h:x, ())
+
+    inact <- readIORef inactivity
+    when inact $ do
+        -- wake up manager thread
+        writeIORef inactivity False
+        _ <- tryPutMVar morePlease ()
+        return ()
+    return h
+
+  where
+    getTime        = _getTime tm
+    inactivity     = _inactivity tm
+    morePlease     = _morePlease tm
+    connections    = _connections tm
+    defaultTimeout = _defaultTimeout tm
+
+_ <- tryPutMVar morePlease ()

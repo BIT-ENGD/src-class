@@ -1,0 +1,64 @@
+import System.Exit
+import Data.Maybe
+import Data.List
+import Data.DList (DList)
+import qualified Data.DList as DList
+
+import Data.ByteString.Char8 (ByteString)
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy as LazyByteString
+import qualified Codec.Compression.BZip as BZip
+
+import Text.XML.Expat.Proc
+import Text.XML.Expat.Tree
+import Text.XML.Expat.Format
+
+testFile = "../data/enwiki-latest-pages-articles.xml.bz2"
+
+validPage pageData = case pageData of
+    (Just _, Just _) -> True
+    (_, _) -> False
+
+scanChildren :: [UNode ByteString] -> DList ByteString
+scanChildren c = case c of
+    h:t -> DList.append (getContent h) (scanChildren t)
+    []  -> DList.fromList []
+
+getContent :: UNode ByteString -> DList ByteString
+getContent treeElement =
+    case treeElement of
+        (Element name attributes children)  -> scanChildren children
+        (Text text)                         -> DList.fromList [text]
+
+rawData t = ((getContent.fromJust.fst) t, (getContent.fromJust.snd) t)
+
+extractText page = do
+    revision <- findChild (BS.pack "revision") page
+    text <- findChild (BS.pack "text") revision
+    return text
+
+pageDetails tree =
+    let pageNodes = filterChildren relevantChildren tree in
+    let getPageData page = (findChild (BS.pack "title") page, extractText page) in
+    map rawData $ filter validPage $ map getPageData pageNodes
+    where
+        relevantChildren node = case node of
+            (Element name attributes children) -> name == (BS.pack "page")
+            (Text _) -> False
+
+outputPages pagesText = do
+    let flattenedPages = map DList.toList pagesText
+    mapM_ (mapM_ BS.putStr) flattenedPages
+
+readCompressed fileName = fmap BZip.decompress (LazyByteString.readFile fileName)
+parseXml byteStream = parse defaultParseOptions byteStream :: (UNode ByteString, Maybe XMLParseError)
+
+main = do
+    rawContent <- readCompressed testFile
+    let (tree, mErr) = parseXml rawContent
+    let pages = pageDetails tree
+    let pagesText = map snd pages
+    outputPages pagesText
+    putStrLn "Complete!"
+    exitWith ExitSuccess
+

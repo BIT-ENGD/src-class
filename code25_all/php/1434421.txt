@@ -1,0 +1,142 @@
+<?php
+    class ups {
+
+    function getMethod() {
+        $method= array(
+                '1DA'    => 'Next Day Air',
+                '2DA'    => '2nd Day Air',
+                '3DS'    => '3 Day Select',
+                'GND'    => 'Ground',
+            );
+        return $method;
+    }
+
+    function get_item_shipping($weight, $zipcode)
+    {
+        unset($_SESSION['zipcode_error']);
+        if($weight > 150) {
+             $_SESSION['zipcode_error'] = "A cart item requires freight.";
+        }
+        if (!isset($_SESSION['zipcode_error'])) {
+            $services = $this->getMethod();
+            $ch = curl_init();
+            foreach ($services as $key => $service) {
+                $Url = join("&", array("http://www.ups.com/using/services/rave/qcostcgi.cgi?accept_UPS_license_agreement=yes",
+                "10_action=3",
+                "13_product=".$key,
+                "14_origCountry=US",
+                "15_origPostal=90210",
+                "19_destPostal=" . $zipcode,
+                "22_destCountry=US",
+                "23_weight=" . $weight,
+                "47_rate_chart=Regular+Daily+Pickup",
+                "48_container=00",
+                "49_residential=2",
+                "billToUPS=no")
+                );
+
+                    curl_setopt($ch, CURLOPT_URL, $Url);
+                    curl_setopt($ch, CURLOPT_HEADER, 0);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+                    $Results[]=curl_exec($ch);
+            }
+            curl_close($ch);
+            $pre = "";
+            $shipping_list = array();
+            foreach($Results as $result) {
+                $result = explode("%", $result);
+                if ($services[$result[1]] != ''){
+                    if ((($result[1]=='XPR') && ($pre == 'XPR')) || (($result[1]=='XDM') && ($pre == 'XDM')) || (($result[1]=='1DP') && ($pre == '1DP')) || (($result[1]=='1DM') && ($pre == '1DM')) || (($result[1]=='1DA') && ($pre == '1DA')) || (($result[1]=='2DA') && ($pre == '2DA')))
+                        $shipping_list += array($services[$result[1]."L"] => $result[8]);
+                    else if (($result[1]=='GND') && ($pre == 'GND'))
+                        $shipping_list += array($services[$result[1]."RES"] => $result[8]);
+                    else
+                        $shipping_list += array($services[$result[1]] => $result[8]);
+                    $pre = $result[1];
+                }
+            }
+        }
+        $shipping_list = array_reverse($shipping_list);
+        return $shipping_list;
+    }
+
+}
+
+
+?>
+
+<?php
+
+    //UPS calculator - Divides packages into 150lbs max packages, and requests multiple quotes if needed
+    //Returns a sum of all the quotes added together.  
+    private function calculate_per_item_shipping() {
+
+        $currWeight = 0;
+        $packageCount = 0;
+
+        //Loop thru cart items - adding weights to packages
+        foreach($this->get_contents() as $item) { 
+            for ($i = 0; $i < $item["qty"]; $i++) {
+                $itemWeight = $item["weight"];
+
+                if ($itemWeight > 150) {  // A single item cannot be more than 150lbs
+                  $_SESSION['zipcode_error'] = $item['name'] . " weighs more than 150lbs.";
+                  return false;
+                }
+                else {
+                  $currWeight += $itemWeight;           //Add item weight to active package
+                  if ($currWeight > 150)  {             //Max weight reached for active package
+                    $currWeight -= $itemWeight;         //Remove item from current package, too heavy
+                    $loopPack = 0;                                  
+                    $itemUsed = false;
+
+                    //Check if an existing package can take the item
+                    while (($loopPack != $packageCount) or ($itemUsed = false)) {
+                      if ($packages[$loopPack] + $itemWeight < 150) {
+                        $packages[$loopPack] += $itemWeight;
+                        $itemUsed = true;
+                      }
+                      $loopPack++;
+                    }
+
+                    //if the item didn't fit in an existing package, create a new package for it
+                    if ($itemUsed == false) {
+                      $packageCount++;
+                      $packages[$packageCount-1] = $currWeight;
+                      $currWeight = $item["weight"];        //Put unused item back in active package            
+                    }
+                  }
+                }
+            }
+        }
+        //The remainder becomes a package
+        $packageCount++;
+        $packages[$packageCount-1] = $currWeight;
+
+        for ($i = 0; $i < $packageCount; $i++) {
+            $temptotal = $this->calc_package_shipping($packages[$i]);
+            if ($temptotal['Ground'] != 0) { $total['Ground'] += $temptotal['Ground']; }
+            if ($temptotal['3 Day Select'] != 0) { $total['3 Day Select'] += $temptotal['3 Day Select']; }
+            if ($temptotal['2nd Day Air'] != 0) { $total['2nd Day Air'] += $temptotal['2nd Day Air']; }
+            if ($temptotal['Next Day Air Saver'] != 0) { $total['Next Day Air Saver'] += $temptotal['Next Day Air Saver']; }
+            if ($temptotal['Next Day Air Early AM'] != 0) { $total['Next Day Air Early AM'] += $temptotal['Next Day Air Early AM']; }
+            if ($temptotal['Next Day Air'] != 0) { $total['Next Day Air'] += $temptotal['Next Day Air']; }
+        }
+
+        $this->selectedQuoteAmount = $total['Ground'];
+
+        return $total;
+    }
+
+
+
+    private function calc_package_shipping($weight) {
+        $ups = new ups();
+        $shipping = $ups->get_item_shipping($weight, $this->zipcode);
+        return $shipping;
+    }
+
+
+
+    ?>
+

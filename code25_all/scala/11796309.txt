@@ -1,0 +1,23 @@
+def create(model: Model, orderNum: String) = {
+  db.handle withSession { implicit ss: Session=>
+    ss.withTransaction { // auto commit now set to false
+      val result = for {
+        uid <- repo.user.create(model)
+        mid <- repo.membership.create(uid)
+        oid <- repo.orders.create(model, uid, orderNum)
+      } yield uid
+      result fold( 
+        e=> { ss.rollback; Left(e) }, 
+        s=> { Cache.remove("member.directory"); Right(s) } 
+      )
+    }
+  } 
+}
+
+def create[T <: User](t: T)(implicit ss: Session) = // what Session is this?
+  for {
+    uid <- either( Users.insert( Users(t) ), i18n("user not created") )
+    ur  <- either( UserRoles.insert( UserRole(uid, t.role) ), i18n("user role not created") )
+  } yield uid
+
+repo.user.create(model)(ss)

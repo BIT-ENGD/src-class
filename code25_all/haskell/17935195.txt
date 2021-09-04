@@ -1,0 +1,99 @@
+{"question_text": "How can NBC defend tape delaying the Olympics when everyone has
+Twitter?", "context_topic": {"followers": 21, "name": "NBC Coverage of the London
+Olympics (July & August 2012)"}, "topics": [{"followers": 2705,
+"name": "NBC"},{"followers": 21, "name": "NBC Coverage of the London 
+Olympics (July & August 2012)"},
+{"followers": 17828, "name": "Olympic Games"},
+{"followers": 11955, "name": "2012 Summer Olympics in London"}], 
+"question_key": "AAEAABORnPCiXO94q0oSDqfCuMJ2jh0ThsH2dHy4ATgigZ5J",
+"__ans__": true, "anonymous": false}
+
+parseToRecord :: B.ByteString -> Question
+parseToRecord bstr = (\(Ok x) -> x) decodedObj where decodedObj = decode (B.unpack bstr) :: Result Question
+
+main :: IO()
+main = do
+  -- my first line in the file tells how many json statements
+  -- are there followed by a lot of other irrelevant info...
+  ts <- B.getContents >>= return . fst . fromJust . B.readInteger . head . B.lines
+  json_text <- B.getContents >>= return . tail . B.lines
+  let training_data = take (fromIntegral ts) json_text
+  let questions = map parseToRecord training_data
+  print $ questions !! 8922
+
+Non-exhaustive patterns in lambda
+\(Ok x) -> x
+{-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -O2 -optc-O2 #-}
+{-# OPTIONS_GHC -fno-warn-incomplete-uni-patterns #-}
+import qualified Data.ByteString.Lazy.Char8 as B
+import Data.Maybe
+import NLP.Tokenize
+
+import           Control.Applicative
+import           Control.Monad
+import           Text.JSON
+
+data Topic = Topic
+  { followers :: Integer,
+    name :: String
+  } deriving (Show)
+
+data Question = Question
+  { question_text :: String,
+    context_topic :: Topic,
+    topics :: [Topic],
+    question_key :: String,
+    __ans__ :: Bool,
+    anonymous :: Bool
+  } deriving (Show)
+
+(!) :: (JSON a) => JSObject JSValue -> String -> Result a
+(!) = flip valFromObj
+
+instance JSON Topic where
+  -- Keep the compiler quiet
+  showJSON = undefined
+
+  readJSON (JSObject obj) =
+    Topic       <$>
+    obj ! "followers" <*>
+    obj ! "name"
+  readJSON _ = mzero
+
+instance JSON Question where
+  -- Keep the compiler quiet
+  showJSON = undefined
+
+  readJSON (JSObject obj) =
+    Question      <$>
+    obj ! "question_text"   <*>
+    obj ! "context_topic" <*>
+    obj ! "topics" <*>
+    obj ! "question_key" <*>
+    obj ! "__ans__" <*>
+    obj ! "anonymous"
+  readJSON _ = mzero
+
+isAnswered (Question _ _ _ _ status _) = status
+isAnonymous (Question _ _ _ _ _ status) = status
+
+parseToRecord :: B.ByteString -> Question
+parseToRecord bstr = handle decodedObj
+                        where handle (Ok k)     = k
+                              handle (Error e)  = error (e ++ "\n" ++ show bstr)
+                              decodedObj = decode (B.unpack bstr) :: Result Question
+--parseToRecord bstr = (\(Ok x) -> x) decodedObj where decodedObj = decode (B.unpack bstr) :: Result Question
+
+main :: IO()
+main = do
+  ts <- B.getContents >>= return . fst . fromJust . B.readInteger . head . B.lines
+  json_text <- B.getContents >>= return . tail . B.lines
+  let training_data = take (fromIntegral ts) json_text
+  let questions = map parseToRecord training_data
+  let correlation = foldr (\x acc -> if (isAnonymous x == isAnswered x) then (fst acc + 1, snd acc + 1) else (fst acc, snd acc + 1)) (0,0) questions
+  print $ fst correlation
+
+$ ghc --make ans.hs
+$ ./ans < path/to/the/file/sample/answered_data_10k.in
+

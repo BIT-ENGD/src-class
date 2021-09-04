@@ -1,0 +1,272 @@
+Imports ModellingHelper
+Imports FTNHelper
+Imports System.ComponentModel
+Imports System.ComponentModel.DataAnnotations
+
+Public Class Parser
+    Inherits BaseModel
+
+    <Required(ErrorMessage:="Name is required.")>
+    Public Property Name As String
+        Get
+            Return GetValue(Function() Name)
+        End Get
+        Set(value As String)
+            SetValue(Function() Name, value)
+        End Set
+    End Property
+
+    <Required(ErrorMessage:="Description is required.")>
+    Public Property Description As String
+        Get
+            Return GetValue(Function() Description)
+        End Get
+        Set(value As String)
+            SetValue(Function() Description, value)
+        End Set
+    End Property
+
+    Public Property InputHeaderInfo As InputHeader
+        Get
+            Return GetValue(Function() InputHeaderInfo)
+        End Get
+        Set(value As InputHeader)
+            SetValue(Function() InputHeaderInfo, value)
+        End Set
+    End Property
+
+    Public Property InputVariables As ObservableList(Of Variable)
+        Get
+            Return GetValue(Function() InputVariables)
+        End Get
+        Set(value As ObservableList(Of Variable))
+            SetValue(Function() InputVariables, value)
+        End Set
+    End Property
+
+    Public Property OutputVariables As ObservableList(Of Variable)
+        Get
+            Return GetValue(Function() OutputVariables)
+        End Get
+        Set(value As ObservableList(Of Variable))
+            SetValue(Function() OutputVariables, value)
+        End Set
+    End Property
+
+    Public Sub New()
+        Name = "New Parser"
+        Description = "This is a new parser."
+        InputHeaderInfo = New InputHeader()
+        InputVariables = New ObservableList(Of Variable)
+        OutputVariables = New ObservableList(Of Variable)
+    End Sub
+End Class
+
+Imports WinTransform.DataModel
+Imports System.IO
+Imports WPFHelper
+Imports System.ComponentModel
+Imports System.ComponentModel.DataAnnotations
+Imports ModellingHelper
+Imports Omu.ValueInjecter
+
+Namespace ViewModels
+    Public Class ParserViewModel
+        Inherits ViewBase
+
+#Region "Properties"
+        Public Property Source As Parser
+            Get
+                Return GetValue(Function() Source)
+            End Get
+            Set(value As Parser)
+                SetValue(Function() Source, value)
+            End Set
+        End Property
+
+        Public Property InputFile As FileInfo
+            Get
+                Return GetValue(Function() InputFile)
+            End Get
+            Set(value As FileInfo)
+                SetValue(Function() InputFile, value)
+                NotifyPropertyChanged(Function() InputFileContents)
+                NotifyPropertyChanged(Function() InputFileParseLine)
+                NotifyPropertyChanged(Function() TabVisability)
+            End Set
+        End Property
+
+        Public ReadOnly Property InputFileContents As String
+            Get
+                If Not InputFile Is Nothing Then
+                    Dim mReader = InputFile.OpenText()
+                    Try
+                        Return mReader.ReadToEnd()
+                    Catch ex As Exception
+                        MessageBox.Show(String.Format("Failed to load transform file contents: {0}", ex.Message))
+                    Finally
+                        mReader.Close()
+                    End Try
+                End If
+                Return String.Empty
+            End Get
+        End Property
+
+        Public ReadOnly Property InputFileParseLine As String
+            Get
+                If Not InputFile Is Nothing Then
+                    Dim mReader = InputFile.OpenText()
+                    Try
+                        Dim mLines = mReader.ReadToEnd().Split(vbNewLine).Select(Function(l As String) l.Trim())
+                        Dim mLineNo = Source.InputHeaderInfo.TitleLinesFixed + Source.InputHeaderInfo.TitleLinesSkipped + Source.InputHeaderInfo.ColumnHeaderLines + Source.InputHeaderInfo.LinesFixed + Source.InputHeaderInfo.LinesSkipped
+                        If mLineNo >= 0 And mLineNo < mLines.Count() Then
+                            Return mLines(mLineNo)
+                        End If
+                    Catch ex As Exception
+                        MessageBox.Show(String.Format("Failed to load transform file contents: {0}", ex.Message))
+                    Finally
+                        mReader.Close()
+                    End Try
+                End If
+                Return String.Empty
+            End Get
+        End Property
+
+        Public ReadOnly Property TabVisability As Visibility
+            Get
+                If Not InputFile Is Nothing Then
+                    Return Visibility.Visible
+                End If
+                Return Visibility.Hidden
+            End Get
+        End Property
+
+        Public ReadOnly Property InputVariablesViews As ObservableList(Of VariableViewModel)
+            Get
+                Dim mVars As New ObservableList(Of VariableViewModel)
+                For Each mVar In Source.InputVariables
+                    mVars.Add(New VariableViewModel(mVar))
+                Next
+                AddHandler mVars.CollectionChanged, Sub() Source.InputVariables.RefreshList(mVars.Select(Function(v As VariableViewModel) v.Source))
+                Return mVars
+            End Get
+        End Property
+
+        Public ReadOnly Property OutputVariablesViews As ObservableList(Of VariableViewModel)
+            Get
+                Dim mVars As New ObservableList(Of VariableViewModel)
+                For Each mVar In Source.OutputVariables
+                    mVars.Add(New VariableViewModel(mVar))
+                Next
+                AddHandler mVars.CollectionChanged, Sub() Source.OutputVariables.RefreshList(mVars.Select(Function(v As VariableViewModel) v.Source))
+                Return mVars
+            End Get
+        End Property
+
+        Public Property IsSaved As Boolean
+            Get
+                If String.IsNullOrEmpty(SaveFile) Then
+                    Return False
+                End If
+
+                If Not IsValid Then
+                    Return False
+                End If
+
+                Return GetValue(Function() IsSaved)
+            End Get
+            Set(value As Boolean)
+                SetValue(Function() IsSaved, value)
+            End Set
+        End Property
+
+        Public Property SaveFile As String
+            Get
+                Return GetValue(Function() SaveFile)
+            End Get
+            Set(value As String)
+                SetValue(Function() SaveFile, value)
+            End Set
+        End Property
+#End Region
+
+#Region "Commands"
+        Public ReadOnly Property SelectInputFile As ICommand
+            Get
+                Return New RelayCommand(Sub() SelectInputFileExecute())
+            End Get
+        End Property
+
+        Private Sub SelectInputFileExecute()
+            Dim mOpenDialog = OpenDialog
+            If mOpenDialog.ShowDialog() Then
+                InputFile = New FileInfo(mOpenDialog.FileName)
+            End If
+        End Sub
+#End Region
+
+        Public Sub New()
+            Source = New Parser()
+            Init()
+        End Sub
+
+        Public Sub New(ByVal mFileInfo As FileInfo)
+            Source = LoadParser(mFileInfo)
+            SaveFile = mFileInfo.FullName
+            Init()
+        End Sub
+
+        Public Sub Init()
+            AddHandler PropertyChanged, Sub() IsSaved = False
+            AddHandler Source.InputHeaderInfo.PropertyChanged, Sub() NotifyPropertyChanged(Function() InputFileParseLine)
+        End Sub
+
+        Public Shared Function LoadParser(ByVal mFileInfo As FileInfo) As Parser
+            Try
+                Dim xmlParser As New XmlDataModel.Parser()
+                xmlParser.FromXmlFile(mFileInfo.FullName)
+                Dim baseParser As New Parser()
+                baseParser.InjectFrom(New ParserInjectionXml(baseParser, xmlParser), xmlParser)
+                Return baseParser
+            Catch ex As Exception
+                MessageBox.Show(String.Format("Could not open parser: {0}", ex.Message))
+                Return New Parser()
+            End Try
+        End Function
+
+        Public Sub Save()
+            If String.IsNullOrEmpty(SaveFile) Then
+                Dim mSaveDialog = SaveDialog
+                If mSaveDialog.ShowDialog() Then
+                    SaveFile = mSaveDialog.FileName
+                Else
+                    Return
+                End If
+            End If
+            IsSaved = Save(SaveFile)
+        End Sub
+
+        Public Function Save(ByVal mFilePath As String) As Boolean
+            SaveFile = mFilePath
+            Return SaveParser(mFilePath, Source)
+        End Function
+
+        Public Shared Function SaveParser(ByVal mFilePath As String, ByVal mParser As Parser) As Boolean
+            If Not mParser.IsValid Then
+                Return False
+            End If
+
+            Try
+                Dim xmlParser As New XmlDataModel.Parser()
+                xmlParser.InjectFrom(New ParserInjectionXml(mParser, xmlParser), mParser)
+                xmlParser.ToXmlFile(mFilePath)
+                Return True
+            Catch ex As Exception
+                MessageBox.Show(String.Format("Could not save parser: {0}", ex.Message))
+                Return False
+            End Try
+        End Function
+    End Class
+End Namespace
+
+Source.Name

@@ -1,0 +1,109 @@
+-1
+errno == EAGAIN
+epoll
+edge-triggered
+server_sock = startup(&port);
+
+if ( (epollfd = epoll_create(4096)) < 0) {
+    perror("epoll_create error");
+    exit(EXIT_FAILURE);
+}
+
+ev.events = EPOLLIN | EPOLLET;
+ev.data.fd = server_sock;
+if (epoll_ctl(epollfd, EPOLL_CTL_ADD, server_sock, &ev) == -1) {
+    perror("epoll_ctl: server_sock");
+    exit(EXIT_FAILURE);
+}
+
+while (1) {
+    int nfds = epoll_wait(epollfd, events, 4096, -1);
+    if (nfds == -1) {
+        perror("epoll_wait");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < nfds; i++) {
+        if (events[i].data.fd == server_sock) {
+            client_sock = accept(server_sock,
+                         (struct sockaddr *)&client_name,
+                         (socklen_t *)(&client_name_len));
+
+        if (client_sock == -1) //server overloaded
+            continue;
+
+        if (events[i].events & EPOLLIN) {
+            std::cout << "EPOLLIN on " << client_sock << std::endl;
+        }
+
+        Arch::set_nonblocking(client_sock);
+        ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET; //input data and connection closing
+        ev.data.fd = client_sock;
+
+        if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client_sock, &ev) == -1) {
+            perror("epoll_ctl: client_socket");
+            exit(EXIT_FAILURE);
+        }
+
+        accept_request(client_sock);
+
+        } else {
+            if (events[i].events & EPOLLRDHUP) {
+                epoll_ctl(epollfd, EPOLL_CTL_DEL, events[i].data.fd, &ev);
+            }
+        }
+    }
+}
+
+startup(&port)
+GET /connect?id=1&secret=1 HTTP/1.0\r\n\r\n
+recv
+-1
+accept_request
+/**********************************************************************/
+/* Get a line from a socket, whether the line ends in a newline,
+ * carriage return, or a CRLF combination.  Terminates the string read
+ * with a null character.  If no newline indicator is found before the
+ * end of the buffer, the string is terminated with a null.  If any of
+ * the above three line terminators is read, the last character of the
+ * string will be a linefeed and the string will be terminated with a
+ * null character.
+ * Parameters: the socket descriptor
+ *             the buffer to save the data in
+ *             the size of the buffer
+ * Returns: the number of bytes stored (excluding null) */
+/**********************************************************************/
+int get_line(int sock, char *buf, int size) {
+    int i = 0;
+    char c = '\0';
+    int n;
+
+    while ((i < size - 1) && (c != '\n')) {
+        n = recv(sock, &c, 1, 0);
+        //debug
+        std::cout << "n = " << n << std::endl;
+        if (n > 0) {
+            if (c == '\r') {
+                n = recv(sock, &c, 1, MSG_PEEK);
+                if ((n > 0) && (c == '\n'))
+                    recv(sock, &c, 1, 0);
+                else
+                    c = '\n';
+            }
+            buf[i] = c;
+            i++;
+        } else {
+            //debug
+            if (errno == EWOULDBLOCK)
+                std::cout << "EWOULDBLOCK" << std::endl;
+            c = '\n';
+        }
+    }
+    buf[i] = '\0';
+
+    return(i);
+}
+
+EAGAIN
+sleep(1)
+recc(...)

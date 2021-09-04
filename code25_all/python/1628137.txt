@@ -1,0 +1,58 @@
+__get__
+from inspect import isdatadescriptor
+
+def namespaces(obj):
+    obj_dict = None
+    if hasattr(obj, '__dict__'):
+        obj_dict = object.__getattribute__(obj, '__dict__')
+
+    obj_class = type(obj)
+    return obj_dict, [t.__dict__ for t in obj_class.__mro__]
+
+def getattr_raw(obj, name):
+    # get an attribute in the same resolution order one would normally,
+    # but do not call __get__ on the attribute even if it has one
+    obj_dict, class_dicts = namespaces(obj)
+
+    # look for a data descriptor in class hierarchy; it takes priority over
+    # the obj's dict if it exists
+    for d in class_dicts:
+        if name in d and isdatadescriptor(d[name]):
+            return d[name]
+
+    # look for the attribute in the object's dictionary
+    if obj_dict and name in obj_dict:
+        return obj_dict[name]
+
+    # look for the attribute anywhere in the class hierarchy
+    for d in class_dicts:
+        if name in d:
+            return d[name]
+
+    raise AttributeError
+
+__get__
+def __get__(self, instance, instance_type):
+    if instance is None: 
+        return self
+    ...
+
+def decorate_get(original_get):
+    def decorated_get(self, instance, instance_type):
+        if instance is None:
+            return self
+        return original_get(self, instance, instance_type)
+    return decorated_get
+
+class InstanceOnlyDescriptor(object):
+    """All __get__ functions are automatically wrapped with a decorator which
+    causes them to only be applied to instances. If __get__ is called on a 
+    class, the decorator returns the descriptor itself, and the decorated
+    __get__ is not called.
+    """
+    class __metaclass__(type):
+        def __new__(cls, name, bases, attrs):
+            if '__get__' in attrs:
+                attrs['__get__'] = decorate_get(attrs['__get__'])
+            return type.__new__(cls, name, bases, attrs)
+

@@ -1,0 +1,202 @@
+<property name="build.home" value="build/jsp" />
+<property name="tomcat.home" location="../Tomcat 5.0/" />
+<path id="project.class.path">
+    <fileset dir="./lib/">
+        <include name="**/*.jar" />
+    </fileset>
+</path>
+
+<target name="reltag">
+    <tstamp>
+        <format property="now" pattern="d MMM yyyy HH:mm" />
+    </tstamp>
+    <property name="reltag" value="Built date: ${now}" />
+</target>
+
+<target name="dev" depends="compile" description="Builds for development">
+    <mkdir dir="jsp/WEB-INF/lib" />
+    <mkdir dir="jsp/WEB-INF/classes" />
+    <copy todir="jsp/WEB-INF/lib">
+        <fileset dir="lib">
+            <exclude name="**/CVS/*" />
+        </fileset>
+    </copy>
+
+    <copy todir="jsp/WEB-INF/classes">
+        <fileset dir="classes">
+            <exclude name="**/CVS/*" />
+        </fileset>
+    </copy>
+</target>
+
+<target name="compile" depends="myproject-gen,reltag">
+    <copy file="setup/Version.java.template" tofile="java/myproject/Version.java" overwrite="true">
+        <filterset>
+            <filter token="VERSION" value="${reltag}" />
+        </filterset>
+    </copy>
+    <mkdir dir="classes" />
+    <depend srcdir="java" destdir="classes" cache="depcache" />
+    <javac srcdir="java" destdir="classes">
+        <classpath refid="project.class.path" />
+    </javac>
+</target>
+
+<target name="myproject-gen" description="Generates torque classes and SQL for myproject">
+    <!-- generate the java files -->
+    <ant dir="torque" target="om" />
+    <antcall target="myproject-sql-mysql" />
+</target>
+
+<!-- generate the schema.sql script for MySQL -->
+<target name="myproject-sql-mysql" depends="myproject-sql-mysql-check" unless="mysql.schema.up.to.date">
+    <echo message="Generating SQL file for MySQL" />
+    <ant dir="torque" target="sql">
+        <property name="torque.database" value="mysql" />
+        <property name="torque.runOnlyOnSchemaChange" value="false" />
+    </ant>
+    <move file="sql/gen/myproject-schema.sql" tofile="sql/gen/myproject-schema-mysql.sql" overwrite="true" />
+    <copy file="sql/gen/myproject-schema-mysql.sql" tofile="jsp/admin/database.sql" overwrite="true"/>
+    <copy file="sql/init.sql" tofile="jsp/admin/init.sql" overwrite="true" />
+</target>
+
+<!-- check if we need to generate the sql file -->
+<target name="myproject-sql-mysql-check">
+    <uptodate property="mysql.schema.up.to.date" targetfile="sql/gen/myproject-schema-mysql.sql" srcfile="torque/myproject-schema.xml" />
+</target>
+
+
+// when i gave the echo inside this target block I was not able to get it and when i gave  the mkdir outside this block it create the folder
+
+<target name="myproject-war" depends="compile-jsp">
+    <mkdir dir="build" />
+    <jar destfile="build/myproject.war" basedir="build/jsp" />
+</target>
+
+<target name="prepare_for_war_file">
+    <mkdir dir="build\jsp-classes\org\apache\jsp" />
+    <!--
+    <move todir="${build.home}/WEB-INF/classes/org/apache/jsp">
+            <fileset dir="${build.home}">
+            <include name="*.jsp"/>
+            </fileset>
+    </move> 
+    -->
+    <!-- copy everything which is not a jsp to admin directory -->
+    <copy tofile="${build.home}/admin/database.sql">
+        <fileset file="sql/gen/*-schema-mysql.sql" />
+    </copy>
+    <copy file="sql/init.sql" todir="${build.home}/admin" />
+    <mkdir dir="${build.home}/pdb_files" />
+    <!-- copy images directory -->
+    <copy todir="${build.home}/images">
+        <fileset dir="jsp/images" />
+    </copy>
+    <copy todir="${build.home}/hand">
+        <fileset dir="jsp/hand" />
+    </copy>
+    <!-- copy javascript directory -->
+    <copy todir="${build.home}/javascript">
+        <fileset dir="jsp/javascript" />
+    </copy>
+    <!-- copy META-INF directory -->
+    <copy todir="${build.home}/META-INF">
+        <fileset dir="jsp/META-INF" />
+    </copy>
+    <!-- copy stylesheet directory -->
+    <copy todir="${build.home}/stylesheet">
+        <fileset dir="jsp/stylesheet" />
+    </copy>
+    <!-- copy WEB-INF directory  -->
+    <copy todir="${build.home}/WEB-INF/classes/">
+        <fileset dir="classes/" includes="**" />
+    </copy>
+    <copy todir="${build.home}/WEB-INF/lib">
+        <fileset dir="lib" includes="*.*" excludes="Cabwiz" />
+    </copy>
+    <!-- copy license and properties -->
+    <!--<copy file="WebContent/myproject.license" todir="${build.home}"/> -->
+    <copy file="jsp/myproject.properties" todir="${build.home}" />
+    <!-- move jsp classes to the correct package structure so war file will work when deployed -->
+    <move todir="${build.home}/WEB-INF/classes/org/apache/jsp">
+        <fileset dir="${build.home}" includes="**/*.class" excludes="WEB-INF/**" />
+    </move>
+    <antcall target="create-web_XML">
+    </antcall>
+</target>
+
+<target name="create-web_XML">
+    <loadfile property="generated.web.xml" srcFile="jsp/WEB-INF/generated_web.xml" />
+    <copy file="jsp/WEB-INF/web_template.xml" tofile="jsp/WEB-INF/web.xml.deployable" overwrite="true">
+        <filterset begintoken="&lt;!--" endToken="--&gt;">
+            <filter token="GENERATED_WEB_XML" value="${generated.web.xml}" />
+        </filterset>
+    </copy>
+    <copy file="jsp/WEB-INF/web.xml.deployable" tofile="build/jsp/WEB-INF/web.xml" />
+</target>
+
+<target name="compile-jsp" depends="dev">
+    <antcall target="prepare_for_war_file">
+    </antcall>
+    <property environment="env" />
+    <taskdef classname="org.apache.jasper.JspC" name="jasper2">
+        <classpath id="jspc.classpath">
+            <pathelement location="${java.home}/../lib/tools.jar" />
+            <fileset dir="${env.tomcat.home}/bin2">
+                <include name="*.jar" />
+            </fileset>
+            <fileset dir="${env.tomcat.home}/server/lib">
+                <include name="*.jar" />
+            </fileset>
+            <fileset dir="${env.tomcat.home}/common/lib">
+                <include name="*.jar" />
+            </fileset>
+        </classpath>
+    </taskdef>
+    <mkdir dir="java/jsp-src" />
+    <jasper2 validateXml="false" package="org.apache.jsp" uriroot="jsp" webXmlFragment="jsp/WEB-INF/generated_web.xml" outputDir="java/jsp-src" />
+    <jspc srcdir="jsp" destdir="java/jsp-src">
+        <include name="include/**/*.jsp" />
+        <include name="**/*.jsp" />
+    </jspc>
+    <mkdir dir="build/jsp-classes" />
+    <property environment="env" />
+    <javac destdir="build/jsp/WEB-INF/classes" optimize="off" debug="on" failonerror="true" srcdir="java/jsp-src" excludes="**/*.smap">
+        <classpath>
+            <pathelement location="classes" />
+            <fileset dir="lib">
+                <include name="*.jar" />
+            </fileset>
+            <pathelement location="${env.tomcat.home}/common/classes" />
+            <fileset dir="${env.tomcat.home}/common/lib">
+                <include name="*.jar" />
+            </fileset>
+            <pathelement location="${env.tomcat.home}/shared/classes" />
+            <fileset dir="${env.tomcat.home}/shared/lib">
+                <include name="*.jar" />
+            </fileset>
+            <fileset dir="${env.tomcat.home}/bin">
+                <include name="*.jar" />
+            </fileset>
+        </classpath>
+        <include name="**" />
+        <!--<exclude name="**/includes/*menu_jsp.java" />-->
+    </javac>
+</target>
+
+<target name="clean" description="Deletes the java/classes dir and torque base objects">
+    <delete dir="classes" />
+    <delete dir="${build.home}" />
+    <delete>
+        <fileset file="build/*" />
+    </delete>
+    <delete dir="java/myproject/torque/map" />
+    <delete dir="java/jsp-src" />
+    <delete dir="jsp/WEB-INF/classes" />
+    <delete dir="jsp/WEB-INF/lib" />
+    <delete>
+        <fileset dir="java/myproject/torque" includes="Base*.java" />
+    </delete>
+    <touch file="torque/myproject-schema.xml" />
+</target>
+

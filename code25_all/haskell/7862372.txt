@@ -1,0 +1,28 @@
+import Control.Concurrent (ThreadId)
+import Control.Concurrent.MVar (MVar,newMVar,withMVar)
+import Control.Concurrent.STM
+import qualified Control.Concurrent.ThreadManager as TM
+
+data ThreadManager = ThreadManager { tmCounter::TVar Int, tmTM::MVar TM.ThreadManager }
+
+data Settings = Settings {
+    maxThreadsCount::Int }
+
+createThreadManager :: Settings -> IO ThreadManager
+createThreadManager s = do
+    counter <- atomically $ newTVar (maxThreadsCount s)
+    tm <- TM.make >>= newMVar
+    return $ ThreadManager counter tm
+
+forkManaged :: ThreadManager -> IO () -> IO ThreadId
+forkManaged tm fn = do
+    atomically $ do
+        counter <- readTVar $ tmCounter tm
+        check $ counter > 0
+        writeTVar (tmCounter tm) (counter - 1)
+    withMVar (tmTM tm) $ \thrdmgr -> TM.fork thrdmgr $ do
+        fn
+        atomically $ do
+            counter <- readTVar $ tmCounter tm
+            writeTVar (tmCounter tm) (counter + 1)
+

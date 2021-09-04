@@ -1,0 +1,128 @@
+Authorize
+IsAuthorized
+service !? IsAuthorized(client) => {
+  case IsAuthorizedResponse(_, authorized) => // do something
+}
+
+receiveWithin()
+case object WaitingForAuthorization
+case class WaitingForAuthorizationResponse(clients: immutable.Set[Client])
+case class IsAuthorized(client: Client)
+case class IsAuthorizedResponse(client: Client, authorized: Boolean)
+case class Authorize(client: Client)
+
+class ClientAuthorizationService {
+  private val authorized: mutable.Set[Client] = new mutable.HashSet[Client] with mutable.SynchronizedSet[Client]
+  private val waiting: mutable.Set[Client] = new mutable.HashSet[Client] with mutable.SynchronizedSet[Client]
+
+  def actor = Actor.actor {
+    loop {
+      react {
+        case IsAuthorized(client: Client) => reply {
+          if (authorized contains client) {
+            IsAuthorizedResponse(client, true)
+          } else {
+            waiting += client
+            var matched = false;
+            val end = Instant.now.plus(ClientAuthorizationService.AUTH_TIMEOUT)
+
+            while (!matched && Instant.now.isBefore(end)) {
+              // ERROR HERE: Never receives Authorize messages
+              receiveWithin(ClientAuthorizationService.AUTH_TIMEOUT) {
+                case Authorize(authorizedClient: Client) => {
+                  authorizeClient(authorizedClient)
+                  if (authorizedClient == client) matched = true
+                }
+                case TIMEOUT => // do nothing since we handle the timeout in the while loop
+              }
+            }
+
+            IsAuthorizedResponse(client, matched)
+          }
+        }
+
+        case Authorize(client: Client) => authorizeClient(client)
+        case WaitingForAuthorization => reply {
+          WaitingForAuthorizationResponse(immutable.Set() ++ waiting)
+        }
+      }
+    }
+  }
+
+  private def authorizeClient(client: Client) = synchronized {
+    authorized += client
+    waiting -= client
+  }
+}
+
+object ClientAuthorizationService {
+  val AUTH_TIMEOUT: Long = 60 * 1000;
+}
+
+Authorize
+loop {
+  react {
+    case IsAuthorized(client: Client) => reply {
+      var matched = false
+
+      // In the "real" logic we would actually loop here until either the
+      // authorized client matches the requested client or the timeout is hit.
+      // For the sake of the demo we only take the first Authorize message.
+
+      receiveWithin(60*1000) {
+        // Although Authorize is send to actor it's never caught here
+        case Authorize(authorizedClient: Client) => matched = authorizedClient == client
+        case TIMEOUT => 
+      }
+
+      IsAuthorizedResponse(client, matched)
+    }
+
+    case Authorize(client: Client) => // this case is hit
+  }
+}
+
+Authorize
+IsAuthorized
+Authorized
+waiting
+Map[Client, Actor]
+loop {
+  react {
+    case IsAuthorized(client: Client) =>
+      if (authorized contains client) {
+        sender ! IsAuthorizedResponse(client, true)
+      } else {
+        val receipient = sender
+        // Start an anonymous actor that waits for an Authorize message
+        // within a given timeout and sends a reply to the consumer.
+        // The actor will be notified by the parent actor below.
+        waiting += client -> Actor.actor {
+          val cleanup = () => {
+            waiting -= client
+            exit()
+          }
+
+          receiveWithin(ClientAuthorizationService.AUTH_TIMEOUT) {
+            case Authorize(c) =>
+              receipient ! IsAuthorizedResponse(client, true)
+              cleanup()
+            case TIMEOUT =>
+              receipient ! IsAuthorizedResponse(client, false)
+              cleanup()
+          }
+        }
+      }
+
+    case Authorize(client: Client) =>
+      authorized += client
+
+      waiting.get(client) match {
+        case Some(actor) => actor ! Authorize(client)
+        case None =>
+      }
+
+    case WaitingForAuthorization => sender ! WaitingForAuthorizationResponse(immutable.Set() ++ waiting.keySet)
+  }
+}
+

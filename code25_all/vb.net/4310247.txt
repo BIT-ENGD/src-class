@@ -1,0 +1,76 @@
+Imports System
+Imports System.Data
+Imports System.Data.SqlClient
+Imports System.Configuration.ConfigurationManager
+
+Public Class Form1
+
+Private Sub Form1_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
+    Dim connectionString As String = GetConnectionString()
+    ' Open a connection 
+    Using sourceConnection As SqlConnection = New SqlConnection(connectionString)
+        sourceConnection.Open()
+
+        ' Perform an initial count on the destination table.
+        Dim commandRowCount As New SqlCommand("SELECT COUNT(*) FROM dbo.BRANCH;", sourceConnection)
+        Dim countStart As Long = System.Convert.ToInt32(commandRowCount.ExecuteScalar())
+        Console.WriteLine("Starting row count = {0}", countStart)
+
+        ' Get data from the source table as a SqlDataReader.
+        Dim commandSourceData As SqlCommand = New SqlCommand("select * from BRANCH", sourceConnection)
+        Dim reader As SqlDataReader = commandSourceData.ExecuteReader
+        UpdateHQDB(reader)
+
+    End Using
+End Sub
+
+Private Function GetConnectionString() As String
+    Return "Data Source=127.0.0.1;Initial Catalog=SOURCEDB;User ID=sa;Password="
+End Function
+
+Private Function GetDestString() As String
+    Return "Data Source=192.168.123.194;Initial Catalog=DESTINATIONDB;User ID=sa;Password="
+End Function
+
+Public Sub UpdateHQDB(ByVal reader)
+    Dim DestConString As String = GetDestString()
+    ' Open a connection 
+    Using DestinationConnection As SqlConnection = New SqlConnection(DestConString)
+        DestinationConnection.Open()
+
+        ' Perform an initial count on the destination table.
+        Dim DestcommandRowCount As New SqlCommand("SELECT COUNT(*) FROM dbo.BRANCH;", DestinationConnection)
+        Dim DestcountStart As Long = System.Convert.ToInt32(DestcommandRowCount.ExecuteScalar())
+        Console.WriteLine("Starting row count at destination = {0}", DestcountStart)
+
+        Using bulkCopy As SqlBulkCopy = New SqlBulkCopy(DestinationConnection)
+            bulkCopy.DestinationTableName = "dbo.BRANCH"
+
+            Try
+                ' Write from the source to the destination.
+                bulkCopy.WriteToServer(reader)
+
+            Catch ex As Exception
+                Console.WriteLine(ex.Message)
+
+            Finally
+                ' Close the SqlDataReader. The SqlBulkCopy
+                ' object is automatically closed at the end
+                ' of the Using block.
+                reader.Close()
+            End Try
+        End Using
+
+        ' Perform a final count on the destination table
+        ' to see how many rows were added.
+        Dim countEnd As Long = _
+            System.Convert.ToInt32(DestcommandRowCount.ExecuteScalar())
+        Console.WriteLine("Ending row count = {0}", countEnd)
+        Console.WriteLine("{0} rows were added.", countEnd - DestcountStart)
+
+        Console.WriteLine("Press Enter to finish.")
+        Console.ReadLine()
+    End Using
+End Sub
+End Class
+

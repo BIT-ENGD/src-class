@@ -1,0 +1,124 @@
+stencil2 Quasi Quote
+[stencil2|   2  4  5  4  2
+             4  9 12  9  4
+             5 12 15 12  5
+             4  9 12  9  4
+             2  4  5  4  2 |]
+
+TemplateHaskell
+makeStencil2 5 5 coeffs where
+     {-# INLINE[~0] coeffs #-}
+     coeffs = \ ix -> case ix of
+                      Z :. -2 :. -2 -> Just 2
+                      Z :. -2 :. -1 -> Just 4
+                      Z :. -2 :. 0 -> Just 5
+                      Z :. -2 :. 1 -> Just 4
+                      Z :. -2 :. 2 -> Just 2
+                      [...]
+                      _ -> Nothing
+
+blur    :: Monad m => Int -> Array U DIM2 Double -> m (Array U DIM2 Double)
+blur !iterations arrInit
+ = go iterations arrInit
+ where  go !0 !arr = return arr
+        go !n !arr  
+         = do   arr'    <- computeP
+                         $ A.smap (/ 159)
+                         $ forStencil2 BoundClamp arr
+                           [stencil2|   2  4  5  4  2
+                                        4  9 12  9  4
+                                        5 12 15 12  5
+                                        4  9 12  9  4
+                                        2  4  5  4  2 |]
+                go (n-1) arr'
+
+blur !iterations arrInit = go iterations arrInit
+    where 
+          stencilx7 = fromListUnboxed (Z :. 7 :. 7) 
+                    [  0,  0,  0,  0,  0,  0, 0
+                    ,  0,  2,  4,  5,  4,  2, 0
+                    ,  0,  4,  9, 12,  9,  4, 0
+                    ,  0,  5, 12, 15, 12,  5, 0
+                    ,  0,  4,  9, 12,  9,  4, 0
+                    ,  0,  2,  4,  5,  4,  2, 0
+                    ,  0,  0,  0,  0,  0,  0, 0
+                    ] :: Array U DIM2 Int
+          magicf (Z :. x :. y) = Just $ fromIntegral $ unsafeIndex stencilx7 (Z:. (x+3) :. (y+3))
+          go !0 !arr = return arr
+          go !n !arr  
+           = do   
+                  arr'    <- computeP
+                           $ A.smap (/ 159)
+                           $ A.forStencil2 BoundClamp arr 
+                            $ makeStencil2 5 5 magicf
+                  go (n-1) arr'
+
+{-# LANGUAGE PackageImports, BangPatterns, TemplateHaskell, QuasiQuotes #-}
+{-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-incomplete-patterns #-}
+
+import Data.List
+import Control.Monad
+import System.Environment
+import Data.Word
+import Data.Array.Repa.IO.BMP
+import Data.Array.Repa.IO.Timing
+import Data.Array.Repa                          as A
+import qualified Data.Array.Repa.Repr.Unboxed   as U
+import Data.Array.Repa.Stencil                  as A
+import Data.Array.Repa.Stencil.Dim2             as A
+import Prelude                                  as P
+
+main 
+ = do   args    <- getArgs
+        case args of
+         [iterations, fileIn, fileOut]  -> run (read iterations) fileIn fileOut
+         _                              -> usage
+
+usage   = putStr $ unlines
+        [ "repa-blur <iterations::Int> <fileIn.bmp> <fileOut.bmp>" ]
+
+
+-- | Perform the blur.
+run :: Int -> FilePath -> FilePath -> IO ()
+run iterations fileIn fileOut
+ = do   arrRGB  <- liftM (either (error . show) id) 
+                $  readImageFromBMP fileIn
+
+        arrRGB `deepSeqArray` return ()
+        let (arrRed, arrGreen, arrBlue) = U.unzip3 arrRGB
+        let comps                       = [arrRed, arrGreen, arrBlue]
+
+        (comps', tElapsed)
+         <- time $ P.mapM (process iterations) comps
+
+        putStr $ prettyTime tElapsed
+
+        let [arrRed', arrGreen', arrBlue'] = comps'
+        writeImageToBMP fileOut
+                (U.zip3 arrRed' arrGreen' arrBlue')
+
+
+process :: Monad m => Int -> Array U DIM2 Word8 -> m (Array U DIM2 Word8)
+process iterations 
+        = promote >=> blur iterations >=> demote
+{-# NOINLINE process #-}
+
+
+promote :: Monad m => Array U DIM2 Word8 -> m (Array U DIM2 Double)
+promote arr
+ = computeP $ A.map ffs arr
+ where  {-# INLINE ffs #-}
+        ffs     :: Word8 -> Double
+        ffs x   =  fromIntegral (fromIntegral x :: Int)
+{-# NOINLINE promote #-}
+
+
+demote  :: Monad m => Array U DIM2 Double -> m (Array U DIM2 Word8)
+demote arr
+ = computeP $ A.map ffs arr
+
+ where  {-# INLINE ffs #-}
+        ffs     :: Double -> Word8
+        ffs x   =  fromIntegral (truncate x :: Int)
+
+ghc -O2 -threaded -fllvm  -fforce-recomp Main.hs -ddump-splices

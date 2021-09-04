@@ -1,0 +1,53 @@
+.RData
+head(my_df)
+long        lat         group
+6.527187    51.87055    0.1 
+6.531768    51.87206    0.1
+6.541202    51.87656    0.1
+6.553331    51.88271    0.1
+
+my_fixed_points
+long        lat         value
+12.817      48.917      0.04 
+8.533       52.017      0.034
+8.683       50.117      0.02
+7.217       49.483      0.0542
+
+ggplot(my_df,aes(long,lat)) + geom_polygon(aes(group=group), fill="white") + 
+geom_path(color="white",aes(group=group)) + coord_equal()
+
+my_generated_point
+value_vector <- subset(my_fixed_points, 
+  spDistsN1(cbind(my_fixed_points$long, my_fixed_points$lat),  
+  c(my_generated_point$long, my_generated_point$lat), longlat=TRUE) < 50, 
+  select = value)
+point_value <- mean(value_vector)
+
+library(ggplot2)
+library(sp)
+library(automap)
+library(rgdal)
+library(scales)
+
+#get the spatial data for the Netherlands
+con <- url("http://gadm.org/data/rda/NLD_adm0.RData")
+print(load(con))
+close(con)
+
+#transform them into the right format for autoKrige
+gadm_t <- spTransform(gadm, CRS=CRS("+proj=merc +ellps=WGS84"))
+
+#generate some random values that serve as fixed points
+value_points <- spsample(gadm_t, type="stratified", n = 200)
+values <- data.frame(value = rnorm(dim(coordinates(value_points))[1], 0 ,1))
+value_df <- SpatialPointsDataFrame(value_points, values)
+
+#generate a grid that can be estimated from the fixed points
+grd = spsample(gadm_t, type = "regular", n = 4000)
+kr <- autoKrige(value~1, value_df, grd)
+dat = as.data.frame(kr$krige_output)
+
+#draw the generated grid with the underlying map
+ggplot(gadm_t,aes(long,lat)) + geom_polygon(aes(group=group), fill="white") + geom_path(color="white",aes(group=group)) + coord_equal() + 
+geom_tile(aes(x = x1, y = x2, fill = var1.pred), data = dat) + scale_fill_continuous(low = "white", high = muted("orange"), name = "value")
+

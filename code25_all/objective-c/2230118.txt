@@ -1,0 +1,125 @@
+@implementation ScreensaverView
+
+- (id)initWithFrame:(NSRect)frame isPreview:(BOOL)isPreview {
+
+    self = [super initWithFrame:frame isPreview:isPreview];
+
+    if (self) {
+
+        [self setAnimationTimeInterval:-1];
+        [self setAutoresizesSubviews:YES];
+
+        // ::::::::::::::::::::::: Init stuff ::::::::::::::::::    
+
+        // init 
+        quitFlag = false;
+        previewMode = isPreview;
+
+        // find out the path the screensaver bundle
+        pMainBundle = [NSBundle bundleForClass:[self class]];
+        pBundlePath = [pMainBundle bundlePath];
+
+        // read Info.plist
+        infoDict = [pMainBundle infoDictionary];
+    }
+
+    return self;
+}
+
+- (void)startAnimation
+{   
+    [super startAnimation];
+
+    // combine: bundle path + filename for screensaver file 
+    NSString *pathToScreensaver = [NSString stringWithString:pBundlePath];
+    NSString *valueScreensaverFile;
+
+    if(!previewMode)
+    {
+        valueScreensaverFile = [infoDict objectForKey:@"ScreensaverFile"];
+    }
+    else 
+    {
+        valueScreensaverFile = [infoDict objectForKey:@"PreviewFile"];
+    }
+
+    // add filename to bundle path
+    pathToScreensaver = [pathToScreensaver stringByAppendingString:valueScreensaverFile];
+
+    // complete NSURL to the screensaver file
+    NSURL *screensaverUrl = [NSURL fileURLWithPath: pathToScreensaver];
+
+    webView = [WebView alloc];
+    [webView initWithFrame:[self frame]];
+    [webView setDrawsBackground:NO];
+
+    // delegation policy for interactive mode
+    [webView setPolicyDelegate: self];
+    [webView setUIDelegate:self];
+
+    // load screensaver
+    [[webView mainFrame] loadRequest:[NSURLRequest requestWithURL:screensaverUrl]];
+
+    scriptObject = [webView windowScriptObject];
+    [scriptObject setValue:self forKey:@"screensaver"];
+
+    [self addSubview:webView];
+}
+
+- (void)stopAnimation
+{   
+    [[webView mainFrame] stopLoading];
+    [webView removeFromSuperview];
+    [webView release];
+    [super stopAnimation];
+}
+
++ (BOOL)isSelectorExcludedFromWebScript:(SEL)selector 
+{       
+    if (selector == @selector(quitScreenSaver)) {
+        return NO;
+    }
+
+    if(selector == @selector(gotoUrl:) ){
+        return NO;
+    }
+
+    return YES;
+}
+
++(NSString *)webScriptNameForSelector:(SEL)selector
+{   
+    if(selector == @selector(quitScreenSaver))
+    {
+        return @"quitNoOpen";
+    }
+
+    if(selector == @selector(gotoUrl:))
+    {
+        return @"openAndQuit";
+    }
+
+    return nil;
+}
+
+- (void) quitScreenSaver
+{
+    quitFlag = true;
+    [super stopAnimation];
+}
+
+- (void) gotoUrl:(NSString *) destinationURL 
+{   
+    if(destinationURL == NULL)
+    {
+        return;
+    }
+
+    NSString * path    = destinationURL;
+    NSURL    * fileURL = [NSURL URLWithString:path];
+    [[ NSWorkspace sharedWorkspace ] openURL:fileURL];
+    [self quitScreenSaver];
+}
+
+@end
+

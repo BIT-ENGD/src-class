@@ -1,0 +1,71 @@
+#!/usr/bin/perl 
+use CGI;
+use DBI;
+use JSON;
+use Test::JSON;
+use POSIX qw(ceil);
+use strict;
+use warnings;
+
+my $cgi = CGI->new;
+my $page = $cgi->param('page');
+my $limit = $cgi->param('limit');
+my $sidx = $cgi->param('sidx');
+my $sordx = $cgi->param('sordx');
+
+if(!$sidx) {$sidx = 1};
+my $start = $limit*$page - $limit;
+
+my $dbh = DBI->connect('dbi:mysql:hostname=localhost;database=test',"test","test") or die $DBI::errstr;
+my $count = $dbh->selectrow_array("SELECT COUNT(id) AS count FROM test;");
+my $sql = "SELECT ID, Name FROM test ORDER BY ? ? LIMIT ?, ?;";
+my $sth = $dbh->prepare($sql) or die $dbh->errstr;
+
+$sth->execute($sidx,$sordx,$start,$limit) or die $sth->errstr;
+my $total_pages;
+if( $count >0 ) {
+        $total_pages = ceil($count/$limit);
+} else {
+        $total_pages = 0;
+}
+if ($page > $total_pages){ $page=$total_pages};
+$start = $limit*$page - $limit;
+my $i=0;
+my $response = {};
+$response->{page} = $page;
+$response->{total} = $total_pages;
+$response->{records} = $count;
+        while (my $row = $sth->fetchrow_arrayref) {
+                my @arr = @{$row};
+                $response->{rows}[$i]{id} = $row->[0];
+                $response->{rows}[$i]{cell} = \@arr;
+                $i++;
+        }
+
+Test::JSON::is_valid_json $response, '... json is well formed';
+
+print $cgi->header(-type => "application/json", -charset => "utf-8");
+print JSON::to_json($response,{ ascii => 1, pretty => 1 });
+
+{
+   "page" : "1",
+   "records" : "35",
+   "rows" : [
+      {
+         "id" : "15675",
+         "cell" : [
+            "15675",
+            "Test 1"
+         ]
+      },
+      {
+         "id" : "15676",
+         "cell" : [
+            "15676",
+            "Test 2"
+         ]
+      }
+   ],
+   "total" : 4
+}
+

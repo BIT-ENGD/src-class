@@ -1,0 +1,70 @@
+#!/usr/bin/perl -w
+use strict;
+use warnings;
+use MIME::Lite::TT::HTML;
+my $basedir = "/var/log";
+my @verdir = qw(fw_d);
+my $fulldir;
+my $configs; 
+my $combidir;
+my @results;
+my @files1;
+foreach $combidir (@verdir) {
+    $fulldir = "$basedir/$combidir";
+    opendir (DIR, $fulldir);
+    my @files = grep { $_ ne '.' && $_ ne '..' && $_ ne 'CVS' } readdir DIR;
+    closedir (DIR);
+    @files1 = sort {expand($a)cmp expand($b)}(@files);
+    foreach my $configs (@files1) {
+        my $now = time;
+        my @stat = stat("$fulldir/$configs");
+        if ($stat[9] > ($now - 2592000)) {
+            system("/usr/bin/less -f $fulldir/$configs | /bin/grep NETOPS_TUNNEL >> /usr/local/CCS/ravpn/output.log"); }
+        }
+    }
+    results();
+    sendmailnew(\@results);
+
+    sub results{
+        my $input = "/usr/local/CCS/ravpn/output.log";
+        open my $fh, "<", "$input" or die "could not open '$input': $!";
+        while (<$fh>){
+            if ($_ =~ /(................)fw.*(Group = NETOPS_TUNNEL). (Username = .(authenticated.)/){
+                push (@results, "$1 $2 $3 $4<br>")
+            }
+        }
+        return @results
+    }
+
+    sub expand  { 
+        my $file=shift; 
+        $file=~s{(\d+)}{sprintf "%04d", $1}eg; # expand all numbers to 4 digits
+        return $file;
+    }
+
+    sub sendmailnew {
+        my %params; 
+        my @results = @{$_[0]};
+        $params{sorted} = "@results";
+        my %options; 
+        $options{INCLUDE_PATH} = '/usr/local/CCS/ravpn/templates/'; 
+        my $msg = MIME::Lite::TT::HTML->new( 
+            From        =>  "",
+            #To          =>  "", 
+            BCC                 =>  "",
+            Subject     =>  "", 
+            Encoding    => 'quoted-printable',
+            Template    =>  {
+                text    =>  'test.txt.tt',
+                html    =>  'sort.html.tt',
+            },
+            TmplOptions =>  \%options, 
+            TmplParams  =>  \%params, 
+        ); 
+
+        $msg->send;
+        system("rm -rf /usr/local/CCS/ravpn/output.log");
+    }
+
+  40 03 * * * perl /usr/local/CCS/ravpn/ravpn.pl    
+

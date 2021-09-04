@@ -1,0 +1,43 @@
+trait Tx {
+   def readSource[A](implicit ser: Serializer[A]) : Source[A] = 
+      new Source[A] { 
+         def get(implicit tx: Tx): A = ser.read(new In {})
+      }
+}    
+trait In
+trait Source[A] { def get(implicit tx: Tx): A }
+trait Serializer[A] { def read(in: In)(implicit tx: Tx): A }
+
+// needs recursive access to itself. for reasons
+// beyond the scope of this questions, `self` must
+// be a by-name parameter
+class Transport(self: => Source[Transport])
+
+// again: self is required to be by-name
+def transportSer(self: => Source[Transport]) : Serializer[Transport] = 
+   new Serializer[Transport] { 
+      def read(in: In)(implicit tx: Tx): Transport = new Transport(self)
+   }
+
+Hook
+trait Hook[A] {
+   def source: Source[A]
+}
+
+def hookSer[A](peerSelf: Source[A] => Serializer[A]) : Serializer[Hook[A]] = 
+   new Serializer[Hook[A]] {
+      def read(in: In)(implicit tx: Tx) : Hook[A] =
+         new Hook[A] with Serializer[A] {
+            val source: Source[A] = tx.readSource[A](this)
+            def read(in: In)(implicit tx: Tx) : A = peerSelf(source).read(in)
+         }
+   }
+
+val hs = hookSer[Transport](transportSer)
+
+<console>:15: error: type mismatch;
+ found   : => Source[Transport] => Serializer[Transport]
+ required: Source[Transport] => Serializer[Transport]
+          val hs = hookSer[Transport](transportSer)
+                                      ^
+

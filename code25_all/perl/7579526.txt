@@ -1,0 +1,80 @@
+use strict;
+use v5.10;
+use Win32::OLE;
+use Win32::OLE::Enum;
+use Win32::OLE::Variant;
+use Data::Dumper;
+use Win32::OLE::Const 'LoadRunner Automation Library';
+use constant False  =>  Variant(VT_BOOL,'');
+use constant True  =>  Variant(VT_BOOL,1);
+
+my $lrEngine = Win32::OLE->new('wlrun.LrEngine') or die "oops\n";
+my $lrScenario = $lrEngine->Scenario();
+my $rc = $lrScenario->new(0, 1); # do not save previous, Regular vusers based scenario 
+if ($rc != 0) {
+    print "Win32::OLE::LastError: ".Win32::OLE::LastError()."\n";
+    print "lrScenario->new(0, 1):rc: $rc\n";
+}
+# snip-snipped - add generator
+# snip-snipped - add @groups definition
+foreach my $group (@groups) {
+    print "scriptName: $group->{scriptName}\n";
+    my $scriptLocation = $group->{scriptLocation};
+    my $scriptName = Variant(VT_BSTR|VT_BYREF, $group->{scriptName});
+
+    { # add $group->{scriptName} script
+        $rc = $lrScenario->Scripts->Add($scriptLocation, $scriptName);
+        if ($rc != 0) {
+            print "Win32::OLE::LastError: ".Win32::OLE::LastError()."\n";
+            print "lrScenario->Scripts->Add($scriptLocation, $scriptName):rc: $rc\n";
+        }
+    }
+    #############################################################################
+    my $groupName = Variant(VT_BSTR|VT_BYREF, $group->{groupName});
+    { # add $group->{groupName} group
+        $rc = $lrScenario->Groups->Add($groupName);
+        if ($rc != 0) {
+            print "Win32::OLE::LastError: ".Win32::OLE::LastError()."\n";
+            print "lrScenario->Groups->Add:rc: $rc\n";
+        }
+        $rc = $lrScenario->Groups->Item($groupName)->AddVusers($scriptName, $hostname, 3);
+        if ($rc != 0) {
+            print "Win32::OLE::LastError: ".Win32::OLE::LastError()."\n";
+            print "lrScenario->Groups->Item($groupName)->AddVusers:rc: $rc\n";
+        }
+    }
+    #############################################################################
+    # snip-snipped - change group script run time setting
+}
+
+my $scheduleName = Variant(VT_BSTR|VT_BYREF, 'Schedule123');
+my $lrManualScheduleData = $lrScenario->ManualScheduler->AddSchedule($scheduleName, lrGroupSchedule); # Scenario schedule mode
+if (!$lrManualScheduleData) {
+    say "Win32::OLE::LastError: ".Win32::OLE::LastError();
+    say "lrScenario->ManualScheduler->AddSchedule:rc: $rc";
+}
+$rc = $lrScenario->ManualScheduler->SetCurrentSchedule($scheduleName);
+if ($rc != 0) {
+    say "Win32::OLE::LastError: ".Win32::OLE::LastError();
+    say "lrScenario->ManualScheduler->SetCurrentSchedule:rc: $rc";
+}
+print "\$lrScenario->ManualScheduler->SetScheduleMode($scheduleName, lrGroupSchedule):";
+$lrScenario->ManualScheduler->SetScheduleMode($scheduleName, lrGroupSchedule);
+#LrManualScheduleMode ->  lrGroupSchedule = 1, lrScenarioSchedule = 0
+say "Win32::OLE::LastError: ".Win32::OLE::LastError();
+
+$lrManualScheduleData->{'InitAllBeforeRun'} = 'True';
+$lrManualScheduleData->{'DurationMode'} = 1;
+$lrManualScheduleData->{'Duration'} = 60 * 60;
+$lrManualScheduleData->{'RampupBatchSize'} = 1;
+$lrManualScheduleData->{'RampupMode'} = lrRampupByGroupBatches;
+$lrManualScheduleData->{'RampupTimeInterval'} = 5;
+$lrManualScheduleData->{'RampdownBatchSize'} = 1;   
+$lrManualScheduleData->{'RampdownMode'} = lrRampupByGroupBatches;
+$lrManualScheduleData->{'RampdownTimeInterval'} = 5;
+
+$rc = $lrScenario->ManualScheduler->{'ScenarioStartTimeMode'} = 0; # Start scenario without delay 
+
+#test
+say "$scheduleName: ".$lrScenario->ManualScheduler->Schedule($scheduleName)->{'Duration'}; # returns 300
+

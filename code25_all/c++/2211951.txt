@@ -1,0 +1,78 @@
+extern "C" {
+#include <aio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <errno.h>
+#include <signal.h>
+}
+#include <cassert>
+#include <string>
+#include <iostream>
+
+using namespace std;
+
+static void
+aio_completion_handler(int signo, siginfo_t *info, void *context)
+{
+  using namespace std;
+  cout << "BLAH" << endl;
+}
+
+
+int main()
+{
+  int err;
+
+  struct sockaddr_in sin;
+  memset(&sin, 0, sizeof(sin));
+
+  sin.sin_port = htons(1234);
+  sin.sin_addr.s_addr = inet_addr("127.0.0.1");
+  sin.sin_family = PF_INET;
+
+  int sd = ::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (sd == -1) {
+    assert(!"socket() failed");
+  }
+
+  const struct sockaddr *saddr = reinterpret_cast<const struct sockaddr *>(&sin);
+  err = ::connect(sd, saddr, sizeof(struct sockaddr));
+  if (err == -1) {
+    perror(NULL);
+    assert(!"connect() failed");
+  }
+
+  struct aiocb *aio = new aiocb();
+  memset(aio, 0, sizeof(struct aiocb));
+
+  char *buf = new char[3];
+  buf[0] = 'a';
+  buf[1] = 'b';
+  buf[2] = 'c';
+  aio->aio_fildes = sd;
+  aio->aio_buf = buf;
+  aio->aio_nbytes = 3;
+
+  aio->aio_sigevent.sigev_notify = SIGEV_SIGNAL;
+  aio->aio_sigevent.sigev_signo = SIGIO;
+  aio->aio_sigevent.sigev_value.sival_ptr = &aio;
+
+  struct sigaction sig_act;
+
+  sigemptyset(&sig_act.sa_mask);
+  sig_act.sa_flags = SA_SIGINFO;
+  sig_act.sa_sigaction = aio_completion_handler;
+
+  sigaction(SIGIO, &sig_act, NULL);
+
+  errno = 0;
+  int ret = aio_write(aio);
+  if (ret == -1) {
+    perror(NULL);
+  }  
+  assert(ret != -1);  
+}
+

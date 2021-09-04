@@ -1,0 +1,213 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <string.h>
+#include <time.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <math.h>
+#include <unistd.h>
+#include <errno.h>
+
+#define READ_BUFFER_LEN 16
+//#define MAX_LENGTH 128
+
+enum {
+    MAX_LENGTH = 512
+};
+
+typedef struct FileNameArray {
+    size_t nfiles; /* Number of file names allocated and in use */
+    size_t maxfiles; /* Number of entries allocated in array */
+    char **files; /* Array of file names */
+} FileNameArray;
+
+
+//GLOBAL vars
+int num_images, *threads_ids /*threads ids*/;
+pthread_t *threads;
+
+void deallocate2D(FileNameArray *names) {
+    size_t i;
+    for (i = 0; i < names->nfiles; i++)
+        free(names->files[i]);
+    free(names->files);
+    names->nfiles = 0;
+    names->files = 0;
+    names->maxfiles = 0;
+}
+
+int readInputFile(FILE *fp, FileNameArray *names) {
+    num_images = names->nfiles;
+    int max_lines = names->maxfiles;
+    char **file_names = names->files;
+    char line[MAX_LENGTH];
+    char **final_filenames, **array;
+
+    while (fgets(line, sizeof line, fp) != NULL) {
+        if (line[0] != '\n') {
+            /* Remove newline from end of file name */
+            char *nl = strchr(line, '\n');
+            if (nl != 0)
+                *nl = '\0';
+            if (num_images >= max_lines) {
+                max_lines += 100;
+                array = realloc(file_names, max_lines * sizeof (char*));
+                if (array == NULL) {
+                    fprintf(stderr, "Error reallocating space for 2d array: %s\n",
+                            strerror(errno));
+                    return -1;
+                }
+                names->maxfiles = max_lines;
+                names->files = array;
+                file_names = array;
+            }
+            if ((file_names[num_images] = malloc(strlen(line) + 1)) == NULL) {
+                fprintf(stderr, "Error allocating space for 2d array: %s\n",
+                        strerror(errno));
+                return -1;
+            }
+            names->nfiles++;
+            strcpy(file_names[num_images], line);
+            printf("name of file %d is: %s \n", num_images, file_names[num_images]);
+            num_images++;
+        }
+    }
+
+    printf("Num_lines: %d\n", num_images);
+    //realloc to number of lines in the file, to avoid wasting memory
+    if ((final_filenames = realloc(file_names, num_images * sizeof (char*))) == NULL) {
+        fprintf(stderr, "Error reallocating space for 2d array: %s\n",
+                strerror(errno));
+        return -1;
+    }
+    names->maxfiles = num_images;
+    names->files = final_filenames;
+    return 0;
+}
+
+void* requester(void* arg) {
+
+    printf("This is the requester thread\n");
+    //sleep(1);
+    pthread_exit(NULL);
+    return NULL;
+}
+
+void* converter(void *id) {
+    int my_id = *((int*) id);
+
+    printf("Thread's id is: %d\n", my_id);
+    pthread_exit(NULL);
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    FileNameArray names = {0, 0, 0};
+    int i, rc;
+    pthread_attr_t attr;
+
+
+    //check parameters
+    if (argc < 4) {
+        fprintf(stderr, "Usage: %s input_filename.ppm charWidth charHeight\n",
+                argv[0]);
+        return -1;
+    }
+
+    printf("Opening input file [%s]\n", argv[1]);
+    FILE *fpin = fopen(argv[1], "r");
+    if (fpin == NULL) {
+        fprintf(stderr, "Could not open input file %s (%s)\n",
+                argv[1], strerror(errno));
+        return -1;
+    }
+
+    if ((names.files = malloc(10 * sizeof (char*))) == NULL) {
+        fprintf(stderr, "Error allocating initial space for 2d array: %s\n",
+                strerror(errno));
+        return -1;
+    }
+    names.maxfiles = 10;
+
+    if (readInputFile(fpin, &names) == -1) {
+        fprintf(stderr, "Error reading image filenames from input\n");
+        return -1;
+    }
+
+    threads = (pthread_t*) malloc(num_images + 1 * sizeof (pthread_t));
+    threads_ids = (int*) malloc(num_images + 1 * sizeof (int));
+
+    /* Initialize and set thread detached attribute */
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    //creates requester thread, the 1st one on the list
+    pthread_create(&threads[0], &attr, requester, &threads_ids[0]);
+    threads_ids[0] = 0;
+
+    //creates so many converter threads as the number of images to convert
+    for (i = 1; i < num_images + 1; i++) {
+        threads_ids[i] = i;
+        rc = pthread_create(&threads[i], &attr, converter, &threads_ids[i]);
+        if (rc) {
+            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            exit(-1);
+        }
+    }
+
+
+    /* Free attribute and wait for the other threads */
+    pthread_attr_destroy(&attr);
+
+    for (i = 0; i < num_images + 1; i++) {
+        printf("Waiting for thread nr %d\n", i);
+        rc = pthread_join(threads[i], NULL);
+        if (rc) {
+            printf("ERROR; return code from pthread_join() is %d\n", rc);
+            exit(-1);
+        }
+    }
+
+    fclose(fpin);
+    free(threads);
+    free(threads_ids);
+    printf("###########\n");
+
+    deallocate2D(&names);
+
+    printf("Done!\n");
+    return 0;
+}
+
+Num_lines: 10
+This is the requester thread
+Thread's id is: 1
+Thread's id is: 2
+Thread's id is: 3
+Thread's id is: 5
+Thread's id is: 4
+Thread's id is: 6
+Thread's id is: 7
+Thread's id is: 8
+Thread's id is: 9
+Waiting for thread nr 0
+Thread's id is: 10
+Segmentation fault
+
+Program received signal SIGSEGV, Segmentation fault.
+0x001bfea9 in *__GI___libc_free (mem=0x804c278) at malloc.c:3724
+3724    malloc.c: No such file or directory.
+    in malloc.c
+(gdb) where
+#0  0x001bfea9 in *__GI___libc_free (mem=0x804c278) at malloc.c:3724
+#1  0x00120802 in *__GI__dl_deallocate_tls (tcb=<value optimized out>, 
+    dealloc_tcb=112) at dl-tls.c:487
+#2  0x00133748 in __free_stacks (limit=41943040) at allocatestack.c:274
+#3  0x00133849 in queue_stack (pd=0xb5fd9b70) at allocatestack.c:302
+#4  __deallocate_stack (pd=0xb5fd9b70) at allocatestack.c:740
+#5  0x00134b37 in pthread_join (threadid=3053296496, thread_return=0x0)
+    at pthread_join.c:110
+#6  0x0804955c in main (argc=4, argv=0xbffff4a4) at main.c:261
+

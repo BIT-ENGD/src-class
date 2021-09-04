@@ -1,0 +1,141 @@
+CREATE OR REPLACE FUNCTION "TRON2000"."DC_F_DUMP_CSV_MMA" (
+p_trailing_separator IN BOOLEAN DEFAULT FALSE,
+p_max_linesize IN NUMBER DEFAULT 32000,
+p_mode IN VARCHAR2 DEFAULT 'w'
+)
+RETURN NUMBER
+IS
+
+CREATE OR REPLACE FUNCTION DC_F_DUMP_CSV_MMA (
+p_trailing_separator IN BOOLEAN DEFAULT FALSE,
+p_max_linesize IN NUMBER DEFAULT 32000,
+p_mode IN VARCHAR2 DEFAULT 'w'
+)
+RETURN NUMBER
+IS
+
+\b(CREATE\sOR\sREPLACE\s(PACKAGE|PACKAGE\sBODY|PROCEDURE|FUNCTION))(?:\W+\w+){1,100}?\W+(RETURN)\s*(\W+\w+)\s(AS|IS)\b
+
+#!/usr/bin/perl
+use strict;
+use warnings;
+use File::Find;
+use Data::Dumper;
+
+# utility to clean strings
+sub trim($) {
+    my $string = shift;
+    $string = "" if !defined($string);
+
+    $string =~ s/^\s+//;
+    $string =~ s/\s+$//;
+
+    # aggressive removal of blank lines
+    $string =~ s/\n+/\n/g;
+    return $string;
+}
+
+sub cleanup_packages {
+    my $file = shift;
+    my $tmp  = $file . ".tmp";
+    my $package_name;
+
+    open( OLD, "< $file" ) or die "open $file: $!";
+    open( NEW, "> $tmp" )  or die "open $tmp: $!";
+
+    while ( my $line = <OLD> ) {
+
+  # look for the first line of the file to contain a CREATE OR REPLACE STATEMENT
+        if ( $line =~
+m/^(CREATE\sOR\sREPLACE)\s*(PACKAGE|PACKAGE\sBODY)?\s(.+)\s(AS|IS)?/i
+          )
+        {
+
+            # look ahead to next line, in case the AS/IS is next
+            my $nextline = <OLD>;
+
+            # from the above IF clause, the package name is in buffer 3
+            $package_name = $3;
+
+             # if the package name and the AS/IS is on the same line, and
+             # the package name is quoted/prepended by the TRON2000 schema name
+            if ( $package_name =~ m/"TRON2000"\."(\w+)"(\s*|\S*)(AS|IS)/i ) {
+                # grab just the name and the AS/IS parts
+                $package_name =~ s/"TRON2000"\."(\w+)"(\s*|\S*)(AS|IS)/$1 $2/i;
+                trim($package_name);
+            }
+            elsif (    ( $package_name =~ m/"TRON2000"\."(\w+)"/i )
+                    && ( $nextline =~ m/(AS|IS)/ ) )
+            {
+
+# if the AS/IS was on the next line from the name, put them together on one line
+                $package_name =~ s/"TRON2000"\."(\w+)"(\s*|\S*)/$1/i;
+                $package_name = trim($package_name) . ' ' . trim($nextline);
+                trim($package_name);    # remove trailing carriage return
+            }
+
+            # now put the line back together
+            $line =~
+s/^(CREATE\sOR\sREPLACE)\s*(PACKAGE|PACKAGE\sBODY|FUNCTION|PROCEDURE)?\s(.+)\s(AS|IS)?/$1 $2 $package_name/ig;
+
+            # and print it to the file
+            print NEW "$line\n";
+        }
+        else {
+
+            # just a normal line - print it to the temp file
+            print NEW $line or die "print $tmp: $!";
+        }
+    }
+
+    # close up the files
+    close(OLD) or die "close $file: $!";
+    close(NEW) or die "close $tmp: $!";
+
+    # rename the temp file as the original file name
+    unlink($file) or die "unlink $file: $!";
+    rename( $tmp, $file ) or die "can't rename $tmp to $file: $!";
+}
+
+# find and clean up oracle files
+sub eachFile {
+    my $ext;
+    my $filename = $_;
+    my $fullpath = $File::Find::name;
+
+    if ( -f $filename ) {
+        ($ext) = $filename =~ /(\.[^.]+)$/;
+    }
+    else {
+
+        # ignore non files
+        return;
+    }
+
+    if ( $ext =~ /(\.spp|\.sps|\.spb|\.sf|\.sp)/i ) {
+        print "package: $filename\n";
+        cleanup_packages($fullpath);
+    }
+    else {
+        print "$filename not specified for processing!\n";
+    }
+}
+
+MAIN:
+{
+    my ( @files, $file );
+    my $dir = 'C:/1_atest';
+
+    # grab all the files for cleanup
+    find( \&eachFile, "$dir/" );
+
+    #open and evaluate each
+    foreach $file (@files)
+    {
+        # skip . and ..
+        next   if ( $file =~ /^\.$/ );
+        next if ( $file =~ /^\.\.$/ );
+          cleanup_file($file);
+      };
+}
+

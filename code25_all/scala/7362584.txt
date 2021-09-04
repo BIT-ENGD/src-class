@@ -1,0 +1,53 @@
+package chubaka
+
+import org.scalaquery.session._
+import org.scalaquery.session.Database.threadLocalSession
+import org.joda.time.DateMidnight
+import java.sql.Date
+
+import org.scalaquery.ql._
+import org.scalaquery.ql.TypeMapper._
+
+import org.scalaquery.ql.extended.OracleDriver.Implicit._
+import org.scalaquery.ql.extended.{ExtendedTable => Table}
+
+import org.scala_tools.time.Imports._
+import org.mindrot.BCrypt
+
+object MembershipUpdate {
+  def main(args: Array[String]) {
+    case class MembersElement(id: String, password: String, dateCreated: String)
+
+    val Members = new Table[(String, Option[String], Option[Date])]("MEMBERS") {
+      def id = column[String]("ID", O.PrimaryKey) // This is the primary key column
+      def password = column[Option[String]]("PASSWORD")
+      def dateCreated = column[Option[Date]]("DATECREATED")
+      // Every table needs a * projection with the same type as the table's type parameter
+      def * = id ~ password ~ dateCreated
+    }
+
+    // Connect to the database and execute the following block within a session
+    Database.forURL("jdbc:oracle:thin:scott/tiger@//test.chubaka:1521/legacydb", driver = "oracle.jdbc.OracleDriver") withSession {
+      // The session is never named explicitly. It is bound to the current
+      // thread as the threadLocalSession that we imported
+
+      def bcryptPassword(password: String) = BCrypt.hashpw(password, BCrypt.gensalt())
+      def dtToSqlDT(dt: DateMidnight) = new Date(dt.toDate.getTime)
+
+      var month = new DateMidnight(new DateMidnight().withDayOfMonth(1) + 1.months)
+
+      while (month > new DateTime(2006, 1, 1, 0, 0, 0, 0)) {
+        val prevMonth = month - 1.month
+
+        val q = Members.where{ p => 
+          (p.password isNotNull) && (p.dateCreated >= dtToSqlDT(prevMonth)) && (p.dateCreated < dtToSqlDT(month))
+        }
+
+        q.map(_.password.get).mutate(m => m.row = bcryptPassword(m.row))
+
+        month = prevMonth
+      }
+    }
+  }
+}
+

@@ -1,0 +1,120 @@
+function Email($name, $from, $to, $subject, $message, $bcc = null, $attachments = null)
+{
+    ini_set('SMTP', 'localhost');
+    ini_set('sendmail_from', $from);
+
+    $name = filter_var($name, FILTER_SANITIZE_STRING);
+    $from = filter_var($from, FILTER_SANITIZE_EMAIL);
+    $subject = filter_var($subject, FILTER_SANITIZE_STRING);
+
+    $boundary = '_Boundary_' . md5(microtime(true) . mt_rand(0, PHP_INT_MAX));
+
+    $headers = array
+    (
+        'MIME-Version: 1.0',
+        'Content-Type: multipart/mixed; boundary="Mixed' . $boundary . '"',
+        'Date: ' . date('r', time()),
+        'From: "' . $name . '" <' . $from . '>',
+        'Reply-To: "' . $name . '" <' . $from . '>',
+        'Return-Path: "' . $name . '" <' . $from . '>',
+        'X-Mailer: PHP ' . phpversion(),
+        'X-Priority: 2',
+        'X-MSMail-Priority: High',
+        'X-Originating-IP: ' . $_SERVER['SERVER_ADDR'],
+    );
+
+    if (is_null($to) === false)
+    {
+        if (is_array($to) === false)
+        {
+            $to = explode(',', $to);
+        }
+
+        foreach ($to as $key => $value)
+        {
+            $to[$key] = filter_var($value, FILTER_SANITIZE_EMAIL);
+        }
+
+        $to = implode(', ', array_filter($to));
+    }
+
+    if (is_null($bcc) === false)
+    {
+        if (is_array($bcc) === false)
+        {
+            $bcc = explode(',', $bcc);
+        }
+
+        foreach ($bcc as $key => $value)
+        {
+            $bcc[$key] = filter_var($value, FILTER_SANITIZE_EMAIL);
+        }
+
+        $headers[] = 'BCC: ' . implode(', ', array_filter($bcc));
+    }
+
+    if (is_null($attachments) === false)
+    {
+        settype($attachments, 'array');
+
+        foreach ($attachments as $key => $value)
+        {
+            if (is_file($value) === true)
+            {
+                $attachments[$key] = array
+                (
+                    '',
+                    '--Mixed' . $boundary,
+                    'Content-Type: application/octet-stream; name="' . basename($value) . '"',
+                    'Content-Disposition: attachment; filename="' . basename($value) . '"',
+                    'Content-Transfer-Encoding: base64',
+                    '',
+                    trim(chunk_split(base64_encode(file_get_contents($value)))),
+                );
+
+                $attachments[$key] = implode("\n", $attachments[$key]);
+            }
+
+            else
+            {
+                unset($attachments[$key]);
+            }
+        }
+
+        $attachments = implode("\n", $attachments) . "\n";
+    }
+
+    $message = array
+    (
+        'This is a multi-part message in MIME format.',
+        '',
+        '--Mixed' . $boundary,
+        'Content-Type: multipart/alternative; boundary="Alt' . $boundary . '"',
+        '',
+        '--Alt' . $boundary,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Disposition: inline',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        trim(strip_tags($message, '<a>')),
+        '',
+        '--Alt' . $boundary,
+        'Content-Type: text/html; charset="UTF-8"',
+        'Content-Disposition: inline',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        trim($message),
+        '',
+        '--Alt' . $boundary . '--',
+        $attachments,
+        '--Mixed' . $boundary . '--',
+    );
+
+    if (@mail($to, stripslashes($subject), implode("\n", $message), implode("\n", $headers)) === true)
+    {
+        return true;
+    }
+
+    return false;
+}
+

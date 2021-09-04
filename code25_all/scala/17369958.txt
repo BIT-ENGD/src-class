@@ -1,0 +1,55 @@
+def monitorStream = WebSocket.async[JsValue] { request =>
+  val promiseIn = promise[Iteratee[JsValue, Unit]]
+  val out = Concurrent.patchPanel[JsValue] { patcher =>
+    val in = Iteratee.foreach[JsValue] { json =>
+      val event:Option[String] = (json \ "event").asOpt[String]
+      val systemId = (json \ "systemId").as[Long]
+      event.getOrElse("") match {
+        case "join" => 
+          val physicalSystem = SystemIdHandler.getById(systemId)
+          val monitorOut = (MonitorStreamActor.joinMonitor(physicalSystem)) 
+          monitorOut map { enum =>
+            val success = patcher.patchIn(enum)
+        }
+      }
+    }.mapDone { _ => Logger.info("Disconnected") }
+    promiseIn.success(in)
+  }
+  future(Iteratee.flatten(promiseIn.future),out)
+}
+
+  def joinMonitor(physicalSystem: PhysicalSystem):
+    scala.concurrent.Future[Enumerator[JsValue]]
+     = {
+    val monitorActor = ActorBase.akkaSystem.actorFor("/user/system-" + physicalSystem.name +"/stream")
+    (monitorActor ? MonitorJoin()).map {
+      case MonitorConnected(enumerator) =>
+        enumerator
+      }
+
+  }
+
+class MonitorStreamActor() extends Actor {
+  val (monitorEnumerator, monitorChannel) = Concurrent.broadcast[JsValue]
+  import play.api.Play.current
+  def receive = {
+    case MonitorJoin() => {
+      Logger.debug ("Actor monitor join")
+      sender ! MonitorConnected(monitorEnumerator)
+    }
+    case UpdatedTranStates(systemName,tranStates) => {
+      //println("Got updated Tran States")
+      val json = Json.toJson(tranStates.map(m => Map("State" -> m._1, "Count" -> m._2) ))
+      //println("Pushing updates to monitorChannel")
+      sendUpdateToClients(systemName, "states", json)
+    }
+  def sendUpdateToClients(systemName:String, updateType:String, json:JsValue) {
+    monitorChannel.push(Json.toJson(
+      Map(
+        "dataType"->Json.toJson(updateType),
+        "systemName" -> Json.toJson(systemName),
+        "data"->json)))
+  }
+}
+}
+

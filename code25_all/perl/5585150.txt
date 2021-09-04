@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+use strict;
+use Getopt::Std;
+use Data::Dumper;
+
+my $usage = "Usage: isg-ppsrpt.pl -d config directory
+-d is required
+use portproto-rpt.pl -h to get this help\n\n";
+
+my @firewalls = ("foo","bar","baz");
+
+my %opts;
+my %configs;
+
+getopts('hd:', \%opts);
+
+if ($opts{h}) { die $usage };
+
+# Parser definition
+my %parse;
+
+$parse{service} = sub {
+ my $ref = shift;
+ my @elements = split(/\s+/, shift);
+ @elements[2]  =~ /\"(\S+)\"/;
+ my $name = $1;
+ my $out;
+ if ($elements[4] =~ /tcp|udp/) {
+  $out->{proto} = $elements[4];
+  $out->{port} = $elements[-1];
+ }
+ if ($out) {push @{$ref->{service}{$name}}, $out};
+};
+
+
+foreach (@firewalls) {
+ my $fw = sprintf "%s\\%s.config",$opts{d},$_;
+ if (-e $fw) {
+  $configs{$_} = parseconfig($fw);
+ } else {
+  die "Cannot find config file for $_ in \n";
+ }
+}
+
+sub parseconfig {
+  my $configref;
+  my $configfile = shift;
+  open (CONFIG,"$configfile");
+  foreach my $line (<CONFIG>) {
+   chomp $line;
+   my $type = (split(/\s+/,$line))[1];
+   if ($parse{$type}) {
+    $parse{$type}($configref,$line);
+   }
+   print Dumper(%$configref); # Dump 1
+  }
+  close(CONFIG);
+  print Dumper(%$configref); # Dump 2
+  return($configref);
+}
+

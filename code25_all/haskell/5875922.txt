@@ -1,0 +1,98 @@
+data T tag val = T val
+
+data A = A
+data B = B
+
+mkIntVal :: T a b -> T Int b
+mkIntVal (T x) = T x
+
+mkCharVal :: T a b -> T Char b
+mkCharVal (T x) = T x
+
+convert :: T Int a -> T Char b
+convert (T A) = mkCharVal $ T B
+convert (T B) = mkCharVal $ T A
+
+test.hs:13:12:
+    Couldn't match type `A' with `B'
+    In the pattern: A
+    In the pattern: T A
+    In an equation for `convert': convert (T A) = mkCharVal $ T B
+
+test.hs:13:17:
+    Couldn't match type `B' with `A'
+    Expected type: T Char b
+      Actual type: T Char B
+    In the expression: mkCharVal $ T B
+    In an equation for `convert': convert (T A) = mkCharVal $ T B
+
+Don Stewart
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+
+data C a = C a deriving Show
+
+class Convertable inVal outVal outTag | outVal -> outTag where
+    convert :: T Int inVal -> T outTag outVal
+
+instance Convertable A B Char where
+    convert (T A) = mkCharVal $ T B
+
+instance Convertable B A Char where
+    convert (T B) = mkCharVal $ T A
+
+instance Convertable a b Char => Convertable (C a) (C (T Char b)) Char where
+    convert (T (C val)) = mkCharVal $ T (C (convert val)) -- line 29
+
+test.hs:29:57:
+    Could not deduce (a ~ T Int inVal0)
+    from the context (Convertable a b Char)
+      bound by the instance declaration at test.hs:28:10-70
+      `a' is a rigid type variable bound by
+          the instance declaration at test.hs:28:22
+    In the first argument of `convert', namely `val'
+    In the first argument of `C', namely `(convert val)'
+    In the first argument of `T', namely `(C (convert val))'
+
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverlappingInstances #-}
+
+
+data T tag val = T val deriving Show
+
+data A = A deriving Show
+data B = B deriving Show
+data C a = C a deriving Show
+
+
+class Convertable inTag inVal outTag outVal | inTag -> outTag, inVal -> outVal
+where
+    convert :: T inTag inVal -> T outTag outVal
+
+instance Convertable Int A Char B where
+    convert (T A) = T B
+
+instance Convertable Int B Char A where
+    convert (T B) = T A
+
+instance (Convertable Int (T Int a) Char (T Char b), Convertable Int a Char b)
+    => Convertable Int (C (T Int a)) Char (C (T Char b)) where
+    convert (T (C x)) = T (C (convert x))
+
+instance Convertable Int (C (T Int A)) Char (C (T Char B)) where
+    convert (T (C x)) = T (C (convert x))
+
+instance Convertable Int (C (T Int B)) Char (C (T Char A)) where
+    convert (T (C x)) = T (C (convert x))
+
+*Main> convert $ mkIntVal $ T $ C $ mkIntVal $ T A
+T (C (T B))
+*Main> :t it
+it :: T Char (C (T Char B))
+

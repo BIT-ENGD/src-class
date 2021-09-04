@@ -1,0 +1,197 @@
+/*********************************
+*   echo1.cpp                    *
+*                                *
+*   Echo client - version 1      *
+**********************************/
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#include <string>
+#include <iostream>
+using namespace std;
+
+const int  MAXBUF  = 128;
+const int  MAXNAME = 80;
+
+SOCKET connectsock (char*, char*, char*);
+
+int main (int argc, char **argv) 
+{
+    char msg[MAXBUF] = "";
+    char buf[MAXBUF] = "";
+    char host[MAXNAME] = "";
+    char service[MAXNAME] = "";
+    int  len;
+    SOCKET s;
+
+    /* Must always initialize the Windows Sockets TCP/IP library */
+    WORD wVersion = 0x0202;
+    WSADATA wsaData;
+    int iResult = WSAStartup( wVersion, &wsaData);
+    if (iResult != 0) 
+    {
+        cout << "Unable to initialize Windows Socket library." << endl;
+        return 0;
+    }
+
+
+    string hostaddress = argv[1];
+
+    if(argv[2] == NULL)
+    {
+        strcpy_s(service, MAXNAME, "7");
+    }
+    else
+    {
+        strcpy_s(service, MAXNAME, argv[2]);
+    }
+
+    strcpy_s( host, MAXNAME, hostaddress.c_str() );
+
+
+
+    s = connectsock(host, service, "tcp");
+    if (s != INVALID_SOCKET) 
+    {
+
+        cout <<"Message?";
+        cin.getline(msg, MAXBUF);
+
+
+        // Now, let's try to send the message to the remote machine
+
+
+        len = send(s, msg, (int) strlen(msg), 0);
+        if (len > 0) 
+        {
+            cout << "Number of bytes sent: " << len << endl;
+            cout << endl;
+        } 
+        else 
+        {
+            cout << "Unable to send message to remote machine." << endl;
+            return 0;
+        }
+
+        // Message was sent.  Is there a reply from the remote machine?
+        len = recv(s, buf, sizeof(buf), 0);
+        if (len > 0) 
+        {
+            cout << "Received message: ";
+            for (int i=0; i<len; i++) cout << buf[i];
+            cout << endl;
+            cout << "Number of bytes received: " << len << endl << endl;
+        }
+        cout << endl << endl;
+
+        /* Close the socket (and thus the connection) */
+        shutdown(s,1);
+        closesocket(s);
+    }
+    WSACleanup();
+}
+
+
+/*------------------------------------------------------------------
+* connectsock - allocate & connect a remote socket using TCP or UDP
+*------------------------------------------------------------------
+*/
+SOCKET connectsock (char *host, char *service, char *protocol)
+{   
+    struct  hostent *phe;   
+    struct  servent *pse;
+    short   port;   
+    int     ihost;  
+
+
+    port = htons( (u_short) atoi(service)); // 1st try to convert string to integer
+    if (port == 0)
+    {                       // if that doesn't work, call service function
+        pse = getservbyname(service,NULL);
+        if (pse) 
+        {
+            port = pse->s_port;
+        }
+        else
+        {
+            cout << "Invalid service request." << endl;
+            return INVALID_SOCKET;
+        }
+    }
+/*
+    cout << "Service: " << service << endl;
+    cout << "Port:    " << htons(port) << endl;
+*/
+
+
+    ihost = inet_addr(host);    
+    if (ihost == INADDR_NONE) 
+    {   
+        phe = gethostbyname(host);
+        if (phe)
+        {
+            memmove(&ihost, phe->h_addr, phe->h_length);
+        }
+        else
+        {
+            cout << "Invalid Host." << endl;
+            return INVALID_SOCKET;
+        }
+    }
+/*
+    cout << "Network address for hostname:         " << host << endl;
+    cout << "32-bit address in Network Byte Order: " << ihost << endl;
+    cout << "32-bit address in Host Byte Order:    " << ntohl(ihost) << endl;
+
+    struct in_addr in;
+    in.S_un.S_addr = ihost;
+    cout << "Address as dotted decimal:            " << inet_ntoa(in) << endl;
+
+*/
+
+    struct sockaddr_in remote;  
+    SOCKET s;                   
+
+    if (_stricmp(protocol, "tcp") == 0) 
+    {   
+        s = socket(AF_INET, SOCK_STREAM, 0);
+
+        if (s < 0 || s == INVALID_SOCKET)
+        {
+            cout << "Cannot create socket" << endl;
+            return INVALID_SOCKET;
+        }
+
+
+        memset(&remote, 0, sizeof(remote));
+        remote.sin_family = AF_INET;
+        remote.sin_port = htons( (u_short) atoi(service));
+        remote.sin_addr.s_addr = inet_addr(host);
+
+
+        int status = connect(s, (LPSOCKADDR) &remote, sizeof(SOCKADDR));
+
+        if (status == SOCKET_ERROR) 
+        {
+            cout << "Remote host/service not found - or connection refused" << endl;
+            return INVALID_SOCKET;
+        }
+    }
+
+    else if (_stricmp(protocol,"udp") == 0) 
+    {   
+        s = socket(AF_INET, SOCK_DGRAM,  0);
+        if (s < 0 || s == INVALID_SOCKET) 
+        {
+            cout << "Cannot create socket" << endl;
+            return INVALID_SOCKET;
+        }
+    }
+    else 
+    {                                   // Unknown or unsupported protocol request
+        cout << "Invalid Protocol" << endl;
+        return INVALID_SOCKET;
+    }
+
+    return s;
+}
+

@@ -1,0 +1,67 @@
+data Elems = I {-# UNPACK #-} !GHC.Int.Int32
+             | S {-# UNPACK #-} !GHC.Int.Int32 {-# UNPACK #-} !(Ptr CChar)
+             | T {-# UNPACK #-} !(V.Vector Elems)
+                deriving (Show)
+
+T
+T
+ForeignPtr
+length
+Vector
+Storable
+ForeignPtr Elems
+Ptr
+ForeignPtr
+Ptr (ForeignPtr a)
+Storable instance
+(Storable a) => Ptr a
+{-# LANGUAGE MagicHash #-}
+import qualified Data.Vector.Storable as V
+import Foreign
+import Foreign.C.Types (CChar)
+import Foreign.Marshal.Array (lengthArray0)
+import GHC.Int
+
+data Elems = I {-# UNPACK #-} !GHC.Int.Int32
+             | S {-# UNPACK #-} !GHC.Int.Int32 {-# UNPACK #-} !(Ptr CChar)
+             | T {-# UNPACK #-} !(V.Vector Elems)
+                deriving (Show)
+
+instance Storable Elems where
+  sizeOf _ = sizeOf (undefined :: Word8) + sizeOf (undefined :: Int32) + sizeOf (undefined :: Ptr CChar)
+  alignment _ = 4
+
+  {-# INLINE peek #-}
+  peek p = do
+      let p1 = (castPtr p::Ptr Word8) `plusPtr` 1 -- get pointer to start of the element. First byte is type of element
+      t <- peek (castPtr p::Ptr Word8)
+      case t of
+        1 -> do 
+          x <- peek (castPtr p1 :: Ptr GHC.Int.Int32) 
+          return (I x)
+        2 -> do 
+          x <- peek (castPtr p1 :: Ptr GHC.Int.Int32) 
+          y <- peek (castPtr (p1 `plusPtr` 4) :: Ptr (Ptr CChar)) -- increment pointer by 4 bytes first
+          return (S x y)
+        _ -> do
+          x <- peek (castPtr p1 :: Ptr Int)
+          y <- peek (castPtr (p1 `plusPtr` 8) :: Ptr (ForeignPtr Elems)) 
+          return (T (V.unsafeFromForeignPtr y 0 x)) -- return vector
+
+  {-# INLINE poke #-}
+  poke p x = case x of
+      I a -> do
+        poke (castPtr p :: Ptr Word8) 1  
+        poke (castPtr p1) a
+      S a b -> do
+        poke (castPtr p :: Ptr Word8) 2
+        poke (castPtr p1) a
+        poke (castPtr (p1 `plusPtr` 4)) b -- increment pointer by 4 bytes first
+      T x -> do
+        poke (castPtr p :: Ptr Word8) 3
+        let (fp,_,n) = V.unsafeToForeignPtr x
+        poke (castPtr p1) n
+        poke (castPtr (p1 `plusPtr` 8)) fp
+
+      where  p1 = (castPtr p :: Ptr Word8) `plusPtr` 1 -- get pointer to start of the element. First byte is type of element
+

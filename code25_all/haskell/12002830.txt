@@ -1,0 +1,168 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+
+module Typed where
+
+import Control.Monad.State
+import Data.Lens.Lazy
+import Data.Lens.Template
+
+-- Generic Block.
+data Block state ports = Block { _blockState :: state, _blockPorts :: ports }
+
+-- For the logic we want to use, we need some state and ports.
+data LogicState = LogicState { _field :: Bool }
+data LogicPorts incoming outgoing =
+  LogicPorts { _input :: incoming, _output :: outgoing }
+
+makeLenses [ ''Block, ''LogicState, ''LogicPorts ]
+
+-- We need to describe how to reach the needed state and ports,
+-- and provide a piece of the logic.
+class LogicBlock block incoming outgoing | block -> incoming, block -> outgoing where
+  logicState :: block ~ Block state ports => Lens state LogicState
+  logicPorts :: block ~ Block state ports => Lens ports (LogicPorts incoming outgoing)
+  convert :: block ~ Block state ports => incoming -> State block outgoing
+  runLogic :: State block outgoing
+  runLogic = do
+    state <- access $ blockState
+    let myField = state ^. logicState ^. field
+    if myField
+    then do
+      ports <- access blockPorts
+      let inputMessage = ports ^. logicPorts ^. input
+      convert inputMessage
+    else
+      error "Sorry"
+
+-- My block uses the generic logic, and also maintains additional state
+-- and ports.
+data MyState = MyState { _myLogicState :: LogicState, _myMoreState :: Bool }
+data MyPorts = MyPorts { _myLogicPorts :: LogicPorts Int Bool, _myMorePorts :: Int }
+
+makeLenses [ ''MyState, ''MyPorts ]
+
+type MyBlock = Block MyState MyPorts
+
+instance LogicBlock MyBlock Int Bool where
+  logicState = myLogicState
+  logicPorts = myLogicPorts
+  convert x = return $ x > 0
+
+-- All this work to write:
+testMyBlock :: State MyBlock Bool
+testMyBlock = runLogic
+
+Typed.hs:39:7:
+    Could not deduce (block ~ Block state1 ports1)
+    from the context (LogicBlock block incoming outgoing)
+      bound by the class declaration for `LogicBlock'
+      at Typed.hs:(27,1)-(41,19)
+      `block' is a rigid type variable bound by
+              the class declaration for `LogicBlock' at Typed.hs:26:18
+    Expected type: StateT block Data.Functor.Identity.Identity outgoing
+      Actual type: State (Block state1 ports1) outgoing
+    In the return type of a call of `convert'
+    In a stmt of a 'do' block: convert inputMessage
+
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+module VTable where
+
+import Control.Monad.State
+import Data.Lens.Lazy
+import Data.Lens.Template
+
+-- Generic Block.
+data Block state ports = Block { _blockState :: state, _blockPorts :: ports }
+
+-- For the logic we want to use, we need some state and ports.
+data LogicState = LogicState { _field :: Bool }
+data LogicPorts incoming outgoing =
+  LogicPorts { _input :: incoming, _output :: outgoing }
+
+makeLenses [ ''Block, ''LogicState, ''LogicPorts ]
+
+-- We need to describe how to reach the needed state and ports,
+-- and provide a piece of the logic.
+data BlockLogic block incoming outgoing where
+  BlockLogic :: { logicState :: Lens state LogicState
+                , logicPorts :: Lens ports (LogicPorts incoming outgoing)
+                , convert :: incoming -> State block outgoing
+                }
+             -> BlockLogic (Block state ports) incoming outgoing
+
+-- | The generic piece of logic.
+runLogic :: forall block state ports incoming outgoing
+          . block ~ Block state ports
+         => BlockLogic block incoming outgoing
+         -> State block outgoing
+runLogic BlockLogic { .. } = do
+  state <- access $ blockState
+  let myField = state ^. logicState ^. field
+  if myField
+  then do
+    ports <- access blockPorts
+    let inputMessage = ports ^. logicPorts ^. input
+    convert inputMessage
+  else
+    error "Sorry"
+
+-- My block uses the generic logic, and also maintains additional state and ports.
+data MyState = MyState { _myLogicState :: LogicState, _myMoreState :: Bool }
+data MyPorts = MyPorts { _myLogicPorts :: LogicPorts Int Bool, _myMorePorts :: Int }
+
+makeLenses [ ''MyState, ''MyPorts ]
+
+type MyBlock = Block MyState MyPorts
+
+-- All this work to write:
+testMyBlock :: State MyBlock Bool
+testMyBlock = runLogic $ BlockLogic
+                         { logicState = myLogicState
+                         , logicPorts = myLogicPorts
+                         , convert = \x -> return $ x > 0
+                         }
+
+VTable.hs:44:5:
+    Could not deduce (block1 ~ Block state1 ports1)
+    from the context (block ~ Block state ports)
+      bound by the type signature for
+                 runLogic :: block ~ Block state ports =>
+                             BlockLogic block incoming outgoing -> State block outgoing
+      at VTable.hs:(37,1)-(46,17)
+    or from (block ~ Block state1 ports1)
+      bound by a pattern with constructor
+                 BlockLogic :: forall incoming outgoing state ports block.
+                               Lens state LogicState
+                               -> Lens ports (LogicPorts incoming outgoing)
+                               -> (incoming -> State block outgoing)
+                               -> BlockLogic (Block state ports) incoming outgoing,
+               in an equation for `runLogic'
+      at VTable.hs:37:10-26
+      `block1' is a rigid type variable bound by
+               a pattern with constructor
+                 BlockLogic :: forall incoming outgoing state ports block.
+                               Lens state LogicState
+                               -> Lens ports (LogicPorts incoming outgoing)
+                               -> (incoming -> State block outgoing)
+                               -> BlockLogic (Block state ports) incoming outgoing,
+               in an equation for `runLogic'
+               at VTable.hs:37:10
+    Expected type: block1
+      Actual type: block
+    Expected type: StateT
+                     block1 Data.Functor.Identity.Identity outgoing
+      Actual type: State block outgoing
+    In the return type of a call of `convert'
+    In a stmt of a 'do' block: convert inputMessage
+

@@ -1,0 +1,103 @@
+public class Repository<T> : IRepository<T> where T : class, new()
+{
+    protected IDataConnection _dcnf;
+
+    public Repository()
+    {
+        _dcnf = new DataConnectionFactory() as IDataConnection;
+    }
+
+    // Constructor injection for dependency on DataContext 
+    // to actually connect to a database
+    public Repository(IDataConnection dc)
+    {
+        _dcnf = dc;
+    }
+
+    /// <summary>
+    /// Return all instances of type T.
+    /// </summary>
+    /// <returns>IEnumerable<T></returns>
+    public virtual IEnumerable<T> GetAll()
+    {
+        return GetTable;
+    }
+
+    public virtual T GetById(int id)
+    {
+        var itemParam = Expression.Parameter(typeof(T), "item");
+        var whereExp = Expression.Lambda<Func<T, bool>>
+            (
+                Expression.Equal(
+                    Expression.Property(itemParam, PrimaryKeyName),
+                    Expression.Constant(id)
+                ), new ParameterExpression[] { itemParam }
+            );
+        return _dcnf.Context.GetTable<T>().Where(whereExp).Single();
+    }
+
+    /// <summary>
+    /// Return all instances of type T that match the expression exp.
+    /// </summary>
+    /// <param name="exp"></param>
+    /// <returns>IEnumerable<T></returns>
+    public virtual IEnumerable<T> FindByExp(Func<T, bool> exp)
+    {
+        return GetTable.Where<T>(exp);
+    }
+
+    /// <summary>See IRepository.</summary>
+    /// <param name="exp"></param><returns></returns>
+    public virtual T Single(Func<T, bool> exp)
+    {
+        return GetTable.Single(exp);
+    }
+
+    /// <summary>See IRepository.</summary>
+    /// <param name="entity"></param>
+    public virtual void MarkForDeletion(T entity)
+    {
+        _dcnf.Context.GetTable<T>().DeleteOnSubmit(entity);
+    }
+
+    /// <summary>
+    /// Create a new instance of type T.
+    /// </summary>
+    /// <returns>T</returns>
+    public virtual T Create()
+    {
+        //T entity = Activator.CreateInstance<T>();
+        T entity = new T();
+        GetTable.InsertOnSubmit(entity);
+        return entity;
+    }
+
+    /// <summary>See IRepository.</summary>
+    public virtual void SaveAll()
+    {
+        _dcnf.SaveAll();
+    }
+
+    #region Properties
+    private string PrimaryKeyName
+    {
+        get { return TableMetadata.RowType.IdentityMembers[0].Name; }
+    }
+
+    private System.Data.Linq.Table<T> GetTable
+    {
+        get { return _dcnf.Context.GetTable<T>(); }
+    }
+
+    private System.Data.Linq.Mapping.MetaTable TableMetadata
+    {
+        get { return _dcnf.Context.Mapping.GetTable(typeof(T)); }
+    }
+
+    private System.Data.Linq.Mapping.MetaType ClassMetadata
+    {
+        get { return _dcnf.Context.Mapping.GetMetaType(typeof(T)); }
+    }
+    #endregion
+}
+

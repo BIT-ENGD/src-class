@@ -1,0 +1,91 @@
+private function blob of_encryptdecrypt (blob ablob_data, string as_password, boolean ab_encrypt)
+// -----------------------------------------------------------------------------
+// SCRIPT:     n_cryptoapi.of_EncryptDecrypt
+//
+// PURPOSE:    This function will encrypt/decrypt the blob passed to it. Both
+//                  encrypt/decrypt have the same api calls except one so they
+//                  are combined to save coding.
+//
+// ARGUMENTS:  ablob_data   - The blob to be decrypted
+//                  as_password - The secret password
+//
+// RETURN:      Blob containing the decrypted data.
+//
+// DATE        PROG/ID      DESCRIPTION OF CHANGE / REASON
+// ----------  --------     -----------------------------------------------------
+// 12/26/2006   RolandS     Initial Coding
+// -----------------------------------------------------------------------------
+
+ULong hCryptProv, hHash, hKey
+ULong lul_datalen, lul_buflen, lul_error
+Blob lblob_buffer, lblob_value
+String ls_msgtext
+string ls_password
+
+// Get handle to CSP
+If Not CryptAcquireContext(hCryptProv, KEY_CONTAINER, is_cryptoservice, PROV_RSA_FULL, 0) Then
+    If Not CryptAcquireContext(hCryptProv, KEY_CONTAINER, is_cryptoservice, PROV_RSA_FULL, CRYPT_NEWKEYSET) Then
+        of_GetLastError(lul_error, ls_msgtext)
+        SignalError(lul_error, "CryptAcquireContext:~r~n~r~n" + ls_msgtext)
+    End If
+End If
+
+// Create a hash object
+If Not CryptCreateHash(hCryptProv, CALG_MD5, 0, 0, hHash) Then
+    of_GetLastError(lul_error, ls_msgtext)
+    SignalError(lul_error, "CryptCreateHash:~r~n~r~n" + ls_msgtext)
+End If
+
+// Hash the password
+If Not CryptHashData(hHash,as_password, Len(as_password), 0) Then
+    of_GetLastError(lul_error, ls_msgtext)
+    SignalError(lul_error, "CryptHashData:~r~n~r~n" + ls_msgtext)
+End If
+
+// Derive a session key from the hash object
+If Not CryptDeriveKey(hCryptProv, ENCRYPT_ALGORITHM, hHash, 0, hKey) Then
+    of_GetLastError(lul_error, ls_msgtext)
+    SignalError(lul_error, "CryptDeriveKey:~r~n~r~n" + ls_msgtext)
+End If
+
+// allocate buffer space
+lul_datalen = Len(ablob_data)
+lblob_buffer = ablob_data + Blob(Space(8))
+lul_buflen = Len(lblob_buffer)
+
+If ab_encrypt Then
+    // Encrypt data
+    If CryptEncrypt(hKey, 0, True, 0, lblob_buffer, lul_datalen, lul_buflen) Then
+        lblob_value = BlobMid(lblob_buffer, 1, lul_datalen)
+    Else
+        of_GetLastError(lul_error, ls_msgtext)
+        SignalError(lul_error, "CryptEncrypt:~r~n~r~n" + ls_msgtext)
+    End If
+Else
+    // Decrypt data
+    If CryptDecrypt(hKey, 0, True, 0, lblob_buffer, lul_datalen) Then
+        lblob_value = BlobMid(lblob_buffer, 1, lul_datalen)
+    Else
+        of_GetLastError(lul_error, ls_msgtext)
+        SignalError(lul_error, "CryptDecrypt:~r~n~r~n" + ls_msgtext)
+    End If
+End If
+
+// Destroy session key
+If hKey > 0 Then
+    CryptDestroyKey(hKey)
+End If
+
+// Destroy hash object
+If hHash > 0 Then
+    CryptDestroyHash(hHash)
+End If
+
+// Release CSP handle
+If hCryptProv > 0 Then
+    CryptReleaseContext(hCryptProv, 0)
+End If
+
+Return lblob_value
+end function
+

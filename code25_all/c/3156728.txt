@@ -1,0 +1,121 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+
+#include <sqlite3.h>
+
+// Error checks replaced with assert for brevity
+
+#define STRING_MAX 32
+
+// metadata for a audio track
+typedef struct {
+    char title[ STRING_MAX ];
+ char artist[ STRING_MAX ];
+ char album[ STRING_MAX ];
+} metadata_t;
+
+// some metadata for testing
+static metadata_t tracks[] = {
+    { "Mr Self Destruct", "Nine Inch Nails", "The Downward Spiral" },
+    { "Sit Down, Stand Up", "Radiohead", "Hail to the Thief" },
+    { "March of the Pigs", "Nine Inch Nails", "The Downward Spiral" },
+};
+// number of test tracks in the above array
+#define TRACK_COUNT ( sizeof( tracks ) / sizeof( tracks[ 0 ] ) )
+
+int main( int argc, char **argv ) {
+    sqlite3 *db;
+    int result = sqlite3_open_v2( "database.db3", &db,
+     SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "unix-none" );
+    assert( result == SQLITE_OK );
+
+    // create the three tables
+
+    // artists have a name
+    result = sqlite3_exec( db, "CREATE TABLE IF NOT EXISTS artists(\
+        artist_id INTEGER PRIMARY KEY,\
+        name TEXT UNIQUE\
+        );",
+        NULL, NULL, NULL );
+    assert( result == SQLITE_OK );
+
+    // albums have a name and an artist
+    result = sqlite3_exec( db, "CREATE TABLE IF NOT EXISTS albums(\
+        album_id INTEGER PRIMARY KEY,\
+        name TEXT UNIQUE,\
+        artist_id INTEGER,\
+        UNIQUE( name, artist_id )\
+        );",
+        NULL, NULL, NULL );
+    assert( result == SQLITE_OK );
+
+    // titles have a name and belong to an album
+    result = sqlite3_exec( db, "CREATE TABLE IF NOT EXISTS titles(\
+        title_id INTEGER PRIMARY KEY,\
+        name TEXT,\
+        album_id INTEGER\
+        );",
+        NULL, NULL, NULL );
+    assert( result == SQLITE_OK );
+
+    // insert the metadata into the databse, one track at a time
+    int i;
+    for ( i = 0; i < TRACK_COUNT; ++i ) {
+        char command[ 1024 ]; // The SQL to execute
+        int result;
+        sqlite3_stmt *stmt;
+
+        // Ignore the UNIQUE error if the artist is already in the table.
+        // This makes sqlite3_last_insert_rowid() not work.
+        (void)sqlite3_snprintf( 1024, command,
+            "INSERT OR IGNORE INTO artists( name )\
+            VALUES( '%q' );",
+            tracks[ i ].artist );
+        result = sqlite3_exec( db, command, NULL, NULL, NULL );
+        assert( result == SQLITE_OK );
+
+        // Get the rowid for the newly inserted artist
+        (void)sqlite3_snprintf( 1024, command,
+            "SELECT artist_id FROM artists WHERE name='%q';",
+            tracks[ i ].artist );
+        sqlite3_prepare( db, command, strlen( command ), &stmt, NULL );
+        assert( sqlite3_column_count( stmt ) == 1 );
+        sqlite3_step( stmt );
+        int artist_id = sqlite3_column_int( stmt, 0 );
+        assert( sqlite3_step( stmt ) == SQLITE_DONE );
+        sqlite3_finalize( stmt );
+
+        // Ignore the UNIQUE error if the album/artist_id combo is
+        // already in the table
+        (void)sqlite3_snprintf( 1024, command,
+            "INSERT OR IGNORE INTO albums( name, artist_id )\
+            VALUES( '%q', %d );",
+            tracks[ i ].album, artist_id );
+        result = sqlite3_exec( db, command, NULL, NULL, NULL );
+        assert( result == SQLITE_OK );
+
+        // Get the rowid for the newly inserted album
+        (void)sqlite3_snprintf( 1024, command,
+            "SELECT album_id FROM albums WHERE name='%q';",
+            tracks[ i ].album );
+        sqlite3_prepare( db, command, strlen( command ), &stmt, NULL );
+        assert( sqlite3_column_count( stmt ) == 1 );
+        sqlite3_step( stmt );
+        int album_id = sqlite3_column_int( stmt, 0 );
+        assert( sqlite3_step( stmt ) == SQLITE_DONE );
+        sqlite3_finalize( stmt );
+
+        // Finally, insert the track title and the album it came from
+        (void)sqlite3_snprintf( 1024, command,
+            "INSERT INTO titles( name, album_id )\
+            VALUES( '%q', %d );",
+            tracks[ i ].title, album_id );
+        result = sqlite3_exec( db, command, NULL, NULL, NULL );
+        assert( result == SQLITE_OK );
+    }
+    sqlite3_close( db );
+    return ( 0 );
+}
+

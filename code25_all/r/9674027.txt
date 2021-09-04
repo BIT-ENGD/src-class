@@ -1,0 +1,189 @@
+require("digest")
+
+setRefClass(
+    "Observer",
+    fields=list(
+        .X="environment"
+    ),
+    methods=list(
+        notify=function(uid, ...) {
+            message(paste("Notifying subscribers of model uid: ", uid, sep=""))
+            temp <- get(uid, .self$.X)
+            if (length(temp$subscribers)) {
+                # Call method updateView() for each subscriber reference
+                sapply(temp$subscribers, function(x) {
+                    x$updateView()        
+                })
+            }    
+            return(TRUE)
+        }
+    )
+)
+
+setRefClass(
+    "Model",
+    fields=list(
+        .X="data.frame",
+        state="character",
+        uid="character",
+        observer="Observer"
+    ),
+    methods=list(
+        initialize=function(...) {
+            # Make sure all inputs are used ('...')
+            .self <- callSuper(...)
+            # Ensure uid
+            .self$uid <- digest(c(.self, Sys.time()))
+            # Ensure hash key of initial state
+            .self$state <- digest(.self$.X)
+            # Register uid in observer
+            assign(.self$uid, list(state=.self$state), .self$observer$.X)
+            .self
+        },
+        multiply=function(x, ...) {
+            .self$.X <- .X * x 
+            # Handle state change
+            statechangeDetect()
+            return(TRUE)
+        },
+        publish=function(...) {
+            message(paste("Publishing state change for model uid: ", 
+                .self$uid, sep=""))
+            # Publish current state to observer
+            if (!exists(.self$uid, .self$observer$.X)) {
+                assign(.self$uid, list(state=.self$state), .self$observer$.X)
+            } else {
+                temp <- get(.self$uid, envir=.self$observer$.X)
+                temp$state <- .self$state
+                assign(.self$uid, temp, .self$observer$.X)    
+            }
+            # Make observer notify all subscribers
+            .self$observer$notify(uid=.self$uid)
+            return(TRUE)
+        },
+        statechangeDetect=function(...) {
+            out <- TRUE
+            # Hash key of current state
+            state <- digest(.self$.X)
+            if (length(.self$state)) {
+                out <- .self$state != state
+                if (out) {
+                # Update state if it has changed
+                    .self$state <- state
+                }
+            }    
+            if (out) {
+                message(paste("State change detected for model uid: ", 
+                   .self$uid, sep=""))
+                # Publish state change to observer
+                .self$publish()
+            }    
+            return(out)
+        }
+    )
+)
+
+setRefClass(
+    "Controller",
+    fields=list(
+        model="Model",
+        views="list"
+    ),
+    methods=list(
+        multiply=function(x, ...) {
+            # Call respective method of model
+            .self$model$multiply(x) 
+        },
+        subscribe=function(...) {
+            uid     <- .self$model$uid
+            envir   <- .self$model$observer$.X 
+            temp <- get(uid, envir)
+            # Add itself to subscribers of underlying model
+            temp$subscribers <- c(temp$subscribers, .self)
+            assign(uid, temp, envir)    
+        },
+        updateView=function(...) {
+            # Call display method of each registered view
+            sapply(.self$views, function(x) {
+                x$display(.self$model)    
+            })
+            return(TRUE)
+        }
+    )
+)
+setRefClass(
+    "View1",
+    methods=list(
+        display=function(model, x=1, y=2, ...) {
+            plot(x=model$.X[,x], y=model$.X[,y])
+        }
+    )
+)
+setRefClass(
+    "View2",
+    methods=list(
+        display=function(model, ...) {
+            print(model$.X)
+        }
+    )
+)
+
+setRefClass(
+    "MyData",
+    fields=list(
+        .X="data.frame"
+    ),
+    methods=list(
+        modelMake=function(...){
+            new("Model", .X=.self$.X)
+        }
+    )
+)
+
+x <- new("MyData", .X=data.frame(a=1:3, b=10:12))
+
+mod <- x$modelMake()
+mod$.X
+
+> mod$uid
+[1] "fdf47649f4c25d99efe5d061b1655193"
+# Field value automatically set when initializing object.
+# See 'initialize()' method of class 'Model'.
+
+> mod$state
+[1] "6d95a520d4e3416bac93fbae88dfe02f"
+# Field value automatically set when initializing object.
+# See 'initialize()' method of class 'Model'.
+
+> ls(mod$observer$.X)
+[1] "fdf47649f4c25d99efe5d061b1655193"
+
+> get(mod$uid, mod$observer$.X)
+$state
+[1] "6d95a520d4e3416bac93fbae88dfe02f"
+
+view1 <- new("View1")
+view2 <- new("View2")
+cont  <- new("Controller", model=mod, views=list(view1, view2))
+
+cont$subscribe()
+
+get(mod$uid, mod$observer$.X)
+
+> cont$updateView()
+  a  b
+1 1 10
+2 2 11
+3 3 12
+[1] TRUE
+
+> cont$model$multiply(x=10)
+State change detected for model uid: fdf47649f4c25d99efe5d061b1655193
+Publishing state change for model uid: fdf47649f4c25d99efe5d061b1655193
+Notifying subscribers of model uid: fdf47649f4c25d99efe5d061b1655193
+   a   b
+1 10 100
+2 20 110
+3 30 120
+[1] TRUE
+

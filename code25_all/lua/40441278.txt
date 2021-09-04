@@ -1,0 +1,47 @@
+server {
+    listen 80;
+
+    location /{
+        set $target '';
+        access_by_lua '
+            local key = ngx.var.http_host
+            if not key then
+                ngx.log("No request URL found")
+                return ngx.exit(400)
+            end
+
+            local redis = require "resty.redis"
+            local red = redis:new()
+
+            red:set_timeout(1000) -- 1 second
+
+            local ok, err = red:connect("<server_ip>", <server_port>)
+            if not ok then
+                ngx.log("Failed to connect to Reddis server")
+                return ngx.exit(500)
+            end
+
+            local res, err = red:auth("<pass>")
+            if not res then
+                ngx.say("Failed to authenticate for Redis Server")
+                return ngx.exit(500)
+            end
+
+            local host, err = red:get(key)
+            if not host then
+                ngx.log("Failed to retrieve Redis key")
+                return ngx.exit(500)
+            end
+
+            if host == ngx.null then
+                ngx.log("No host found")
+                return ngx.exit(400)
+            end
+
+            ngx.var.target = host
+        ';
+
+        proxy_pass http://$target;
+    }
+}
+

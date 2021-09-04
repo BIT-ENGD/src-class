@@ -1,0 +1,79 @@
+[(i, j, val)]
+j
+j
+i
+(i, j)
+(i, j, val_1)
+(i, j, val_2)
+(i, j, val_1 + val_2)
+i
+(i - 1)
+j
+i + j - 1
+i - 1 + j - 1 + 1
+l_1 = [ (1, 1, 1), (2, 1, 1), (4, 1, 1), (1, 4, 1), (2, 4, 1), (4, 4, 1) ]
+l_2 = [ (1, 1, 1), (3, 1, 1), (4, 1, 1), (1, 4, 1), (3, 4, 1), (4, 4, 1) ] 
+
+l_3 = [ (1, 1, 2), (2, 1, 1), (3, 1, 1), (4, 1, 2), (1, 4, 2), (2, 4, 2), (3, 4, 1), (4, 4, 2) ] 
+
+{-# LANGUAGE ParallelArrays #-}
+{-# OPTIONS_GHC -fvectorise #-}
+
+module Bsearch ( interfaceSparse ) where
+import qualified Data.Array.Parallel as P
+import Data.Array.Parallel.PArray
+import qualified Data.Array.Parallel.Prelude as Pre
+import qualified Data.Array.Parallel.Prelude.Int as I
+import qualified Data.Array.Parallel.Prelude.Double as D
+
+bSearch :: ( I.Int , I.Int , D.Double ) -> [: ( I.Int , I.Int ,D.Double ) :] -> I.Int
+bSearch elem@( i , j , val ) xs = ret where
+  ret = helpBsearch 0 len where
+        len = P.lengthP xs
+        helpBsearch :: I.Int -> I.Int -> I.Int
+        helpBsearch lo hi
+           | lo I.>= hi = lo
+           | cond  = helpBsearch ( mid I.+ 1 ) hi
+           | otherwise = helpBsearch lo mid
+           where mid = I.div ( lo I.+ hi ) 2
+             ( i' , j' , val' ) = xs P.!: mid
+             cond = case () of
+                     _| j' I.< j Pre.|| ( j I.== j' Pre.&& i' I.<i )  -> True
+                      | otherwise ->  False
+
+bSearchFun :: [: ( I.Int , I.Int , D.Double ) :] -> [: ( I.Int ,I.Int , D.Double ) :] -> [:I.Int :]
+bSearchFun xs ys = P.mapP ( \( x , y ) -> x I.+ y ) ( P.indexedP ( P.mapP  ( \x ->  bSearch x ys ) xs ) )
+
+bSearchMain :: [: ( I.Int , I.Int , D.Double ) :] -> [: ( I.Int , I.Int , D.Double ) :] -> [: ( I.Int  , ( I.Int , I.Int , D.Double ) ) :]
+bSearchMain xs ys = l_1 where --here change l_2 for second list
+    lst = [: bSearchFun xs ys  , bSearchFun ys xs  :]
+    first = lst P.!: 0
+    second = lst P.!: 1
+    l_1 = P.zipP first xs
+    l_2 = P.zipP second ys
+
+interfaceSparse :: PArray ( Int , Int , Double )  ->  PArray ( Int ,Int , Double )  -> PArray   ( Int , ( Int , Int , Double ) )
+{-# NOINLINE interfaceSparse #-}
+interfaceSparse  xs ys = P.toPArrayP ( bSearchMain ( P.fromPArrayPxs ) ( P.fromPArrayP ys ) ) 
+
+module Main where
+import Bsearch
+import qualified Data.Array.Parallel.PArray as P
+import Data.List
+
+main = do
+ let
+   l_1 = P.fromList $ ( [ ( 1 , 1 , 1 ) , ( 2 , 1 , 1)  , ( 4 , 1 , 1 ) , ( 1 , 4 , 1 ) ,( 2 , 4 , 1 ) , ( 4 ,4 , 1 ) ] :: [ ( Int ,Int , Double ) ] )
+   l_2 = P.fromList $ ( [ ( 1 , 1 , 1 ) , ( 3 , 1 , 1 ) , ( 4 , 1 , 1) , ( 1 , 4 , 1 ) , ( 3 , 4 , 1 ) , ( 4 , 4 , 1 ) ] :: [ ( Int , Int , Double )] )
+   e = interfaceSparse l_1 l_2
+ print e 
+
+[ntro@localhost parBsearch]$ ghc -c -Odph -fdph-par -fforce-recomp Bsearch.hs
+[ntro@localhost parBsearch]$ ghc -c -Odph -fdph-par -fforce-recomp Main.hs
+[ntro@localhost parBsearch]$ ghc -o Bsearch -threaded -rtsopts -fdph-par Main.o Bsearch.o
+
+[ntro@localhost parBsearch]$ ./Bsearch --first list
+fromList<PArray> [(0,(1,1,1.0)),(2,(2,1,1.0)),(4,(4,1,1.0)),(6,(1,4,1.0)),(8,(2,4,1.0)),(10 (4,4,1.0))]
+[ntro@localhost parBsearch]$ ./Bsearch  -- second list
+fromList<PArray> [(0,(1,1,1.0)),(3,(3,1,1.0)),(4,(4,1,1.0)),(6,(1,4,1.0)),(9,(3,4,1.0)),(10,(4,4,1.0))] 
+

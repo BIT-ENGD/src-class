@@ -1,0 +1,143 @@
+public partial class Form1 : Form
+{       
+    public Form1( )
+    {
+        InitializeComponent( );
+        testPBox1.Image = Properties.Resources.test;
+        trackBar1.Value = 100;
+        trackBar1.ValueChanged += trackBar1_ValueChanged;
+    }     
+
+    void trackBar1_ValueChanged( object sender, EventArgs e )
+    {
+        testPBox1.IntensityScale = (float) trackBar1.Value / 100;
+    }
+}
+
+class TestPBox : Control
+{
+    private const int MIN_SAT_WARNING = 240;        
+    private Bitmap m_srcBitmap;
+    private Bitmap m_dispBitmap;
+    private float m_scale;        
+    BackgroundWorker worker;
+
+    public TestPBox( )
+    {
+        this.DoubleBuffered = true;                        
+        worker = new BackgroundWorker( );
+        worker.DoWork += new DoWorkEventHandler( worker_DoWork );
+        IntensityScale = 1.0f;
+    }       
+
+    public Bitmap Image
+    {
+        get
+        {
+            return m_dispBitmap;
+        }
+        set
+        {
+            if ( value != null )
+            {
+                m_srcBitmap = value;
+                m_dispBitmap = (Bitmap) value.Clone( );
+                Invalidate( );
+                OnImageChanged( EventArgs.Empty );
+            }
+        }
+    }
+
+    [DefaultValue( 1.0f )]
+    public float IntensityScale
+    {
+        get
+        {
+            return m_scale;
+        }
+        set
+        {
+            if ( value == 0.0 || m_scale == value )
+            {
+                return;
+            }
+
+            m_scale = value;
+            if ( !this.DesignMode && StartImageProcThread( ) )
+            {
+                OnIntensityscaleChanged( EventArgs.Empty );
+            }                
+        }
+    }
+
+    private bool StartImageProcThread( )
+    {                        
+        if ( !worker.IsBusy )
+        {                     
+            worker.RunWorkerAsync( );
+            return true;
+        }
+
+        return false;
+    }
+
+    private void worker_DoWork( object sender, DoWorkEventArgs e )
+    {
+        ChangeIntensity( );
+    }
+
+    private unsafe void ChangeIntensity( )
+    {
+        if ( Image != null )
+        {                
+            BitmapData srcData = m_srcBitmap.LockBits
+                    ( new Rectangle( new Point( 0, 0 ), m_srcBitmap.Size ), ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb );
+            BitmapData dspData = m_dispBitmap.LockBits
+                    ( new Rectangle( new Point( 0, 0 ), m_dispBitmap.Size ), ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb );
+            byte* pSrc = (byte*) srcData.Scan0;
+            byte* pDsp = (byte*) dspData.Scan0;
+
+            for ( int y = 0; y < m_dispBitmap.Height; ++y )
+            {
+                for ( int x = 0; x < m_dispBitmap.Width; ++x )
+                {
+                    // we are dealing with a monochrome image, so r = g = b.
+                    // We only need to get one value to use for all r, g, and b.
+                    byte b = (byte) CompMinMax( 0, 255, (int) ( pSrc[0] * m_scale ) );
+                    Color c = ( b > MIN_SAT_WARNING ) ? Color.FromArgb( b, Color.Red ) : Color.FromArgb( 255, b, b, b );
+
+                    pDsp[3] = (byte) c.A;
+                    pDsp[2] = (byte) c.R;
+                    pDsp[1] = (byte) c.G;
+                    pDsp[0] = (byte) c.B;
+
+                    pSrc += 4;
+                    pDsp += 4;
+                }
+            }
+
+            m_srcBitmap.UnlockBits( srcData );
+            m_dispBitmap.UnlockBits( dspData );
+            this.Invalidate( );           
+        }
+    }
+
+    private int CompMinMax( int min, int max, int value )
+    {
+        if ( value > max ) return max;
+        if ( value < min ) return min;
+        return value;
+    }
+
+    protected override void OnPaint( PaintEventArgs e )
+    {
+        if ( Image != null )
+        {               
+            Graphics g = e.Graphics;
+            Rectangle drawingRect = PaintUtils.CenterInRect( ClientRectangle, PaintUtils.ScaleRect( ClientRectangle, Image.Size ).Size );
+            g.DrawImage( Image, drawingRect, 0, 0, Image.Width, Image.Height, GraphicsUnit.Pixel );         
+        }
+
+        base.OnPaint( e );
+    }
+

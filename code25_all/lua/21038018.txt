@@ -1,0 +1,41 @@
+posix.wait(cpid)
+-- returns true on connected, else false
+function wifi.wpa_supplicant_status()
+    -- iw dev wlan0-1 link
+    local r,w = posix.pipe()
+    local cpid = posix.fork()
+    if cpid == 0 then --child writes to pipe
+        --close unused read end
+        local devnull = posix.open("/dev/null", posix.O_RDWR)
+        posix.close(r)
+        posix.dup2(devnull, 0)
+        posix.dup2(w, 1)
+        posix.dup2(devnull, 2)
+        local dir = wifi.wpa_supplicant_dir()
+        local iface = posix.basename(dir)
+        iface = string.gsub(iface, "wpa_supplicant%-",'')
+        posix.exec('/usr/sbin/iw', {'dev', iface, 'link'})
+        posix._exit(-1)
+    elseif cpid > 0 then
+        --parent reads from pipe, close write end
+        posix.close(w)
+        local buf = ''
+        while true do
+            local tmp = posix.read(r, 100)
+            if tmp ~= nil and #tmp > 0 then
+                buf = buf .. tmp
+            else
+                break
+            end
+        end
+        -- TODO, check exit value, to see if entry exists or not
+        while posix.wait(cpid) ~= cpid do print("waiting in wpa_supplicant_status") end
+        print("status is "..buf)
+        if string.find(buf, "Connected to", 1, true) then
+            return true
+        else
+            return false
+        end
+    end
+end
+

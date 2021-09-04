@@ -1,0 +1,77 @@
+Upgrade: WebSocket
+Connection: Upgrade
+Host: akira:22222
+Origin: http://akira:22222
+Sec-WebSocket-Key1: ;39LP*eC48 n /r0P6  v6548
+Sec-WebSocket-Key2: 1 0  r 362547    4  4  G
+
+Key1: 3948066548 / 4 = 987016637
+Key2: 1036254744 / 12 = 86354562
+
+000001  48 54 54 50  2F 31 2E 31  20 31 30 31  20 57 65 62  HTTP/1.1 101 Web
+000011  20 53 6F 63  6B 65 74 20  50 72 6F 74  6F 63 6F 6C   Socket Protocol
+000021  20 48 61 6E  64 73 68 61  6B 65 0D 0A  55 70 67 72   Handshake..Upgr
+000031  61 64 65 3A  20 57 65 62  53 6F 63 6B  65 74 0D 0A  ade: WebSocket..
+000041  43 6F 6E 6E  65 63 74 69  6F 6E 3A 20  55 70 67 72  Connection: Upgr
+000051  61 64 65 0D  0A 53 65 63  2D 57 65 62  53 6F 63 6B  ade..Sec-WebSock
+000061  65 74 2D 4F  72 69 67 69  6E 3A 20 68  74 74 70 3A  et-Origin: http:
+000071  2F 2F 61 6B  69 72 61 3A  32 32 32 32  32 0D 0A 53  //akira:22222..S
+000081  65 63 2D 57  65 62 53 6F  63 6B 65 74  2D 4C 6F 63  ec-WebSocket-Loc
+000091  61 74 69 6F  6E 3A 20 77  73 3A 2F 2F  61 6B 69 72  ation: ws://akir
+0000A1  61 3A 32 32  32 32 32 2F  73 6F 63 6B  65 74 0D 0A  a:22222/socket..
+0000B1  0D 0A FF F4  2E 12 9D DC  12 C2 56 40  B8 09 F3 84  ..........V@....
+0000C1  CA EF .. ..  .. .. .. ..  .. .. .. ..  .. .. .. ..  ..##############
+
+require('crypto')
+local handshake = {
+    "HTTP/1.1 101 Web Socket Protocol Handshake",
+    "Upgrade: WebSocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Origin: " .. request.header.origin,
+    "Sec-WebSocket-Location: " ..
+        request.header.origin:gsub('http:', 'ws:') .. "/socket",
+'\r\n'}
+
+log.debug("Request header:\n%s\n", table.concat(request.rawheader, '\n'))
+
+local client = response.socket
+client:settimeout(10)
+
+local keys =
+    {request.header.sec_websocket_key1, request.header.sec_websocket_key2}
+local sum = {}
+for i, k in ipairs(keys) do
+    local nspc = 0
+    sum[i] = ''
+    k:gsub('%d', function(n) sum[i] = sum[i] ..n end)
+    k:gsub(' ', function() nspc = nspc + 1 end)
+    log.debug("Key%d: %s / %d = ", i, sum[i], nspc)
+    sum[i] = tostring(tonumber(sum[i]) / nspc)
+    log.debug("%s\n", sum[i])
+end
+
+local key = assert(client:receive(8))
+local bytes = {key:byte(1, #key)}
+local keydump = {}
+for i = 1, #bytes do keydump[i] = ('%02X'):format(bytes[i]) end
+log.debug("Key3: %s\n", table.concat(keydump, ' '))
+
+local resp = crypto.evp.digest('md5', table.concat(sum) .. key, true)
+handshake = table.concat(handshake, '\r\n') .. resp
+
+client:settimeout(0.1)
+log.debug("Send handshake:\n%s\n", rena.debug.hexdump(handshake))
+client:send(handshake)
+
+repeat
+    local res, err = client:receive('*l')
+    if res then log.debug("R: %s\n", res) end
+
+    local res, err = client:send("Test " .. tostring(os.time()) .. '\n')
+    if res then socket.sleep(1)
+    elseif err == 'timeout' then log.debug("WS: Timed out\n")
+    elseif err == 'closed' then log.debug("WS: Closed\n")
+    else log.error("WS: Error: %s\n", tostring(err))
+    end
+until not res
+

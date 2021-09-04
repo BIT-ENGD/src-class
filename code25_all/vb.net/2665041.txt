@@ -1,0 +1,131 @@
+Dictionary
+IXmlSerializable
+Sub Main()
+    Dim z As New SerializableDictionary(Of String, String)
+    z.Add("asdf", "asd")
+    Console.WriteLine(z.Serialize)
+End Sub
+
+<?xml version="1.0" encoding="utf-16"?><Entry key="asdf" value="asd" />
+
+<Serializable()> _
+Public Class SerializableDictionary(Of TKey, TValue) : Inherits Dictionary(Of TKey, TValue) : Implements IXmlSerializable
+    Private Const EntryString As String = "Entry"
+    Private Const KeyString As String = "key"
+    Private Const ValueString As String = "value"
+    Private Shared ReadOnly AttributableTypes As Type() = New Type() {GetType(Boolean), GetType(Byte), GetType(Char), GetType(DateTime), GetType(Decimal), GetType(Double), GetType([Enum]), GetType(Guid), GetType(Int16), GetType(Int32), GetType(Int64), GetType(SByte), GetType(Single), GetType(String), GetType(TimeSpan), GetType(UInt16), GetType(UInt32), GetType(UInt64)}
+    Private Shared ReadOnly GetIsAttributable As Predicate(Of Type) = Function(t) AttributableTypes.Contains(t)
+    Private Shared ReadOnly IsKeyAttributable As Boolean = GetIsAttributable(GetType(TKey))
+    Private Shared ReadOnly IsValueAttributable As Boolean = GetIsAttributable(GetType(TValue))
+    Private Shared ReadOnly GetElementName As Func(Of Boolean, String) = Function(isKey) If(isKey, KeyString, ValueString)
+
+    Public Function GetSchema() As System.Xml.Schema.XmlSchema Implements System.Xml.Serialization.IXmlSerializable.GetSchema
+        Return Nothing
+    End Function
+
+    Public Sub WriteXml(ByVal writer As XmlWriter) Implements IXmlSerializable.WriteXml
+        For Each entry In Me
+            writer.WriteStartElement(EntryString)
+
+            WriteData(IsKeyAttributable, writer, True, entry.Key)
+            WriteData(IsValueAttributable, writer, False, entry.Value)
+
+            writer.WriteEndElement()
+        Next
+    End Sub
+
+    Private Sub WriteData(Of T)(ByVal attributable As Boolean, ByVal writer As XmlWriter, ByVal isKey As Boolean, ByVal value As T)
+        Dim name = GetElementName(isKey)
+
+        If attributable Then
+            writer.WriteAttributeString(name, value.ToString)
+        Else
+            Dim serializer As New XmlSerializer(GetType(T))
+            writer.WriteStartElement(name)
+            serializer.Serialize(writer, value)
+            writer.WriteEndElement()
+        End If
+    End Sub
+
+    Public Sub ReadXml(ByVal reader As XmlReader) Implements IXmlSerializable.ReadXml
+        Dim empty = reader.IsEmptyElement
+
+        reader.Read()
+        If empty Then Exit Sub
+
+        Clear()
+
+        While reader.NodeType <> XmlNodeType.EndElement
+            While reader.NodeType = XmlNodeType.Whitespace
+                reader.Read()
+
+                Dim key = ReadData(Of TKey)(IsKeyAttributable, reader, True)
+                Dim value = ReadData(Of TValue)(IsValueAttributable, reader, False)
+
+                Add(key, value)
+
+                If Not IsKeyAttributable AndAlso Not IsValueAttributable Then reader.ReadEndElement() Else reader.Read()
+
+                While reader.NodeType = XmlNodeType.Whitespace
+                    reader.Read()
+                End While
+            End While
+
+            reader.ReadEndElement()
+        End While
+    End Sub
+
+    Private Function ReadData(Of T)(ByVal attributable As Boolean, ByVal reader As XmlReader, ByVal isKey As Boolean) As T
+        Dim name = GetElementName(isKey)
+        Dim type = GetType(T)
+
+        If attributable Then
+            Return Convert.ChangeType(reader.GetAttribute(name), type)
+        Else
+            Dim serializer As New XmlSerializer(type)
+
+            While reader.Name <> name
+                reader.Read()
+            End While
+
+            reader.ReadStartElement(name)
+            Dim value = serializer.Deserialize(reader)
+            reader.ReadEndElement()
+
+            Return value
+        End If
+    End Function
+
+    Public Shared Function Serialize(ByVal dictionary As SerializableDictionary(Of TKey, TValue)) As String
+        Dim sb As New StringBuilder(1024)
+        Dim sw As New StringWriter(sb)
+        Dim xs As New XmlSerializer(GetType(SerializableDictionary(Of TKey, TValue)))
+
+        xs.Serialize(sw, dictionary)
+        sw.Dispose()
+        Return sb.ToString
+    End Function
+
+    Public Shared Function Deserialize(ByVal xml As String) As SerializableDictionary(Of TKey, TValue)
+        Dim xs As New XmlSerializer(GetType(SerializableDictionary(Of TKey, TValue)))
+        Dim xr As New XmlTextReader(xml, XmlNodeType.Document, Nothing)
+        xr.Close()
+              Return xs.Deserialize(xr)
+    End Function
+
+    Public Function Serialize() As String
+        Dim sb As New StringBuilder
+        Dim xw = XmlWriter.Create(sb)
+        WriteXml(xw)
+        xw.Close()
+        Return sb.ToString
+    End Function
+
+    Public Sub Parse(ByVal xml As String)
+        Dim xr As New XmlTextReader(xml, XmlNodeType.Document, Nothing)
+        ReadXml(xr)
+        xr.Close()
+    End Sub
+
+End Class
+

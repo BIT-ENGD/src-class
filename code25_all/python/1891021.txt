@@ -1,0 +1,91 @@
+void *
+void* mutex;
+
+/* get the mutex object via the create_mutex callback */
+create_mutex(&mutex);
+
+/* acquire a lock */
+lock_mutex(mutex);
+
+... etc
+
+create_mutex
+void **
+int
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef int (* callback_t)(int**);
+callback_t func;
+int* global_i_p = NULL;
+
+int mock_callback(int** ipp)
+{
+ int* dynamic_int_p = (int *) malloc(sizeof(int));
+ /* dynamic int value from C */
+ *dynamic_int_p = 2;
+ *ipp = dynamic_int_p;
+ return 0;
+}
+
+void set_py_callback(callback_t f)
+{
+ func = f;
+}
+
+void set_c_callback()
+{
+ func = mock_callback;
+}
+
+void test_callback(void)
+{
+ printf("global_i_p before: %p\n", global_i_p);
+ func(&global_i_p);
+ printf("global_i_p after: %p, pointed value:%d\n", global_i_p, *global_i_p);
+
+ /* to be nice */
+ if (func == mock_callback)
+  free(global_i_p);
+}
+
+from ctypes import *
+
+lib = CDLL("ct_test.so")
+
+# "dynamic" int value from python
+int  = c_int(1)
+int_p = pointer(int)
+
+def pyfunc(p_p_i):
+ p_p_i.contents = int_p
+
+# create callback type and instance
+CALLBACK = CFUNCTYPE(c_int, POINTER (POINTER(c_int)))
+c_pyfunc = CALLBACK(pyfunc)
+
+# functions from .so
+set_py_callback = lib.set_py_callback
+set_c_callback = lib.set_c_callback
+test_callback = lib.test_callback
+
+# set one of the callbacks
+set_py_callback(c_pyfunc)
+#set_c_callback()
+
+# test it
+test_callback()
+
+set_c_callback()
+~/dev/test$ python ct_test.py
+global_i_p before: (nil)
+global_i_p after: 0x97eb008, pointed value:2
+
+~/dev/test$ python ct_test.py
+global_i_p before: (nil)
+Traceback (most recent call last):
+  File "/home/packages/python/2.5/python2.5-2.5.2/Modules/_ctypes/callbacks.c", line 284, in 'converting callback result'
+TypeError: an integer is required
+Exception  in <function pyfunc at 0xa14079c> ignored
+Segmentation fault
+

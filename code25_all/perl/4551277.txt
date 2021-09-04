@@ -1,0 +1,120 @@
+scraper_tools_v1.pm did not return a true value at getYid.pl line 5.
+BEGIN failed--compilation aborted at getYid.pl line 5.
+
+#!/usr/bin/perl
+
+package scraper_tools_v1;
+
+use strict;
+use warnings;
+use WWW::Curl::Easy;
+
+# Note this function expects a single parameter which should be in the form of a URL
+
+  sub getWebPage($)
+  {
+    # Setting up the Curl parameters
+    my $curl = WWW::Curl::Easy->new; # create a variable to store the curl object
+
+    # A parameter set to 1 tells the library to include the header in the body output.
+    # This is only relevant for protocols that actually have headers preceding the data (like HTTP).
+    $curl->setopt(CURLOPT_HEADER, 1);
+
+    # Setting the target URL to retrieve with the passed parameter
+    $curl->setopt(CURLOPT_URL, @_);
+
+    # Declaring a variable to store the response from the Curl request
+    my $response_body = '';
+
+    # Creating a file handle for CURL to output to, then redirecting our output to the $response_body variable
+    open(my $fileb, ">",\$response_body) or die $!;
+    $curl->setopt(CURLOPT_WRITEDATA, $fileb);
+
+    # getting the return code from the header to see if the GET was successful
+    my $return_code = $curl->perform;
+
+    # capturing the response code from the GET request in the HTTP header, i.e... 200, 404, 500, etc...
+    # 200 is success
+    my $response_code = $curl->getinfo(CURLINFO_HTTP_CODE);  
+
+    # if the return code is zero than the request was a success
+    if ($return_code == 0)
+    {    
+      # A little debug output to keep you informed
+      print ("Success ". $response_code.": ".@_."\n");
+
+      # return whatever was contained on the web page that we just got using a GET
+      return $response_body;
+    }
+
+    else
+    {
+      print ("Failure ". $response_code.": ".@_."\n");
+    }
+
+    close($fileb); # close the file-handle
+
+    }
+
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use scraper_tools_v1;
+
+my %cat_links; # Hash that stores categories and their numbers (ID's)
+my $web_page = scraper_tools_v1->getWebPage("http://something.com/categoryindex.aspx");
+
+my @lines = split(/\n/, $web_page);
+
+foreach my $line (@lines)
+{
+  chomp($line);
+
+  if ($line =~ /<option value=\"{1}(.+)\">(.+)<\/option>/)
+  {
+    my $num = $1;
+    my $desc = $2;
+    $desc =~ s/\s+&amp;\s+/ & /;
+    $cat_links{$desc} = $num;
+  }
+}
+
+my @allTargetUrls; # make a new array to store all the links we need to extract listings from
+$web_page = '';    # Reset this variable so we can reuse it.
+
+my $totalNumberOfListings = 0;
+
+foreach my $key (keys %cat_links)
+{
+  my $target = "http://something.com/categorydetail.aspx?id=$cat_links{$key}&exact_phrase=0";
+  $web_page = scraper_tools_v1->getWebPage($target);
+
+  @lines = split(/\n/, $web_page);
+
+  foreach my $line (@lines)
+  {
+    my $pages;
+    chomp($line);
+    if ($line =~ /We found (\d) listings for your search\./)
+    {
+          my $listingsInCat = $1;
+      print ("$cat_links{$key}, $listingsInCat");
+      $totalNumberOfListings += $listingsInCat;
+    }
+    if ($line =~ /Page 1 of (\d)/)
+    {
+       $pages = $1;
+    }
+
+    for (my $i = 1; $i <= $pages; $i++)
+    {
+      #build the target urls
+      my $pageUrl = "http://something.com/categorydetail.aspx?id=$key&search=&exact_phrase=True&city=&state=&zipcode=&page=$i";
+      push(@allTargetUrls, $pageUrl);
+    }
+  }
+
+  print("Total number of listings = ".$totalNumberOfListings);
+} 
+

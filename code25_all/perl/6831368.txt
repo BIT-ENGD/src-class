@@ -1,0 +1,77 @@
+#!/usr/bin/env perl
+
+package LatencySub;
+
+use strict;
+use warnings;
+use AnyEvent;
+
+# sub for emulate latency - is it right way?
+sub do_delay{
+    my ($name, $delay) = (@_);
+    my $cv = AE::cv;
+    my $timer = AE::timer $delay, 0, sub { $cv->send() };
+    $cv->recv;
+    return $name.' proceed, delay is '.$delay;
+};
+
+
+package main;
+
+use 5.12.0;
+use warnings;
+
+use Smart::Comments;
+
+use AnyEvent;
+
+my @list = (
+    { name => 'first', delay => 1  },
+    { name => 'second', delay => 1 },
+    { name => 'third', delay => 2 }
+);
+
+sub process_cb {
+    my ( $name, $delay, $cb ) = @_;
+    my $result = LatencySub::do_delay( $name, $delay );
+    $cb->($result);
+}
+
+my %result;
+
+my $cv = AE::cv;
+# outer loop
+$cv->begin (sub { shift->send (\%result) });
+
+my $before_time =  AE::time;
+### foreach start...
+foreach my $entity (@list) {
+            $cv->begin;
+            process_cb ( 
+                                $entity->{'name'},
+                                $entity->{'delay'},
+                                sub {
+                                     $result{$entity->{'name'}} = shift;
+                                     $cv->end;
+                                }
+            );
+     }
+### foreach end...
+
+$cv->end;
+my $time_all = AE::time - $before_time;
+
+### $time_all
+### %result
+
+### foreach start...
+
+### foreach end...
+
+### $time_all: '4.02105116844177'
+### %result: {
+###            first => 'first proceed, delay is 1',
+###            second => 'second proceed, delay is 1',
+###            third => 'third proceed, delay is 2'
+###          }
+

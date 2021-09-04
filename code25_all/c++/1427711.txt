@@ -1,0 +1,70 @@
+QDesktopWidget *w = QApplication::desktop();
+if (w)
+{
+    QRect r = w->screenGeometry();
+    QPixmap p = QPixmap::grabWindow(w->winId(), 0, 0, r.width(), r.height())
+    QByteArray bitmap;
+}
+
+void QX11Mirror::x11Event(XEvent *event)
+{
+    if (event->type == m_damageEvent + XDamageNotify)
+    {
+        XDamageNotifyEvent *e = reinterpret_cast<XDamageNotifyEvent*>(event);
+
+        XWindowAttributes attr;
+        XGetWindowAttributes(QX11Info::display(), m_window, &attr);
+        XRenderPictFormat *format = XRenderFindVisualFormat(QX11Info::display(), attr.visual);
+        bool hasAlpha             = ( format->type == PictTypeDirect && format->direct.alphaMask );
+        int x                     = attr.x;
+        int y                     = attr.y;
+        int width                 = attr.width;
+        int height                = attr.height;
+
+            // debug output so I can see the window pos vs the damaged area:
+        qDebug() << "repainting dirty area:" << x << y << width << height << "vs" << e->area.x << e->area.y << e->area.width << e->area.height;
+
+        XRenderPictureAttributes pa;
+        pa.subwindow_mode = IncludeInferiors; // Don't clip child widgets    
+        Picture picture = XRenderCreatePicture(QX11Info::display(),
+                                               m_window,
+                                               format,
+                                               CPSubwindowMode,
+                                               &pa);
+
+        XserverRegion region = XFixesCreateRegionFromWindow(QX11Info::display(),
+                                                            m_window, WindowRegionBounding);
+
+        XFixesTranslateRegion(QX11Info::display(), region, -x, -y);
+        XFixesSetPictureClipRegion(QX11Info::display(), picture, 0, 0, region);
+        XFixesDestroyRegion(QX11Info::display(), region);
+
+
+        //QPixmap dest(width, height);
+        XRenderComposite(QX11Info::display(),                       // display
+                         hasAlpha ? PictOpOver : PictOpSrc,         // operation mode
+                         picture,                                   // src drawable
+                         None,                                      // src mask
+                         dest.x11PictureHandle(),                   // dest drawable
+                         e->area.x,                                 // src X
+                         e->area.y,                                 // src Y
+                         0,                                         // mask X
+                         0,                                         // mask Y
+                         e->area.x,                                 // dest X
+                         e->area.y,                                 // dest Y
+                         e->area.width,                             // width
+                         e->area.height);                           // height
+
+            m_px = dest;
+        XDamageSubtract(QX11Info::display(), e->damage, None, None);
+            emit windowChanged();
+
+    }
+    else if (event->type == ConfigureNotify)
+    {
+        XConfigureEvent *e = &event->xconfigure;
+        m_position = QRect(e->x, e->y, e->width, e->height);
+        emit positionChanged(m_position);
+    }
+}
+

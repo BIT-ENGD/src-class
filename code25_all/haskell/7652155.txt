@@ -1,0 +1,67 @@
+Grid
+StdGen
+type RandomState = State StdGen
+
+makeGrid :: (Int, Int) -> (Int, Int) -> Float -> RandomState Grid
+
+doAction :: Action -> Cleaner -> State Grid Cleaner
+
+getRandomR :: Random a => (a, a) -> RandomState a
+getRandomR limits = do
+  gen <- get
+  let (val, gen') = randomR limits gen
+  put gen'
+  return val
+
+chooseAction :: Percepts -> RandomState Action
+chooseAction percepts
+  | PhotoSensor `elem` percepts = return SuckDirt
+  | InfraredSensor `elem` percepts = return TurnOff
+  | TouchSensor `elem` percepts = return TurnLeft
+  | otherwise = do
+    r <- getRandomR ((1, 3) :: (Int, Int))
+    case r of
+      1 -> return GoForward
+      2 -> return TurnRight
+      3 -> return TurnLeft
+
+runCleaner :: Int -> Cleaner -> StateT Grid RandomState Cleaner
+runCleaner turnsLeft cleaner@(Cleaner _ _ _ ph _) =
+  if turnsLeft == 0
+    then return cleaner
+    else do
+      grid <- get
+      gen <- lift $ get
+      cleaner <- case ph of
+        [] -> do
+          let (cleaner, grid) = runState (doAction GoForward cleaner) grid
+          put grid
+          return cleaner
+        _ -> do
+          let (action, gen) = runState (chooseAction (head ph)) gen
+          lift $ put gen
+
+          let (cleaner, grid) = runState (doAction action cleaner) grid
+          put grid
+          return cleaner
+
+      case clState cleaner of
+        Off -> return cleaner
+        On -> runCleaner (turnsLeft - 1) cleaner
+
+simulateOnGrid :: Int -> Grid -> StdGen -> (Cleaner, Grid)
+simulateOnGrid maxTurns grid gen = 
+  evalState (runStateT (runCleaner maxTurns cleaner) grid) gen
+  where cleaner = createCleaner (fromJust $ cell (0,0) grid) East
+
+simulateOnGrid
+> gen <- newStdGen
+> let grid = evalState (makeGrid (8,15) (8,15) 0.05) gen
+> simulateOnGrid 5 grid gen
+
+let (cleaner, grid) = runState (doAction GoForward cleaner) grid
+
+doAction
+runState
+runCleaner
+runState

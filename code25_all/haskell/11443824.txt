@@ -1,0 +1,70 @@
+-- Client connects to server at localhost with 3 priorities in the priority queue
+do { (outQueue, inQueue) <- client Nothing 3
+   -- send 'Click' events until terminated, the server responds with the coords negated
+   ; mapM_ (\x -> atomically $ writeThing outQueue (lookupPriority x) x)
+           (repeat (Click (fromIntegral 2) (fromIntegral 4)))
+   }
+
+atomically $ PQ.writeThing inqueue (Events.lookupPriority Events.Init) Events.Init
+    GLUT.mainLoop
+
+render pqueue =
+    do  event <- atomically $
+            do  e <- PQ.getThing pqueue
+                case e of
+                    Nothing -> retry
+                    Just event -> return event
+        putStrLn $ "Got event"
+        (Events.lookupHandler event Events.Client) event
+        GL.flush
+        GLUT.swapBuffers
+
+main =
+    do  args <- getArgs
+        let ip = args !! 0
+        let priorities = args !! 1
+        (progname, _) <- GLUT.getArgsAndInitialize
+        -- Run the client here and bind the queues to use for communication
+        (outqueue, inqueue) <- Client.client (Just ip) priorities
+        GLUT.createWindow "Hello World"
+        GLUT.initialDisplayMode $= [GLUT.DoubleBuffered, GLUT.RGBAMode]
+        GLUT.keyboardMouseCallback $= Just (keyboardMouse outqueue)
+        GLUT.displayCallback $= render inqueue
+        PQ.writeThing inqueue (Events.lookupPriority Events.Init) Events.Init
+        GLUT.mainLoop
+
+-package GLUT
+postRedisplay
+lookupHandler
+Maybe
+render pqueue =
+    do  event <- atomically $ PQ.getThing pqueue
+        case (Events.lookupHandler event Events.Client) of
+            Nothing -> return ()
+            Just handler -> 
+                do  let e = case event of {Just e' -> e'}
+                    handler e
+                    return ()
+        GL.flush
+        GLUT.swapBuffers
+        GLUT.postRedisplay Nothing
+
+$ ghc -threaded -package GLUT helloworldOGL.hs -o helloworldOGL
+$ ghc server.hs -o server
+-- one or the other, I usually do 0.0.0.0
+$ ./server "localhost" 3
+$ ./server "0.0.0.0" 3
+$ ./helloworldOGL "localhost" 3
+
+checkEvents pqueue = forever $
+    do  event <- atomically $
+            do  e <- PQ.getThing pqueue
+                case e of
+                    Nothing -> retry
+                    Just event -> return event
+        putStrLn $ "Got event"
+        (Events.lookupHandler event Events.Client) event
+        GLUT.postRedisplay Nothing
+
+render = GLUT.swapBuffers
+

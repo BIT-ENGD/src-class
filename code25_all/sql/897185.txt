@@ -1,0 +1,49 @@
+date_updated
+category
+element_id
+date_updated
+value
+weight
+source_prefix
+source_name
+element_id
+CREATE TEMPORARY TABLE `temp1` (INDEX ( `ds_hash` ))
+                SELECT `category`, 
+                `element_id`, 
+                `source_prefix`, 
+                `source_name`, 
+                `date_updated`, 
+                `value`, 
+                `weight`, 
+                MD5(CONCAT(`category`, `element_id`, `source_prefix`, `source_name`)) AS `subcat_hash`, 
+                MD5(CONCAT(`category`, `element_id`, `date_updated`)) AS `cat_hash` 
+                FROM `bigbigtable` WHERE `date_updated` <= '2009-04-28'
+
+CREATE TEMPORARY TABLE `temp2` (INDEX ( `subcat_hash` ))
+
+                SELECT MAX(`date_updated`) AS `maxdate` , `subcat_hash`
+                FROM `temp1`
+                GROUP BY `subcat_hash`;
+
+CREATE TEMPORARY TABLE `valuebycats` (INDEX ( `category` ))
+            SELECT `temp1`.`element_id`, 
+                   `temp1`.`category`, 
+                   `temp1`.`source_prefix`, 
+                   `temp1`.`source_name`, 
+                   `temp1`.`date_updated`, 
+                   AVG(`temp1`.`value`) AS `avg_value`,
+            SUM(`temp1`.`value` * `temp1`.`weight`) / SUM(`weight`) AS `rating`
+
+            FROM `temp1` LEFT JOIN `temp2` ON `temp1`.`subcat_hash` = `temp2`.`subcat_hash`
+            WHERE `temp2`.`subcat_hash` = `temp1`.`subcat_hash`
+            AND `temp1`.`date_updated` = `temp2`.`maxdate`
+
+            GROUP BY `temp1`.`cat_hash`;
+
++----+-------------+-------+------+---------------+------------+---------+--------------------------------------------------------------------------------------+--------+----------+----------------------------------------------+
+| id | select_type | table | type | possible_keys | key        | key_len | ref                                                                                  | rows   | filtered | Extra                                        |
++----+-------------+-------+------+---------------+------------+---------+--------------------------------------------------------------------------------------+--------+----------+----------------------------------------------+
+|  1 | SIMPLE      | cur   | ALL  | NULL          | NULL       | NULL    | NULL                                                                                 | 893085 |   100.00 | Using where; Using temporary; Using filesort |
+|  1 | SIMPLE      | next  | ref  | prefix        | prefix     | 1074    | bigbigtable.cur.source_prefix,bigbigtable.cur.source_name,bigbigtable.cur.element_id |      1 |   100.00 | Using where                                  |
++----+-------------+-------+------+---------------+------------+---------+--------------------------------------------------------------------------------------+--------+----------+----------------------------------------------+    
+

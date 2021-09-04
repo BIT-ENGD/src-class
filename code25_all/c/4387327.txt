@@ -1,0 +1,81 @@
+#include "stdafx.h"
+#include <stdlib.h> 
+#include <stdio.h> 
+
+#include "pthread.h"
+
+#define MAX_ENTRY_COUNT 4  
+
+int  entries = 0;  
+bool start = false;
+
+bool send_active = false;
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;  
+pthread_cond_t condNotEmpty = PTHREAD_COND_INITIALIZER;  
+pthread_cond_t condNotFull = PTHREAD_COND_INITIALIZER;  
+
+void send()
+{ 
+    for (;;) {
+        if (!start)
+            continue;
+        start = false;
+
+        for(int i = 0; i < 11; ++i) { 
+            send_active = true;
+
+            pthread_mutex_lock(&mutex); 
+            while(entries == MAX_ENTRY_COUNT) 
+                pthread_cond_wait(&condNotFull, &mutex);      
+            entries++; 
+            pthread_cond_broadcast(&condNotEmpty); 
+            pthread_mutex_unlock(&mutex);
+
+            send_active = false;
+        }
+    }
+} 
+
+void receive(){ 
+    for(int i = 0; i < 11; ++i){ 
+        pthread_mutex_lock(&mutex);  
+        while(entries == 0) 
+            pthread_cond_wait(&condNotEmpty, &mutex); 
+        entries--;  
+        pthread_cond_broadcast(&condNotFull);  
+        pthread_mutex_unlock(&mutex);
+    } 
+
+    if (send_active)
+        printf("x");
+} 
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    pthread_t s; 
+
+    pthread_create(&s, NULL, (void *(*)(void*))send, NULL);  
+
+    for (;;) {
+        pthread_mutex_init(&mutex, NULL);
+        pthread_cond_init(&condNotEmpty, NULL);
+        pthread_cond_init(&condNotFull, NULL);
+
+        start = true;
+
+        receive();
+
+        pthread_mutex_destroy(&mutex);
+        mutex = NULL;
+        pthread_cond_destroy(&condNotEmpty);
+        pthread_cond_destroy(&condNotFull);
+        condNotEmpty = NULL;
+        condNotFull = NULL;
+
+        printf(".");
+    }
+
+    return 0;
+}
+

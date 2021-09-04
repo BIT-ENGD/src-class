@@ -1,0 +1,121 @@
+CREATE         PROC [dbo].[Sp_Table1] @ctlg_ipt_event_id int
+AS
+SET NOCOUNT ON
+
+DECLARE @current_status NCHAR(1), @ready_status_code NCHAR(1)
+DECLARE @current_action NCHAR(1), @ready_action_code NCHAR(1), @done_action_code NCHAR(1)
+DECLARE @pst_user_id int
+
+
+SELECT @current_status =  status_code 
+      ,@current_action =  action_code
+      ,@pst_user_id = last_mod_user_id
+  FROM merch_ctlg_ipt_event 
+ WHERE ctlg_ipt_event_id = @ctlg_ipt_event_id
+
+Select @ready_status_code = 'o'
+, @ready_action_code = 'a'
+, @done_action_code = 'b'
+
+IF @current_status <> @ready_status_code OR @current_action <> @ready_action_code
+BEGIN
+RETURN 
+END
+
+
+BEGIN TRAN
+
+declare @rows int
+  ,@err int
+  ,@i int
+  ,@name nvarchar(50) --COLLATE SQL_AltDiction_Pref_CP850_CI_AS 
+          ,@resolved_View_Name_category_id int
+          ,@xref_value int
+          ,@availability_start_date datetime
+          ,@availability_end_date datetime
+          ,@status_code int
+          ,@last_mod_user_id int
+          ,@CT datetime
+          ,@supplier_id int
+          ,@View_Name_id int
+   select @i = 1
+         ,@CT = current_timestamp
+
+Select  Distinct mc.name,
+   mc.resolved_View_Name_category_id,
+  mc.xref_value,
+  mc.availability_start_date,
+  mc.availability_end_date,
+  mc.status_code,
+  CASE WHEN mc.last_mod_user_id = 42
+       THEN @pst_user_id 
+       ELSE mc.last_mod_user_id 
+       END as last_mod_user_id,
+  CURRENT_tsp
+  ,IDENTITY(int,1,1) as rn
+  ,si.supplier_id 
+  ,si.View_Name_id 
+ into #temp 
+FROM View_Name AS si
+JOIN merch_ctlg_ipt_View_Name AS mc
+  ON  mc.supplier_id = si.supplier_id
+  AND mc.resolved_View_Name_id = si.View_Name_id
+  AND mc.cat_imp_event_id = @ctlg_ipt_event_id
+  AND mc.accept_flag = 'y'
+WHERE si.shipper_flag = 'n'
+select @rows=@@ROWCOUNT,@err=@@error
+if @rows > 0 and @err=0 
+Begin 
+
+   While @i <=@rows
+         begin
+            SElect @name = name,
+                   @resolved_View_Name_category_id = resolved_View_Name_category_id,
+                   @xref_value = xref_value,
+                   @availability_start_date = availability_start_date,
+                   @availability_end_date = availability_end_date,
+                   @status_code = mc.status_code,
+                   @last_mod_user_id =last_mod_user_id ,
+                  ,@i=@i+1
+                  ,@supplier_id=supplier_id
+                  ,@View_Name_id=View_Name_id
+              from #temp
+             Where rn=@i
+            UPDATE View_Name
+               SET name = @name,
+                   View_Name_category_id = @resolved_View_Name_category_id,
+                   xref_value = @xref_value,
+                   availability_start_date = @availability_start_date,
+                   availability_end_date = @availability_end_date,
+                   status_code = @status_code,
+                   last_mod_user_id = @last_mod_user_id ,
+                   last_mod_timestamp = @CT
+             Where @sup_id = supplier_id
+               AND @View_Name_id = View_Name_id
+               AND shipper_flag = 'n'
+             IF @@ERROR > 0
+             BEGIN
+               ROLLBACK TRAN
+               RETURN
+               END
+          End
+ End 
+
+
+UPDATE
+merch_ctlg_ipt_event
+SET action_code = @done_action_code,
+  last_mod_timestamp = @CT
+WHERE ctlg_ipt_event_id = @ctlg_ipt_event_id
+
+IF @@ERROR > 0
+BEGIN
+ROLLBACK TRAN
+RETURN
+END
+
+
+COMMIT TRAN
+Return
+go
+

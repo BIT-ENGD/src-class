@@ -1,0 +1,56 @@
+Dim changeset As System.Data.Linq.ChangeSet = c.GetChangeSet()
+Dim objDic As New Dictionary(Of System.Type, List(Of Object))
+
+If Not changeset Is Nothing AndAlso Not changeset.Inserts Is Nothing AndAlso Not changeset.Inserts.Count = 0 Then
+
+For Each i As Object In changeset.Inserts
+
+    Dim t As System.Type = i.GetType()
+
+    If objDic.ContainsKey(t) Then
+        objDic(t).Add(i)
+    Else
+        Dim l As New List(Of Object)
+        l.Add(i)
+        objDic(t) = l
+    End If
+
+Next
+
+'XML schema 
+
+For Each t As System.Type In objDic.Keys
+    Dim s As New System.IO.FileStream(String.Format("{0}{1}", LinqBulkInsert.My.Application.Info.DirectoryPath, "\xmlschema.xsd"), System.IO.FileMode.Create)
+
+    Using xmlw As New System.Xml.XmlTextWriter(s, System.Text.Encoding.UTF8)
+
+        xmlw.WriteStartDocument()
+        xmlw.WriteStartElement("xsd:schema")
+        xmlw.WriteAttributeString("xmlns:xsd", "http://www.w3.org/2001/XMLSchema")
+        xmlw.WriteAttributeString("xmlns:sql", "urn:schemas-microsoft-com:mapping-schema")
+        xmlw.WriteStartElement("xsd:element")
+        xmlw.WriteAttributeString("name", t.Name)
+        xmlw.WriteAttributeString("sql:relation", c.Mapping.GetTable(t).TableName)
+        xmlw.WriteStartElement("xsd:complexType")
+        xmlw.WriteStartElement("xsd:sequence")
+
+        Dim pinfos As System.Reflection.PropertyInfo() = t.GetProperties
+
+        For Each pi As System.Reflection.PropertyInfo In pinfos
+            If Not pi.PropertyType.Equals(GetType(System.Guid)) Then
+                xmlw.WriteStartElement("xsd:element")
+                xmlw.WriteAttributeString("name", pi.Name)
+                xmlw.WriteAttributeString("type", "xsd:" & XsdTypeConverter.getInstance.GetSimpleType(pi.PropertyType))
+                xmlw.WriteEndElement()
+            End If
+        Next
+        xmlw.WriteEndDocument()
+        xmlw.Flush()
+
+    End Using
+
+    s.Close()
+    'Schema wordt succesvol weggeschreven in xmlschema.xsd
+
+Next
+

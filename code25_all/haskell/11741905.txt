@@ -1,0 +1,56 @@
+mmultP
+repa-algorithms-3.2.1.1
+import Data.Array.Repa hiding            (map)
+import Data.Array.Repa.Algorithms.Matrix (mmultP)
+
+import Control.Monad                     (replicateM)
+import Control.Arrow                     ((&&&))
+import System.Random.MWC                 (initialize, uniformR)
+import Control.Monad.ST                  (runST)
+import Data.Vector.Unboxed               (singleton)
+import Data.Word                         (Word32)
+
+-- Create a couple of dense matrices
+genRnds :: Word32 -> [Double]
+genRnds seed = runST $ do
+    gen <- initialize (singleton seed)
+    replicateM (1000 ^ 2) (uniformR (0, 1) gen)
+
+(arr, brr) = head &&& last $ map (fromListUnboxed (Z :. 1000 :. 1000 :: DIM2) . genRnds) [1, 100000]
+
+-- mmultP test
+main :: IO ()
+main = mmultP arr brr >>= print
+
+ghc mmultTest.hs -Odph -rtsopts -threaded -fno-liberate-case -funfolding-use-threshold1000 -funfolding-keeness-factor1000 -fllvm -optlo-O3 -fforce-recomp
+
+$ time ./mmultTest +RTS -K100M > /dev/null
+real    0m10.962s
+user    0m10.790s
+sys     0m0.161s
+
+$ time ./mmultTest +RTS -N4 -K100M > /dev/null
+real    0m13.008s
+user    0m18.591s
+sys     0m2.067s
+
+-N2
+-N3
+main
+mmultBench :: IO ()
+mmultBench  = do 
+   results <- mmultP arr brr 
+   let reduced = sumAllS results 
+   print reduced
+
+mwc-random
+(arr, brr) = head &&& last $ map (fromListUnboxed (Z :. 1000 :. 1000 :: DIM2)) (replicate 2 [1..1000000])
+
+-N1 -K100M
+mean: 1.361450 s, lb 1.360514 s, ub 1.362915 s, ci 0.950
+std dev: 5.914850 ms, lb 3.870615 ms, ub 9.183472 ms, ci 0.950
+
+-N4 -K100M
+mean: 556.8201 ms, lb 547.5370 ms, ub 573.5012 ms, ci 0.950
+std dev: 61.82764 ms, lb 40.15479 ms, ub 102.5329 ms, ci 0.950
+

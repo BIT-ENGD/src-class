@@ -1,0 +1,62 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+import Network.Connection
+import Data.Monoid                             ((<>))
+import qualified Crypto.Random.AESCtr   as RNG (makeSystem)
+import Data.ByteString                         (ByteString)
+import qualified Data.ByteString.Char8  as BC  (isPrefixOf)
+import qualified Data.ByteString.UTF8   as BU  (fromString,toString)
+import qualified Data.ByteString.Base64 as BE  (encode)
+import Data.Text                               (Text, unpack)
+
+gmail :: (Text, Int)
+gmail = ("smtp.gmail.com", 587)
+
+readHeader :: Connection -> ByteString -> IO ()
+readHeader con code = do
+    hea <- connectionGetLine 1024 con
+    putStrLn $ show hea
+    if code `BC.isPrefixOf` hea
+    then return ()
+    else readHeader con code
+
+emailT :: (Text, Int) -> (Text, Text) -> Text -> Text -> Text -> IO ()
+emailT provider auth from to email = do
+    ctx <- initConnectionContext
+    con <- connectTo ctx $
+        ConnectionParams
+        { connectionHostname  = unpack $ fst provider
+        , connectionPort      = 587
+        , connectionUseSecure = Nothing
+        , connectionUseSocks  = Nothing
+        }
+    g <- RNG.makeSystem
+    connectionGetLine 1024 con >>= putStrLn . show
+    connectionPut con "EHLO\n"
+    readHeader con "250-STARTTLS"
+    connectionPut con "STARTTLS\n"
+    readHeader con "220"
+    connectionSetSecure ctx con $ TLSSettingsSimple False False False
+    connectionPut con "EHLO\n"
+    readHeader con "250"
+    connectionPut con "AUTH LOGIN\n"
+    readHeader con "334 "
+    connectionPut con $ BE.encode $ BU.fromString $ unpack $ fst auth
+    readHeader con "334"
+    connectionPut con $ BE.encode $ BU.fromString $ unpack $ snd auth
+    readHeader con "235"
+    connectionPut con $ BU.fromString $ unpack ("MAIL FROM:<"<> from <>">")
+    readHeader con "250"
+    connectionPut con $ BU.fromString $ unpack ("RCPT TO:<"<> to <>">")
+    readHeader con "250"
+    connectionPut con "DATA\n"
+    readHeader con "354"
+    connectionPut con $ BU.fromString $ unpack email
+    connectionPut con "\r\n."
+    readHeader con "250"
+    connectionPut con "QUIT\n"
+    readHeader con "221"
+    connectionClose con
+
+main = emailT gmail ("mygmailuser", "mygmaipass") "test" "test" "test"
+

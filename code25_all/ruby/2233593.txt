@@ -1,0 +1,46 @@
+class AuctionTest < ActiveSupport::TestCase
+  test "are monitored when created" do
+    auction = Auction.new(
+      :name => "A TV",
+      :markdown => "A large TV",
+      :starting_bid => 0.01,
+      :bid_increment => 0.01,
+      :starts_at => Time.now(),
+      :ends_at => Time.now() + 5.seconds,
+      :active => true
+    )
+    auction.save
+    Bid.place(@current_user, auction)
+
+    sleep(10) #when bids are placed, time is added to the end of the auction so wait
+
+    assert auction.won?
+    assert_equal @current_user.id, auction.winner_id
+  end
+end
+
+class AuctionsWorker < Workling::Base
+  def monitor(options)
+    active = true
+    ends_at = options[:original_ends_at]
+    while active
+      auction = Auction.find(options[:auction_id]) #this is the record that cannot be found
+      if auction.won?
+        active = false
+        winner = User.find(auction.high_bidder).id
+        auction.update_attribute(:winner_id, winner)
+      else
+        until Time.now() >= ends_at
+          sleep(1)
+        end
+      end
+    end
+  end
+end
+
+class Auction < ActiveRecord::Base
+  def after_create
+    AuctionsWorker.asynch_monitor(:auction_id => self.id, :original_ends_at => self.ends_at) if self.active?
+  end
+end
+

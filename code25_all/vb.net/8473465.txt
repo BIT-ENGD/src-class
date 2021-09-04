@@ -1,0 +1,80 @@
+Sub RetrieveInfo()
+    Dim _PCName As String = My.Computer.Name
+    Dim _Info As String = vbNullString
+    Dim _FileName As String = "G:\BiosVersion\" & _PCName & ".txt"
+    Dim _ManagmentC As New ManagementClass("Win32_ComputerSystem")
+    Dim _Moc As ManagementObjectCollection = _ManagmentC.GetInstances
+
+    For Each _Mo As ManagementObject In _Moc
+        Dim Model() As String = Split(_Mo.Properties("Model").Value.ToString, " ")
+        For i = 0 To Model.Length - 1
+            If Model(i).ToLower.Contains("dc") Then _Info &= Model(i)
+        Next
+    Next
+
+    _ManagmentC = New ManagementClass("win32_bios")
+    _Moc = _ManagmentC.GetInstances
+    For Each _Mo As ManagementObject In _Moc
+        _Info &= "|" & _Mo.Properties("SMBIOSBIOSVersion").Value.ToString
+    Next
+
+    Try
+        If IO.File.Exists(_FileName) Then
+            IO.File.Delete(_FileName)
+        End If
+    Catch ex As IO.IOException
+        _FileName = _FileName.Replace(_PCName, _PCName & "-" & New Random().Next(10, 10000))
+    End Try
+
+    IO.File.WriteAllText(_FileName, _Info)
+
+End Sub
+
+Dim Path As String = "G:\BiosVersion\"
+Sub UpdateChart()
+    Dim PCModels As New List(Of String)
+    Dim BiosVersions As New List(Of String)
+    Dim Files As IO.FileInfo() = New IO.DirectoryInfo(Path).GetFiles
+
+    For Each File As IO.FileInfo In Files
+        If File.Extension = ".txt" Then
+            PCModels.Add(IO.File.ReadAllText(File.FullName).Split("|")(0))
+            BiosVersions.Add(IO.File.ReadAllText(File.FullName).Split("|")(1))
+        End If
+    Next
+    PCModels = RemoveDuplicates(PCModels)
+    BiosVersions = RemoveDuplicates(BiosVersions)
+
+    For i = 0 To chartBios.Series.Count - 1
+        chartBios.Series.Remove(chartBios.Series.Item(i))
+    Next
+
+    Dim Dictionary As New Dictionary(Of String, Integer)
+    For Each Version As String In BiosVersions
+        chartBios.Series.Add(Version)
+        Dim Count As Integer = 0
+        For Each File As IO.FileInfo In Files
+            If IO.File.ReadAllText(File.FullName).Split("|")(1).ToLower.Trim = Version.ToLower.Trim Then
+                Count += 1
+            End If
+        Next
+        Dictionary.Add(Version, Count)
+    Next
+
+    For Each Entry As KeyValuePair(Of String, Integer) In Dictionary
+        chartBios.Series(Entry.Key).Points.AddY(Entry.Value)
+    Next
+End Sub
+
+Function RemoveDuplicates(ByVal inputList As List(Of String)) As List(Of String)
+    Dim uniqueStore As New Dictionary(Of String, Integer)()
+    Dim finalList As New List(Of String)()
+    For Each currValue As String In inputList
+        If Not uniqueStore.ContainsKey(currValue) Then
+            uniqueStore.Add(currValue, 0)
+            finalList.Add(currValue)
+        End If
+    Next
+    Return finalList
+End Function
+

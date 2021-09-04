@@ -1,0 +1,89 @@
+SELECT CONCAT(u.lastname, ', ', u.firstname) AS Name
+   , start.timestamp start
+   , end.timestamp end
+   , timediff(end.timestamp, start.timestamp) duration 
+FROM user u
+   , user_group ug
+   , (
+      select *
+         , (
+            select event_id
+            from event L2 
+            where L2.timestamp > L1.timestamp
+               and L2.user_bannerid = L1.user_bannerid
+            order by timestamp limit 1  
+           ) stop_id
+      From event L1
+     ) start
+join event end on end.event_id = start.stop_id
+where start.status = 'In'
+   and end.status='Out'
+   and u.user_bannerid = start.user_bannerid
+   and ug.user_bannerid = u.user_bannerid
+   and ug.group_id = start.group_id 
+
+UNION
+
+SELECT null, null, null, CAST(sum(duration) as Time)
+FROM
+(
+   SELECT CONCAT(u.lastname, ', ', u.firstname) AS Name
+      , start.timestamp start
+      , end.timestamp end
+      , timediff(end.timestamp, start.timestamp) duration 
+   from user u
+      , user_group ug
+      , (
+         select *
+         , (
+            select event_id
+            from event L2
+            where L2.timestamp > L1.timestamp
+               and L2.user_bannerid = L1.user_bannerid
+            order by timestamp
+            limit 1
+           ) stop_id
+         from event L1
+        ) start
+   join event end on end.event_id = start.stop_id
+   where start.status = 'In'
+      and end.status = 'Out'
+   and u.user_bannerid = start.user_bannerid
+   and ug.user_bannerid = u.user_bannerid
+      and ug.group_id = start.group_id 
+) total
+
++----------------------------------------------------+---------------+
+| Name   | start               | end                 | duration      |    
++----------------------------------------------------+---------------+
+| User   | 2011-11-24 02:12:05 | 2011-11-24 02:12:20 | 00:00:15      |       
+|        |                     |                     | 00:00:15      |
++----------------------------------------------------+---------------+ 
+
+    +----------------------------------------------------+---------------+
+    | Name   | start               | end                 | duration      |    
+    +----------------------------------------------------+---------------+
+    | User   | 2011-11-24 02:12:05 | 2011-11-24 02:12:20 | 00:00:15      |       
+    | User   | 2011-11-28 21:46:54 | 2011-11-28 21:53:01 | 00:06:17      |
+    |        |                     |                     |               |
+    +----------------------------------------------------+---------------+
+
++----------------------------------------------------+---------------+
+| Name   | start               | end                 | duration      |    
++----------------------------------------------------+---------------+
+| User   | 2011-11-24 02:12:05 | 2011-11-24 02:12:20 | 00:00:15      |       
+| User   | 2011-11-28 21:46:54 | 2011-11-28 21:53:01 | 00:06:17      |
+| User   | 2011-11-28 21:46:54 | 2011-11-28 21:53:01 | null          |
++----------------------------------------------------+---------------+
+
+SELECT
+    CONCAT(u.lastname, ', ', u.firstname) AS Name,
+    start.timestamp AS start,
+    end.timestamp AS end,
+    TIME(SUM(TIMEDIFF(end.timestamp, start.timestamp))) AS duration 
+FROM user AS u
+    INNER JOIN user_group AS ug ON u.user_bannerid = ug.user_bannerid
+    INNER JOIN event AS start ON start.user_bannerid = u.user_bannerid AND start.status='In' AND start.group_id = ug.group_id
+    INNER JOIN event AS end ON end.user_bannerid = u.user_bannerid AND end.status='Out' AND start.event_id < end.event_id 
+GROUP BY start.event_id WITH ROLLUP
+

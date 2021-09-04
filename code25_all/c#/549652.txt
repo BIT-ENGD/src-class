@@ -1,0 +1,92 @@
+ public class JobProcessor<TJob> : IJobProcessor<TJob> where TJob : class
+ {
+  private readonly IJobQueue<TJob> theJobQueue =
+   new NullQueue<TJob>();
+
+  private Thread processorThread;
+
+  private bool shutdownRequested;
+
+  private readonly IJobObserver<TJob> theObserver = new NullObserver<TJob>();
+
+  public AutoResetEvent threadStartedEvent = new AutoResetEvent(false);
+
+  private int processorThreadId = 0;
+
+  private volatile TJob currentJob = null;
+
+  public JobProcessor(IJobQueue<TJob> jobQueue, IJobObserver<TJob> observer)
+  {
+   if (observer != null)
+   {
+    theObserver = observer;
+   }
+   shutdownRequested = false;
+   theJobQueue = jobQueue;
+   CreateAndRunThread();
+  }
+
+  private void CreateAndRunThread()
+  {
+   processorThread = new Thread(Run)
+                      {
+                       Name = "Tpk Processor Thread", IsBackground = true
+                      };
+   processorThread.SetApartmentState(ApartmentState.STA);
+   processorThread.Priority = ThreadPriority.BelowNormal;
+   processorThread.Start();
+  }
+
+  public void Shutdown()
+  {
+   threadStartedEvent.WaitOne();
+
+   shutdownRequested = true;
+
+   theJobQueue.Interrupt(processorThreadId);
+  }
+
+  public TJob CurrentJob()
+  {
+   return currentJob;
+  }
+
+  private void Run()
+  {
+   processorThreadId = Thread.CurrentThread.ManagedThreadId;
+
+   threadStartedEvent.Set();
+
+   while (!BufferClearedAndShutDown())
+   {
+    try
+    {
+     ProcessNextMessage();
+    }
+    catch (ThreadAbortException)
+    {
+     CreateAndRunThread();
+     break;
+    }
+    catch (Exception e)
+    {  }
+   }
+  }
+
+  private void ProcessNextMessage()
+  {
+   currentJob = theJobQueue.RetrieveJob();
+   if (currentJob != null)
+   {
+    theObserver.ProcessMessage(this, currentJob);
+   }
+   currentJob = null;
+  }
+
+  private bool BufferClearedAndShutDown()
+  {
+   return theJobQueue.IsEmpty && shutdownRequested;
+  }
+ }
+}
+

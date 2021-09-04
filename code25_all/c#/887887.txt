@@ -1,0 +1,66 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Linq;
+using System.Web;
+using System.Management.Automation;
+using System.Management.Automation.Host;
+using System.Management.Automation.Runspaces;
+using Microsoft.PowerShell.Commands;  
+using System.Web.Services;
+using System.DirectoryServices;
+
+namespace WebService1
+{
+/// <summary>
+/// Summary description for Service1
+/// </summary>
+[WebService(Namespace = "http://tempuri.org/")]
+[WebServiceBinding(ConformsTo = WsiProfiles.BasicProfile1_1)]
+[System.ComponentModel.ToolboxItem(false)]
+// To allow this Web Service to be called from script, using ASP.NET AJAX, uncomment the following line. 
+// [System.Web.Script.Services.ScriptService]
+public class Service1 : System.Web.Services.WebService
+{
+
+    [WebMethod]
+    public void CreateADUser(string domain, string domainPostFix, string firstName, string emailaddress, string lastName, string department, string loginName, string password)
+    {
+        DirectoryEntry AD = null;
+        DirectoryEntry NewUser = null;
+
+        AD = new DirectoryEntry("LDAP://OU=Users,DC=" + domain + ",DC=" + domainPostFix);
+
+        NewUser = AD.Children.Add("CN=" + firstName + " " + lastName, "user");
+        NewUser.Properties["samAccountName"].Add(loginName);
+        NewUser.Properties["name"].Add(firstName + " " + lastName);
+        NewUser.Properties["displayname"].Add(firstName + " " + lastName);
+        NewUser.Properties["givenName"].Add(firstName);
+        NewUser.Properties["sn"].Add(lastName);
+        NewUser.Properties["userprincipalname"].Add(loginName + "@" + domain + "." + domainPostFix);
+        NewUser.CommitChanges();
+
+        NewUser.Invoke("SetPassword", new object[] { password });
+
+        NewUser.CommitChanges();
+
+        // E-mail shizzle, don't understand it yet, hopefully it works, if not, don't blame me -Erik
+        RunspaceConfiguration runspaceConf = RunspaceConfiguration.Create();
+        PSSnapInException PSException = null;
+        PSSnapInInfo info = runspaceConf.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out PSException);
+        Runspace runspace = RunspaceFactory.CreateRunspace(runspaceConf);
+        runspace.Open();
+        Pipeline pipeline = runspace.CreatePipeline();
+        Command command = new Command("New-Mailbox");
+        command.Parameters.Add("Name", "TestName");
+
+        //Enabling user account
+        int val = (int)NewUser.Properties["userAccountControl"].Value;
+        NewUser.Properties["userAccountControl"].Value = val & ~0x2;
+        NewUser.CommitChanges();
+
+        NewUser.Close();
+
+
+    }
+

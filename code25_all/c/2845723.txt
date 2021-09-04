@@ -1,0 +1,201 @@
+numactl --physcpubind=0
+likwid-pin -c0
+// on zs, ~2.1-2.4us/switch
+
+#include <stdlib.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <semaphore.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <pthread.h>
+
+uint32_t COUNTER;
+pthread_mutex_t LOCK;
+pthread_mutex_t START;
+sem_t *s0, *s1, *s2;
+
+void * threads (
+    void * unused
+) {
+    // Wait till we may fire away
+    sem_wait(s2);
+
+    for (;;) {
+        pthread_mutex_lock(&LOCK);
+        pthread_mutex_unlock(&LOCK);
+        COUNTER++;
+        sem_post(s0);
+        sem_wait(s1);
+    }
+    return 0;
+}
+
+int64_t timeInMS ()
+{
+    struct timeval t;
+
+    gettimeofday(&t, NULL);
+    return (
+        (int64_t)t.tv_sec * 1000 +
+        (int64_t)t.tv_usec / 1000
+    );
+}
+
+int main (
+    int argc,
+    char ** argv
+) {
+    int64_t start;
+    pthread_t t1;
+
+    pthread_mutex_init(&LOCK, NULL);
+
+    COUNTER = 0;
+    s0 = sem_open("/s0", O_CREAT, 0022, 0);
+    if (s0 == 0) { perror("sem_open"); exit(1); }
+    s1 = sem_open("/s1", O_CREAT, 0022, 0);
+    if (s1 == 0) { perror("sem_open"); exit(1); }
+    s2 = sem_open("/s2", O_CREAT, 0022, 0);
+    if (s2 == 0) { perror("sem_open"); exit(1); }
+
+    int x, y, z;
+    sem_getvalue(s0, &x);
+    sem_getvalue(s1, &y);
+    sem_getvalue(s2, &z);
+    printf("%d %d %d\n", x, y, z);
+
+    pid_t pid = fork();
+    if (pid) {
+      pthread_create(&t1, NULL, threads, NULL);
+      pthread_detach(t1);
+      // Get start time and fire away
+      start = timeInMS();
+      sem_post(s2);
+      sem_post(s2);
+
+      // Wait for about a second
+      sleep(1);
+      // Stop thread
+      pthread_mutex_lock(&LOCK);
+
+      // Find out how much time has really passed. sleep won't guarantee me that
+      // I sleep exactly one second, I might sleep longer since even after being
+      // woken up, it can take some time before I gain back CPU time. Further
+      // some more time might have passed before I obtained the lock!
+      int64_t time = timeInMS() - start;
+      // Correct the number of thread switches accordingly
+      COUNTER = (uint32_t)(((uint64_t)COUNTER * 2 * 1000) / time);
+      printf("Number of process switches in about one second was %u\n", COUNTER);
+      printf("roughly %f microseconds per switch\n", 1000000.0 / COUNTER);
+
+      // clean up
+      kill(pid, 9);
+      wait(0);
+      sem_close(s0);
+      sem_close(s1);
+      sem_unlink("/s0");
+      sem_unlink("/s1");
+      sem_unlink("/s2");
+    } else {
+      if (1) { sem_t *t = s0; s0 = s1; s1 = t; }
+      threads(0); // never return
+    }
+    return 0;
+}
+
+// From <http://stackoverflow.com/questions/304752/how-to-estimate-the-thread-context-switching-overhead>
+
+// on zs, ~4-5us/switch; tried making COUNTER updated only by one thread, but no difference
+
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/time.h>
+
+uint32_t COUNTER;
+pthread_mutex_t LOCK;
+pthread_mutex_t START;
+pthread_cond_t CONDITION;
+
+void * threads (
+    void * unused
+) {
+    // Wait till we may fire away
+    pthread_mutex_lock(&START);
+    pthread_mutex_unlock(&START);
+    int first=1;
+
+    pthread_mutex_lock(&LOCK);
+    // If I'm not the first thread, the other thread is already waiting on
+    // the condition, thus Ihave to wake it up first, otherwise we'll deadlock
+    if (COUNTER > 0) {
+        pthread_cond_signal(&CONDITION);
+        first=0;
+    }
+    for (;;) {
+        if (first) COUNTER++;
+        pthread_cond_wait(&CONDITION, &LOCK);
+        // Always wake up the other thread before processing. The other
+        // thread will not be able to do anything as long as I don't go
+        // back to sleep first.
+        pthread_cond_signal(&CONDITION);
+    }
+    pthread_mutex_unlock(&LOCK);
+    return 0;
+}
+
+int64_t timeInMS ()
+{
+    struct timeval t;
+
+    gettimeofday(&t, NULL);
+    return (
+        (int64_t)t.tv_sec * 1000 +
+        (int64_t)t.tv_usec / 1000
+    );
+}
+
+
+int main (
+    int argc,
+    char ** argv
+) {
+    int64_t start;
+    pthread_t t1;
+    pthread_t t2;
+
+    pthread_mutex_init(&LOCK, NULL);
+    pthread_mutex_init(&START, NULL);   
+    pthread_cond_init(&CONDITION, NULL);
+
+    pthread_mutex_lock(&START);
+    COUNTER = 0;
+    pthread_create(&t1, NULL, threads, NULL);
+    pthread_create(&t2, NULL, threads, NULL);
+    pthread_detach(t1);
+    pthread_detach(t2);
+    // Get start time and fire away
+    start = timeInMS();
+    pthread_mutex_unlock(&START);
+    // Wait for about a second
+    sleep(1);
+    // Stop both threads
+    pthread_mutex_lock(&LOCK);
+    // Find out how much time has really passed. sleep won't guarantee me that
+    // I sleep exactly one second, I might sleep longer since even after being
+    // woken up, it can take some time before I gain back CPU time. Further
+    // some more time might have passed before I obtained the lock!
+    int64_t time = timeInMS() - start;
+    // Correct the number of thread switches accordingly
+    COUNTER = (uint32_t)(((uint64_t)COUNTER * 2 * 1000) / time);
+    printf("Number of thread switches in about one second was %u\n", COUNTER);
+    printf("roughly %f microseconds per switch\n", 1000000.0 / COUNTER);
+    return 0;
+}
+

@@ -1,0 +1,125 @@
+$err = system("/usr/bin/curl -f -v -s -r "36155357-36259993,36790101-37194555,53623979-53745261" http://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/gfs.2012040100/master/gfs.t00z.mastergrb2f21 -o /root/Desktop/getGFS_uploadGFS/GFS/windvect/gfs.t00z.mastergrb2f21.tmp");
+
+while ($fhr <= $hr1) {
+   if ($fhr <= 9) { $fhr="0$fhr"; }
+   $url = $URL;
+   $url =~ s/\$FHR/$fhr/g;
+   $url =~ s/\${FHR}/$fhr/g;
+   $file = $url;
+   $file =~ s/^.*\///;
+
+   #
+   # read the inventory
+   #    $line[] = wgrib inventory,  $start[] = start of record (column two of $line[])
+   #
+
+   if ($windows eq 'yes') {
+      $err = system("$curl -f -s $url$inv -o $OUTDIR/$file.tmp");
+      $err = $err >> 8;
+      if ($err) {
+          print STDERR "error code=$err,  problem reading $url$inv\n";
+         sleep(10);
+         exit(8);
+      }
+  open (In, "$OUTDIR/$file.tmp");
+   }
+   else {
+      open (In, "$curl -f -s $url$inv |");
+   }
+
+   $n=0;
+   while (<In>) {
+      chomp;
+      $line[$n] = $_;
+      s/^[^:]*://;
+      s/:.*//;
+      $start[$n] = $_;
+      $n++;
+   }
+   close(In);
+   if ($n == 0) {
+       print STDERR "Problem reading file $url$inv\n";
+       sleep(10);
+       exit(8);
+   }
+
+   #
+   # find end of record: $last[]
+   #
+
+   $lastnum = $start[$n-1];
+   for ($i = 0; $i < $n; $i++) {
+      $num = $start[$i];
+      if ($num < $lastnum) {
+         $j = $i + 1;
+         while ($start[$j] == $num) { $j++; }
+         $last[$i] = $start[$j] - 1;
+      }
+      else {      
+         $last[$i] = '';
+      }
+   }
+
+   if ($action eq 'inv') {
+      for ($i = 0; $i < $n; $i++) {
+         print "$line[$i]:range=$start[$i]-$last[$i]\n";
+      }
+      exit(0);
+   }
+
+   #
+   # make the range field for Curl
+   #
+
+   $range = '';
+   $lastfrom = '';
+   $lastto = '-100';
+   for ($i = 0; $i < $n; $i++) {
+      $_ = $line[$i];
+      if (/$LEVS/i && /$VARS/i) {
+         $from=$start[$i];
+         $to=$last[$i];
+
+         if ($lastto + 1 == $from) {
+            $lastto = $to;
+         }
+         elsif ($lastto ne $to) {
+            if ($lastfrom ne '') {
+               if ($range eq '') { $range = "$lastfrom-$lastto"; }
+               else { $range = "$range,$lastfrom-$lastto"; }
+            }
+            $lastfrom = $from;
+            $lastto = $to;
+        }
+      }
+   }
+   if ($lastfrom ne '') {
+      if ($range eq '') { $range="$lastfrom-$lastto"; }
+      else { $range="$range,$lastfrom-$lastto"; }
+   }
+
+
+   if ($range ne '') {
+
+
+    #################################################################################
+    ########### THE BELOW LINE IS WHERE CURL IS CALLED AND IT CRASHES ###############
+    #################################################################################
+
+
+      $err = system("$curl -f -v -s -r \"$range\" $url$grb -o $OUTDIR/$file.tmp");
+      $err = $err >> 8;
+      if ($err != 0) {
+         print STDERR "error in getting file $err $url$grb\n";
+         sleep(20);
+         exit $err;
+      }
+      rename "$OUTDIR/$file.tmp", "$OUTDIR/$file";
+      $output = "$output $OUTDIR/$file";
+   }
+   else {
+      print "no matches (no download) for $file\n";
+   }
+   $fhr += $dhr;
+}
+

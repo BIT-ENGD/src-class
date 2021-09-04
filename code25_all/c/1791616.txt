@@ -1,0 +1,95 @@
+struct dhcpmessage
+{
+    uint8_t op;
+    uint8_t htype;
+    uint8_t hlen;
+    uint8_t hops;
+    uint32_t xid;
+    uint16_t secs;
+    uint16_t flags;
+    uint32_t ciaddr;
+    uint32_t yiaddr;
+    uint32_t siaddr;
+    uint32_t giaddr;
+    char chaddr[16];
+    char sname[64];
+    char file[128];
+    char magic[4];
+    char opt[3];
+} __attribute__((__packed__));
+
+#include<stdio.h>
+#include<ctype.h>
+#include<stdlib.h>
+#include<string.h>
+#include<unistd.h>
+#include<signal.h>
+#include<sys/wait.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<errno.h>
+#include<sys/file.h>
+#include<sys/msg.h>
+#include<sys/ipc.h>
+#include<time.h>
+#include"defs.h"
+int main() {
+int sockfd,listenfd,connfd;
+const int on=1;
+struct sockaddr_in servaddr,cliaddr,rservaddr;
+if((sockfd=socket(AF_INET,SOCK_DGRAM,0)) < 0)
+    die("socket");
+if(setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)
+    die("setsockopt");  
+
+if(setsockopt(sockfd,SOL_SOCKET,SO_BROADCAST,&on,sizeof(on)) < 0)
+    die("setsockopt");
+bzero(&servaddr,sizeof(servaddr));
+bzero(&cliaddr,sizeof(cliaddr));
+cliaddr.sin_port = htons(68);
+cliaddr.sin_family = AF_INET;
+cliaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+if(bind(sockfd,(struct sockaddr*)&cliaddr,sizeof(cliaddr)) < 0)
+    die("bind");
+
+servaddr.sin_port = htons(67);
+servaddr.sin_family = AF_INET;
+servaddr.sin_addr.s_addr = inet_addr("255.255.255.255");
+struct dhcpmessage dhcpmsg;
+bzero(&dhcpmsg,sizeof(dhcpmsg));
+dhcpmsg.op = 1;
+dhcpmsg.htype = 1;
+dhcpmsg.hlen = 6;
+dhcpmsg.hops = 0;
+dhcpmsg.xid = htonl(1000);
+dhcpmsg.secs = htons(0);
+dhcpmsg.flags = htons(0x8000);
+dhcpmsg.chaddr[0] = 0x00;
+dhcpmsg.chaddr[1] = 0x1A;
+dhcpmsg.chaddr[2] = 0x80;
+dhcpmsg.chaddr[3] = 0x80;
+dhcpmsg.chaddr[4] = 0x2C;
+dhcpmsg.chaddr[5] = 0xC3;
+dhcpmsg.magic[0]=99;
+dhcpmsg.magic[1]=130;
+dhcpmsg.magic[2]=83;
+dhcpmsg.magic[3]=99;
+dhcpmsg.opt[0]=53;
+dhcpmsg.opt[1]=1;
+dhcpmsg.opt[2]=1;
+if(sendto(sockfd,&dhcpmsg,sizeof(dhcpmsg),0,(struct sockaddr*)&servaddr,sizeof(servaddr)) < 0)
+    die("sendto");
+struct dhcpmessage recvdhcpmsg;
+socklen_t rservlen = sizeof(rservaddr);
+if(recvfrom(sockfd,&recvdhcpmsg,sizeof(recvdhcpmsg),0,(struct sockaddr*)&rservaddr,&rservlen) < 0)
+    die("recvfrom");
+char *str = (char*)&recvdhcpmsg;
+int i;
+for(i=0;i<sizeof(recvdhcpmsg);i++)
+    printf("%d_",str[i]);
+printf("\n");
+return 0;
+}
+

@@ -1,0 +1,31 @@
+gen_render :: Name -> Q [Dec]
+gen_render typName =
+  do (TyConI d) <- reify typName -- Get all the information on the type
+     (type_name, vars, nars, constructors) <- typeInfo (return d) -- extract name and constructors
+     x <- mapM func_def constructors
+     let funcs = concat x
+     let setterNames = [setter | (setter, _) <- funcs]
+     acidic <- makeAcidic typName setterNames
+     return $ [newFuncs | (_, newFuncs) <- funcs] ++ acidic
+
+     where func_def data_con@(con_name, compontents) 
+               = do 
+                   x <- mapM genFieldSetandGet compontents
+                   return $ concat x
+           genFieldSetandGet (Just fieldName, fieldType) = do
+
+                   uVar <- runQ $ varE $ mkName "u"
+
+                   ixInsert <- appsE $ [[| IxSet.insert |], (varE $ mkName "u"), parensE $ appsE [(varE fieldName), (varE $ mkName "db")]]
+
+                   {-instanceD (cxt [])
+                     (conT (mkName "DatabaseAccess") `appT` (return fieldType) `appT` conT typName)-}
+
+                   let setterName = (mkName $ "updateDb" ++ (capitalize $ nameBase fieldName))
+
+                   func <- funD setterName $
+                               [clause [(varP $ mkName "u"), (varP $ mkName "db")] (normalB $ 
+                                   [| modify |] `appE` [| IxSet.insert |] `appE` (varE $ mkName "u") ) []]
+
+                   return [(setterName, func)]
+

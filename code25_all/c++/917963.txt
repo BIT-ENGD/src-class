@@ -1,0 +1,71 @@
+SOURCE
+Run()
+E_UNEXPECTED
+// Get the interface for DirectShow's GraphBuilder
+mGB.CoCreateInstance(CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER);
+
+// Create the Video Mixing Renderer and add it to the graph
+ATL::CComPtr<IBaseFilter> pVmr;
+pVmr.CoCreateInstance(CLSID_VideoMixingRenderer9, NULL, CLSCTX_INPROC);
+mGB->AddFilter(pVmr, L"Video Mixing Renderer 9");
+
+// Set the rendering mode and number of streams
+ATL::CComPtr<IVMRFilterConfig9> pConfig;
+pVmr->QueryInterface(IID_IVMRFilterConfig9, (void**)&pConfig);
+pConfig->SetRenderingMode(VMR9Mode_Windowless);
+pVmr->QueryInterface(IID_IVMRWindowlessControl9, (void**)&mWC);
+
+RenderFileToVideoRenderer
+dshowutil.h
+// Release the source filter, if it exists, so we can replace it.
+IBaseFilter *pSource = NULL;
+if (SUCCEEDED(mpGB->FindFilterByName(L"SOURCE", &pSource)) && pSource)
+{
+    mpGB->RemoveFilter(pSource);
+    pSource->Release();
+    pSource = NULL;
+}
+
+// Render the file.
+hr = RenderFileToVideoRenderer(mpGB, mPlayPath.c_str(), FALSE);
+
+// QueryInterface for DirectShow interfaces
+hr = mpGB->QueryInterface(&mMC);
+hr = mpGB->QueryInterface(&mME);
+hr = mpGB->QueryInterface(&mMS);
+
+// Read the default video size
+hr = mpWC->GetNativeVideoSize(&lWidth, &lHeight, NULL, NULL);
+if (hr != E_NOINTERFACE)
+{
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Play video at native resolution, anchored at top-left corner.
+    RECT r;
+    r.left = 0;
+    r.top = 0;
+    r.right = lWidth;
+    r.bottom = lHeight;
+    hr = mpWC->SetVideoPosition(NULL, &r);
+}
+
+// Run the graph to play the media file
+if (mMC)
+{
+    hr = mMC->Run();
+    if (FAILED(hr))
+    {
+        // We get here the second time this code is executed.
+        return hr;
+    }
+    mState = Running;
+}
+
+if (mME)
+{
+    mME->SetNotifyWindow((OAHWND)m_hWnd, WM_GRAPHNOTIFY, 0);
+}
+

@@ -1,0 +1,292 @@
+    var task = session.dataTaskWithRequest(request, completionHandler: {data, response, error -> Void in
+        println("Task completed")
+        if(error) {
+            // if there is an error in the request, print it to the console
+            self.delegate?.didCompleteWithError(error.localizedDescription)
+            //println(error.localizedDescription)
+            println("oops!")
+        }
+        var err: NSError?
+        if self.responseFormat == "JSON" {
+            // blah blah blah ... the code here does work fine. Snipped for brevity
+        } else if self.responseFormat == "XML" {
+            // Put XML parsing code here
+            var error = NSError()
+            var xmlReader = XMLDictionary(error: error)
+            var xmlResult = xmlReader.dictionaryForXMLData(data, error: error) as NSDictionary
+            self.delegate?.didCompleteWithDictionary(xmlResult)
+        }
+
+//
+//  XMLDictionary.swift
+//
+//
+
+import Foundation
+
+class XMLDictionary: NSObject, NSXMLParserDelegate {
+
+    var dictionaryStack = NSMutableArray()
+
+var textInProgress = ""
+let XMLReaderTextNodeKey = "text"
+var errorP = NSError()
+
+func dictionaryForXMLData(data: NSData, error: NSError) -> NSDictionary {
+   var reader = XMLDictionary(error: error)
+    return reader.objectWithData(data, error: error) as NSDictionary
+}
+
+func dictionaryForXMLString(string: String, error: NSError) -> NSDictionary {
+    var data : NSData = string.dataUsingEncoding(NSUTF8StringEncoding)
+    return dictionaryForXMLData(data, error: error)
+}
+
+init(error: NSError) {
+    self.errorP = error
+}
+
+func objectWithData(data:NSData, error:NSError) -> NSDictionary {
+    // clear out any old data
+    dictionaryStack.removeAllObjects()
+    textInProgress = ""
+
+    // Initialize the stack with a fresh dictionary
+    dictionaryStack.addObject(NSMutableDictionary())
+
+    // Parse the XML
+    var parser = NSXMLParser(data: data)
+    parser.delegate = self
+
+    // some more needed
+    var success:Bool = parser.parse()
+
+    if success {
+        println("parse success!")
+    } else {
+        println("parse failure!")
+    }
+
+    // Return the stack's root dictionary on success
+    var resultDict : NSDictionary! = dictionaryStack[0] as NSDictionary
+    NSLog(" in parser: %@", resultDict)
+    return resultDict as NSDictionary
+
+}
+
+func parser(parser: NSXMLParser!,didStartElement elementName: String!, namespaceURI: String!, qualifiedName : String!, attributes attributeDict: NSDictionary!) {
+
+    // Get the dictionary for the current level in the stack
+    var elementCount = dictionaryStack.count - 1
+    if elementCount < 0 {
+        elementCount = 0
+    }
+    NSLog("element: %d", elementCount)
+    var parentDict = dictionaryStack[elementCount] as NSMutableDictionary
+
+    // Create the child dictionary for the new element and initialize it with the attributes
+    var childDict = NSMutableDictionary()
+    childDict.addEntriesFromDictionary(attributeDict)
+
+    // If there's already an item for this key, it means we need to create an array
+    var existingValue : AnyObject? = parentDict[elementName]! as AnyObject
+    if let eValue : NSMutableArray = existingValue as? NSMutableArray {
+        var array = NSMutableArray()
+        if eValue.isKindOfClass(NSMutableArray) {
+            // The array exists, so use it
+            array = eValue
+        } else {
+            array.addObject(eValue)
+            // Replace the child dictionary with an array of children dictionaries
+            parentDict.setObject(array, forKey: elementName)
+        }
+
+        // Add the new child dictionary to the array
+        array.addObject(childDict)
+    } else {
+        // No existing value, so update the dictionary
+        parentDict.setObject(childDict, forKey: elementName)
+    }
+
+    // Update the stack
+    dictionaryStack.addObject(childDict)
+
+}
+
+func parser(parser: NSXMLParser!, didEndElement elementName: String!, namespaceURI: String!, qualifiedName qName: String!) {
+
+    // Update the parent dict with text info
+    var elementCount = dictionaryStack.count - 1
+    if elementCount < 0 {
+        elementCount = 0
+    }
+    var dictInProgress = dictionaryStack[elementCount] as NSMutableDictionary
+
+    // Set the text property
+    if countElements(textInProgress) > 0 {
+        // Get rid of leading + trailing whitespace
+        dictInProgress.setObject(textInProgress, forKey: XMLReaderTextNodeKey)
+
+        // Reset the text
+        textInProgress = ""
+
+    }
+
+    // Pop the current dict
+    dictionaryStack.removeLastObject()
+
+}
+
+func parser(parser: NSXMLParser!, foundCharacters string: String!) {
+    // Build the text value
+    textInProgress += string
+}
+
+func parser(parser: NSXMLParser!, parseErrorOccurred parseError: NSError!) {
+    self.errorP = parseError
+    NSLog("failure error: %@", parseError)
+    }
+}
+
+//
+//  GovDataRequest.swift
+//  
+//
+//  Created by Michael Pulsifer (U.S. Department of Labor) on 6/18/14.
+//  License: Public Domain
+//
+
+import Foundation
+
+protocol GovDataRequestProtocol {
+    func didCompleteWithError(errorMessage: String)
+    func didCompleteWithDictionary(results: NSDictionary)
+}
+
+class GovDataRequest {
+
+    var delegate: GovDataRequestProtocol? = nil
+
+    var APIKey = ""
+    var APIHost = ""
+    var APIURL = ""
+    var responseFormat = "JSON"
+    var timeOut = 60.0
+
+    init(APIKey: String, APIHost: String, APIURL:String) {
+        self.APIKey = APIKey
+        self.APIHost = APIHost
+        self.APIURL = APIURL
+    }
+
+
+    func callAPIMethod (#method: String, arguments: Dictionary<String,String>) {
+        // Construct the base url based on the provided information
+        var url = APIHost + APIURL + "/" + method
+        // Start building the query string
+        var queryString = ""
+
+        // Where appropriate, add the key
+        switch APIHost {
+        case "http://api.dol.gov":
+            queryString = "?KEY=" + APIKey
+        case "http://api.census.gov", "http://pillbox.nlm.nih.gov":
+            queryString = "?key=" + APIKey
+        case "http://api.eia.gov", "http://developer.nrel.gov", "http://api.stlouisfed.org", "http://healthfinder.gov":
+            queryString = "?api_key=" + APIKey
+        case "http://www.ncdc.noaa.gov":
+            queryString = "?token=" + APIKey
+        default:
+            // do nothing for now
+            println("doing nothing for now")
+        }
+
+        //Construct the arguments part of the query string
+        for (argKey, argValue) in arguments {
+            switch APIHost {
+            case "http://api.dol.gov":
+                // DOL's V1 API has specific formatting requirements for arguments in the query string
+                switch argKey {
+                case "top", "skip", "select", "orderby", "filter":
+                    queryString += "&$" + argKey + "=" + argValue
+                case "format", "query", "region", "locality", "skipcount":
+                    queryString += "&" + argKey + "=" + argValue
+                default:
+                    println("nothing to see here")
+                }
+            case "http://go.usa.gov":
+                // go.usa.gov requires that the apiKey be the 2nd argument
+                if countElements(queryString) == 0 {
+                    queryString += "?" + argKey + "=" + argValue + "&apiKey=" + APIKey
+                } else {
+                    queryString += "&" + argKey + "=" + argValue
+                }
+            default:
+                if countElements(queryString) == 0 {
+                    queryString += "?" + argKey + "=" + argValue
+                } else {
+                    queryString += "&" + argKey + "=" + argValue
+                }
+            }
+
+        }
+
+        //If there are arguments, append them to the url
+        if countElements(queryString) > 0 {
+            url += queryString
+        }
+
+        //DOT FMCSA requires that the key be placed at the end.
+        if APIHost == "https://mobile.fmcsa.dot.gov" {
+            if countElements(queryString) > 0 {
+                url += "&webKey=" + APIKey
+            } else {
+                url += "?webKey=" + APIKey
+            }
+        }
+
+        /*
+            ASSUMPTION: data retrieved is in JSON format.
+            TODO: consider situation when XML is received.
+        */
+
+
+            // Send the request to the API and parse
+            var urlToPackage = url.stringByAddingPercentEscapesUsingEncoding(NSUTF8StringEncoding)
+            println(urlToPackage)
+            var urlToSend: NSURL = NSURL(string: urlToPackage)
+            var apiSessionConfiguration: NSURLSessionConfiguration = NSURLSessionConfiguration.defaultSessionConfiguration()
+            apiSessionConfiguration.timeoutIntervalForRequest = timeOut
+            var session = NSURLSession(configuration:apiSessionConfiguration)
+            var request = NSMutableURLRequest(URL:urlToSend)
+            request.addValue("application/json",forHTTPHeaderField:"Accept")
+            var task = session.dataTaskWithRequest(request, completionHandler: {data, response, error -> Void in
+                println("Task completed")
+                if(error) {
+                    // if there is an error in the request, print it to the console
+                    self.delegate?.didCompleteWithError(error.localizedDescription)
+                    //println(error.localizedDescription)
+                    println("oops!")
+                }
+                var err: NSError?
+                if self.responseFormat == "JSON" {
+                    var jsonResult = NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions.MutableContainers, error: &err) as NSDictionary
+                    if(err?) {
+                        // If there is an error parson JSON, print it to the console
+                        NSLog ("Error parsing the JSON")
+                    }
+                    self.delegate?.didCompleteWithDictionary(jsonResult)
+                } else if self.responseFormat == "XML" {
+                    // Put XML parsing code here
+                    var error = NSError()
+                    var xmlReader = XMLDictionary(error: error)
+                    var xmlResult = xmlReader.dictionaryForXMLData(data, error: error) as NSDictionary
+                    self.delegate?.didCompleteWithDictionary(xmlResult)
+                }
+                })
+            task.resume()
+    }
+
+
+}
+

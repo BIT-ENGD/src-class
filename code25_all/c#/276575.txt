@@ -1,0 +1,107 @@
+public interface ITemperatureProvider
+{
+    void Subcribe(ObjRef temperatureSubcriber);
+}
+
+[Serializable]
+public sealed class TemperatureProvider : MarshalByRefObject, ITemperatureProvider
+{
+    private readonly List<ITemperatureSubcriber> _temperatureSubcribers = new List<ITemperatureSubcriber>();
+    private readonly Random randomTemperature = new Random();
+
+    public void Subcribe(ObjRef temperatureSubcriber)
+    {
+        ITemperatureSubcriber tempSubcriber = (ITemperatureSubcriber)RemotingServices.Unmarshal(temperatureSubcriber);
+        lock (_temperatureSubcribers)
+        {
+            _temperatureSubcribers.Add(tempSubcriber);
+        }
+    }
+
+    public void Start()
+    {
+        Console.WriteLine("TemperatureProvider started...");
+        BinaryServerFormatterSinkProvider provider = new BinaryServerFormatterSinkProvider();
+        provider.TypeFilterLevel = System.Runtime.Serialization.Formatters.TypeFilterLevel.Full;
+        TcpServerChannel tcpChannel = new TcpServerChannel("TemperatureProviderChannel", 5001, provider);
+        ChannelServices.RegisterChannel(tcpChannel, false);
+        RemotingServices.Marshal(this, "TemperatureProvider", typeof(ITemperatureProvider));
+
+        while (true)
+        {
+            double nextTemp = randomTemperature.NextDouble();
+
+            lock (_temperatureSubcribers)
+            {
+                foreach (var item in _temperatureSubcribers)
+                {
+                    try
+                    {
+                        item.OnTemperature(nextTemp);
+                    }
+                    catch (SocketException)
+                    {}
+                    catch(RemotingException)
+                    {}
+                }
+            }
+            Thread.Sleep(200);
+        }
+    }
+}
+
+public interface ITemperatureSubcriber
+{
+    void OnTemperature(double temperature);
+}
+
+[Serializable]
+public sealed class TemperatureSubcriber : MarshalByRefObject, ITemperatureSubcriber
+{
+    private ObjRef _clientRef;
+    private readonly Random portGen = new Random();
+
+    public void OnTemperature(double temperature)
+    {
+        Console.WriteLine(temperature);
+    }
+    public override object InitializeLifetimeService()
+    {
+        return null;
+    }
+
+    public void Start()
+    {
+        BinaryServerFormatterSinkProvider provider = new BinaryServerFormatterSinkProvider();
+        provider.TypeFilterLevel = System.Runtime.Serialization.Formatters.TypeFilterLevel.Full;
+
+        int port = portGen.Next(1, 65535);
+        TcpServerChannel tcpChannel = new TcpServerChannel(string.Format("TemperatureSubcriber_{0}", Guid.NewGuid()), port, provider);
+        ChannelServices.RegisterChannel(tcpChannel, false);
+
+        ITemperatureProvider p1 = (ITemperatureProvider)RemotingServices.Connect(typeof(ITemperatureProvider), "tcp://localhost:5001/TemperatureProvider");
+        _clientRef = RemotingServices.Marshal(this, string.Format("TemperatureSubcriber_{0}_{1}.rem", Environment.MachineName, Guid.NewGuid()));
+        p1.Subcribe(_clientRef);
+    }
+}
+
+public class TemperatureProviderProgram
+{
+    static void Main(string[] args)
+    {
+        TemperatureProvider tp = new TemperatureProvider();
+        tp.Start();
+    }
+}
+public class TemperatureSubcriberProgram
+{
+    static void Main(string[] args)
+    {
+        Console.WriteLine("Press any key to start TemperatureSubcriber.");
+        Console.ReadLine();
+        TemperatureSubcriber ts = new TemperatureSubcriber();
+        ts.Start();
+        Console.ReadLine();
+    }
+}
+

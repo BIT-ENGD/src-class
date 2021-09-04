@@ -1,0 +1,102 @@
+import actors.threadpool.{TimeUnit, Future, Executors}
+import collection.mutable.ListBuffer
+
+object TaskRepeater {
+
+  def repeat(task: Runnable, millisecs: Long): Int = {
+    val exector = Executors.newCachedThreadPool
+    val remover = Executors.newCachedThreadPool
+
+    val queue = ListBuffer[Future]()
+    def removeDone() {
+      (queue filter (_.isDone)) foreach { f =>
+        queue.remove(queue indexOf f)
+      }
+    }
+
+    val lock = new EasyLock()
+
+    val maxQueueSize = scala.collection.parallel.availableProcessors
+
+    val queueAvaiable = lock.mkCondition(queue.size < maxQueueSize)
+
+    var cnt = 0
+
+    val start = System.nanoTime()
+
+    while(System.nanoTime() - start < millisecs * 1000000) {
+      lock {
+        queueAvaiable.waitUntilFulfiled()
+
+        cnt += 1
+        val r = exector.submit(task)
+        queue += r
+
+        remover.submit(runneble {
+          r.get()
+          lock {
+            removeDone()
+            queueAvaiable.signalIfFulfilled()
+          }
+        })
+      }
+    }
+
+    exector.shutdown()
+    remover.shutdown()
+
+    assert(exector.awaitTermination(1, TimeUnit.SECONDS))
+
+    cnt
+  }
+
+  def runneble(f: => Unit) = new Runnable {
+    def run() {
+      f
+    }
+  }
+}
+
+import actors.threadpool.locks.{Condition, ReentrantLock}
+
+class EasyLock {
+  val lock = new ReentrantLock
+
+  def mkCondition(f: => Boolean): EasyCondition = {
+    new EasyCondition(lock.newCondition(), f)
+  }
+
+  def apply(f: => Unit) {
+    lock.lock()
+    try {
+      f
+    } finally {
+      lock.unlock()
+    }
+  }
+}
+
+class EasyCondition(c: Condition, condition: => Boolean) {
+
+  def waitUntilFulfiled(f: => Unit) {
+    while (!condition) {
+      c.await()
+    }
+    f
+  }
+
+  def signalAllIfFulfilled() {
+    if (condition) c.signalAll()
+  }
+
+  def signalIfFulfilled() {
+    if (condition) c.signal()
+  }
+}
+
+val b = new Broker
+val e = new Executor // connects with the broker anyway
+e.runTask
+val o = b.recv
+o.sync() // wait until the task finishes
+

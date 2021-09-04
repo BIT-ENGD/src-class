@@ -1,0 +1,256 @@
+phi ::= p ; !p ; phi_0 & phi_1 ; phi_0 | phi_1 ; AX phi ; AF phi ; AG phi ; AU phi_0 U phi_1.
+
+            tokens = (
+            'NEGATION',
+            'FUTURE',
+            'GLOBAL',
+            'NEXT',
+            'CONJUNCTION',
+            'DISJUNCTION',
+            'EQUIVALENCE',
+            'IMPLICATION',
+            'PROPOSITION',             
+            'LPAREN',
+            'RPAREN',
+            'TRUE',
+            'FALSE',
+            )
+
+        # regex in order of parsing precedence
+        t_NEGATION    = r'[\s]*\![\s]*'
+        t_FUTURE      = r'[\s]*AF[\s]*'
+        t_GLOBAL      = r'[\s]*AG[\s]*'
+        t_NEXT        = r'[\s]*AX[\s]*'
+        t_CONJUNCTION = r'[\s]*\&[\s]*'
+        t_DISJUNCTION = r'[\s]*\|[\s]*'
+        t_EQUIVALENCE = r'[\s]*\<\-\>[\s]*'
+        t_IMPLICATION = r'[\s]*[^<]\-\>[\s]*'
+        t_LPAREN      = r'[\s]*\([\s]*'
+        t_RPAREN      = r'[\s]*\)[\s]*'
+        t_PROPOSITION = r'[\s]*[a-z]+[-\w\._]*[\s]*'
+        t_TRUE        = r'[\s]*TRUE[\s]*'
+        t_FALSE       = r'[\s]*FALSE[\s]*'
+
+        precedence = (
+        ('left', 'ASSIGNMENT'),
+        ('left', 'NEGATION'),
+        ('left', 'GLOBAL','NEXT','FUTURE'),
+        ('left', 'CONJUNCTION'), 
+        ('left', 'DISJUNCTION'), 
+        ('left', 'EQUIVALENCE'),
+        ('left', 'IMPLICATION'),   
+        ('left', 'AUB', 'AUM'),
+        ('left', 'LPAREN', 'RPAREN', 'TRUE', 'FALSE'),
+        )            
+
+        lexer = lex.lex()
+        lexer.input(formula)
+
+        def p_double_neg_paren(p):
+            '''formula : NEGATION LPAREN NEGATION LPAREN PROPOSITION RPAREN RPAREN
+            '''
+            stack.append(p[5].strip())
+
+        def p_double_neg(p):
+            '''formula : NEGATION NEGATION PROPOSITION
+            '''
+            stack.append(p[3].strip())
+
+        def p_double_neg_inner_paren(p):
+            '''formula : NEGATION NEGATION LPAREN PROPOSITION RPAREN
+            '''
+            stack.append(p[4].strip())
+
+        def p_double_neg_mid_paren(p):
+            '''formula : NEGATION LPAREN NEGATION PROPOSITION RPAREN
+            '''
+            stack.append(p[4].strip())
+
+        def p_groupAssignment(p):
+            '''formula : PROPOSITION ASSIGNMENT ASSIGNVAL
+            '''
+            stack.append(p[1].strip() + p[2].strip() + p[3].strip())
+
+        def p_neg_paren_take_outer_token(p):
+            '''formula : NEGATION LPAREN PROPOSITION RPAREN
+                       | NEGATION LPAREN TRUE RPAREN
+                       | NEGATION LPAREN FALSE RPAREN
+            '''
+            stack.append(Neg(p[3]))
+
+        def p_neg_take_outer_token(p):
+            '''formula : NEGATION PROPOSITION
+                       | NEGATION TRUE
+                       | NEGATION FALSE
+            '''
+
+            stack.append(Neg(p[2].strip()))
+
+        def p_neg_take_outer_token_paren(p):
+            '''formula : LPAREN NEGATION PROPOSITION RPAREN
+                       | LPAREN NEGATION TRUE RPAREN
+                       | LPAREN NEGATION FALSE RPAREN
+            '''
+            stack.append(Neg(p[3].strip()))
+
+        def p_unary_paren_nest_take_outer_token(p):
+            '''formula : GLOBAL LPAREN LPAREN NEGATION formula RPAREN RPAREN
+                       | NEXT LPAREN LPAREN NEGATION formula RPAREN RPAREN
+                       | FUTURE LPAREN LPAREN NEGATION formula RPAREN RPAREN
+            '''
+            if len(stack) >= 1:
+                if p[1].strip() == 'AG':
+                    stack.append(['AG', ['!', stack.pop()]])
+                elif p[1].strip() == 'AF':
+                    stack.append(['AF', ['!', stack.pop()]])
+                elif p[1].strip() == 'AX':    
+                    stack.append(['AX', ['!', stack.pop()]])
+
+
+        def p_unary_paren_take_outer_token(p):
+            '''formula : GLOBAL LPAREN formula RPAREN
+                       | NEXT LPAREN formula RPAREN
+                       | FUTURE LPAREN formula RPAREN
+            '''
+            if len(stack) >= 1:
+                if p[1].strip() == "AG":
+                    stack.append(AG(stack.pop()))
+                elif p[1].strip() == "AF":
+                    stack.append(AF(stack.pop()))
+                elif p[1].strip() == "AX":
+                    stack.append(AX(stack.pop()))
+
+        def p_unary_take_outer_token(p):
+            '''formula : GLOBAL formula
+                       | NEXT formula
+                       | FUTURE formula
+            '''
+
+            if len(stack) >= 1:
+                if p[1].strip() == "AG":
+                    stack.append(AG(stack.pop()))
+                elif p[1].strip() == "AF":
+                    stack.append(AF(stack.pop()))
+                elif p[1].strip() == "AX":
+                    stack.append(AX(stack.pop()))
+
+        def p_unary_take_outer_token_prop(p):
+            '''formula : GLOBAL PROPOSITION
+                       | NEXT PROPOSITION
+                       | FUTURE PROPOSITION
+            '''
+
+            if len(stack) >= 1:
+                if p[1].strip() == "AG":
+                    stack.append(AG(stack.pop()))
+                elif p[1].strip() == "AF":
+                    stack.append(AF(stack.pop()))
+                elif p[1].strip() == "AX":
+                    stack.append(AX(stack.pop()))
+
+        def p_binary_take_outer_token(p):
+            '''formula : formula CONJUNCTION formula 
+                       | formula DISJUNCTION formula 
+                       | formula EQUIVALENCE formula
+                       | formula IMPLICATION formula
+            '''
+
+            if len(stack) >= 2:
+                a, b = stack.pop(), stack.pop()
+                if self.IMPLICATION.search(p[2].strip()) and not self.EQUIVALENCE.search(p[2].strip()):
+                    stack.append(Or(a, Neg(b)))
+                elif self.EQUIVALENCE.search(p[2].strip()):
+                    stack.append(And(Or(Neg(a), b), Or(Neg(b), a)))
+                else:
+                    if p[2].strip() == "|":
+                        stack.append(Or(b, a))
+                    elif p[2].strip() == "&":
+                        stack.append(And(b, a))
+
+        def p_binary_paren_take_outer_token(p):
+            '''formula : LPAREN formula RPAREN CONJUNCTION LPAREN formula RPAREN 
+                       | LPAREN formula RPAREN DISJUNCTION LPAREN formula RPAREN
+                       | LPAREN formula RPAREN EQUIVALENCE LPAREN formula RPAREN 
+                       | LPAREN formula RPAREN IMPLICATION LPAREN formula RPAREN
+            '''
+            if len(stack) >= 2:
+                a, b = stack.pop(), stack.pop()
+                if self.IMPLICATION.search(p[4].strip()) and not self.EQUIVALENCE.search(p[4].strip()):
+                    stack.append(Or(a, Neg(b)))
+                elif self.EQUIVALENCE.search(p[4].strip()):
+                    stack.append(And(Or(Neg(a), b), Or(Neg(b), a)))
+                else:
+                    if p[4].strip() == "|":
+                        stack.append(Or(b, a))
+                    elif p[4].strip() == "&":
+                        stack.append(And(b, a))
+
+        def p_binary_lparen_take_outer_token(p):
+            '''formula : LPAREN formula RPAREN CONJUNCTION formula 
+                       | LPAREN formula RPAREN DISJUNCTION formula
+                       | LPAREN formula RPAREN EQUIVALENCE formula 
+                       | LPAREN formula RPAREN IMPLICATION formula
+            '''
+            if len(stack) >= 2:
+                a = stack.pop()
+                b = stack.pop()
+                if self.IMPLICATION.search(p[4].strip()) and not self.EQUIVALENCE.search(p[4].strip()):
+                    stack.append(Or(a, Neg(b)))
+                elif self.EQUIVALENCE.search(p[4].strip()):
+                    stack.append(And(Or(Neg(a), b), Or(Neg(b), a)))
+                else:
+                    if p[4].strip() == "|":
+                        stack.append(Or(b, a))
+                    elif p[4].strip() == "&":
+                        stack.append(And(b, a))
+
+        def p_binary_rparen_take_outer_token(p):
+            '''formula : formula CONJUNCTION LPAREN formula RPAREN 
+                       | formula DISJUNCTION LPAREN formula RPAREN
+                       | formula EQUIVALENCE LPAREN formula RPAREN 
+                       | formula IMPLICATION LPAREN formula RPAREN
+            '''
+            if len(stack) >= 2:
+                a = stack.pop()
+                b = stack.pop()
+                if self.IMPLICATION.search(p[4].strip()) and not self.EQUIVALENCE.search(p[4].strip()):
+                    stack.append(Or(a, Neg(b)))
+                elif self.EQUIVALENCE.search(p[4].strip()):
+                    stack.append(And(Or(Neg(a), b), Or(Neg(b), a)))
+                else:
+                    if p[4].strip() == "|":
+                        stack.append(Or(b, a))
+                    elif p[4].strip() == "&":
+                        stack.append(And(b, a))
+
+        def p_proposition_take_token_paren(p):
+            '''formula : LPAREN formula RPAREN
+            '''
+            stack.append(p[2].strip())
+
+        def p_proposition_take_token_atom(p):
+            '''formula : LPAREN PROPOSITION RPAREN
+            '''
+            stack.append(p[2].strip())
+
+        def p_proposition_take_token(p):
+            '''formula : PROPOSITION
+            '''
+            stack.append(p[1].strip())
+
+        def p_true_take_token(p):
+            '''formula : TRUE
+                       '''
+            stack.append(p[1].strip())
+
+        def p_false_take_token(p):
+            '''formula : FALSE
+                       '''
+            stack.append(p[1].strip())
+
+        # Error rule for syntax errors
+        def p_error(p):
+            print "Syntax error in input!: " + str(p)
+            os.system("pause")
+            return 0
+

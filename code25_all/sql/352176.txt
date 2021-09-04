@@ -1,0 +1,66 @@
+WITH 
+ AllTables(TableName) AS
+ (
+ SELECT OBJECT_SCHEMA_NAME(so.id) +'.'+ OBJECT_NAME(so.id) 
+ FROM dbo.sysobjects so 
+ INNER JOIN sys.all_columns ac ON 
+  so.ID = ac.object_id
+ WHERE
+  so.type = 'U'
+ AND
+  ac.is_rowguidcol = 1
+ ),
+
+  Relationships(ReferenceTableName, ReferenceColumnName, TableName, ColumnName)  AS
+  (
+  SELECT  
+    OBJECT_SCHEMA_NAME (fkey.referenced_object_id) + '.' +  
+    OBJECT_NAME (fkey.referenced_object_id) AS ReferenceTableName 
+    ,COL_NAME(fcol.referenced_object_id, 
+              fcol.referenced_column_id) AS ReferenceColumnName 
+    ,OBJECT_SCHEMA_NAME (fkey.parent_object_id) + '.' +  
+    OBJECT_NAME(fkey.parent_object_id) AS TableName 
+    ,COL_NAME(fcol.parent_object_id, fcol.parent_column_id) AS ColumnName 
+  FROM sys.foreign_keys AS fkey 
+    INNER JOIN sys.foreign_key_columns AS fcol ON 
+               fkey.OBJECT_ID = fcol.constraint_object_id 
+  ),
+
+ NotReferencedOrReferencing(TableName) AS
+ (
+ SELECT TableName FROM AllTables
+ EXCEPT
+ SELECT TableName FROM Relationships
+ EXCEPT
+ SELECT ReferenceTableName FROM Relationships
+ ),
+
+ OnlyReferenced(Tablename) AS
+ (
+ SELECT ReferenceTableName FROM Relationships
+ EXCEPT
+ SELECT TableName FROM Relationships
+ ),
+-- These need to be sorted based on theire internal relationships
+ ReferencedAndReferencing(TableName, ReferenceTableName) AS
+ (
+ SELECT r1.Tablename, r2.ReferenceTableName FROM Relationships r1 
+ INNER JOIN Relationships r2
+ ON r1.TableName = r2.ReferenceTableName   
+ ),
+
+ OnlyReferencing(TableName) AS
+ (
+ SELECT Tablename FROM Relationships
+ EXCEPT
+ SELECT ReferenceTablename FROM Relationships
+ )
+SELECT TableName, 1000 AS Sorting FROM NotReferencedOrReferencing
+UNION
+SELECT TableName, 2000 AS Sorting FROM OnlyReferenced 
+UNION
+SELECT TableName, 3000 AS Sorting FROM ReferencedAndReferencing
+UNION
+SELECT TableName, 4000 AS Sorting FROM OnlyReferencing
+ORDER BY Sorting
+

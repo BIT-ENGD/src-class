@@ -1,0 +1,132 @@
+<ServiceContract(Namespace:="ImageSystem")> _
+Public Interface IUploadService
+    <OperationContract()> _
+    Function UploadFile(ByVal file As ImageUpload) As ImageUpload
+End Interface
+
+<MessageContract()> _
+Public Class ImageUpload
+
+#Region " Message Header "
+
+    Private _ImageID As Nullable(Of Long)
+    <MessageHeader()> _
+    Public Property ImageID() As Nullable(Of Long)
+        Get
+            Return _ImageID
+        End Get
+        Set(ByVal value As Nullable(Of Long))
+            _ImageID = value
+        End Set
+    End Property
+
+    '... a few other value type properties
+
+#End Region
+
+#Region " Message Body"
+    ' Do not add any more members to the message body or streaming support will be disabled!
+
+    <MessageBodyMember()> _
+    Public Data As System.IO.Stream
+
+#End Region
+
+End Class
+
+<system.serviceModel>
+    <bindings>
+      <netTcpBinding>
+        <binding name="netTcpStreamBinding" transferMode="Streamed" maxBufferSize="20971520" maxReceivedMessageSize="20971520"/>
+      </netTcpBinding>
+    </bindings>
+    <services>
+      <service behaviorConfiguration="UploadServiceBehaviour"
+        name="ImageSystem.SVC.UploadService">
+        <endpoint address="" binding="netTcpBinding" bindingConfiguration="netTcpStreamBinding"
+          contract="ImageSystem.SVC.IUploadService">
+          <identity>
+            <dns value="localhost" />
+          </identity>
+        </endpoint>
+        <endpoint address="mex" binding="mexTcpBinding" contract="IMetadataExchange" />
+        <host>
+          <baseAddresses>
+            <add baseAddress="net.tcp://localhost:809/UploadService" />
+          </baseAddresses>
+        </host>
+      </service>
+    </services>
+    <behaviors>
+      <serviceBehaviors>
+        <behavior name="UploadServiceBehaviour">
+          <serviceMetadata httpGetEnabled="false"/>
+          <serviceDebug includeExceptionDetailInFaults="true"/>
+        </behavior>
+      </serviceBehaviors>
+    </behaviors>
+  </system.serviceModel>
+
+<system.serviceModel>
+
+    <bindings>
+        <binding name="NetTcpBinding_IUploadService" closeTimeout="00:01:00"
+          openTimeout="00:01:00" receiveTimeout="00:10:00" sendTimeout="00:01:00"
+          transactionFlow="false" transferMode="Streamed" transactionProtocol="OleTransactions"
+          hostNameComparisonMode="StrongWildcard" listenBacklog="10" maxBufferPoolSize="20971520"
+          maxBufferSize="20971520" maxConnections="10" maxReceivedMessageSize="20971520">
+          <readerQuotas maxDepth="32" maxStringContentLength="8192" maxArrayLength="16384"
+            maxBytesPerRead="4096" maxNameTableCharCount="16384" />
+          <!--<reliableSession ordered="true" inactivityTimeout="00:10:00"
+            enabled="false" />-->
+          <security mode="None">
+            <transport clientCredentialType="Windows" protectionLevel="EncryptAndSign" />
+            <message clientCredentialType="Windows" />
+          </security>
+        </binding>
+      </netTcpBinding>
+    </bindings>
+
+    <client>
+      <endpoint address="net.tcp://mycomputername.mydomain/ImageSystem/UploadService.svc"
+        binding="netTcpBinding" bindingConfiguration="NetTcpBinding_IUploadService"
+        contract="UploadService.Local.IUploadService" name="NetTcpBinding_IUploadService">
+        <identity>
+          <dns value="localhost" />
+        </identity>
+      </endpoint>
+    </client>
+
+  </system.serviceModel>
+
+Public Sub Test()
+    Dim serviceClient As UploadService.Local.UploadServiceClient = New UploadService.Local.UploadServiceClient
+    AddHandler serviceClient.UploadFileCompleted, AddressOf LocalTestCallback
+    Dim ms As MemoryStream = New MemoryStream
+    My.Resources.Penguins.Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg)
+    serviceClient.ClientCredentials.Windows.ClientCredential.Domain = "MYDOMAIN"
+    serviceClient.ClientCredentials.Windows.ClientCredential.UserName = "User"
+    serviceClient.ClientCredentials.Windows.ClientCredential.Domain = "Password123"
+    serviceClient.UploadFileAsync(Nothing, ..., ms, ms) '"..." is obviously not actually here, other values omitted. "ms" is passed as UserState object in addition to fulfilling the 'Data' parameter
+End Sub
+
+Public Function UploadFile(ByVal file As ImageUpload) As ImageUpload Implements IUploadService.UploadFile
+
+    Dim uploadBuffer(Helper.Settings.AppSettings(Of Integer)("UploadBufferSize", True) - 1) As Byte
+    Dim ms As MemoryStream = New MemoryStream()
+    Dim bytesRead As Integer
+    Do
+        bytesRead = file.Data.Read(uploadBuffer, 0, uploadBuffer.Length)
+        ms.Write(uploadBuffer, 0, bytesRead)
+    Loop Until bytesRead = 0
+
+End Function
+
+Public Function UploadFile(ByVal file As ImageUpload) As ImageUpload Implements IUploadService.UploadFile
+
+    Dim reader As StreamReader = New StreamReader(file.Data)
+    Dim imageB64 As String = reader.ReadToEnd
+    ms = New MemoryStream(Convert.FromBase64String(imageB64))
+
+End Function
+

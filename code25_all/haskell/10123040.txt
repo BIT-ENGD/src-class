@@ -1,0 +1,110 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+module Main where
+
+import qualified Data.ByteString.Char8 as B
+
+foreign import ccall "callMeFromHaskell"
+  callMeFromHaskell :: IO ()
+
+foreign export ccall callMeFromC :: IO ()
+callMeFromC :: IO ()
+callMeFromC = B.putStrLn "callMeFromC"
+
+main :: IO ()
+main = do
+  B.putStrLn "main"
+  callMeFromHaskell
+  return ()
+
+#include <stdio.h>
+
+void callMeFromC(void);
+
+void callMeFromHaskell(void)
+{   
+    printf("callMeFromHaskell\n");
+    callMeFromC();
+}
+
+GHC_OPT := -Wall -O2 -fno-warn-unused-do-bind
+
+all: ffiso
+
+test: ffiso
+    ./$<
+
+ffiso: FFISo.hs c.c
+    ghc --make $(GHC_OPT) $^ -o $@
+
+clean:
+    rm -rf *.hi *.o ffiso *_stub.*
+
+ghci0: ffiso
+    echo main | ghci FFISo.hs
+
+ghci1: ffiso
+    echo main | ghci FFISo.hs c.o
+
+ghci2: ffiso
+    echo main | ghci FFISo.hs c.o FFISo.o
+
+$ make test
+ghc --make -Wall -O2 -fno-warn-unused-do-bind FFISo.hs c.c -o ffiso
+[1 of 1] Compiling Main             ( FFISo.hs, FFISo.o )
+Linking ffiso ...
+./ffiso
+main
+callMeFromHaskell
+callMeFromC
+
+$ make ghci0
+echo main | ghci FFISo.hs
+GHCi, version 7.4.1: http://www.haskell.org/ghc/  :? for help
+Loading package ghc-prim ... linking ... done.
+Loading package integer-gmp ... linking ... done.
+Loading package base ... linking ... done.
+Ok, modules loaded: Main.
+Prelude Main> Loading package bytestring-0.9.2.1 ... linking ... done.
+<interactive>: FFISo.o: unknown symbol `callMeFromHaskell'
+
+Prelude Main> Leaving GHCi.
+
+c.o
+$ make ghci1
+echo main | ghci FFISo.hs c.o
+GHCi, version 7.4.1: http://www.haskell.org/ghc/  :? for help
+Loading package ghc-prim ... linking ... done.
+Loading package integer-gmp ... linking ... done.
+Loading package base ... linking ... done.
+Loading object (static) c.o ... done
+ghc: c.o: unknown symbol `callMeFromC'
+linking extra libraries/objects failed
+make: *** [ghci1] Error 1
+final link ... 
+
+$ make ghci2
+echo main | ghci FFISo.hs c.o FFISo.o
+GHCi, version 7.4.1: http://www.haskell.org/ghc/  :? for help
+Loading package ghc-prim ... linking ... done.
+Loading package integer-gmp ... linking ... done.
+Loading package base ... linking ... done.
+Loading object (static) c.o ... done
+Loading object (static) FFISo.o ... done
+ghc: FFISo.o: unknown symbol `bytestringzm0zi9zi2zi1_DataziByteStringziInternal_PS_con_info'
+linking extra libraries/objects failed
+make: *** [ghci2] Error 1
+final link ... 
+
+$ # system 1
+$ ghc --version
+The Glorious Glasgow Haskell Compilation System, version 7.4.1
+$ uname -a
+Linux phenom 3.2.13-1-ARCH #1 SMP PREEMPT Sat Mar 24 09:10:39 CET 2012 x86_64 AMD Phenom(tm) II X6 1055T Processor AuthenticAMD GNU/Linux
+
+$ # system 2
+$ ghc --version
+The Glorious Glasgow Haskell Compilation System, version 6.12.1
+$ uname -a
+Linux hermann 2.6.32-22-generic-pae #36-Ubuntu SMP Thu Jun 3 23:14:23 UTC 2010 i686 GNU/Linux
+

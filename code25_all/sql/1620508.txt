@@ -1,0 +1,125 @@
+DECLARE 
+@out_desc VARCHAR(1000),
+@out_mesg VARCHAR(10)
+
+DECLARE @name VARCHAR(20),
+@birthdate datetime,
+@email NVARCHAR(50)
+
+DECLARE @body NVARCHAR(1000)
+
+DECLARE C1 CURSOR READ_ONLY
+FOR
+SELECT [name], [birthdate], [email]
+FROM Customers
+
+OPEN C1
+FETCH NEXT FROM C1 INTO 
+@name, @birthdate, @email
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF DATEPART(DAY,@birthdate) = DATEPART(DAY,GETDATE())
+    AND DATEPART(MONTH,@birthdate) = DATEPART(MONTH,GETDATE())
+    BEGIN
+        SET @body = '<b>Happy Birthday ' + @name + '</b><br />Many happy returns of the day'
+        + '<br /><br />Customer Relationship Department'
+        EXEC sp_send_mail 
+        'shamim@sew.com', --- add your Email Address here
+        'shamim007',       ----add your Password here
+        @email,
+        'Birthday Wishes', 
+        @body,
+        'htmlbody', @output_mesg = @out_mesg output, @output_desc = @out_desc output
+
+        PRINT @out_mesg
+        PRINT @out_desc
+    END 
+    FETCH NEXT FROM C1 INTO 
+    @name, @birthdate, @email
+END
+CLOSE C1
+DEALLOCATE C1
+
+CREATE PROCEDURE [dbo].[sp_send_mail]
+        @from varchar(500) ,
+        @password varchar(500) ,
+        @to varchar(500) ,      
+        @subject varchar(500),
+        @body varchar(4000) ,
+        @bodytype varchar(10),
+        @output_mesg varchar(10) output,
+        @output_desc varchar(1000) output
+AS
+DECLARE @imsg int
+DECLARE @hr int
+DECLARE @source varchar(255)
+DECLARE @description varchar(500)
+
+EXEC @hr = sp_oacreate 'cdo.message', @imsg out
+
+--SendUsing Specifies Whether to send using port (2) or using pickup directory (1)
+EXEC @hr = sp_oasetproperty @imsg,
+'configuration.fields("http://schemas.microsoft.com/cdo/configuration/sendusing").value','2'
+
+--SMTP Server
+EXEC @hr = sp_oasetproperty @imsg, 
+  'configuration.fields("http://schemas.microsoft.com/cdo/configuration/smtpserver").value', 
+  'smtp.mail.me.net' 
+
+--UserName
+EXEC @hr = sp_oasetproperty @imsg, 
+  'configuration.fields("http://schemas.microsoft.com/cdo/configuration/sendusername").value', 
+  @from 
+
+--Password
+EXEC @hr = sp_oasetproperty @imsg, 
+  'configuration.fields("http://schemas.microsoft.com/cdo/configuration/sendpassword").value', 
+  @password 
+
+--UseSSL
+EXEC @hr = sp_oasetproperty @imsg, 
+  'configuration.fields("http://schemas.microsoft.com/cdo/configuration/smtpusessl").value', 
+  'True' 
+
+--PORT 
+EXEC @hr = sp_oasetproperty @imsg, 
+  'configuration.fields("http://schemas.microsoft.com/cdo/configuration/smtpserverport").value', 
+  '465' 
+
+--Requires Aunthentication None(0) / Basic(1)
+EXEC @hr = sp_oasetproperty @imsg, 
+  'configuration.fields("http://schemas.microsoft.com/cdo/configuration/smtpauthenticate").value', 
+  '1' 
+
+EXEC @hr = sp_oamethod @imsg, 'configuration.fields.update', null
+EXEC @hr = sp_oasetproperty @imsg, 'to', @to
+EXEC @hr = sp_oasetproperty @imsg, 'from', @from
+EXEC @hr = sp_oasetproperty @imsg, 'subject', @subject
+
+-- if you are using html e-mail, use 'htmlbody' instead of 'textbody'.
+
+EXEC @hr = sp_oasetproperty @imsg, @bodytype, @body
+EXEC @hr = sp_oamethod @imsg, 'send', null
+
+SET @output_mesg = 'Success'
+
+-- sample error handling.
+IF @hr <>0 
+    SELECT @hr
+    BEGIN
+        EXEC @hr = sp_oageterrorinfo null, @source out, @description out
+        IF @hr = 0
+        BEGIN
+            --set @output_desc = ' source: ' + @source
+            set @output_desc =  @description
+        END
+    ELSE
+    BEGIN
+        SET @output_desc = ' sp_oageterrorinfo failed'
+    END
+    IF not @output_desc is NULL
+            SET @output_mesg = 'Error'
+END
+EXEC @hr = sp_oadestroy @imsg
+GO
+

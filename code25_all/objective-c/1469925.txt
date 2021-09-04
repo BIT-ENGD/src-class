@@ -1,0 +1,320 @@
+
+// we are using timer in this way:
+chkOnlineUser=[NSTimer scheduledTimerWithTimeInterval:15 target:mmObject selector:@selector(threadOnlineUser) userInfo:NULL repeats:YES];
+
+
+// this method being called in timer
+-(void)threadOnlineUser{//HeartBeat in Thread
+    [NSThread detachNewThreadSelector:@selector(onlineUserRefresh) toTarget:self withObject:nil];
+}
+
+// this performs actual updation
+-(void)onlineUserRefresh{
+    NSAutoreleasePool *pool =[[NSAutoreleasePool alloc]init];
+    @try{
+        if(chkTimer==1){
+            return;
+        }
+        chkTimer=1;
+
+        if([allUserArray count]==0){
+            [user parseXMLFileUser:@"all" andFlag:3];
+            [allUserArray removeAllObjects];
+            [allUserArray addObjectsFromArray:[user users]];
+        }
+        [objHeartBeat parseXMLFile:[loginID intValue] timeOut:10];
+        NSMutableDictionary *tDictOL=[[NSMutableDictionary alloc] init];
+        tDictOL=[objHeartBeat onLineList];
+
+        NSArray *tArray=[[NSArray alloc] init];
+        tArray=[[tDictOL objectForKey:@"onlineuser"] componentsSeparatedByString:@","];
+        [loginUserArray removeAllObjects];
+        for(int l=0;l less than [tArray count] ;l++){
+            int t;//=[[tArray objectAtIndex:l] intValue];
+            if([[allUserArray valueForKey:@"Id"] containsObject:[tArray objectAtIndex:l]]){
+                t = [[allUserArray valueForKey:@"Id"] indexOfObject:[tArray objectAtIndex:l]];
+                [loginUserArray addObject:[allUserArray objectAtIndex:t]];
+            }
+        }
+        [onlineTable reloadData];
+
+        [logInUserPopUp removeAllItems];
+        if([loginUserArray count]==1){
+            [labelLoginUser setStringValue:@"Only you are online"];
+            [logInUserPopUp setEnabled:YES];
+        }else{
+            [labelLoginUser setStringValue:[NSString stringWithFormat:@"  %d users online",[loginUserArray count]]];
+            [logInUserPopUp setEnabled:YES];
+        }
+
+        NSMenu *menu = [[NSMenu alloc] initWithTitle:@"menu"];
+        NSMenuItem *itemOne = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
+        [menu addItem:itemOne];
+        for(int l=0;l less than [loginUserArray count];l++){
+            NSString *tempStr= [NSString stringWithFormat:@"%@ %@",[[[loginUserArray objectAtIndex:l] objectForKey:@"user_fname"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]],[[[loginUserArray objectAtIndex:l] objectForKey:@"user_lname"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+            if(![tempStr isEqualToString:@""]){
+                NSMenuItem *itemOne = [[NSMenuItem alloc] initWithTitle:tempStr action:NULL keyEquivalent:@""];
+                [menu addItem:itemOne];
+            }else if(l==0){
+                NSMenuItem *itemOne = [[NSMenuItem alloc] initWithTitle:tempStr action:NULL keyEquivalent:@""];
+                [menu addItem:itemOne];
+            }
+        }
+        [logInUserPopUp setMenu:menu];
+
+        if([lastUpdateTime isEqualToString:@""]){
+        }else {
+            [self fetchUpdatedInfo:lastUpdateTime];
+
+
+            [self fetchUpdatedGroup:lastUpdateTime];// function same as fetchUpdatedInfo
+            [avObject fetchUpdatedInfo:lastUpdateTime];// function same as fetchUpdatedInfo
+            [esTVObject fetchUpdatedInfo:lastUpdateTime];// function same as fetchUpdatedInfo
+        }
+
+        lastUpdateTime=[[tDictOL objectForKey:@"lastServerTime"] copy];
+    }
+    @catch (NSException * e) {
+        [queryByPost insertException:@"MainModule" inFun:@"onlineUserRefresh" excp:[e description] userId:[loginID intValue]];
+        NSRunAlertPanel(@"Error Panel", @"Main Module- onlineUserRefresh....%@", @"OK", nil, nil,e);
+    }
+    @finally {
+        NSLog(@"Internal Update Before Bye");
+        chkTimer=0;
+        NSLog(@"Internal Update Bye");// Some time application crashes after this log
+
+        // Some time application crahses after "Internal Update Bye" log
+    }
+}
+
+// The method which we are using to obtain updated data is of following form:
+-(void)fetchUpdatedInfo:(NSString *)UpdTime{
+    @try {
+        if(initAfterLoginComplete==0){
+            return;
+        }
+
+        [user parseXMLFileUser:UpdTime andFlag:[loginID intValue]];
+        [tempUserUpdatedArray removeAllObjects];
+        [tempUserUpdatedArray addObjectsFromArray:[user users]];
+        if([tempUserUpdatedArray count]>0){
+            if([contactsView isHidden]){
+                [topContactImg setImage:[NSImage imageNamed:@"btn_contacts_off_red.png"]];
+            }else {
+                [topContactImg setImage:[NSImage imageNamed:@"btn_contacts_red.png"]];
+            }
+        }else {
+            return;
+        }
+        int chkprof=0;
+        for(int l=0;l less than [tempUserUpdatedArray count];l++){
+            NSArray *tempArr1 = [allUserArray valueForKey:@"Id"];
+            int s;
+            if([[[tempUserUpdatedArray objectAtIndex:l] objectForKey:@"Id"] intValue]==profile_Id){
+                chkprof=1;
+            }
+            if([tempArr1 containsObject:[[tempUserUpdatedArray objectAtIndex:l] objectForKey:@"Id"]]){
+                s = [tempArr1 indexOfObject:[[tempUserUpdatedArray objectAtIndex:l] objectForKey:@"Id"]];
+                [allUserArray replaceObjectAtIndex:s withObject:[tempUserUpdatedArray objectAtIndex:l]];
+            }else {
+                [allUserArray addObject:[tempUserUpdatedArray objectAtIndex:l]];
+            }
+
+            NSArray *tempArr2 = [tempUser valueForKey:@"Id"];
+            if([tempArr2 containsObject:[[tempUserUpdatedArray objectAtIndex:l] objectForKey:@"Id"]]){
+                s = [tempArr2 indexOfObject:[[tempUserUpdatedArray objectAtIndex:l] objectForKey:@"Id"]];
+                [tempUser replaceObjectAtIndex:s withObject:[tempUserUpdatedArray objectAtIndex:l]];
+            }else {
+                [tempUser addObject:[tempUserUpdatedArray objectAtIndex:l]];
+            }
+        }
+
+        NSSortDescriptor *sortDescriptor = [[NSSortDescriptor alloc] initWithKey:@"user_fname" ascending:YES];
+        [tempUser sortUsingDescriptors:[NSMutableArray arrayWithObject:sortDescriptor]];
+        [userListTableView reloadData];
+
+        [groupsArray removeAllObjects];
+        for(int z=0;z less than [tempGroups count];z++){
+            NSMutableArray *tempMArr=[[NSMutableArray alloc] init];
+            for(int l=0;l less than [allUserArray count];l++){
+                if([[[allUserArray objectAtIndex:l] objectForKey:@"GroupId"] intValue]==[[[tempGroups objectAtIndex:z] objectForKey:@"group_id"] intValue]){
+                    [tempMArr addObject:[allUserArray objectAtIndex:l]];
+                }
+            }
+            [groupsArray insertObject:tempMArr atIndex:z];
+            [tempMArr release];
+            tempMArr= nil;
+        }
+
+        for(int n=0;n less than [tempGroups count];n++){
+            [[groupsArray objectAtIndex:n] addObject:[tempGroups objectAtIndex:n]];
+        }
+        [groupsListOV reloadData];
+        if(chkprof==1){
+            [self profileShow:profile_Id];
+        }else {
+        }
+        [self selectUserInTable:0];
+    }@catch (NSException * e) {
+        NSRunAlertPanel(@"Error Panel", @"%@", @"OK", nil, nil,e);
+    }
+}
+
+// The method which we are using to frame select query and parse obtained data is:
+-(void)parseXMLForUser:(int)UId stringVar:(NSString*)stringVar{
+    @try{
+
+        if(queryByPost)
+            [queryByPost release];
+
+        queryByPost=[QueryByPost new];  // common class used to invoke method to send request via POST method
+
+        //obtaining data for xml parsing
+        NSString *query=[NSString stringWithFormat:@"Select * from userinfo update_time >= '%@' AND NOT owner_id ='%d' ",stringVar,UId];
+
+        NSData *obtainedData=[queryByPost executeQuery:query WithAction:@"query"];  // method invoked to perform post query
+
+        if(obtainedData==nil){
+            // data not obtained so return
+            return;
+        }
+
+        // initializing dictionary to be obtained after parsing
+        if(obtainedDictionary)
+            [obtainedDictionary release];
+
+        obtainedDictionary=[NSMutableDictionary new];
+
+        // xml parsing
+        if (updatedDataParser) // airportsListParser is an NSXMLParser instance variable 
+            [updatedDataParser release]; 
+
+        updatedDataParser = [[NSXMLParser alloc] initWithData:obtainedData];
+        [updatedDataParser setDelegate:self]; 
+        [updatedDataParser setShouldResolveExternalEntities:YES]; 
+
+        BOOL success = [updatedDataParser parse];  
+
+    }
+    @catch (NSException *e) {
+        NSLog(@"wtihin parseXMLForUser- parseXMLForUser:stringVar: - %@",[e description]);
+    }
+
+}
+//The method which will attempt to interact 4 times with server if interaction with it is found to be unsuccessful , is of following form:
+-(NSData*)executeQuery:(NSString*)query WithAction:(NSString*)doAction{
+    NSLog(@"within ExecuteQuery:WithAction: Query is: %@ and Action is: %@",query,doAction);
+    NSString *returnResult;
+    @try {
+
+        NSString *returnResult;
+        NSMutableURLRequest *postRequest;
+        NSError *error;
+        NSData *searchData;
+        NSHTTPURLResponse *response;
+        postRequest=[self directMySQLQuery:query WithAction:doAction];  // this method sends actual POST request
+
+        NSLog(@"after directMYSQL in QueryByPost- performQuery... ErrorLogMsg");
+        searchData = [NSURLConnection sendSynchronousRequest:postRequest returningResponse:&response error:&error];
+        returnResult = [[NSString alloc] initWithData:searchData encoding:NSASCIIStringEncoding];
+
+        NSString *resultToBeCompared=[returnResult stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSLog(@"result obtained - %@/ resultToBeCompared - %@",returnResult,resultToBeCompared);
+
+
+        if(![resultToBeCompared isEqualToString:@""]){
+        }else {
+            sleep(10);
+            postRequest=[self directMySQLQuery:query WithAction:doAction];
+            searchData = [NSURLConnection sendSynchronousRequest:postRequest returningResponse:&response error:&error];
+            if(![resultToBeCompared isEqualToString:@""]){
+            }else {
+                sleep(10);
+                postRequest=[self directMySQLQuery:query WithAction:doAction];
+                searchData = [NSURLConnection sendSynchronousRequest:postRequest returningResponse:&response error:&error];
+                if(![resultToBeCompared isEqualToString:@""]){
+                }else {
+                    sleep(10);
+                    postRequest=[self directMySQLQuery:query WithAction:doAction];
+                    searchData = [NSURLConnection sendSynchronousRequest:postRequest returningResponse:&response error:&error];
+                    if(![resultToBeCompared isEqualToString:@""]){
+                    }else {
+                        sleep(10);
+                        postRequest=[self directMySQLQuery:query WithAction:doAction];
+                        searchData = [NSURLConnection sendSynchronousRequest:postRequest returningResponse:&response error:&error];
+                        if(![resultToBeCompared isEqualToString:@""]){
+                        }else {
+                            return nil; 
+                        }
+                    }
+                }
+            }
+        }
+
+
+
+
+        returnResult = [[NSString alloc] initWithData:searchData encoding:NSASCIIStringEncoding];
+
+        return searchData;
+    }
+    @catch (NSException * e) {
+        NSLog(@"within QueryByPost , execurteQuery:WithAction - %@",[e description]);
+        return nil;     
+    }
+}
+
+// The method which sends POST request to server , is of following form:
+-(NSMutableURLRequest *)directMySQLQuery:(NSString*)query WithAction:(NSString*)doAction{   
+    @try{
+        NSLog(@"Query is: %@ and Action is: %@",query,doAction);
+
+        // some pre initialization
+        NSString *stringBoundary,*contentType;
+        NSURL *cgiUrl ;
+        NSMutableURLRequest *postRequest;
+        NSMutableData *postBody;
+        NSString *ans=@"434";
+
+        cgiUrl = [NSURL URLWithString:@"http://keysoftwareservices.com/API.php"];
+        postRequest = [NSMutableURLRequest requestWithURL:cgiUrl];
+        [postRequest setHTTPMethod:@"POST"];
+
+        stringBoundary = [NSString stringWithString:@"0000ABCQueryxxxxxx"];
+        contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@", stringBoundary];
+        [postRequest addValue:contentType forHTTPHeaderField: @"Content-Type"];
+
+        //setting up the body:
+        postBody = [NSMutableData data];
+        [postBody appendData:[[NSString stringWithFormat:@"\r\n\r\n--%@\r\n",stringBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:@"Content-Disposition: form-data; name=\"code\"\r\n\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:ans] dataUsingEncoding:NSUTF8StringEncoding]];
+
+        [postBody appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n",stringBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:@"Content-Disposition: form-data; name=\"action\"\r\n\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:doAction] dataUsingEncoding:NSUTF8StringEncoding]];
+
+        [postBody appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n",stringBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:@"Content-Disposition: form-data; name=\"devmode\"\r\n\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:[[[NSBundle mainBundle] infoDictionary] objectForKey:@"devmode"]] dataUsingEncoding:NSUTF8StringEncoding]];
+
+        [postBody appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n",stringBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:@"Content-Disposition: form-data; name=\"q\"\r\n\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postBody appendData:[[NSString stringWithString:query] dataUsingEncoding:NSUTF8StringEncoding]];
+
+        [postBody appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n",stringBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postRequest setHTTPBody:postBody];
+
+        NSLog(@"Direct My SQL ok");// Some time application crashes afte this log
+
+        //Some time application crashes after "Direct My SQL ok" log
+        return [postRequest mutableCopy];
+
+    }@catch (NSException * e) {
+        NSLog(@"NSException %@",e);
+        NSRunAlertPanel(@"Error Panel", @"Within QueryByPost- directMySQLQuery...%@", @"OK", nil, nil,e);
+        return nil;
+    } 
+}
+
+

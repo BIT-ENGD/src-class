@@ -1,0 +1,177 @@
+Public Function RegisterAssembly() As Boolean
+    Dim success As Boolean = False
+
+    Try
+        Dim asm As [Assembly] = [Assembly].LoadFile(Path.Combine(My.Computer.FileSystem.SpecialDirectories.Temp, "my.dll"))
+        Dim regasm As New RegistrationServices()
+
+        success = regasm.RegisterAssembly(asm, AssemblyRegistrationFlags.None)
+    Catch ex As Exception
+        success = False
+        Throw ex
+    End Try
+
+    Return success
+End Function
+
+Error Number: BC31019
+Error Message: Unable to write to output file 'C:\Users\Me\AppData\Local\Temp\my.dll': The process cannot access the file because it is being used by another process. 
+
+Imports System.CodeDom.Compiler
+Imports System.Text
+Imports System.IO
+Imports System.Reflection
+Imports System.Runtime.InteropServices
+
+Public Class ExitCompiler
+
+Private _errorMessageContents As String = ""
+Private _errorCount As Integer = -1
+
+Public ReadOnly Property ErrorMessageText As String
+    Get
+        Return _errorMessageContents
+    End Get
+End Property
+
+Public ReadOnly Property ErrorCount As Integer
+    Get
+        Return _errorCount
+    End Get
+End Property
+
+Public Function Compile(ByVal codeFileInfo As FileInfo) As Boolean
+    Dim success As Boolean = False
+    Dim codeContents As String = CodeReader.ReadAllContents(codeFileInfo.FullName)
+
+    success = Compile(codeContents)
+
+    Return success
+End Function
+
+Public Function Compile(ByVal codeContents As String) As Boolean
+    _errorMessageContents = ""
+
+    'asmAppDomain = AppDomain.CreateDomain("asmAppDomain", AppDomain.CurrentDomain.Evidence, AppDomain.CurrentDomain.BaseDirectory, AppDomain.CurrentDomain.RelativeSearchPath, AppDomain.CurrentDomain.ShadowCopyFiles)
+
+    LogLoadedAssemblies(AppDomain.CurrentDomain)
+    ' LogLoadedAssemblies(asmAppDomain)
+
+    Try
+        ' Remove output assemblies from previous compilations
+        'RemoveAssembly()
+    Catch uaEx As UnauthorizedAccessException
+        Throw uaEx
+    End Try
+
+    Dim success As Boolean = False
+    Dim outputFileName As String = Path.Combine(My.Computer.FileSystem.SpecialDirectories.Temp, "my.dll")
+    Dim results As CompilerResults
+
+    Dim codeProvider As New VBCodeProvider()
+    Dim parameters As New CompilerParameters()
+
+    parameters.TreatWarningsAsErrors = False
+    parameters.CompilerOptions = "/optimize"
+    parameters.TempFiles = New TempFileCollection(My.Computer.FileSystem.SpecialDirectories.Temp, False)
+    parameters.OutputAssembly = outputFileName
+    parameters.ReferencedAssemblies.Add("System.dll")
+    parameters.ReferencedAssemblies.Add("System.Data.dll")
+    parameters.ReferencedAssemblies.Add("System.Xml.dll")
+
+    results = codeProvider.CompileAssemblyFromSource(parameters, codeContents)
+
+    _errorCount = results.Errors.Count
+
+    If _errorCount > 0 Then
+        success = False
+
+        'There were compiler errors
+        Dim sb As New StringBuilder
+        For Each compileError As CompilerError In results.Errors
+            sb.AppendLine()
+            sb.AppendLine("Line number: " & compileError.Line)
+            sb.AppendLine("Error Number: " & compileError.ErrorNumber)
+            sb.AppendLine("Error Message: " & compileError.ErrorText)
+            sb.AppendLine()
+        Next
+
+        _errorMessageContents = sb.ToString()
+    Else
+        success = True
+
+        ' Successful compile, now generate the TLB (Optional)
+        'success = GenerateTypeLib()
+
+        If success Then
+            ' Type lib generated, now register with GAC
+            Try
+                success = RegisterAssembly()
+            Catch ex As Exception
+                success = False
+            End Try
+        End If
+    End If
+
+    Return success
+End Function
+
+'Private Function GenerateTypeLib() As Boolean
+'    Dim success As Boolean = False
+
+'    Try
+'        Dim asm As [Assembly] = [Assembly].ReflectionOnlyLoadFrom(My.Computer.FileSystem.SpecialDirectories.Temp & "\my.dll")
+'        Dim converter As New TypeLibConverter()
+'        Dim eventHandler As New ConversionEventHandler()
+
+'        Dim typeLib As UCOMICreateITypeLib = CType(converter.ConvertAssemblyToTypeLib(asm, My.Computer.FileSystem.SpecialDirectories.Temp & "\my.tlb", 0, eventHandler), UCOMICreateITypeLib)
+'        typeLib.SaveAllChanges()
+
+'        success = True
+'    Catch ex As Exception
+'        success = False
+'        Throw ex
+'    End Try
+
+'    Return success
+'End Function
+
+Public Function RegisterAssembly() As Boolean
+    Dim success As Boolean = False
+
+    Try
+        Dim asm As [Assembly] = [Assembly].LoadFile(Path.Combine(My.Computer.FileSystem.SpecialDirectories.Temp, "my.dll"))
+        Dim regasm As New RegistrationServices()
+
+        success = regasm.RegisterAssembly(asm, AssemblyRegistrationFlags.None)
+    Catch ex As Exception
+        success = False
+        Throw ex
+    End Try
+
+    Return success
+End Function
+
+Public Sub RemoveAssembly()
+    'AppDomain.Unload(asmAppDomain)
+
+    File.Delete(Path.Combine(My.Computer.FileSystem.SpecialDirectories.Temp, "my.dll"))
+    'File.Delete(Path.Combine(My.Computer.FileSystem.SpecialDirectories.Temp, "my.tlb"))
+End Sub
+
+Private Shared Sub LogLoadedAssemblies(appDomain__1 As AppDomain)
+    Dim sb As New StringBuilder
+
+    sb.AppendLine("Loaded assemblies in appdomain: " & appDomain__1.FriendlyName)
+    For Each loadedAssembly As Assembly In AppDomain.CurrentDomain.GetAssemblies()
+        sb.AppendLine("- " & loadedAssembly.GetName().Name)
+    Next
+
+    MessageBox.Show(sb.ToString())
+End Sub
+
+'Private Shared Function CurrentDomain_ReflectionOnlyAssemblyResolve(sender As Object, args As ResolveEventArgs) As Assembly
+'    Return System.Reflection.Assembly.ReflectionOnlyLoad(args.Name)
+'End Function
+End Class
+

@@ -1,0 +1,108 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include "minithread.h"
+#include "synch.h"
+#define BUFFER_SIZE 16
+#define MAXCOUNT 100
+
+int buffer[BUFFER_SIZE];
+int size, head, tail;
+int count = 1;
+int out = 0;
+int toadd = 0;
+int toremove = 0;
+
+semaphore_t empty;
+semaphore_t full;
+semaphore_t count_lock; // Semaphore to keep a lock on the 
+                        // global variables for maintaining the counts
+
+
+/* Method to handle the working of a student 
+    * The ID of a student is the corresponding minithread_id */
+int student(int total_burgers) {
+    int n, i;
+    semaphore_P(count_lock);
+    while ((out+toremove) < arg) {
+        n = genintrand(BUFFER_SIZE);
+        n = (n <= total_burgers - (out + toremove)) ? n : total_burgers - (out + toremove);
+        printf("Student %d wants to get %d burgers ...\n", minithread_id(), n);
+        toremove += n;
+        semaphore_V(count_lock);
+        for (i=0; i<n; i++) {
+            semaphore_P(empty);
+            out = buffer[tail];
+            printf("Student %d is taking burger %d.\n", minithread_id(), out);
+            tail = (tail + 1) % BUFFER_SIZE;
+            size--;
+            toremove--;
+            semaphore_V(full);
+        }
+        semaphore_P(count_lock);
+    }
+    semaphore_V(count_lock);
+    printf("Student %d is done.\n", minithread_id());
+    return 0;
+}
+
+/* Method to handle the working of a cook 
+    * The ID of a cook is the corresponding minithread_id */
+int cook(int total_burgers) {
+    int n, i;
+    printf("Creating Cook %d\n",minithread_id());
+    semaphore_P(count_lock);
+    while ((count+toadd) <= arg) {
+        n = genintrand(BUFFER_SIZE);
+        n = (n <= total_burgers - (count + toadd) + 1) ? n : total_burgers - (count + toadd) + 1;
+        printf("Cook %d wants to put %d burgers into the burger stack ...\n", minithread_id(),n);
+        toadd += n;
+        semaphore_V(count_lock);
+        for (i=0; i<n; i++) {
+            semaphore_P(full);
+            printf("Cook %d is putting burger %d into the burger stack.\n", minithread_id(), count);
+            buffer[head] = count++;
+            head = (head + 1) % BUFFER_SIZE;
+            size++;
+            toadd--;
+            semaphore_V(empty);
+        }
+        semaphore_P(count_lock);
+    }
+    semaphore_V(count_lock);
+    printf("Cook %d is done.\n", minithread_id());
+    return 0;
+}
+
+/* Method to create our multiple producers and consumers
+    * and start their respective threads by fork */
+void starter(int* c){
+    int i;
+    for (i=0;i<c[2];i++){
+        minithread_fork(cook, c[0]);
+    }
+    for (i=0;i<c[1];i++){
+        minithread_fork(student, c[0]);
+    }
+}
+
+
+/* The arguments are passed as command line parameters
+    * argv[1] is the no of students
+    * argv[2] is the no of cooks */
+void main(int argc, char *argv[]) {
+    int pass_args[3];
+    pass_args[0] = MAXCOUNT;
+    pass_args[1] = atoi(argv[1]);
+    pass_args[2] = atoi(argv[2]);
+
+    size = head = tail = 0;
+    empty = semaphore_create();
+    semaphore_initialize(empty, 0);
+    full = semaphore_create();
+    semaphore_initialize(full, BUFFER_SIZE);
+    count_lock = semaphore_create();
+    semaphore_initialize(count_lock, 1);
+
+    minithread_system_initialize(starter, pass_args);
+}
+

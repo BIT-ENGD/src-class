@@ -1,0 +1,206 @@
+#import <UIKit/UIKit.h>
+#import <sqlite3.h>
+#import "NoteCell.h"
+#import "BIUtility.h"
+#import "Bring_ItAppDelegate.h"
+#import "MoveListViewController.h"
+
+
+@class MoveListViewController;
+@class BIUtility;
+
+@interface WorkoutViewController : UITableViewController {
+    NSMutableArray *todaysWorkouts;
+    IBOutlet NoteCell *woNoteCell;
+    MoveListViewController *childController;
+    NSInteger scheduleDay;
+    BIUtility *bi;
+}
+
+@property (nonatomic, retain) NSMutableArray *todaysWorkouts;
+@property (nonatomic, retain) NoteCell *woNoteCell;
+@property (nonatomic,retain) BIUtility *bi;
+
+//@property (nonatomic, retain) SwitchCell *woSwitchCell;
+
+@end
+
+#import "WorkoutViewController.h"
+#import "MoveListViewController.h"
+#import "Profile.h"
+
+static sqlite3 *database = nil;
+
+@implementation WorkoutViewController
+@synthesize todaysWorkouts;
+@synthesize woNoteCell;
+@synthesize bi;
+
+//@synthesize woSwitchCell;
+
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+
+ bi = [[BIUtility alloc] init];
+
+
+ todaysWorkouts = [[NSMutableArray alloc] init];
+
+ NSString *query;
+ sqlite3_stmt *statement;
+
+ //open the database
+ if (sqlite3_open([[BIUtility getDBPath] UTF8String], &database) != SQLITE_OK) {
+  sqlite3_close(database);
+  NSAssert(0, @"Failed to opendatabase");
+ }
+
+ query = [NSString stringWithFormat:@"SELECT IWORKOUT.WOINSTANCEID, IWORKOUT.WORKOUTID, CWORKOUTS.WORKOUTNAME FROM CWORKOUTS JOIN IWORKOUT ON IWORKOUT.WORKOUTID = CWORKOUTS.WORKOUTID AND DATE = '%@'", [BIUtility todayDateString]];
+ if (sqlite3_prepare_v2(database, [query UTF8String], -1, &statement, nil) == SQLITE_OK) {
+  while (sqlite3_step(statement) == SQLITE_ROW) {
+   Workout *wo = [[Workout alloc] init];
+   wo.woInstanceID = sqlite3_column_int(statement, 0);
+   wo.workoutID = sqlite3_column_int(statement, 1);
+   wo.workoutName = [NSString stringWithUTF8String:(char *)sqlite3_column_text(statement, 2)];
+   [todaysWorkouts addObject:wo];    
+   [wo release];    
+  }
+  sqlite3_finalize(statement);
+
+ } 
+ if(database) sqlite3_close(database);
+
+ [query release];
+
+
+
+
+}
+
+
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+ //todaysWorkouts = [BIUtility todaysScheduledWorkouts];
+ static NSString *noteCellIdentifier = @"NoteCellIdentifier";
+
+ UITableViewCell *cell;
+
+
+ if (indexPath.section < ([todaysWorkouts count])) {
+  cell = [tableView dequeueReusableCellWithIdentifier:@"OtherCell"];
+  if (cell == nil) {
+   cell = [[[UITableViewCell alloc] initWithFrame:CGRectZero reuseIdentifier: @"OtherCell"] autorelease];
+   cell.accessoryType = UITableViewCellAccessoryNone;
+  } 
+  if (indexPath.row == 0) {
+   Workout *wo = [todaysWorkouts objectAtIndex:indexPath.section];   
+   [cell.textLabel setText:wo.workoutName];
+  } else {
+   [cell.textLabel setText:@"Completed?"];
+   [cell.textLabel setFont:[UIFont fontWithName:@"Arial" size:15]];
+   [cell.textLabel setTextColor:[UIColor blueColor]];
+  }
+
+ } else { 
+  cell = (NoteCell *)[tableView dequeueReusableCellWithIdentifier:noteCellIdentifier];
+  if (cell == nil) {
+   NSArray *nib = [[NSBundle mainBundle] loadNibNamed:@"NoteCell" owner:self options:nil];
+   cell = [nib objectAtIndex:0];
+  }
+ }
+
+
+ return cell; 
+
+ //[cell release];
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+ NSUInteger row = [indexPath row];
+
+ if (indexPath.section < ([todaysWorkouts count]) && (row == 0)) {
+  MoveListViewController *moveListController = [[MoveListViewController alloc] initWithStyle:UITableViewStylePlain];
+  moveListController.workoutID = [[todaysWorkouts objectAtIndex:indexPath.section] workoutID];
+  moveListController.workoutName = [[todaysWorkouts objectAtIndex:indexPath.section] workoutName];
+  moveListController.woInstanceID = [[todaysWorkouts objectAtIndex:indexPath.section] woInstanceID];
+
+
+  NSLog(@"Workout Selected: %@", [[todaysWorkouts objectAtIndex:indexPath.section] workoutName]);
+  Bring_ItAppDelegate *delegate = [[UIApplication sharedApplication] delegate];
+  [delegate.workoutNavController pushViewController:moveListController animated:YES];
+ } else {
+
+
+  UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath]; 
+  if (indexPath.section < ([todaysWorkouts count]) && (row == 1)) {
+   if (cell.accessoryType == UITableViewCellAccessoryNone) {
+    cell.accessoryType = UITableViewCellAccessoryCheckmark;
+   }
+   else {
+    cell.accessoryType = UITableViewCellAccessoryNone;
+   }
+  }
+ }
+ [tableView deselectRowAtIndexPath:indexPath animated:YES];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+ NSInteger h = 35;
+ return h;
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+ return ([todaysWorkouts count] + 1);
+ //return ([todaysWorkouts count]);
+
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+
+ if (section < ([todaysWorkouts count])) {
+  return 2;
+ } else { 
+  return 1;
+ }
+
+
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+
+ if (section < ([todaysWorkouts count])) {
+  return @"Workout";
+ } else { 
+  return @"How Was Your Workout?";
+ }
+
+}
+
+
+- (void)didReceiveMemoryWarning {
+    // Releases the view if it doesn't have a superview.
+    [super didReceiveMemoryWarning];
+
+    // Release any cached data, images, etc that aren't in use.
+}
+
+- (void)viewDidUnload {
+    [super viewDidUnload];
+    // Release any retained subviews of the main view.
+    // e.g. self.myOutlet = nil;
+}
+
+
+- (void)dealloc {
+    [todaysWorkouts release];
+ [bi release];
+ [super dealloc];
+}
+
+
+@end
+

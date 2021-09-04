@@ -1,0 +1,93 @@
+<?php
+ini_set("max_execution_time", "28800");
+error_reporting(E_ALL);
+
+include(dirname(__FILE__)."/includes/prepend.php");
+
+$table = "source_table";
+$target = "destination_table";
+
+echo 'Initial: ' . number_format((memory_get_usage()/ 1024) / 1024 , 0, '.', ',') . " MB <br>";
+
+$db = new DB_cms();
+$db->beginTransaction();
+
+$return.= 'DELETE FROM '.$target.'; '. "\n\n";
+
+if($db->query('SELECT * FROM '.$table)){
+    $i=0;
+    $itemList = array();
+
+    while($db->next_record()){
+
+        $itemList[$i]["guid"] = $db->f("guid");
+        $itemList[$i]["title"] = $db->f("title");
+        $itemList[$i]["description"] = $db->f("description");
+        $itemList[$i]["copyright"] = $db->f("copyright");
+        $itemList[$i]["mediaType"] = $db->f("wapMediaType");
+        $itemList[$i]["price"] = $db->f("displayPrice");
+        $itemList[$i]["category"] = $db->f("category");
+        $itemList[$i]["thumbnail"] = $db->f("thumbnail");
+
+        //begin json  data
+        $json = new Services_JSON();
+        $keywords_arr = $json->decode($db->f("keywords"));
+
+        foreach($keywords_arr as $key => $value){
+             $itemList[$i][$key] = $value;
+        }
+
+        $credit_arr = $json->decode($db->f("credit"));
+        foreach($credit_arr as $c => $credit){
+            $itemList[$i][str_replace(' ','',$c)] = $credit;
+        }
+        $i++;
+    }
+
+    $toInsert = array();
+
+    foreach($itemList as $items => $item){
+        $guid = mysql_real_escape_string($item["guid"]);
+        $title = mysql_real_escape_string($item["title"]);
+        $description = mysql_real_escape_string(ereg_replace('"', "",$item["description"]));
+        $copyright = mysql_real_escape_string($item["copyright"]);
+        $mediaType = mysql_real_escape_string($item["mediaType"]);
+        $price = mysql_real_escape_string($item["price"]);
+        $keywords = mysql_real_escape_string(ereg_replace('"', "",$item["keywords"]));
+        $category = mysql_real_escape_string(ereg_replace('"', "",$item["category"]));
+        $thumbnail = mysql_real_escape_string($item["thumbnail"]);
+        $date = date("Y-m-d H:i:s");
+        //json decoded  data
+        $artist = mysql_real_escape_string($item["artist"]);
+        $label = mysql_real_escape_string($item["label"]);
+        $genre = mysql_real_escape_string($item["genre"]);
+        $media_format = mysql_real_escape_string($item["mediaformat"]);
+        $country = mysql_real_escape_string($item["country"]);
+        $album_title = mysql_real_escape_string(ereg_replace('"', "",$item["albumtitle"]));
+
+        $toInsert[] = "('0', $guid, 'NULL', '".$mediaType."', '".$category."', '".$keywords."', '".$title."', '".$artist."', '".$album_title."', '".$genre."', '".$label."', '".$media_format."', '".$country."', '".$description."', '".$thumbnail."', '".$price."', '".$copyright."', '".$date."', '0', '".$date."', '0', 'active')";
+    }
+
+    $sqlStart = "INSERT INTO `".$target ."` (`SortVar`, `Guid`, `Space`, `MediaType`, `Category`, `Keywords`, `Title`, `Artist`, `Album`, `Genre`, `Label`, `Mediaformat`, `Country`, `Description`, `Thumbnail`, `Price`, `Copyright`, `DateCreated`, `CreatedBy`, `DateModified`, `ModifiedBy`, `Status`) VALUES";
+
+    foreach (array_chunk($toInsert, 100) as $insertSet) {
+        $return.= $sqlStart . implode(', ', $insertSet);
+        $return.="; \n";
+    }
+
+    //save file
+    $handle = fopen(ABSOLUTE_DUMP_PATH.'file'.'.sql','w+');
+    if(fwrite($handle,$return)){
+        fclose($handle);
+        $ret = true;
+    } else {
+        $ret = false;
+    }
+
+    $usage = memory_get_usage();
+    $total_usage = ($usage / 1024) / 1024;
+    echo 'Peak: ' . number_format($total_usage, 0, '.', ',') . " MB<br>";
+    echo 'End: ' . number_format($total_usage, 0, '.', ',') . " MB<br>";
+}
+?>
+

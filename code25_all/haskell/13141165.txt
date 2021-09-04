@@ -1,0 +1,59 @@
+out of memory
+import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict
+import qualified Data.ByteString.Lazy.Char8 as B
+import Control.Monad
+import qualified Text.Show.ByteString as BS
+import Data.List
+
+main = printDIMACS "test.cnf" test
+
+test = do
+  xs <- freshs 100000
+  forM_ (zip xs (tail xs))
+    (\(x,y) -> addAll [[negate x, negate y],[x,y]])
+
+type Var = Int
+type Clause = [Var]
+
+data DIMACSS = DS{
+  nextFresh :: Int,
+  numClauses :: Int
+} deriving (Show)
+
+type DIMACSM a = StateT DIMACSS (Writer B.ByteString) a
+
+freshs :: Int -> DIMACSM [Var] 
+freshs i = do
+  next <- gets nextFresh
+  let toRet = [next..next+i-1]
+  modify (\s -> s{nextFresh = next+i}) 
+  return toRet
+
+fresh :: DIMACSM Int
+fresh = do
+  i <- gets nextFresh
+  modify (\s -> s{nextFresh = i+1}) 
+  return i
+
+addAll :: [Clause] -> DIMACSM ()
+addAll c = do
+  tell 
+    (B.concat . 
+    intersperse (B.pack " 0\n") . 
+    map (B.unwords . map BS.show) $ c)
+  tell (B.pack " 0\n")
+  modify (\s -> s{numClauses = numClauses s + length c})
+
+add h = addAll [h]
+
+printDIMACS :: FilePath -> DIMACSM a -> IO ()
+printDIMACS file f = do
+  writeFile file ""
+  appendFile file (concat ["p cnf ", show i, " ", show j, "\n"])
+  B.appendFile file b
+   where
+     (s,b) = runWriter (execStateT f (DS 1 0))
+     i = nextFresh s - 1
+     j = numClauses s
+

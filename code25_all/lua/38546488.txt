@@ -1,0 +1,52 @@
+OpenCV Error: Assertion failed (type == src2.type() && src1.cols == src2.cols && (type == CV_32F || type == CV_8U)) in batchDistance, file /home/ec2-user/opencv/modules/core/src/stat.cpp, line 3749
+print(#loaded_descriptors)
+print(#conv)
+134
+64
+[torch.LongStorage of size 2]
+
+134
+64
+[torch.LongStorage of size 2]
+
+local model_params = torch.load(path[i])
+net = dofile("../training/models/3x32x32_to_64.lua")(model_params):float())
+net:evaluate()
+net = net:cuda()
+net = cudnn.convert(net, cudnn)
+print(net)
+
+function load_descriptors(csv_path)
+  --loop through folder and load descriptors from csv files
+  local csv_files = io.popen('ls ' .. csv_path .. '/*.csv')
+  for path in csv_files:lines() do
+    local keypoints = table.load(path)
+    --change table to tensor of, number of features x 64 descriptors
+    local tensor_data = torch.CudaTensor(#keypoints,64)
+    for i=1, #keypoints, 1 do
+      for j=1, 64, 1 do
+        tensor_data[i][j] = keypoints[i][j]
+      end
+    end
+  return tensor_data:cuda()
+end
+
+--Load image and convolute
+img = image.load("img.jpg", 3, 'float'):mul(255):cuda()
+img = img:view(3,img:size(2)/img:size(3), img:size(3),img:size(3)):transpose(1, 2):contiguous()   
+conv = net:forward(img):clone()
+
+--Load descriptors
+local loaded_descriptors = load_descriptors(descriptor_path)
+
+--BF Matching
+print(#loaded_descriptors)
+print(#conv)
+
+matcher = cv.BFMatcher{cv.NORM_L2, False}
+local match_ptr = matcher:match{conv, loaded_descriptors}
+local res = {}
+for i=1, match_ptr.size, 1 do
+  table.insert(res, match_ptr.data[i].distance)
+end
+

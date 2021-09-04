@@ -1,0 +1,96 @@
+signal.h
+unistd.h
+stdio.h
+conflicting types for 'getline()'
+incompatible implicit declaration of built-in function strlen
+/* define a global input buffer */
+#include <signal.h>
+#include <unistd.h>
+#include <stdio.h>
+
+#define MAXARG 512
+#define MAXBUF 512
+#define BUFFER_SIZE 50
+#define MAX_COMMANDS 10
+char buffer [BUFFER_SIZE];
+static char *prompt = "MYSHELL>";
+static char inpbuf[MAXBUF];
+static char *arg[MAXARG+1];
+static char tokbuf[2*MAXBUF];
+static char *tok = tokbuf;
+char history[MAX_COMMANDS][MAXBUF];
+int cmd_num;
+
+void getline(void);
+
+void getline() {
+int length;
+
+length = read(0, inpbuf, MAXBUF);
+if (length == 0) {
+    printf("\n");
+    exit(0);
+}
+inpbuf[length] = '\0';
+
+}
+
+void processline() {
+char *ptr = inpbuf;
+int narg;
+for (narg=0;;) {    
+    arg[narg] = tok;
+    for (; *ptr == ' ' || *ptr == '\t'; ptr++)
+        ;
+    while(*ptr != ' ' && *ptr != '\t' && *ptr != '\n' && 
+          *ptr != '\0' && *ptr != ';' && *ptr != '&') 
+        *tok++ = *ptr++;
+    *tok++ = '\0';
+    if (narg < MAXARG)
+        narg++;
+    if (*ptr == '\n')
+        break;
+}
+// clear the input buffer
+for (ptr = inpbuf; *ptr != '\n'; ptr++)
+    *ptr = ' ';
+if (narg != 0) {
+    arg[narg] = NULL;
+}
+}
+
+void handle_SIGINT()
+{
+write(STDOUT_FILENO, buffer, strlen(buffer));
+}
+
+int main()
+{
+    int pid, exitstat, ret;
+    struct sigaction handler;
+    handler.sa_handler = handle_SIGINT;
+    handler.sa_flags = 0;
+    sigemptyset(&handler.sa_mask);
+    sigaction(SIGINT, &handler, NULL);
+    strcpy(buffer, "Caught Control C\n");
+
+    while (1) {
+        printf("%s ", prompt);
+        fflush(stdout);
+        getline();
+        processline();
+        if ((pid = fork()) < 0){
+            fprintf(stderr, "myshell: error\n");
+            return (-1);
+        }
+
+        if (pid == 0) {
+            execvp(*arg, arg);
+            fprintf(stderr, "%s\n", *arg);
+            exit(127);
+        }
+        waitpid(pid, &exitstat, 0);
+    }
+    return 0;
+}
+

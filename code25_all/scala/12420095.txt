@@ -1,0 +1,20 @@
+class Pool(conns: Seq[Conn]) {
+  private[this] val waiters = new Broker[Conn]
+  private[this] val returnConn = new Broker[Conn]
+
+  val get: Offer[Conn] = waiters.recv
+  def put(c: Conn) { returnConn ! c }
+
+  private[this] def loop(connq: Queue[Conn]) {
+    Offer.choose(
+      if (connq.isEmpty) Offer.never else {
+        val (head, rest) = connq.dequeue
+        waiters.send(head) { _ => loop(rest) }
+      },
+      returnConn.recv { c => loop(connq enqueue c) }
+    ).sync()
+  }
+
+  loop(Queue.empty ++ conns)
+}
+

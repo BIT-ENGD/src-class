@@ -1,0 +1,100 @@
+trait DB {
+    def lookup(query:String):String
+}
+
+trait PubSub {
+    def subscribe(key:String, callback:String => Any)
+}
+
+trait Functionality { this:DB with PubSub => 
+    def doSomething() {
+        val key = lookup("get key")
+        subscribe(key, data => println(data))
+    }
+}
+
+object Awesome extends App {
+
+    object repository extends Functionality with DB with PubSub {
+        def lookup(query:String) = "some key"
+        def subscribe(key:String, callback:String => Any) {
+            scala.concurrent.ops.spawn { while(true) { callback(key) ; Thread.Sleep(1000) } } 
+        }
+    }
+    repository.doSomething()
+}
+
+object Awesome2 extends App {
+    object repository extends DB {
+        def lookup(query: String): String = "some other key"
+
+        object connection1 extends Functionality with PubSub with DB {
+            def subscribe(key: String, callback: (String) => Any) {
+                scala.concurrent.ops.spawn { while(true) { callback(key.toUpperCase) ; Thread.sleep(1000) } }
+            }
+        }
+
+        object connection2 extends Functionality with PubSub with DB {
+            def subscribe(key: String, callback: (String) => Any) {
+                scala.concurrent.ops.spawn { while(true) { callback(key.toLowerCase) ; Thread.sleep(1000) } }
+            }
+        }
+    }
+}
+
+error: object creation impossible, since method lookup in trait DB of type (query:String) String is not defined
+object connection2 extends Functionality with PubSub with DB {
+
+object Awesome3 extends App {
+    object repository extends DB {
+        override def lookup(query: String): String = "some other key"
+
+        object connection1 extends Functionality with PubSub with DB {
+            def subscribe(key: String, callback: (String) => Any) {
+                scala.concurrent.ops.spawn { while(true) { callback(key.toUpperCase) ; Thread.sleep(1000) } }
+            }
+
+            def lookup(query: String): String = repository.lookup(query)
+        }
+
+        object connection2 extends Functionality with PubSub with DB {
+            def subscribe(key: String, callback: (String) => Any) {
+                scala.concurrent.ops.spawn { while(true) { callback(key.toLowerCase) ; Thread.sleep(1000) } }
+            }
+
+            def lookup(query: String): String = repository.lookup(query)
+        }
+    }
+    repository.connection1.doSomething()
+    repository.connection2.doSomething()
+}
+
+trait DB_Base extends DB {
+
+    private val db:DB = this
+
+    trait DB_Layer extends DB {
+        def lookup(query:String):String = db.lookup(query)
+    }
+}
+
+object Awesome4 extends App {
+    object repository extends DB_Base {
+        override def lookup(query: String): String = "some other key"
+
+        object connection1 extends Functionality with PubSub with DB_Layer {
+            def subscribe(key: String, callback: (String) => Any) {
+                scala.concurrent.ops.spawn { while(true) { callback(key.toUpperCase) ; Thread.sleep(1000) } }
+            }
+        }
+
+        object connection2 extends Functionality with PubSub with DB_Layer {
+            def subscribe(key: String, callback: (String) => Any) {
+                scala.concurrent.ops.spawn { while(true) { callback(key.toLowerCase) ; Thread.sleep(1000) } }
+            }
+        }
+    }    
+    repository.connection1.doSomething()
+    repository.connection2.doSomething()
+}
+

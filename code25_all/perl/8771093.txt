@@ -1,0 +1,47 @@
+sub _getPages {
+    my $self      = shift;
+    my $rel_url   = lc(shift);
+    my @turls     = ();
+    my $urls      = [];
+    my $ipc_share =  tie $urls, 'IPC::Shareable',undef, { destroy   => 1 };
+
+    foreach my $stag (@{$self->{SUPP_TAGS}}) {
+
+           push(@{$urls}, map { lc($self->_normalizeSupportURL($_->url(),
+                                                             $self->{MECH_O}->getGlobalMechInstance()->uri->authority,
+                                                             $self->{MECH_O}->getGlobalMechInstance()->uri->scheme)) }
+                              grep { ((index($_->url,$rel_url) > -1) || ($_->url =~ m{^/})) &&
+                                     $_->url !~ m/answer|mailto:/i }
+                        $self->{MECH_O}->getGlobalMechInstance()->find_all_links( text_regex     => qr/$stag/i ),
+                        $self->{MECH_O}->getGlobalMechInstance()->find_all_links( name_regex     => qr/$stag/i ),
+                        $self->{MECH_O}->getGlobalMechInstance()->find_all_links( url_abs_regex  => qr/$stag/i ));
+    }
+    @{$urls} = uniq(@{$urls});
+
+    foreach my $url (@{$urls}) {
+
+        if (!exists($self->{UNQ_URLS}->{lc($url)}))  {
+            $self->{UNQ_URLS}->{lc($url)} = 1;
+
+            $self->{SUPP_PROC}->start and next;
+            if (eval {$self->{MECH_O}->getGlobalMechInstance()->get($url); } ) {
+                push(@{$urls}, map { lc($self->_normalizeSupportURL($_->url(),
+                                                                  $self->{MECH_O}->getGlobalMechInstance()->uri->authority,
+                                                                  $self->{MECH_O}->getGlobalMechInstance()->uri->scheme)) }
+                             grep { ((index($_->url,$rel_url) > -1) || ($_->url =~ m{^/}) ||
+                                      $_->url =~ m/\d+\.\d+\.\d+\.\d+/ ) &&
+                                      $_->url !~ m/answer|mailto:/i }
+                             $self->{MECH_O}->getGlobalMechInstance()->find_all_links( text_regex     => qr/chat/i ),
+                             $self->{MECH_O}->getGlobalMechInstance()->find_all_links( name_regex     => qr/chat/i ),
+                             $self->{MECH_O}->getGlobalMechInstance()->find_all_links( url_abs_regex  => qr/chat/i ));
+            }
+            $self->{SUPP_PROC}->finish;
+        }
+    }
+    $self->{SUPP_PROC}->wait_all_children;
+
+    return uniq(@{$urls});
+}
+
+$urls
+Storable

@@ -1,0 +1,173 @@
+-(void) refreshGraph;
+//Inhereted Methods
+-(NSUInteger)numberOfRecordsForPlot:(CPPlot *)plot;
+-(NSNumber *)numberForPlot:(CPPlot *)plot field:(NSUInteger)fieldEnum recordIndex:(NSUInteger)index;
+
+#import "RatesTickerViewController.h"
+
+#import "Tick.h"
+
+
+#import <Foundation/Foundation.h>
+
+#define DEGREES_TO_RADIANS(__ANGLE__) ((__ANGLE__) / 180.0 * M_PI)
+
+@implementation RatesTickerViewController
+@synthesize graphController, graphView;
+
+// Implement viewDidLoad to do additional setup after loading the view, typically from a nib.
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    RatesTickerGraphController *aGraphController = [[RatesTickerGraphController alloc] initWithNibName:@"RatesTickerViewController" bundle:[NSBundle mainBundle]];
+    [self setGraphController:aGraphController];
+    [aGraphController release];
+
+    //self.graphView = self.graphController.layerHost;
+    [self.graphController refreshGraph];
+
+}
+
+#pragma mark -
+#pragma mark Plot Data Source Methods
+
+-(NSUInteger)numberOfRecordsForPlot:(CPPlot *)plot {
+    return [graphController.dataForPlot count];
+}
+
+-(NSNumber *)numberForPlot:(CPPlot *)plot field:(NSUInteger)fieldEnum recordIndex:(NSUInteger)index 
+{
+    NSNumber *num = [[graphController.dataForPlot objectAtIndex:index] valueForKey:(fieldEnum == CPScatterPlotFieldX ? @"x" : @"y")];
+    return num;
+}
+
+#pragma mark -
+#pragma mark Set Rotation Orientation Methods
+
+// Override to allow orientations other than the default portrait orientation.
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation {
+    return (interfaceOrientation == UIInterfaceOrientationPortrait ||
+            interfaceOrientation == UIInterfaceOrientationLandscapeLeft || 
+            interfaceOrientation == UIInterfaceOrientationLandscapeRight);
+}
+
+- (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)fromInterfaceOrientation {
+    if (fromInterfaceOrientation == UIInterfaceOrientationPortrait)
+    {
+        isShowingLandscapeView = YES;
+        [self setViewToLandscape];
+    } else {
+        isShowingLandscapeView = NO;
+        [self setViewToPortrait];
+    }
+}
+
+- (void)didReceiveMemoryWarning {
+    // Releases the view if it doesn't have a superview.
+    [super didReceiveMemoryWarning];
+
+    // Release any cached data, images, etc that aren't in use.
+}
+
+- (void)viewDidUnload {
+    // Release any retained subviews of the main view.
+    // e.g. self.myOutlet = nil;
+    [graphController release]; graphController = nil;
+}
+
+
+- (void)dealloc {
+    [super dealloc];
+}
+
+
+@end
+
+@implementation RatesTickerGraphController
+@synthesize dataForPlot;
+@synthesize layerHost;
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    isShowingLandscapeView = NO;
+
+    [self refreshGraph];
+}
+
+- (void)refreshGraph {
+    //Graph Plot
+    if(!graph){
+        // Create graph from theme
+        graph = [[CPXYGraph alloc] initWithFrame:CGRectZero];
+        CPTheme *theme = [CPTheme themeNamed:kCPDarkGradientTheme];
+        [graph applyTheme:theme];
+        CPLayerHostingView *hostingView = (CPLayerHostingView *)self.layerHost;
+        hostingView.hostedLayer = graph;
+        graph.paddingLeft = 5.0;
+        graph.paddingTop = 5.0;
+        graph.paddingRight = 5.0;
+        graph.paddingBottom = 5.0;
+
+        // Create a white plot area
+        CPScatterPlot *boundLinePlot = [[[CPScatterPlot alloc] init] autorelease];
+        boundLinePlot.identifier = @"White Plot";
+        boundLinePlot.dataLineStyle.miterLimit = 0.0f;
+        boundLinePlot.dataLineStyle.lineWidth = 2.0f;
+        boundLinePlot.dataLineStyle.lineColor = [CPColor whiteColor];
+        boundLinePlot.dataSource = self;
+        [graph addPlot:boundLinePlot];
+
+        // Do a grey gradient
+        CPColor *areaColor1 = [CPColor grayColor];
+        CPGradient *areaGradient1 = [CPGradient gradientWithBeginningColor:areaColor1 endingColor:[CPColor clearColor]];
+        areaGradient1.angle = -90.0f;
+        CPFill *areaGradientFill = [CPFill fillWithGradient:areaGradient1];
+        boundLinePlot.areaFill = areaGradientFill;
+        boundLinePlot.areaBaseValue = [[NSDecimalNumber zero] decimalValue];
+    }
+
+    // Setup plot space
+    CPXYPlotSpace *plotSpace = (CPXYPlotSpace *)graph.defaultPlotSpace;
+    plotSpace.allowsUserInteraction = NO;
+    //Auto scale the plot space to fit the data
+    [plotSpace scaleToFitPlots:[NSArray arrayWithObject:[graph plotAtIndex:0]]];
+    CPPlotRange *xRange = plotSpace.xRange;
+    [xRange expandRangeByFactor:CPDecimalFromDouble(1.25)];
+    plotSpace.xRange = xRange;
+    CPPlotRange *yRange = plotSpace.yRange;
+    [yRange expandRangeByFactor:CPDecimalFromDouble(1.1)];
+    plotSpace.yRange = yRange;
+
+    // Axes
+    CPXYAxisSet *axisSet = (CPXYAxisSet *)graph.axisSet;
+    CPXYAxis *x = axisSet.xAxis;
+    x.axisLineStyle = nil;
+
+    CPXYAxis *y = axisSet.yAxis;
+    y.minorTicksPerInterval = 0;
+    y.orthogonalCoordinateDecimal = CPDecimalFromString(@"0");
+    y.labelingPolicy = CPAxisLabelingPolicyAutomatic;
+
+    // Add plot symbols
+    CPLineStyle *symbolLineStyle = [CPLineStyle lineStyle];
+    symbolLineStyle.lineColor = [CPColor blackColor];
+    CPPlotSymbol *plotSymbol = [CPPlotSymbol ellipsePlotSymbol];
+    plotSymbol.fill = [CPFill fillWithColor:[CPColor whiteColor]];
+    plotSymbol.lineStyle = symbolLineStyle;
+    plotSymbol.size = CGSizeMake(5.0, 5.0);
+    //boundLinePlot.plotSymbol = plotSymbol;
+
+}
+#pragma mark -
+#pragma mark Plot Data Source Methods
+
+-(NSUInteger)numberOfRecordsForPlot:(CPPlot *)plot {
+    return [dataForPlot count];
+}
+
+-(NSNumber *)numberForPlot:(CPPlot *)plot field:(NSUInteger)fieldEnum recordIndex:(NSUInteger)index 
+{
+    NSNumber *num = [[dataForPlot objectAtIndex:index] valueForKey:(fieldEnum == CPScatterPlotFieldX ? @"x" : @"y")];
+    return num;
+}
+

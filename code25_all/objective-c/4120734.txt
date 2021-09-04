@@ -1,0 +1,168 @@
+NSMutableArray
+NSLog()
+EXEC_BAD_ACCESS
+ArticlesParser
+// ArticlesParser.h
+#import <Foundation/Foundation.h>
+#import "Article.h"
+
+@class Article;
+
+@interface ArticlesParser : NSObject <NSXMLParserDelegate> {
+ NSMutableString *currentCharaters;
+ Article *currentArticle; 
+ NSMutableArray *articlesCollection; 
+ NSMutableData *xmlData;
+ NSURLConnection *connectionInProgress;
+ BOOL connectionHasCompleted;
+}
+
+@property (nonatomic, assign) BOOL connectionHasCompleted;
+
+- (void)parseUrl:(NSString *)url;
+- (void)beginParsing:(NSURL *)xmlUrl;
+- (NSMutableArray *)arrayOfArticles;
+
+@end
+
+// ArticlesParser.m
+#import "ArticlesParser.h"
+
+@implementation ArticlesParser
+
+@synthesize connectionHasCompleted;
+
+#pragma mark -
+#pragma mark Parsing methods
+
+- (void)parseUrl:(NSString *)url
+{
+ [self setConnectionHasCompleted:NO];
+ NSURL *xmlUrl = [NSURL URLWithString:url];
+ [self beginParsing:xmlUrl];
+}
+
+- (void)beginParsing:(NSURL *)xmlUrl
+{
+ [articlesCollection removeAllObjects];
+ articlesCollection = [[NSMutableArray alloc] init];
+
+ NSURLRequest *request = [NSURLRequest requestWithURL:xmlUrl cachePolicy:NSURLRequestReloadIgnoringCacheData timeoutInterval:30];
+
+ // clear existing connection if there is one
+ if (connectionInProgress) {
+  [connectionInProgress cancel];
+  [connectionInProgress release];
+ }
+
+ [xmlData release];
+ xmlData = [[NSMutableData alloc] init];
+
+ // asynchronous connection
+ connectionInProgress = [[NSURLConnection alloc] initWithRequest:request delegate:self startImmediately:YES];
+}
+
+- (NSMutableArray *)arrayOfArticles
+{
+ // NOT RETURNING ANYTHING
+ return articlesCollection;
+}
+
+#pragma mark -
+#pragma mark NSXMLParserDelegate methods
+
+- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
+{
+ [xmlData appendData:data];
+}
+
+- (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)elementName namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName attributes:(NSDictionary *)attributeDict
+{
+ if ([elementName isEqual:@"article"]) {
+  currentArticle = [[Article alloc] init];
+  return;
+ }
+ if ([elementName isEqual:@"title"]) {
+  currentCharaters = [[NSMutableString alloc] init];
+  return;
+ }
+ if ([elementName isEqual:@"last_updated"]) {
+  currentCharaters = [[NSMutableString alloc] init];
+  return;
+ }
+}
+
+- (void)parser:(NSXMLParser *)parser foundCharacters:(NSString *)string
+{
+ [currentCharaters appendString:string];
+}
+
+- (void)parser:(NSXMLParser *)parser didEndElement:(NSString *)elementName namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName
+{
+ if ([elementName isEqual:@"article"]) {
+  [articlesCollection addObject:currentArticle];
+  [currentArticle release], currentArticle = nil;
+  return;
+ }
+ if ([elementName isEqual:@"title"]) {
+  [currentArticle setTitle:currentCharaters];
+  [currentCharaters release], currentCharaters = nil;
+  return;
+ }
+ if ([elementName isEqual:@"last_updated"]) {
+  [currentArticle setLastModified:currentCharaters];
+  [currentCharaters release], currentCharaters = nil;
+  return;
+ }
+}
+
+- (void)connectionDidFinishLoading:(NSURLConnection *)connection
+{
+ NSXMLParser *parser = [[NSXMLParser alloc] initWithData:xmlData];
+ [parser setDelegate:self];
+
+ [parser parse];
+ [parser release];
+
+ [self setConnectionHasCompleted:YES];
+}
+
+- (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
+{
+ [currentArticle release];
+ currentArticle = nil;
+
+ [currentCharaters release];
+ currentCharaters = nil;
+
+ [articlesCollection release];
+ articlesCollection = nil;
+
+ [connectionInProgress release];
+ connectionInProgress = nil;
+
+ [xmlData release];
+ xmlData = nil;
+
+ NSLog(@"connection failed: %@", [error localizedDescription]);
+}
+
+@end
+
+// instance method called within an articles controller
+// that is to load the results in a table view
+- (void)loadArticles
+{
+    // (leaving off the URL because it's not important)
+ NSString *urlToRequest = [NSString stringWithFormat:@"...", [self letterToList]];
+ ArticlesParser *aParser = [[ArticlesParser alloc] init];
+
+    // initiate the parsing
+ [aParser parseUrl:urlToRequest];
+
+    // load up the articles ivar so the tableview can
+    // make use of it to load its cells
+ articles = [aParser arrayOfArticles];
+}
+
+NSXMLParser

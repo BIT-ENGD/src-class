@@ -1,0 +1,51 @@
+object Auth  {
+    def IsAuthenticated(block: => String => Request[AnyContent] => Result) = {
+      Security.Authenticated(RetrieveUser, HandleUnauthorized) { user =>
+        Action { request =>
+          block(user)(request)
+        }
+      }
+    }
+
+    def RetrieveUser(request: RequestHeader) = {
+
+      val auth = new String(base64Decode(request.headers.get("AUTHORIZATION").get.replaceFirst("Basic", "")))
+      val split  = auth.split(":")
+      val user = split(0)
+      val pass = split(1)
+      Option(user)
+    }
+
+    def HandleUnauthorized(request: RequestHeader) = {
+      Results.Forbidden
+    }
+
+    def APIKey(apiKey: String)(f: => String => Request[AnyContent] => Result) = IsAuthenticated { user => request =>
+
+      if(apiKey == "123")
+        f(user)(request)
+      else
+        Results.Forbidden
+    }
+
+}
+
+  def testOut = Auth.APIKey("123") { username => implicit request =>
+
+    var props:Map[String, JsValue] = Map[String, JsValue]()
+    request.body  match {
+      case JsObject(fields) => { props = fields.toMap }
+      case _ => {} // Ok("received something else: " + request.body + '\n')
+    }
+
+    if(!props.contains("UUID"))
+      props.+("UUID" -> UniqueIdGenerator.uuid)
+
+    if (!props.contains("entity"))
+      props.+("entity" -> "unset")
+
+    props.+("username" -> username)
+
+    Ok(props.toString)
+  }
+

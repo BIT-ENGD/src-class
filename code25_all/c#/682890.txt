@@ -1,0 +1,52 @@
+static void Pacman()
+{
+    Queue<MatchUpdateQueue> waiting = new Queue<MatchUpdateQueue>();
+
+    events.WriteEntry("matchqueue worker thread started");
+
+    while (!stop)
+    {
+        if (waiting.Count == 0)
+        {
+            /* grab any new items available */
+            aDataContext db = new aDataContext();
+            List<MatchUpdateQueue> freshitems = db.MatchUpdateQueues.OrderBy(item => item.id).ToList();
+
+            foreach (MatchUpdateQueue item in freshitems)
+                waiting.Enqueue(item);
+            db.Dispose();
+        }
+        else
+        {
+            /* grab & dispatch waiting item */
+            MatchUpdateQueue item = waiting.Peek();
+            try
+            {
+                int result = ActionHandler.Handle(item);
+                if (result == -1)
+                    events.WriteEntry("unknown command consumed : " + item.actiontype.ToString(), EventLogEntryType.Error);
+
+                /* remove item from queue */
+                waiting.Dequeue();
+
+                /* remove item from database */
+                aDataContext db = new aDataContext();
+                db.MatchUpdateQueues.DeleteOnSubmit(db.MatchUpdateQueues.Single(i => i == item));
+                db.SubmitChanges();
+                db.Dispose();
+            }
+            catch (Exception ex)
+            {
+                events.WriteEntry("exception while handling item : " + ex.Message, EventLogEntryType.Error);
+                stop = true;
+            }
+        }
+
+        /* to avoid hammering database when there's nothing to do */
+        if (waiting.Count == 0)
+            Thread.Sleep(TimeSpan.FromSeconds(10));
+    }
+
+    events.WriteEntry("matchqueue worker thread halted");
+}
+

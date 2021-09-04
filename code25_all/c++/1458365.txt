@@ -1,0 +1,224 @@
+#include <iostream>
+#import <Foundation/Foundation.h>
+
+// An abstract C++ interface
+class Foo_cpp {
+public:
+    virtual void foo() = 0;
+};
+
+// Another abstract C++ interface
+class Bar_cpp {
+public:
+    virtual void bar() = 0;
+};
+
+
+// An Objective-C to C++ adaptor. 
+// It takes a C++ interface Foo. When it's do_foo method is called it
+// delegates call to Foo::foo.
+@interface Foo_objc : NSObject {
+    Foo_cpp* foo_cpp_;
+}
+@end
+
+@implementation Foo_objc
+
+- (id)init:(Foo_cpp*)foo {
+    self = [super init];
+    if (self) {
+        foo_cpp_ = foo;
+    } 
+    return self;
+}
+
+- (void) do_foo {
+    std::cout << "do_foo: ";
+    foo_cpp_->foo();
+}
+@end 
+
+// Another Objective-C to C++ adaptor. 
+@interface Bar_objc : NSObject{
+    Bar_cpp* bar_cpp_;
+}
+@end 
+
+@implementation Bar_objc
+
+- (id)init:(Bar_cpp*)bar {
+    self = [super init];
+    if (self) {
+        bar_cpp_ = bar;
+    }
+    return self;
+}
+
+- (void) do_bar {
+    std::cout << "do_bar: ";
+    bar_cpp_->bar();
+}
+@end 
+
+// Main class implements both abstract C++ interfaces (which will
+// confuse the compiler as we shall see). 
+// It constructs two Objective-C to C++ adaptors as a members and
+// tries to pass itself as a C++ delegate for these adaptors.
+class Main : public Foo_cpp, public Bar_cpp {
+public:
+    Foo_objc* foo_;
+    Bar_objc* bar_;
+
+    Main() {
+        // We try to construct two objective-c to c++ adaptors Foo_objc and
+        // Bar_objc. 
+        // 
+        // We expect output of 
+        // [foo_ do_foo];
+        // [bar_ do_bar];
+        // to be
+        //   do_foo: foo
+        //   do_bar: bar
+#if 0
+        // This variant compiles but the compiler messes up
+        // the vtables. When do_bar() is called, we expect
+        // bar() to be called via Bar_objc, but instead
+        // foo() is called from both adaptors.
+        // Output is
+        //    do_foo: foo
+        //    do_bar: foo  !!!! Calls wrong method !!!!
+        foo_ = [[Foo_objc alloc] init:this];
+        bar_ = [[Bar_objc alloc] init:this];
+
+        [foo_ do_foo];
+        [bar_ do_bar];
+#else 
+        // Now, this variant tries to help the compiler by passing 
+        // |this| via a variable of the correct interface type.
+        // It actually reveals the confusion that the compiler
+        // is having. Seems like a bug in the compiler.
+        Foo_cpp* iface = this;
+        foo_ = [[Foo_objc alloc] init:iface];
+
+        Bar_cpp* iface2 = this;
+        // Error we get is on the next code line.
+        //   $ g++ -x objective-c++ -lobjc mheritance_test.mm
+        //   mheritance_test.mm: In constructor ‘Main::Main()’:
+        //   mheritance_test.mm:107: error: cannot convert ‘Bar_cpp*’ to ‘Foo_cpp*’ in argument passing
+        bar_ = [[Bar_objc alloc] init:iface2];
+
+        [foo_ do_foo];
+        [bar_ do_bar];
+#endif
+
+    }
+
+    ~Main() {
+        delete foo_;
+        delete bar_;
+    }
+
+    virtual void foo() {
+        std::cout << "foo" << std::endl;
+    }
+
+    virtual void bar() {
+        std::cout << "bar" << std::endl;
+    }
+
+};
+
+int main() {
+    Main m;
+}
+
+#include <iostream>
+#import <Foundation/Foundation.h>
+
+// An abstract C++ interface
+class Foo_cpp {
+public:
+    virtual void foo() = 0;
+};
+
+// Another abstract C++ interface
+class Bar_cpp {
+public:
+    virtual void bar() = 0;
+};
+
+// An Objective-C to C++ adaptor. 
+// It takes a C++ interface Foo. When it's do_foo method is called it
+// delegates call to Foo::foo.
+@interface Foo_objc : NSObject {
+    Foo_cpp* foo_cpp_;
+}
+@end
+
+@implementation Foo_objc
+
+- (id)init:(Foo_cpp*)foo {
+    self = [super init];
+    if (self) {
+        foo_cpp_ = foo;
+    } 
+    return self;
+}
+
+- (void) do_foo {
+    std::cout << "do_foo: ";
+    foo_cpp_->foo();
+}
+@end 
+
+// Another Objective-C to C++ adaptor. 
+@interface Bar_objc : NSObject{
+    Bar_cpp* bar_cpp_;
+}
+@end 
+
+@implementation Bar_objc
+
+- (id)init:(Bar_cpp*)bar {
+    self = [super init];
+    if (self) {
+        bar_cpp_ = bar;
+    }
+    return self;
+}
+
+- (void) do_bar {
+    std::cout << "do_bar: ";
+    bar_cpp_->bar();
+}
+@end 
+
+class Main : public Foo_cpp, public Bar_cpp {
+    void foo() { 
+        std::cout << "foo" << std::endl;
+    }
+    void bar() {
+        std::cout << "bar" << std::endl;
+    }
+};
+
+int main() {
+    Main* m = new Main;    
+#if 0 
+    // Compiles but produces
+    //   do_foo: foo
+    //   do_bar: foo !!! incorrect method called !!!
+    Foo_objc* fo = [[Foo_objc alloc] init:m];
+    Bar_objc* bo = [[Bar_objc alloc] init:m];
+#else 
+    // Doesn't compile
+    Foo_objc* fo = [[Foo_objc alloc] init:(Foo_cpp*)m];
+    Bar_objc* bo = [[Bar_objc alloc] init:(Bar_cpp*)m];
+    // A line above produces following error
+    //    mheritance_test2.mm: In function ‘int main()’:
+    //    mheritance_test2.mm:82: error: cannot convert ‘Bar_cpp*’ to ‘Foo_cpp*’ in argument passing
+#endif
+    [fo do_foo];
+    [bo do_bar];
+}
+

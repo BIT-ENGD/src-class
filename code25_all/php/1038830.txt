@@ -1,0 +1,180 @@
+$template = new Template($mysqli);
+$_SESSION['template'] = serialize($template);
+
+$template = unserialize($_SESSION['template']);
+$prodid = $_GET['product_id'];
+$template->addItem($prodid);
+echo var_dump($template->getItems());
+$_SESSION['template'] = serialize($template);
+
+$_SESSION['template']
+<?php
+
+include_once( 'DBE.class.php' ) ;
+
+################################################
+# Function: Sessions_open
+# Parameters: $path (string), $name (string)
+# Returns: bool
+# Description: This is an over-ride function call
+#       that we need to create so that the php internal
+#       session manager doesn't store our session in the
+#       file system, since we are storing it in the
+#       db. Storing a session in a file system on the
+#       server inhibits scalability for two reasons:
+#       1: A large number of users may be hitting the site
+#           and clog the space on the hard-drive of the server
+#           due to the sheer amount of session files stored
+#       2: The website may be behind a load-balancer and
+#           therefore the server handling the page request
+#           may not have the session stored on its file system
+################################################
+function Sessions_open ( $path, $name ) {
+    return TRUE ;
+}
+
+
+################################################
+# Function: Sessions_close
+# Parameters: N/A
+# Returns: bool
+# Description: This is an over-ride function call
+#       that we need to create so that the php internal
+#       session manager doesn't store our session in the
+#       file system, since we are storing it in the
+#       db. Storing a session in a file system on the
+#       server inhibits scalability for two reasons:
+#       1: A large number of users may be hitting the site
+#           and clog the space on the hard-drive of the server
+#           due to the sheer amount of session files stored
+#       2: The website may be behind a load-balancer and
+#           therefore the server handling the page request
+#           may not have the session stored on its file system
+################################################
+function Sessions_close () {
+    return TRUE ;
+}
+
+
+################################################
+# Function: Sessions_read
+# Parameters: $SessionID (string)
+# Returns: (string) or (false) on error
+# Description: This function is used at startup to read
+#           the contents of the session. 
+#           If no sess data, the empty string ("") is returned.
+#           Otherwise, the serialized sess data is returned.
+#           On error, false is returned.
+################################################
+function Sessions_read ( $SessionID ) {
+
+    include_once( 'DBE.class.php' ) ;
+    $dbe = new DBE() ;
+
+    //default return value to false
+    $returnVal = FALSE ;
+
+    $query = "SELECT DataValue
+                        FROM Sessions 
+                        WHERE SessionID = '$SessionID' " ;
+
+    $result = $dbe->Select( $query ) ;
+
+    if( count( $result ) == 1 ) {
+        $returnVal = $result[0]['DataValue'] ;
+
+        //update the session so that we don't time-out after creating
+        $query = "UPDATE Sessions
+                            SET LastUpdated = NOW()
+                            WHERE SessionID = '$SessionID'" ;
+        $dbe->Update( $query ) ;
+
+    } else {
+        //Insert here to simplify the write function
+        $query = "INSERT INTO Sessions (SessionID, DataValue) VALUES ( '$SessionID', '' )" ;
+
+        $dbe->Insert( $query ) ;            //pass the insert stmt
+
+        //set returnVal to '' being that we didn't find the SessionID
+        $returnVal = '' ;
+    }
+
+    return( $returnVal ) ;
+}
+
+################################################
+# Function: Sessions_write
+# Parameters: $SessionID (string), $Data
+# Returns: bool
+# Description: This function is used at startup to read
+#           the contents of the session. 
+#           If no sess data, the empty string ("") is returned.
+#           Otherwise, the serialized sess data is returned.
+#           On error, false is returned.
+################################################
+function Sessions_write( $SessionID, $Data ) {
+
+    include_once( 'DBE.class.php' ) ;
+    $dbe = new DBE() ;
+
+    //default to true
+    $returnVal = TRUE ;
+
+    //update the session
+    $query = "UPDATE Sessions 
+                            SET DataValue = '$Data'
+                        WHERE SessionID = '$SessionID'" ;
+
+    $result = $dbe->Update( $query ) ; //pass the update stmt to the dbEngine..
+
+    //test for success
+    if( $result == -1 )
+        $returnVal = FALSE ;
+
+    //return the return value
+    return( $returnVal ) ;
+}
+
+
+################################################
+# Function: Sessions_delete
+# Parameters: $SessionID (string)
+# Returns: bool
+# Description: This function is used to delete the session
+################################################
+function Sessions_destroy( $SessionID ) {
+
+    include_once( 'DBE.class.php' ) ;
+    $dbe = new DBE() ;
+
+    $query = "DELETE FROM Sessions WHERE SessionID = '$SessionID' " ;
+
+    $dbe->Delete( $query ) ;
+
+    return( TRUE ) ;
+}
+
+################################################
+# Function: Sessions_delete
+# Parameters: $SessionID (string)
+# Returns: bool
+# Description: This function is used to delete the session
+################################################
+function Sessions_gc( $aMaxLifetime ) {
+
+    include_once( 'DBE.class.php' ) ;
+    $dbe = new DBE() ;
+
+    $query = "DELETE FROM Sessions WHERE (UNIX_TIMESTAMP(NOW()) - UNIX_TIMESTAMP( LastUpdated )) > $aMaxLifetime " ;
+
+    $dbe->Delete( $query ) ;
+
+    return( TRUE ) ;
+}
+
+    session_set_save_handler( "Sessions_open", "Sessions_close",
+                                 "Sessions_read", "Sessions_write",
+                                 "Sessions_destroy", "Sessions_gc" ) ;
+
+?>
+

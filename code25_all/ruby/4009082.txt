@@ -1,0 +1,106 @@
+# in config/routes.rb
+mount DAV4Rack::Handler.new(
+  :root => Rails.root.to_s, # <= it's just an example
+  :root_uri_path => '/webdav',
+  :resource_class => Dav::DocumentResource # <= my custom resource, you could use FileResource from dav4rack
+), :at => "/webdav"
+
+ActionController::UnknownHttpMethod (PROPFIND, accepted HTTP methods are get, head, put, post, delete, and options)
+
+/usr/local/lib/ruby/gems/1.9.1/gems/actionpack-3.0.0/lib/action_dispatch/http/request.rb +56 +72
+in (56) "def request_method" and (72) "def method"
+
+def method
+  @method ||= begin
+    method = env["rack.methodoverride.original_method"] || env['REQUEST_METHOD']
+    HTTP_METHOD_LOOKUP[method] || raise(ActionController::UnknownHttpMethod, "#{method}, accepted HTTP methods are #{HTTP_METHODS.to_sentence(:locale => :en)}")
+    method
+  end
+end
+
+# config.ru
+require ::File.expand_path('../config/environment',  __FILE__)
+require 'dav4rack/interceptor'
+require 'dav/document_resource'
+
+app = Rack::Builder.new{
+  map '/webdav/' do
+    run DAV4Rack::Handler.new(
+      :root => Rails.root.to_s,
+      :root_uri_path => '/webdav',
+      :resource_class => Dav::DocumentResource
+    )
+  end
+
+  map '/' do
+    use DAV4Rack::Interceptor, :mappings => {
+      '/webdav/' => {
+        :resource_class => Dav::DocumentResource
+      },
+    }
+    run Pmp::Application
+  end
+}.to_app
+run app
+
+# in document_resource.rb
+def check_authentication
+  puts request.env['warden'] # nil :(
+end
+
+> rake middleware 
+use ActionDispatch::Static
+use Rack::Lock
+use ActiveSupport::Cache::Strategy::LocalCache
+use Rack::Runtime
+use Rails::Rack::Logger
+use ActionDispatch::ShowExceptions
+use ActionDispatch::RemoteIp
+use Rack::Sendfile
+use ActionDispatch::Callbacks
+use ActiveRecord::ConnectionAdapters::ConnectionManagement
+use ActiveRecord::QueryCache
+use ActionDispatch::Cookies
+use ActionDispatch::Session::CookieStore
+use ActionDispatch::Flash
+use ActionDispatch::ParamsParser
+use Rack::MethodOverride
+use ActionDispatch::Head
+use ActionDispatch::BestStandardsSupport
+use Warden::Manager
+run Pmp::Application.routes
+
+# in my app at APP_ROOT/config/application.rb
+# override the routes method inherited from Rails::Application#routes
+def routes
+  routes_app = super
+  app = Rack::Builder.new {
+    map '/webdav/' do
+      run DAV4Rack::Handler.new(
+        :root => Rails.root.to_s,
+        :root_uri_path => '/webdav',
+        :resource_class => Dav::DocumentResource
+      )
+    end
+
+    map '/' do
+      use DAV4Rack::Interceptor, :mappings => {
+        '/webdav/' => {
+          :resource_class => Dav::DocumentResource
+        },
+      }
+      run routes_app
+    end
+  }.to_app
+
+  class << app; self end.class_eval do
+    attr_accessor :routes_app
+    def method_missing(sym, *args, &block)
+      routes_app.send sym, *args, &block
+    end
+  end
+  app.routes_app = routes_app
+
+  app
+end
+

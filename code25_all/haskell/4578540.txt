@@ -1,0 +1,67 @@
+convertXML ::  (Text.XML.Light.Lexer.XmlSource s) => s -> [String]
+convertXML xml = productToCSV products
+    where
+        productToCSV [] = []
+        productToCSV (x:xs) = (getFields x) ++ (productToCSV
+                                (elChildren x)) ++ (productToCSV xs)
+        getFields elm = case (qName . elName) elm of
+                            "product" -> [attrField "uid", attrField "code"]
+                            "name" -> [trim $ strContent elm]
+                            "annotation" -> [trim $ strContent elm]
+                            "text" -> [trim $ strContent elm]
+                            "category" -> [attrField "uid", attrField "name"]
+                            "manufacturer" -> [attrField "uid",
+                                                attrField "name"]
+                            "file" -> [getImgName]
+                            _ -> []
+            where
+                attrField fldName = trim . fromJust $
+                                        findAttr (unqual fldName) elm
+                getImgName = if (map toUpper $ attrField "type") == "FULL"
+                                then
+                                    -- here I need some IO code
+                                    -- to download an image
+                                    -- fetchFile :: String -> IO String
+                                    attrField "file"
+                                else []
+        products = findElements (unqual "product") productsTree
+        productsTree = fromJust $ findElement (unqual "products") xmlTree
+        xmlTree = fromJust $ parseXMLDoc xml
+
+convertXML ::  (Text.XML.Light.Lexer.XmlSource s) => s -> ([String], IO [String])
+convertXML xml = productToCSV products (return [])
+    where
+        productToCSV :: [Element] -> IO String -> ([String], IO [String])
+        productToCSV [] _ = ([], return [])
+        productToCSV (x:xs) (ys) = storeFields (getFields x)
+                            ( storeFields (productToCSV (elChildren x) (return []))
+                                (productToCSV xs ys) )
+        getFields elm = case (qName . elName) elm of
+                            "product" -> ([attrField "uid", attrField "code"], return [])
+                            "name" -> ([trim $ strContent elm], return [])
+                            "annotation" -> ([trim $ strContent elm], return [])
+                            "text" -> ([trim $ strContent elm], return [])
+                            "category" -> ([attrField "uid", attrField "name"], return [])
+                            "manufacturer" -> ([attrField "uid",
+                                                attrField "name"], return [])
+                            "file" -> getImg
+                            _ -> ([], return [])
+            where
+                attrField fldName = trim . fromJust $
+                                        findAttr (unqual fldName) elm
+                getImg = if (map toUpper $ attrField "type") == "FULL"
+                            then
+                                ( [attrField "file"], fetchFile url >>=
+                                    saveFile localPath >>
+                                    return [localPath] )
+                                else ([], return [])
+                    where
+                        fName = attrField "file"
+                        localPath = imagesDir ++ "/" ++ fName
+                        url = attrField "folderUrl" ++ "/" ++ fName
+
+        storeFields (x1s, y1s) (x2s, y2s) = (x1s ++ x2s, liftM2 (++) y1s y2s)
+        products = findElements (unqual "product") productsTree
+        productsTree = fromJust $ findElement (unqual "products") xmlTree
+        xmlTree = fromJust $ parseXMLDoc xml
+

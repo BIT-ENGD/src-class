@@ -1,0 +1,233 @@
+typedef struct {
+  float Width;
+  float Height;
+} texInfo;
+
+typedef struct {
+  dshlib::utfstr ResourceName;
+  texInfo * TextureInfo;
+  GLuint TextureNum;
+  SDL_Surface * Image;
+} texCacheItem;
+
+texCacheItem * loadGraphics(dshlib::utfstr FileName) {
+
+  for(int i = 0; i < NumTexCached; i++) { //First see if this texture has already been loaded
+    if(TextureCache[i]->ResourceName == FileName)
+      return TextureCache[i];
+  }
+
+  dshlib::utfstr FullFileName = "Data/Graphics/"; //If not, create the full file path in the archive
+  FullFileName += FileName;
+  dshlib::FilePtr file = resourceCtr.OpenFile(FullFileName); //And open the file
+
+  if (!file->IsOk()) { //If the file failed to load...
+    EngineState = ENGINESTATE_ERR;
+    return NULL;
+  }
+
+  SDL_Surface * T = loadPNG(file);
+  texCacheItem * Texture = new texCacheItem;
+  Texture->TextureInfo = new texInfo;
+
+  glGenTextures(1, &Texture->TextureNum); //Allocate one more texture and save the name to the texCacheItem
+  glBindTexture(GL_TEXTURE_2D, Texture->TextureNum); //Then create it
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, T->w, T->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, T->pixels);
+
+  Texture->TextureInfo->Width = (float)T->w; //Write the useful data
+  Texture->TextureInfo->Height = (float)T->h;
+  Texture->ResourceName = FileName; //And the caching info needed
+  Texture->Image = T; //And save the image for if it's needed later and for deleting
+
+  if (!TexCacheSize) { //If this is the first load this is 0, so allocate the first 8 Cache slots.
+    TexCacheSize = 8;
+    TextureCache = new texCacheItem*[8];
+  }
+
+  if(NumTexCached == TexCacheSize) { //If we're out of cache space
+    if (TexCacheSize == 32768) { //If too many cache items, error out
+      EngineState = ENGINESTATE_ERR;
+      return NULL;
+    }
+    TexCacheSize <<= 1; //Double cache size
+    texCacheItem ** NewSet = new texCacheItem*[TexCacheSize];
+    memcpy(NewSet, TextureCache, NumTexCached * sizeof(texCacheItem*)); //And copy over the old cache
+    delete TextureCache; //Delete the old cache
+    TextureCache = NewSet; //And assign the pointer to the new one
+  }
+  TextureCache[NumTexCached++] = Texture; //Store the texCacheItem to the Cache
+
+  file->Close(); //Close the file
+  file = NULL;   //And NULL the smart pointer. [NTS: Confirm with Disch this is what won't cause a memory leak]
+
+  return Texture; //And return the loaded texture in texCacheItem form.
+}
+
+SDL_Surface *loadPNG(dshlib::FilePtr File)
+{
+    Uint8 *PNGFile = new Uint8[(long)File->GetSize()];
+    File->GetAr<Uint8>(PNGFile, (long)File->GetSize());
+    return IMG_LoadPNG_RW(SDL_RWFromMem(PNGFile, (long)File->GetSize()));
+}
+
+#include "../MegaJul.h"
+void render(void) {
+
+  //Render the current tilemap to the screen
+
+glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+glLoadIdentity();
+glTranslatef(0.0f, 0.0f, -4.0f);
+
+if (level) {
+
+glBegin(GL_QUADS);
+float dT = 32.0f / level->dTex;
+float sX, fX, fXa, sY, tX, tY, sYa, sYb, sXa, tXa, tYa;
+unsigned long m = level->mapDimensions[0] * level->mapDimensions[1];
+float ai; long long t; Sint16 * p;
+glBindTexture(GL_TEXTURE_2D, level->tilemap->TextureNum);
+
+for (int i = 3; i >= 0; i--) {
+
+  if (level->layers[i]->mapPosition[0] > 0)
+    level->layers[i]->mapPosition[0] = 0;
+  if (level->layers[i]->mapPosition[0] < 0 - (signed long)((level->mapDimensions[0] - 21) * 32))
+    level->layers[i]->mapPosition[0] = 0 - (signed long)((level->mapDimensions[0] - 21) * 32);
+
+  if (level->layers[i]->mapPosition[1] < 0)
+    level->layers[i]->mapPosition[1] = 0;
+  if (level->layers[i]->mapPosition[1] > (signed long)((level->mapDimensions[1] - 16) * 32))
+    level->layers[i]->mapPosition[1] = (signed long)((level->mapDimensions[1] - 16) * 32);
+
+  if (i == level->activeMap) {
+    for (int j = 0; j < NumSprites; j++) {
+      glBindTexture(GL_TEXTURE_2D, Sprites[j]->Graphics->TextureNum);
+      Sprites[j]->render(level->layers[i]->mapPosition[0], level->layers[i]->mapPosition[1]);
+    }
+    for (int j = 0; j < NumBullets; j++) {
+      glBindTexture(GL_TEXTURE_2D, Bullets[j]->Texture->TextureNum);
+      Bullets[j]->render(level->layers[i]->mapPosition[0], level->layers[i]->mapPosition[1]);
+    }
+  }
+
+  glBindTexture(GL_TEXTURE_2D, level->tilemap->TextureNum);
+
+  t = 0 - ((level->layers[i]->mapPosition[0] - (level->layers[i]->mapPosition[0] % 32)) /32) + (((level->layers[i]->mapPosition[1] - (level->layers[i]->mapPosition[1] % 32)) /32) * level->mapDimensions[0]);
+  ai = (float)(3 - i); //Invert Z-Index
+  sX = (float)((level->layers[i]->mapPosition[0] % 32));
+  sY = (float)((level->layers[i]->mapPosition[1] % 32));
+  if (sX > 0) 
+      sX -= 32;
+  if (sY < 0)
+      sY += 32;
+  fX = sX /= 32.0f;
+  sY /= 32.0f;
+  fXa = sXa = sX + 1.0f;
+  sYa = sY + 14.0f;
+  sYb = sY + 15.0f;
+
+  for (int y = 0; y < 16; y++) {
+    for (int x = 0; x < 21; x++) {
+      p = level->tiles[level->layers[i]->map[t]]->position;
+      tX = p[0] / level->dTex;
+      tY = p[1] / level->dTex;
+      tXa = tX + dT;
+      tYa = tY + dT;
+      glTexCoord2f(tX, tYa);     glVertex3f(fX, sYa, ai);   // Bottom Left Of The Texture and Quad
+      glTexCoord2f(tXa,tYa);     glVertex3f(fXa, sYa, ai);  // Bottom Right Of The Texture and Quad
+      glTexCoord2f(tXa,tY);      glVertex3f(fXa, sYb, ai);  // Top Right Of The Texture and Quad
+          glTexCoord2f(tX, tY);      glVertex3f(fX, sYb, ai);     // Top Left Of The Texture and Quad
+          fX += 1.0f;
+          fXa += 1.0f;
+          t++;
+          if (t >= m) break;
+        }
+        sYb -= 1.0f; sYa -= 1.0f;
+        fXa = sXa; fX = sX;
+        t += level->mapDimensions[0] - 21; //21 is the number of tiles drawn on a line (20 visible + 1 extra for scrolling)
+      }
+
+    }
+    glEnd();
+  }
+
+SDL_GL_SwapBuffers();
+}
+
+void loadLevel(dshlib::utfstr FileName) {
+-snip-
+  texCacheItem * Tex = loadGraphics(FileName);
+
+  if (!Tex) { //Load the tile graphics for the level
+    unloadLevel();
+    EngineState = ENGINESTATE_ERR;
+    return;
+  } else {
+    level->dTex = Tex->TextureInfo->Width;
+    level->tilemap = Tex;
+  }
+-snip-
+}
+
+void SpriteBase::created() {
+  this->Graphics = loadGraphics(DefaultGFX());
+-snip-
+}
+
+#include "../MegaJul.h"
+void render(void) {
+
+  //Render the current tilemap to the screen
+
+  glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    glLoadIdentity();
+  glTranslatef(0.0f, 0.0f, -4.0f);
+
+  if (level) {
+
+    float dT = 32.0f / level->dTex;
+    float sX, fX, fXa, sY, tX, tY, sYa, sYb, sXa, tXa, tYa;
+    unsigned long m = level->mapDimensions[0] * level->mapDimensions[1];
+    float ai; long long t; Sint16 * p;
+
+    for (int i = 3; i >= 0; i--) {
+
+      if (level->layers[i]->mapPosition[0] > 0)
+        level->layers[i]->mapPosition[0] = 0;
+      if (level->layers[i]->mapPosition[0] < 0 - (signed long)((level->mapDimensions[0] - 21) * 32))
+        level->layers[i]->mapPosition[0] = 0 - (signed long)((level->mapDimensions[0] - 21) * 32);
+
+      if (level->layers[i]->mapPosition[1] < 0)    
+        level->layers[i]->mapPosition[1] = 0;
+      if (level->layers[i]->mapPosition[1] > (signed long)((level->mapDimensions[1] - 16) * 32))
+        level->layers[i]->mapPosition[1] = (signed long)((level->mapDimensions[1] - 16) * 32);
+
+      if (i == level->activeMap) {
+        for (int j = 0; j < NumSprites; j++) {
+          glBindTexture(GL_TEXTURE_2D, Sprites[j]->Graphics->TextureNum);
+          glBegin(GL_QUADS);
+          Sprites[j]->render(level->layers[i]->mapPosition[0], level->layers[i]->mapPosition[1]);
+          glEnd();
+        }
+        for (int j = 0; j < NumBullets; j++) {
+          glBindTexture(GL_TEXTURE_2D, Bullets[j]->Texture->TextureNum);
+          glBegin(GL_QUADS);
+          Bullets[j]->render(level->layers[i]->mapPosition[0], level->layers[i]->mapPosition[1]);
+          glEnd();
+        }
+      }
+
+      glBindTexture(GL_TEXTURE_2D, level->tilemap->TextureNum);
+      glBegin(GL_QUADS);
+
+  -snipped out renderer since it was bloat
+
+    glEnd();
+  }
+
+  SDL_GL_SwapBuffers();
+}
+

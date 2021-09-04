@@ -1,0 +1,98 @@
+package main
+
+import (
+    "github.com/PuerkitoBio/redisc"
+    "github.com/garyburd/redigo/redis"
+    "log"
+    "time"
+)
+
+const script = `if redis.call("EXISTS", KEYS[1]) == 1 then
+    local keyvalues = redis.call("HGETALL", KEYS[1])
+    local a = {}
+    for i=2, table.getn(ARGV) do
+      a[i-1] = ARGV[i]
+    end
+    local res = redis.call("HMSET", KEYS[1], unpack(a))
+    redis.call("EXPIRE", KEYS[1], ARGV[1])  
+    return keyvalues
+else
+    return 2 -- "Key doesn't exists"
+end`
+
+func main() {
+    cluster := redisc.Cluster{
+        StartupNodes: []string{":30001", ":30002", ":30003", ":30004", ":30005", ":30006"},
+        DialOptions:  []redis.DialOption{redis.DialConnectTimeout(5 * time.Second)},
+        CreatePool:   createPool,
+    }
+    defer cluster.Close()
+
+    // initialize its mapping
+    if err := cluster.Refresh(); err != nil {
+        log.Fatalf("Refresh failed: %v", err)
+    }
+
+    // grab a connection from the pool
+    conn := cluster.Get()
+    defer cluster.Close()
+    retryConn, errRe := redisc.RetryConn(conn, 3, 1*time.Millisecond)
+    if errRe != nil {
+        log.Println("Failed to get retry connection " + errRe.Error())
+        return
+    }
+    rScript := redis.NewScript(1, script)
+    argv := make([]string, 5)
+    argv[0] = "30000"
+    argv[1] = "SSF_lastAccessedDate"
+    argv[2] = "1481627386"
+    argv[3] = "SSF_expiryDate"
+    argv[4] = "2481657386"
+    reply, errS := rScript.Do(retryConn, "JJNb324a680c35d11e6a1123c15c2d271f21481871788G", argv)
+    if errS != nil {
+        log.Println("Error in executing script " + errS.Error())
+    } else {
+        log.Printf("Result %+v", reply)
+    }
+}
+
+func createPool(addr string, opts ...redis.DialOption) (*redis.Pool, error) {
+    return &redis.Pool{
+        MaxIdle:     100,
+        MaxActive:   4000,
+        IdleTimeout: time.Minute,
+        Dial: func() (redis.Conn, error) {
+            return redis.Dial("tcp", addr, opts...)
+        },
+        TestOnBorrow: func(c redis.Conn, t time.Time) error {
+            if time.Since(t) < time.Minute {
+                return nil
+            }
+            _, err := c.Do("PING")
+            return err
+        },
+    }, nil
+}
+
+2016/12/16 12:52:32 Error in executing script ERR Error running script (call to f_5a127779e5c1c2daa0b636d9b02f6b570a9f7f13): @user_script:7: @user_script: 7: Wrong number of args calling Redis command From Lua script 
+
+rScript.Do(retryConn, "JJNb324a680c35d11e6a1123c15c2d271f21481871788G", argv[0], argv[1], argv[2], argv[3], argv[4])
+
+2016/12/16 21:39:51 Result [[116 121 112 101] [50] [100 97 116 97] [72 101 108 108 111] [120] [50] [83 83 70 95 99 114 101 97 116 105 111 110 68 97 116 101] [49 52 56 49 56 55 49 55 56 56] [83 83 70 95 108 97 115 116 77 111 100 105 102 105 101 100 68 97 116 101] [49 52 56 49 56 55 49 55 56 56] [83 83 70 95 101 120 112 105 114 121 68 97 116 101] [50 52 56 49 54 53 55 51 56 54] [83 83 70 95 108 97 115 116 65 99 99 101 115 115 101 100 68 97 116 101] [49 52 56 49 54 50 55 51 56 54]]
+
+redis-cli
+1) "type"
+ 2) "2"
+ 3) "data"
+ 4) "Hello"
+ 5) "x"
+ 6) "2"
+ 7) "SSF_creationDate"
+ 8) "1481871788"
+ 9) "SSF_lastModifiedDate"
+10) "1481871788"
+11) "SSF_expiryDate"
+12) "2481657386"
+13) "SSF_lastAccessedDate"
+14) "1481627386"
+

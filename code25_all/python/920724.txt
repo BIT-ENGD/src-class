@@ -1,0 +1,47 @@
+class CustomizableQuery(Query):
+    """An overridden sqlalchemy.orm.query.Query to filter entities
+
+    Filters itself by BinaryExpressions
+    found in :attr:`CONDITIONS`
+    """
+
+    CONDITIONS = []
+
+    def __init__(self, mapper, session=None):
+        super(CustomizableQuery, self).__init__(mapper, session)
+        for cond in self.CONDITIONS:
+            self._add_criterion(cond)
+
+    def _add_criterion(self, criterion):
+        criterion = self._adapt_clause(criterion, False, True)
+        if self._criterion is not None:
+            self._criterion = self._criterion & criterion
+        else:
+            self._criterion = criterion
+
+class UndeletedContactQuery(CustomizableQuery):
+    CONDITIONS = [contacts.c.deleted != True]
+
+    def by_email(self, email_address):
+        return EmailInfo.query.by_module_and_address('Contacts', email_address).contact
+
+    def by_username(self, uname):
+        return self.filter_by(twod_username_c=uname).one()
+
+class Contact(object):
+    query = session.query_property(UndeletedContactQuery)
+
+Contact.query.by_email('someone@some.com')
+
+contacts_map = mapper(Contact, join(contacts, contacts_cstm), {
+    '_emails': dynamic_loader(EmailInfo,
+                              foreign_keys=[email_join.c.bean_id],
+                              primaryjoin=contacts.c.id==email_join.c.bean_id,
+                              query_class=EmailInfoQuery),
+    })
+
+class EmailInfoQuery(CustomizableQuery):
+
+    CONDITIONS = [email_join.c.deleted != True]
+    # More methods here
+

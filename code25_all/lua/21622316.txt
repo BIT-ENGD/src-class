@@ -1,0 +1,79 @@
+\begin{cmd}
+\end{cmd}
+\foo{bar}
+\foo
+\command[color=green,background=blue]{content}
+lpeg = require("lpeg")
+lpeg.locale(lpeg)
+-- Assume a lot of "X = lpeg.X" here.
+
+-- Line number handling from http://lua-users.org/lists/lua-l/2011-05/msg00607.html
+-- with additional print statements to check they are working.
+local newline = P"\r"^-1 * "\n" / function (a) print("New"); end
+local incrementline = Cg( Cb"linenum" )/ function ( a ) print("NL");  return a + 1 end , "linenum"
+local setup = Cg ( Cc ( 1) , "linenum" )
+nl = newline * incrementline
+space = nl + lpeg.space
+
+-- Taken from "Name-value lists" in http://www.inf.puc-rio.br/~roberto/lpeg/
+local identifier = (R("AZ") + R("az") + P("_") + R("09"))^1
+local sep = lpeg.S(",;") * space^0
+local value = (1-lpeg.S(",;]"))^1
+local pair = lpeg.Cg(C(identifier) * space ^0 * "=" * space ^0 * C(value)) * sep^-1
+local list = lpeg.Cf(lpeg.Ct("") * pair^0, rawset)
+local parameters = (P("[") * list * P("]")) ^-1
+
+-- And the rest is mine
+
+anything = C( (space^1 + (1-lpeg.S("\\{}")) )^1) * Cb("linenum") / function (a,b) return { text = a, line = b } end
+
+begin_environment = P("\\begin") * Ct(parameters) * P("{") * Cg(identifier, "environment") * Cb("environment") * P("}") / function (a,b) return { params = a[1], environment = b } end
+end_environment = P("\\end{") * Cg(identifier) * P("}") 
+
+texlike = lpeg.P{
+  "document";
+  document = setup * V("stuff") * -1,
+  stuff = Cg(V"environment" + anything + V"bracketed_stuff" + V"command_with" + V"command_without")^0,
+  bracketed_stuff = P"{" * V"stuff" * P"}" / function (a) return a end,
+  command_with =((P("\\") * Cg(identifier) * Ct(parameters) * Ct(V"bracketed_stuff"))-P("\\end{")) / function (i,p,n) return { command = i, parameters = p, nodes = n } end,
+  command_without = (( P("\\") * Cg(identifier) * Ct(parameters) )-P("\\end{")) / function (i,p) return { command = i, parameters = p } end,
+  environment = Cg(begin_environment * Ct(V("stuff")) * end_environment) / function (b,stuff, e) return { b = b, stuff = stuff, e = e} end
+}
+
+> texlike:match("\\foo[one=two]thing\\bar")
+{
+  command = "foo",
+  parameters = {
+    {
+      one = "two",
+    },
+  },
+}
+{
+  line = 1,
+  text = "thing",
+}
+{
+  command = "bar",
+  parameters = {
+  },
+}
+
+incrementline
+Cg
+C
+Ct
+command_with
+> texlike:match("\\foo{text \\command moretext}")
+{
+  command = "foo",
+  nodes = {
+    {
+      line = 1,
+      text = "text ",
+    },
+  },
+  parameters = {
+  },
+}
+

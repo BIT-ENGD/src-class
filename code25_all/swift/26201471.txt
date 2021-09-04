@@ -1,0 +1,157 @@
+CLLocationManager
+AppDelegate.swift
+import UIKit
+import CoreLocation
+
+@UIApplicationMain
+
+class AppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate {
+
+    var window: UIWindow?
+    var locationManager: CLLocationManager!
+    var errorOccured: Bool = false
+    var foundLocation: Bool = false
+    var locationStatus: NSString = "Not Started"
+    var location: CLLocationCoordinate2D?
+    var locationName: String?
+
+
+    func application(application: UIApplication, didFinishLaunchingWithOptions launchOptions: [NSObject: AnyObject]?) -> Bool {
+        // Override point for customization after application launch.
+        application.setStatusBarHidden(true, withAnimation: .None)
+        initializeLocationManager()
+        return true
+    }
+
+    func initializeLocationManager() {
+        self.locationManager = CLLocationManager()
+        self.locationManager.delegate = self
+        self.locationManager.desiredAccuracy = kCLLocationAccuracyKilometer
+        self.locationManager.requestAlwaysAuthorization()
+        self.locationManager.startUpdatingLocation()
+    }
+
+    func locationManager(manager: CLLocationManager!, didUpdateLocations locations: [AnyObject]!) {
+        println("didUpdateLocations running")
+        if (foundLocation == false) {
+            self.locationManager.stopUpdatingLocation()
+            foundLocation = true
+            var locationArray = locations as NSArray
+            var locationObj = locationArray.lastObject as CLLocation
+            var geoCoder = CLGeocoder()
+            geoCoder.reverseGeocodeLocation(locationObj, completionHandler: { (placemarks, error) -> Void in
+                var p = placemarks as NSArray
+                var placemark: CLPlacemark? = p.lastObject as? CLPlacemark
+                self.locationName = placemark?.name
+            })
+            self.location = locationObj.coordinate
+        }
+    }
+
+    func locationManager(manager: CLLocationManager!, didFailWithError error: NSError!) {
+        locationManager.stopUpdatingLocation()
+        if ((error) != nil) {
+            if (errorOccured == false) {
+                errorOccured = true
+                print(error)
+            }
+        }
+    }
+
+    // authorization status
+    func locationManager(manager: CLLocationManager!,
+        didChangeAuthorizationStatus status: CLAuthorizationStatus) {
+            var shouldIAllow = false
+
+            switch status {
+            case CLAuthorizationStatus.Restricted:
+                locationStatus = "Restricted Access to location"
+            case CLAuthorizationStatus.Denied:
+                locationStatus = "User denied access to location"
+            case CLAuthorizationStatus.NotDetermined:
+                locationStatus = "Status not determined"
+            default:
+                locationStatus = "Allowed to location Access"
+                shouldIAllow = true
+            }
+            NSNotificationCenter.defaultCenter().postNotificationName("LabelHasbeenUpdated", object: nil)
+            if (shouldIAllow == true) {
+                NSLog("Location to Allowed")
+                // Start location services
+                locationManager.startUpdatingLocation()
+            } else {
+                NSLog("Denied access: \(locationStatus)")
+            }
+    }
+
+}
+
+ViewController.swift
+func getCurrentWeatherData() -> Void {
+    let baseURL = NSURL(string: "https://api.forecast.io/forecast/\(apiKey)/")
+    var forecastURL: NSURL
+    var locName = "London"
+
+    let appDelegate = UIApplication.sharedApplication().delegate as AppDelegate
+    appDelegate.foundLocation = false
+
+    if let loc = appDelegate.location {
+        println("Got Location!") // for debug purposes
+        var currentLat = loc.latitude
+        var currentLng = loc.longitude
+        forecastURL = NSURL(string: "\(currentLat),\(currentLng)", relativeToURL: baseURL)
+        locName = appDelegate.locationName!
+    } else {
+        println("No Location :(") // for debug purposes
+        var currentLat = "51.513445"
+        var currentLng = "-0.157828"
+        forecastURL = NSURL(string: "\(currentLat),\(currentLng)", relativeToURL: baseURL)
+    }
+
+    let sharedSession = NSURLSession.sharedSession()
+
+    let downloadTask: NSURLSessionDownloadTask = sharedSession.downloadTaskWithURL(forecastURL, completionHandler: { (location: NSURL!, response: NSURLResponse!, error: NSError!) -> Void in
+        var urlContents = NSString.stringWithContentsOfURL(location, encoding: NSUTF8StringEncoding, error: nil)
+        if (error == nil) {
+            let dataObject = NSData(contentsOfURL: location)
+            let weatherDictionary: NSDictionary = NSJSONSerialization.JSONObjectWithData(dataObject, options: nil, error: nil) as NSDictionary
+            let currentWeather = Current(weatherDictionary: weatherDictionary)
+            dispatch_async(dispatch_get_main_queue(), {
+                () -> Void in
+                self.locationNameLabel.text = "\(locName)"
+                self.temperatureLabel.text = "\(currentWeather.temperature)"
+                self.iconView.image = currentWeather.icon!
+                self.currentTimeLabel.text = "At \(currentWeather.currentTime!) it is"
+                self.humidityLabel.text = "\(currentWeather.humidity)"
+                self.percipitationLabel.text = "\(currentWeather.percipProbability)"
+                self.summaryLabel.text = "\(currentWeather.summary)"
+                // Stop refresh animation
+                self.refreshActivityIndicator.stopAnimating()
+                self.refreshActivityIndicator.hidden = true
+                self.refreshButton.hidden = false
+            })
+        } else {
+            let networkIssueController = UIAlertController(title: "Error", message: "Unable to load data. Connectivity error!", preferredStyle: .Alert)
+            let okButton = UIAlertAction(title: "OK", style: .Default, handler: nil)
+            networkIssueController.addAction(okButton)
+            let cancelButton = UIAlertAction(title: "Cancel", style: .Cancel, handler: nil)
+            networkIssueController.addAction(cancelButton)
+            self.presentViewController(networkIssueController, animated: true, completion: nil)
+
+            dispatch_async(dispatch_get_main_queue(), { () -> Void in
+                self.refreshActivityIndicator.stopAnimating()
+                self.refreshActivityIndicator.hidden = true
+                self.refreshButton.hidden = false
+            })
+        }
+    })
+
+    downloadTask.resume()
+}
+
+didUpdateLocations
+No Location :(
+AppDelegate
+nil
+NSLocationWhenInUseUsageDescription
+NSLocationAlwaysUsageDescription

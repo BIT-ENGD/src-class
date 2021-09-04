@@ -1,0 +1,113 @@
+proxy.connection.backend_ndx
+proxy.connection.backend_ndx
+proxy.PROXY_IGNORE_RESULT
+return proxy.PROXY_IGNORE_RESULT
+connect_server()
+local default_backend = 1
+local min_idle_connections = 1 
+local max_idle_connections = 4
+local connections_limit = 1
+local user_name = "user"
+
+if not proxy.global.count then -- never mind this, not using it...
+    proxy.global.count = 0
+end
+
+function connect_server()
+
+    local backend  = proxy.global.backends[1]
+    local pool = backend.pool
+    local cur_idle = pool.users[""].cur_idle_connections
+    print ("CONNECT SERVER:")
+    print("current backend:" ..proxy.connection.backend_ndx)
+    if cur_idle >= min_idle_connections then
+        print("using pooled connection")
+        proxy.connection.backend_ndx=0
+        print("current backend:" ..proxy.connection.backend_ndx)
+        return proxy.PROXY_SEND_RESULT
+    end
+    proxy.global.count = proxy.global.count + 1
+    print("Creating new connection")
+    proxy.connection.backend_ndx = default_backend
+    print("current backend:" ..proxy.connection.backend_ndx)
+
+end
+
+function read_handshake()
+    print("READ_HANDSHAKE")
+    print("current backend:" ..proxy.connection.backend_ndx)
+
+end
+
+function read_auth()
+    local username = proxy.connection.client.username
+    print("READ_AUTH: " ..username)
+    print("current backend:" ..proxy.connection.backend_ndx)
+
+end
+
+function disconnect_client()
+    print ("DISCONNECT CLIENT. ")
+    print("current backend:" ..proxy.connection.backend_ndx)
+
+end
+
+function read_auth_result(auth)
+        print("READ_AUTH_RESULT")
+        if auth.packet:byte() == proxy.MYSQLD_PACKET_OK then
+            --auth was fine, disconnect from the server--
+            proxy.connection.backend_ndx = 0
+            print("disconnected backend after auth")
+            print("current backend:" ..proxy.connection.backend_ndx)
+        end
+end
+
+function read_query(packet)
+    print("READ_QUERY:")
+    print("current backend:" ..proxy.connection.backend_ndx)
+
+if packet:byte() == proxy.COM_QUIT then
+        print("received signal QUIT")
+         proxy.response = {
+             type = proxy.MYSQLD_PACKET_OK,
+         }
+        return proxy.PROXY_SEND_RESULT
+    end
+
+    if proxy.connection.backend_ndx == 0 then
+        print("assigning backend to process query...")
+        proxy.connection.backend_ndx = default_backend
+        print("current backend:" ..proxy.connection.backend_ndx)
+
+    end
+
+    local username = proxy.connection.client.username
+     local cur_idle = proxy.global.backends[default_backend].pool.users[username].cur_idle_connections
+     print ("current idle user" ..username.." connections: " ..cur_idle)
+    if string.byte(packet) == proxy.COM_QUERY then
+         print("Query: " .. string.sub(packet, 2))
+
+    end
+    proxy.queries:append(1, packet)
+    return proxy.PROXY_SEND_QUERY
+end
+
+ function read_query_result( inj )
+    print("READ_QUERY_RESULT:")
+    print("current backend:" ..proxy.connection.backend_ndx)
+     local res = assert(inj.resultset)
+        local flags = res.flags
+
+        if inj.id ~= 1 then
+             return proxy.PROXY_IGNORE_RESULT
+        end
+        is_in_transaction = flags.in_trans
+
+        if not is_in_transaction then
+            -- release the backend
+            print("releasing backend")
+            proxy.connection.backend_ndx = 0
+        end
+    print("current backend:" ..proxy.connection.backend_ndx)
+end
+

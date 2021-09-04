@@ -1,0 +1,97 @@
+sub("abc", "123", "iabc.def", fixed = TRUE)
+#[1] "i123.def"
+
+sub("abc", "1234", "iabc.def", fixed = TRUE)
+#[1] "i1234.def"
+
+x <- "iabc.def"
+substr(x, 2, 4) <- "123"
+#[1] "i123.def"
+
+x <- "iabc.def"
+substr(x, 2, 4) <- "1234"
+#[1] "i123.def"
+
+#                             test elapsed  relative
+# 7 francois.fx_wb(x, replacement)    0.94  1.000000
+# 1                           f(x)    1.56  1.659574
+# 6    francois.fx(x, replacement)    2.23  2.372340
+# 5                      Sobala(x)    3.89  4.138298
+# 2                    Hong.Ooi(x)    4.41  4.691489
+# 3                        DWin(x)    5.57  5.925532
+# 4                      hadley(x)    9.47 10.074468
+
+library(rbenchmark)
+library(stringr)
+library(Rcpp)
+library(inline)
+
+f <- function(x, replacement = "1234")  sub("abc", replacement, x, fixed = TRUE)
+
+Hong.Ooi <- function(x, replacement = "1234") paste(substr(x, 1, 1), replacement, substr(x, 5, nchar(x)), sep = "")
+
+DWin <- function(x, replacement =  paste("\\1", "1234", sep = "")) sub("^(.)abc", replacement, x)
+
+Sobala <- function(x, replacement =  paste("\\1", "1234", sep = ""))  sub("^(.).{3}", replacement, x, perl=TRUE)
+
+hadley <- function(x, replacement = "1234") {
+  str_sub(x, 2, 4) <- replacement
+  return(x)
+}
+
+francois.fx <- cxxfunction( signature( x_ = "character", rep_ = "character" ), '
+
+    const char* rep =as<const char*>(rep_) ;
+    CharacterVector x(x_) ;
+    int nrep = strlen( rep ) ;
+    int n = x.size() ; 
+    CharacterVector res(n) ;
+
+    char buffer[1024] ;
+
+    for(int i=0; i<n; i++) {
+        const char* xi = x[i] ;
+        if( strncmp( xi+1, "abc", 3 ) ) {
+            res[i] = x[i] ;
+        } else{
+            buffer[0] = xi[0] ;
+            strncpy( buffer + 1, rep, nrep ) ;
+            strcpy( buffer + 1 + nrep, xi + 4 ) ;
+            res[i] = buffer ;
+        }
+    }
+    return res ;
+', plugin = "Rcpp" )
+
+francois.fx_wb <- cxxfunction( signature( x_ = "character", rep_ = "character" ), '
+
+    const char* rep =as<const char*>(rep_) ;
+    int nrep = strlen( rep ) ;
+    int n=Rf_length(x_) ;
+    SEXP res = PROTECT( Rf_allocVector( STRSXP, n ) ) ;
+
+    char buffer[1024] ;
+
+    for(int i=0; i<n; i++) {
+        const char* xi = char_get_string_elt(x_, i) ;
+        if( strncmp( xi+1, "abc", 3 ) ) {
+            set_string_elt( res, i, get_string_elt(x_,i)) ;
+        } else{
+            buffer[0] = xi[0] ;
+            strncpy( buffer + 1, rep, nrep ) ;
+            strcpy( buffer + 1 + nrep, xi + 4 ) ;
+            char_set_string_elt(res, i, buffer ) ;
+        }
+    }
+    UNPROTECT(1) ;
+    return res ;
+', plugin = "Rcpp" )
+
+
+x <- rep("iabc.def", 1e6)
+replacement <- "1234"
+benchmark(f(x), Hong.Ooi(x), DWin(x), hadley(x), Sobala(x), francois.fx(x, replacement), francois.fx_wb(x, replacement),
+          columns = c("test", "elapsed", "relative"),
+          order = "relative",
+          replications = 10)
+

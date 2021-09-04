@@ -1,0 +1,85 @@
+    case class Player(id: UUID, name: String, email: String)
+
+class PlayerSpec extends Specification {
+  "Player" should {
+
+    val application = FakeApplication(additionalConfiguration =  inMemoryDatabase("test"))
+
+    "insert a player" in {
+      running(application) {
+
+        val uuid = UUID.randomUUID()
+
+        Player.insert(Player(uuid, "Joe Person", "joe.player@someplace.mail")) must beEqualTo(1)
+      }
+    }
+
+    "Find a player by id" in {
+      running(application) {
+        val uuid = UUID.randomUUID()
+
+        Player.insert(Player(uuid, "Jane Person", "jane.player@someplace.mail"))
+
+        Player.findById(uuid) must beEqualTo(Some(Player(uuid, "Jane Person", "jane.player@someplace.mail")))
+      }
+    }
+
+  }
+}
+
+[info] PlayerSpec
+[info] 
+[info] Player should
+[info] + insert a player
+[error] ! Find a player by id
+[error]     anon$1: Configuration error [Cannot connect to database [default]] Configuration.scala:258)
+ ....
+
+case class Player(id: UUID, name: String, email: String)
+
+object Player {
+
+  private val fullPlayer = {
+    get[UUID]("player.id")(Utils.rowToUuid) ~
+    get[String]("player.name") ~
+    get[String]("player.email") map {
+      case id~name~email => Player(id, name, email)
+    }
+  }
+
+  def insert(player: Player) = {
+    DB.withConnection { implicit c =>
+
+      SQL(
+        """
+          insert into player (id, name, email) values (
+             {id}, {name}, {email}
+          )
+        """
+      ).on(
+        'id -> player.id.toString,
+        'name -> player.name,
+        'email -> player.email
+      ).executeUpdate()
+
+    }
+  }
+
+  def findById(id: UUID) : Option[Player] = {
+    DB.withConnection { implicit c =>
+      SQL("select * from player where id = {id}").on('id -> id).as(fullPlayer.singleOpt)
+    }
+  }
+}
+
+object Utils {
+  implicit def rowToUuid: Column[UUID] = Column.nonNull {
+    (value, meta) =>
+      val MetaDataItem(qualified, nullable, clazz) = meta
+      value match {
+        case uuid: UUID => Right(uuid)
+        case _ => Left(TypeDoesNotMatch("Cannot convert " + value + ":" + value.asInstanceOf[AnyRef].getClass + " to UUID for column " + qualified))
+      }
+  }
+}
+

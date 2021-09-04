@@ -1,0 +1,79 @@
+SqlConnection con = new SqlConnection();
+
+con.ConnectionString = System.Configuration.ConfigurationManager.ConnectionStrings["ConnectionString"].ConnectionString;
+con.Open();
+
+SqlCommand command = new SqlCommand("spReport_SiteUsage_KP", con);
+
+command.CommandType = CommandType.StoredProcedure;
+
+command.Parameters.Add(new SqlParameter("@fromDate", SqlDbType.DateTime));
+
+command.Parameters.Add(new SqlParameter("@toDate", SqlDbType.DateTime));
+
+command.Parameters[0].Value = Convert.ToDateTime(DatePicker1.SelectedDate.ToShortDateString());
+
+command.Parameters[1].Value = DatePicker2.SelectedDate;
+
+int i = command.ExecuteNonQuery();
+
+con.Close();
+
+insert into RPT_SiteUsage 
+select '' as ReportType, 
+'Site Usage for '+ datename(mm,@fromDate)+' '+datename(dd,@fromDate)+', '+datename(yy,@fromDate) + 
+' To '+datename(mm,@toDate)+' '+datename(dd,@toDate)+', '+datename(yy,@toDate) as ReportTitle,
+min(@fromDate) as FromDate,max(@toDate) as ToDate,
+isnull(count(s.SessionId),0) VisitsTotal,
+isnull(count(distinct(s.cookieid)),0) VisitsUnique,
+isnull(sum(PagesVisited),0) PageViews, 
+isnull(round(avg(convert(decimal(10,2),PagesVisited)),2),0) PagePerVisit,  
+isnull(min(PagesVisited),0) MinNoPageViews, 
+isnull(max(PagesVisited),0) MaxNoPageViews,
+isnull(round(avg(convert(decimal(10,2),TimeInSiteMinutes)),2),0) AvgTimeInSite, 
+isnull(min(TimeInSiteMinutes),0) MinTimeSpent, 
+isnull(max(TimeInSiteMinutes),0) MaxTimeSpent, 
+isnull(sum(NewPeople),0) as NewVisitors
+from
+dbo.UMM_UserAction ua inner join dbo.UMM_Session s on ua.SessionId=s.Sessionid
+left join
+    (select ua.sessionId, datediff(ss,min(Actiondate),max(Actiondate))/60 TimeInSiteMinutes
+     from dbo.UMM_UserAction ua
+     where ActionDate between @fromDate and @toDate
+     group by ua.sessionid
+     ) sessionTime on ua.sessionId = sessionTime.sessionid
+left join
+    (select ua.sessionId, 0 as NewPeople
+    from dbo.UMM_UserAction ua 
+        inner join dbo.UMM_Session s on ua.SessionId=s.SessionId
+        inner join dbo.UMM_Cookie c on s.CookieId=c.CookieId
+        where ua.actiondate< @fromDate --this is the from date
+    group by UserId,ua.sessionId    
+     ) Old on ua.sessionId = Old.sessionid
+left join
+    (select ua.sessionId,count(distinct(uaP.PageEntryId)) as PagesVisited
+    from dbo.UMM_UserAction ua,
+    dbo.UMM_UserActionPageReview uaP 
+    where ua.UserActionId=uaP.UserActionId
+    and ActionDate between @fromDate and @toDate
+    group by ua.sessionId
+    )pVisited on ua.sessionId = pVisited.sessionId
+where ActionDate between @fromDate and @toDate
+
+IF (select count(*) from RPT_SiteUsage)=0
+    insert into RPT_SiteUsage 
+    select '(1 day)' as ReportType, 
+    'Site Usage for '+datename(mm,@fromDate)+' '+datename(dd,@fromDate)+', '+datename(yy,@fromDate) + 
+    ' To '+datename(mm,@toDate)+' '+datename(dd,@toDate)+', '+datename(yy,@toDate) as ReportTitle,
+    min(@fromDate) as FromDate,max(@toDate) as ToDate,
+    0 as VisitsTotal,
+    0 as VisitsUnique,
+    0 as PageViews, 
+    0 as PagePerVisit,  
+    0 as MinNoPageViews, 
+    0 as MaxNoPageViews,
+    0 as AvgTimeInSite, 
+    0 as MinTimeSpent, 
+    0 as MaxTimeSpent, 
+    0 as NewVisitors
+

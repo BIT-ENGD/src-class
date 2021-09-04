@@ -1,0 +1,79 @@
+Private WithEvents CalculateBGW As New System.ComponentModel.BackgroundWorker
+Dim resetEvent As New Threading.AutoResetEvent(False)
+Dim calcDoneEvent As New Threading.AutoResetEvent(True)
+
+Public Sub Calculate()
+
+    calcDoneEvent.WaitOne() ' will wait if there is already a calculate running.'
+    calcDoneEvent.Reset()
+
+    ' setup variables for the background worker'
+
+    CalculateBGW.RunWorkerAsync() ' Start the call to calculate'
+
+    Dim nMsgState As Integer = 0
+    ' will block until the backgorundWorker is done'
+    Do While Not resetEvent.WaitOne(200) ' sleep for 200 miliseconds, then update the status window'
+        Select Case nMsgState
+            Case 1
+                PleaseWait(True, vbNull, "Calculating.   ")
+            Case 2
+                PleaseWait(True, vbNull, "Calculating..  ")
+            Case 3
+                PleaseWait(True, vbNull, "Calculating... ")
+            Case 4
+                PleaseWait(True, vbNull, "Calculating....")
+            Case Else
+                PleaseWait(True, vbNull, "Calculating    ")
+        End Select
+        nMsgState = (nMsgState + 1) Mod 5
+    Loop
+
+    PleaseWait(False, vbNull) 'make sure the wait screen goes away'
+
+    calcDoneEvent.Set() ' allow another calculate to proceed'
+    Application.DoEvents() ' I hate using this here'
+End Sub
+
+Private Sub CalculateBGW_DoWork(ByVal sender As System.Object, _
+    ByVal e As System.ComponentModel.DoWorkEventArgs) Handles CalculateBGW.DoWork
+    Try
+        'make WS Call, do data processing on it, can take a long time..'
+        'No Catch inside the DoWork for BGW, or exception handling wont work right...'
+        'Catch'
+    Finally
+        resetEvent.Set() 'unblock the main thread'
+    End Try
+End Sub
+
+Private Sub CalculateBGW_RunWorkerCompleted(ByVal sender As Object, _
+    ByVal e As System.ComponentModel.RunWorkerCompletedEventArgs) Handles CalculateBGW.RunWorkerCompleted
+
+    'If an error occurs we must check e.Error prior to touching e.Result, or the BGW' 
+    'will possibly "eat" the exception for breakfast (I hear theyre tasty w/ jam)'
+    If Not (e.Error Is Nothing) Then
+
+        'If a Web Exception timeout, retry the call'
+        If TypeOf e.Error Is System.Net.WebException And _
+            e.Error.Message = "The operation has timed out" And _
+            intRetryCount < intRetryMax Then
+
+            ' Code for checking retry times, increasing timeout, then possibly recalling the BGW'
+
+            resetEvent.Reset()
+            CalculateBGW.RunWorkerAsync() 'restart the call to the WS'
+        Else
+            Throw e.Error ' after intRetryMax times, go ahead and throw the error up higher'
+        End If
+    Else
+        Try
+
+            'normal completion stuff'
+
+        Catch ex As Exception
+            Throw
+        End Try
+    End If
+
+End Sub
+

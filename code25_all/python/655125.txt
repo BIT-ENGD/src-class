@@ -1,0 +1,66 @@
+
+CREATE TABLE test (given_time timestamp,
+                   default_time timestamp DEFAULT NOW());
+
+
+import sys
+import datetime
+import psycopg2
+import cherrypy
+
+def connect(thread_index): 
+    # Create a connection and store it in the current thread 
+    cherrypy.thread_data.db = psycopg2.connect('dbname=timestamps')
+
+# Tell CherryPy to call "connect" for each thread, when it starts up
+cherrypy.engine.subscribe('start_thread', connect)
+
+class Root:
+    @cherrypy.expose
+    def index(self): 
+        html = []
+        html.append("<html><body>")
+
+        html.append("<table border=1><thead>")
+        html.append("<tr><td>Given Time</td><td>Default Time</td></tr>")
+        html.append("</thead><tbody>")
+
+        for given, default in self.get_timestamps():
+            html.append("<tr><td>%s<td>%s" % (given, default))
+
+        html.append("</tbody>")
+        html.append("</table>")
+
+        html.append("<form action='add_timestamp' method='post'>")
+        html.append("<input type='submit' value='Add Timestamp'/>")
+        html.append("</form>")
+
+        html.append("</body></html>")
+        return "\n".join(html)
+
+    @cherrypy.expose
+    def add_timestamp(self):
+        c = cherrypy.thread_data.db.cursor()
+        now = datetime.datetime.now()
+        c.execute("insert into test (given_time) values ('%s')" % now)
+        c.connection.commit()
+        c.close()
+        raise cherrypy.HTTPRedirect('/')
+
+    def get_timestamps(self):
+        c = cherrypy.thread_data.db.cursor()
+        c.execute("select * from test order by given_time desc limit 10")
+        records = c.fetchall()
+        c.close()
+        return records
+
+if __name__ == '__main__':
+
+    cherrypy.config.update({'server.socket_host': '0.0.0.0',
+                            'server.socket_port': 8081,
+                            'server.thread_pool': 5,
+                            'tools.log_headers.on': False,
+                            })
+
+    cherrypy.quickstart(Root())
+

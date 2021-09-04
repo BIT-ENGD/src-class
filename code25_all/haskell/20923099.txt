@@ -1,0 +1,105 @@
+Estuary0b.hs:112:53:
+    Couldn't match type `HandlerT Site IO' with `WidgetT Site IO'
+    Expected type: Text.Blaze.Internal.Markup
+                   -> MForm (WidgetT Site IO) (FormResult Course, WidgetT Site IO ())
+      Actual type: Text.Blaze.Internal.Markup
+                   -> Control.Monad.Trans.RWS.Lazy.RWST
+                        (Maybe (Env, FileEnv), HandlerSite (HandlerT Site IO), [Lang])
+                        Enctype
+                        Ints
+                        (HandlerT Site IO)
+                        (FormResult Course, WidgetT (HandlerSite (HandlerT Site IO)) IO ())
+    In the first argument of `generateFormPost', namely
+      `add_course_form'
+    In a stmt of a 'do' block:
+      (form_widget, form_enctype) <- generateFormPost add_course_form
+    In the second argument of `($)', namely
+      `do { setTitle "Estuary - Courses";
+            (form_widget, form_enctype) <- generateFormPost add_course_form;
+            do { (Yesod.Core.Widget.asWidgetT . toWidget)
+                   ((Text.Blaze.Internal.preEscapedText . Data.Text.pack)
+                      "<h1>Courses</h1>\
+                      \<table><tr><th>Name</th>\
+                      \<th>Accreditation</th>\
+                      \<th>Specification</th>\
+                      \<th>Scheme of work</th>\
+                      \<th>Past papers</th>\
+                      \</tr>");
+                 Data.Foldable.mapM_
+                   (\ (Course cname_a5mw aname_a5mx __a5my __a5mz __a5mA) -> ...
+)
+                   courses;
+                 .... } }'
+
+data Course = Course {
+    _course_name :: !Text,
+    _accreditor :: !Text,
+    _spec :: !ByteString,
+    _sow :: !ByteString,
+  _past_exams :: ![ByteString]
+    }
+    deriving (Eq, Ord, Data, Typeable)
+deriveSafeCopy 0 'base ''Course
+
+mkYesod "Site" [parseRoutes|
+
+  / Home GET
+
+
+  /courses Courses GET POST
+
+
+  |]
+
+
+getHome :: Handler Html
+getHome = do
+  defaultLayout [whamlet|<h1>Estuary|]
+
+
+getCourses :: Handler Html
+getCourses = do
+  site <- getYesod
+  courses <- fmap IxSet.toList $ query' (_db site) All_courses
+  defaultLayout $ do
+    setTitle "Estuary - Courses"
+    (form_widget, form_enctype) <- generateFormPost add_course_form
+    [whamlet|
+      <h1>Courses
+      <table>
+        <tr>
+          <th>Name
+          <th>Accreditation
+          <th>Specification
+          <th>Scheme of work
+          <th>Past papers
+        $forall (Course cname aname _ _ _) <- courses
+          <tr>
+            <td>#{cname}
+            <td>#{aname}
+            <td><a href="">Download</a>
+            <td><a href="">Download</a>
+      <h2>Add a new course
+      <form method=post action=@{Courses} enctype=#{form_enctype}>
+        ^{form_widget}
+        <input type=submit value=Add_course>|]
+
+
+
+add_course_form = renderDivs $ Course
+  <$> areq textField "Course name" Nothing
+  <*> areq textField "Accredditation" Nothing
+  <*> pure Bytes.empty
+  <*> pure Bytes.empty
+  <*> pure []
+
+postCourses :: Handler Html
+postCourses = do
+  ((result, _), _) <- runFormPost add_course_form
+  case result of
+    FormSuccess course -> do
+      site <- getYesod
+      update' (_db site) (Add_course course)
+    _ -> return ()
+  redirect Courses
+

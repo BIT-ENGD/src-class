@@ -1,0 +1,90 @@
+mt.c
+#include <pthread.h>
+#include <stdio.h>
+
+typedef void(*FunctionPtr)(int);
+
+/* This is our thread function.  It is like main(), but for a thread*/
+void *threadFunc(void *arg)
+{
+  FunctionPtr fn;
+  fn = (FunctionPtr) arg;
+  fn(1); //call haskell function with a CInt argument to see if it works
+}
+
+void create_threads(FunctionPtr* fp, int numThreads )
+{
+  pthread_t pth[numThreads];  // array of pthreads
+  int t;
+  for (t=0; t < numThreads;){
+    pthread_create(&pth[t],NULL,threadFunc,*(fp + t));
+    t++;
+  }
+
+  printf("main waiting for all threads to terminate...\n");
+  for (t=0; t < numThreads;t++){
+    pthread_join(pth[t],NULL);
+  }
+}
+
+t.hs
+create_threads
+mt.c
+Storable Vector
+FunPtr
+f
+f
+{-# LANGUAGE BangPatterns #-}
+import Control.Concurrent (forkIO, threadDelay, MVar, newEmptyMVar, putMVar, takeMVar)
+import qualified Data.Vector.Storable.Mutable as MSV
+import qualified Data.Vector.Storable as SV
+import Control.Monad.Primitive (PrimState)
+import Control.Monad (mapM, forM_)
+import Foreign.Ptr (Ptr, FunPtr)
+import Foreign.C.Types (CInt)
+
+
+type Length = CInt
+
+-- | f is a function that is called back by create_threads in mt.c
+f :: MVar Int -> MSV.MVector (PrimState IO) CInt -> Length -> CInt -> IO ()
+f m v l x = do
+              !i <- takeMVar m
+              case (i< fromIntegral l) of
+                True -> MSV.unsafeWrite v i x >> print x >> putMVar m (i+1) 
+                False -> return () -- overflow
+
+-- a "wrapper" import gives us a converter for converting a Haskell function to a foreign function pointer
+foreign import ccall "wrapper"
+  wrap :: (CInt -> IO()) -> IO (FunPtr (CInt -> IO()))
+
+foreign import ccall safe "create_threads"
+  createThreads :: Ptr (FunPtr (CInt -> IO())) -> CInt -> IO()
+
+main = do
+  let threads = [1..4]
+  m <- mapM (\x -> newEmptyMVar) $ threads
+  -- intialize mvars with 0
+  forM_ m $ \x -> putMVar x 0
+  let l = 10
+  -- intialize vectors of length 10 that will be filled by function f
+  v <- mapM (\x -> MSV.new l) threads
+  -- create a list of function pointers to partial function - the partial function is obtained by applying first three arguments to         function f
+  lf <- mapM (\(x,y) -> wrap (f x y (fromIntegral l))) $ zip m v
+  -- convert above function list to a storable vector of function pointers
+  let fv = SV.fromList lf
+  -- call createThreads with storable vector of function pointers, and number of threads - createThreads will spawn threads which will use  function pointers for callback
+  SV.unsafeWith fv $ \x -> createThreads x (fromIntegral $ length threads)
+
+$ ghc -O2 t.hs mt.c -lpthread
+[1 of 1] Compiling Main             ( t.hs, t.o )
+Linking t ...
+$ ./t
+main waiting for all threads to terminate...
+t: schedule: re-entered unsafely.
+   Perhaps a 'foreign import unsafe' should be 'safe'?
+$ uname -a
+Darwin desktop.local 11.2.0 Darwin Kernel Version 11.2.0: Tue Aug  9 20:54:00 PDT 2011; root:xnu-1699.24.8~1/RELEASE_X86_64 x86_64
+$ ghc --version
+The Glorious Glasgow Haskell Compilation System, version 7.0.3
+

@@ -1,0 +1,43 @@
+    def create
+    open_id_authentication
+  end
+
+  protected
+
+  def open_id_authentication
+    openid_url = 'https://www.google.com/accounts/o8/site-xrds?hd=SITE_DOMAIN'
+    authenticate_with_open_id(openid_url, 
+                              :required => ['http://axschema.org/contact/email',
+                                            'http://axschema.org/namePerson/first',
+                                            'http://axschema.org/namePerson/last']) do |result, identity_url, registration|
+      case result.status
+      when :missing
+        failed_login "Sorry, the OpenID server couldn't be found"
+      when :invalid
+        failed_login "Sorry, but this does not appear to be a valid OpenID"
+      when :canceled
+        failed_login "OpenID verification was canceled"
+      when :failed
+        failed_login "Sorry, the OpenID verification failed"
+      when :successful
+        if @current_user = User.find_by_id_url(identity_url)
+          if @current_user.login_from(request.env['REMOTE_ADDR'])
+            successful_login
+          else
+            failed_login "Your OpenID profile registration failed: " + @current_user.errors.full_messages.to_sentence
+          end
+        else
+          ax_response = OpenID::AX::FetchResponse.from_success_response(request.env[Rack::OpenID::RESPONSE])
+          @current_user = User.login_create(ax_response, identity_url, request.env['REMOTE_ADDR'])
+          successful_login
+        end
+      end
+    end
+  end
+
+session[:current_user] = @current_user
+
+  def current_user
+    return session[:current_user] if defined?(session[:current_user])
+  end
+

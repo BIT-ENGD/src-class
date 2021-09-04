@@ -1,0 +1,450 @@
+ case 'vote':
+                require_once('auth/auth.php');
+                if(Auth::isUserLoggedIn())
+                {
+                    require_once('data/article.php');
+                    require_once('includes/helpers.php');
+
+                    $id = isset($_GET['param'])? $_GET['param'] : 0;
+                    if($id > 0)
+                    {
+                        $article = Article::getById($id);
+                        $article->vote();
+                        $article->calculateRanking();
+                    }
+                    if(!isset($_SESSION)) session_start();
+                    redirectTo($_SESSION['action'], $_SESSION['param']);
+                }
+                else
+                {
+                    Auth::redirectToLogin(); 
+                }
+                break;
+
+<?php
+require_once($_SERVER['DOCUMENT_ROOT'].'/config.php'); 
+require_once(SITE_ROOT.'includes/exceptions.php'); 
+require_once(SITE_ROOT.'data/model.php');
+require_once(SITE_ROOT.'data/comment.php');
+
+class Article extends Model 
+{
+    private $id;
+    private $user_id;
+    private $url;
+    private $title;
+    private $description;
+    private $ranking;
+    private $points;
+
+    function __construct($title = ' ', $description = ' ', $url = ' ', $username = ' ', $created = ' ', $modified = '') {
+
+        $this->setId(0);
+        $this->setCreated($created);
+        $this->setModified($modified);
+        $this->setUsername($username);
+        $this->setUrl($url);
+        $this->setTitle($title);
+        $this->setDescription($description);
+        $this->setRanking(0.0);
+        $this->setPoints(1); 
+    }
+
+    function getId(){
+        return $this->id;
+    }
+
+    private function setId($value){
+        $this->id = $value;
+    }
+
+    function getUsername(){
+        return $this->username;
+    }
+
+    function setUsername($value){
+        $this->username = $value;
+    }
+
+    function getUrl(){
+        return $this->url;
+    }
+
+    function setUrl($value){
+        $this->url = $value;
+    }
+
+    function getTitle()
+    {
+        return $this->title;
+    }
+
+    function setTitle($value) {
+
+        $this->title = $value;
+    }
+
+    function getDescription() {
+
+    return $this->description;
+    }
+
+    function setDescription($value)
+    {
+        $this->description = $value;
+    }
+
+    function getPoints()
+    {
+        return $this->points;
+    }
+
+    function setPoints($value) 
+    {
+        $this->points = $value;
+    }
+
+    function getRanking()
+    {
+        return $this->ranking;
+    }
+
+    function setRanking($value)
+    {
+        $this->ranking = $value;
+    }
+
+    function calculateRanking()
+    {
+        $created = $this->getCreated();
+
+        $diff = $this->getTimeDifference($created, date('F d, Y h:i:s A'));
+
+        $time = $diff['days'] * 24;
+        $time += $diff['hours'];
+        $time += ($diff['minutes'] / 60);
+        $time += (($diff['seconds'] / 60)/60);
+
+        $base = $time + 2;        
+
+        $this->ranking = ($this->points - 1) / pow($base, 1.5);
+
+        $this->save();
+    }
+
+    function vote()
+    {
+        $this->points++;
+        $this->save();
+    }
+
+    function getUrlDomain()
+    {
+        /* We extract the domain from the URL
+         * using the following regex pattern
+         */
+
+        $url = $this->getUrl();
+        $matches = array(); 
+        if(preg_match('/http:\/\/(.+?)\//', $url, $matches))
+        {
+            return $matches[1];
+        }
+        else
+        {
+            return $url;
+        }
+    }
+
+    function getTimeDifference( $start, $end )
+    {
+        $uts['start']      =    strtotime( $start );
+        $uts['end']        =    strtotime( $end );
+        if( $uts['start']!==-1 && $uts['end']!==-1 )
+        {
+            if( $uts['end'] >= $uts['start'] )
+            {
+                $diff    =    $uts['end'] - $uts['start'];
+                if( $days=intval((floor($diff/86400))) )
+                    $diff = $diff % 86400;
+                if( $hours=intval((floor($diff/3600))) )
+                    $diff = $diff % 3600;
+                if( $minutes=intval((floor($diff/60))) )
+                    $diff = $diff % 60;
+                $diff    =    intval( $diff );
+                return( array('days'=>$days, 'hours'=>$hours, 'minutes'=>$minutes, 'seconds'=>$diff) );
+            }
+            else
+            {
+                echo( "Ending date/time is earlier than the start date/time");
+            }
+        }
+        else
+        {
+            echo( "Invalid date/time data detected");
+        }
+        return( false );
+    }
+
+
+
+    function getElapsedDateTime()
+    {
+        $db = null;
+        $record = null;
+
+        $record = Article::getById($this->id);
+        $created = $record->getCreated();         
+
+        $diff = $this->getTimeDifference($created, date('F d, Y h:i:s A'));
+        //echo 'new date is '.date('F d, Y h:i:s A');
+        //print_r($diff);
+
+        if($diff['days'] > 0 )
+        {
+            return sprintf("hace %d dias", $diff['days']);
+        }
+        else if($diff['hours'] > 0 )
+        {
+            return sprintf("hace %d horas", $diff['hours']);
+        }
+        else if($diff['minutes'] > 0 )
+        {
+            return sprintf("hace %d minutos", $diff['minutes']);
+        }
+        else
+        {
+            return sprintf("hace %d segundos", $diff['seconds']);
+        }
+    }
+
+    function save() {
+
+    /*
+            Here we do either a create or
+            update operation depending
+            on the value of the id field.
+            Zero means create, non-zero
+            update
+    */
+
+        if(!get_magic_quotes_gpc())
+        {
+            $this->title = addslashes($this->title);
+            $this->description = addslashes($this->description);
+        }
+
+        try
+        {
+            $db = parent::getConnection();
+            if($this->id == 0 )
+            {
+                $query = 'insert into articles (modified, username, url, title, description, points )';
+                $query .= " values ('$this->getModified()', '$this->username', '$this->url', '$this->title', '$this->description', $this->points)";
+            }
+            else if($this->id != 0)
+            {
+                $query = "update articles set modified = NOW()".", username = '$this->username', url = '$this->url', title = '".$this->title."', description = '".$this->description."', points = $this->points, ranking = $this->ranking where id = $this->id";
+            }
+
+            $lastid = parent::execSql2($query);
+
+            if($this->id == 0 )
+                $this->id = $lastid;
+
+        }
+        catch(Exception $e){
+            throw $e;
+        }
+    }
+
+
+    function delete()
+    {
+        try
+        {
+            $db = parent::getConnection();
+            if($this->id != 0)
+            {                ;
+                /*$comments = $this->getAllComments();
+                foreach($comments as $comment)
+                {
+                    $comment->delete();
+                }*/
+                $this->deleteAllComments();
+                $query = "delete from articles where id = $this->id";
+            }
+            parent::execSql($query);
+
+
+        }
+        catch(Exception $e){
+            throw $e;
+        }
+    }
+
+    static function getAll($conditions = ' ')
+    {
+        /* Retrieve all the records from the
+         * database according subject to
+         * conditions
+         */
+
+        $db = null;
+        $results = null;
+        $records = array();
+        $query = "select id, created, modified, username, url, title, description, points, ranking from articles $conditions";
+        try
+        {
+            $db = parent::getConnection();
+
+            $results = parent::execSql($query);
+
+            while($row = $results->fetch_assoc())
+            {
+                $r_id = $row['id'];
+                $r_created = $row['created'];
+                $r_modified = $row['modified'];
+
+                $r_title = $row['title'];
+                $r_description = $row['description'];
+
+                if(!get_magic_quotes_gpc())
+                {
+                    $r_title = stripslashes($r_title);
+                    $r_description = stripslashes($r_description);
+                }
+
+                $r_url = $row['url'];
+                $r_username = $row['username'];
+                $r_points = $row['points'];
+                $r_ranking = $row['ranking'];
+
+                $article = new Article($r_title, $r_description , $r_url, $r_username, $r_created, $r_modified);
+                $article->id = $r_id;
+                $article->points = $r_points;
+                $article->ranking = $r_ranking;
+                $records[] = $article;
+            }
+            parent::closeConnection($db);
+        }
+        catch(Exception $e)
+        {
+            throw $e;
+        }
+
+        return $records;
+    }
+
+    static function getById($id)
+    {/*
+     *  Return one record from the database by its id */
+
+        $db = null;
+        $record = null;
+
+        try
+        {
+            $db = parent::getConnection();
+            $query = "select id, username, created, modified, title, url, description, points, ranking from articles where id = $id";
+            $results = parent::execSQL($query);
+            if(!$results) {
+                throw new Exception ('Record not found', EX_RECORD_NOT_FOUND);
+            }
+
+            $row = $results->fetch_assoc();
+            parent::closeConnection($db);
+
+            if(!get_magic_quotes_gpc())
+            {
+                $row['title'] = stripslashes($row['title']);
+                $row['description'] = stripslashes($row['description']);
+            }
+
+
+            $article = new Article($row['title'], $row['description'], $row['url'], $row['username'], $row['created'], $row['modified']);
+            $article->id = $row['id'];
+            $article->points = $row['points'];
+            $article->ranking = $row['ranking']; 
+            return $article;
+
+        }
+        catch (Exception $e){
+            throw $e;
+        }
+    }
+
+    static function getNumberOfComments($id)
+    {/*
+     *  Return one record from the database by its id */
+
+        $db = null;
+        $record = null;
+
+        try
+        {
+            $db = parent::getConnection();
+            $query = "select count(*) as 'total' from comments where article_id = $id";
+            $results = parent::execSQL($query);
+            if(!$results) {
+                throw new Exception ('Comments Count Query Query Failed', EX_QUERY_FAILED);
+            }
+
+            $row = $results->fetch_assoc();
+            $total = $row['total'];
+            parent::closeConnection($db);    
+
+            return $total;
+
+
+        }
+        catch (Exception $e){
+            throw $e;
+        }
+    }
+
+    function deleteAllComments()
+    {/*
+     *  Return one record from the database by its id */
+
+        $db = null;
+        try
+        {
+            $db = parent::getConnection();
+            $query = "delete from comments where article_id = $this->id";
+            $results = parent::execSQL($query);
+            if(!$results) {
+                throw new Exception ('Deletion Query Failed', EX_QUERY_FAILED);
+            }
+            parent::closeConnection($db);
+        }
+        catch (Exception $e){
+            throw $e;
+        }
+    }
+
+
+    function getAllComments($conditions = ' ')
+    {
+        /* Retrieve all the records from the
+         * database according subject to
+         * conditions
+         */
+        $conditions = "where article_id = $this->id";
+        $comments = Comment::getAll($conditions);
+        return $comments; 
+    }
+
+
+    static function getTestData($url)
+    {
+        $page = file_get_contents($url);
+
+
+
+
+    }
+
+}
+?>
+

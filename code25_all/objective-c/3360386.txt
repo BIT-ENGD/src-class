@@ -1,0 +1,114 @@
+@implementation ES1Renderer
+
+GLfloat **helixVertices;
+GLushort **helixIndices;
+GLubyte **helixColors;
+
+- (void)freeEverything
+{
+    if (helixVertices != NULL)
+    {
+        for (int i=0; i < alphasToFree / 30 + 1; i++)
+            free(helixVertices[i]);
+        free(helixVertices);
+    }
+
+    if (helixIndices != NULL)
+    {
+        for (int i=0; i < alphasToFree / 30 + 1; i++)
+            free(helixIndices[i]);
+        free(helixIndices);
+    }
+
+    if (helixColors != NULL)
+    {
+        for (int i=0; i < alphasToFree / 30 + 1; i++)
+            free(helixColors[i]);
+        free(helixColors);
+    }
+}
+
+- (void)askForVertexInformation
+{
+    int nrows = self.helper.numberOfAtoms / 300;
+    int mrows = [self.helper.bonds count] / 300;
+
+    int alphaCarbonRows = [self.helper.alphaCarbons count] / 30;
+
+    helixVertices = malloc(alphaCarbonRows * sizeof(GLfloat *) + 1);
+    helixIndices = malloc(alphaCarbonRows * sizeof(GLfloat *) + 1);
+    helixColors = malloc(alphaCarbonRows * sizeof(GLfloat *) + 1);
+
+    for (int i=0; i < alphaCarbonRows + 1; i++)
+    {
+        helixVertices[i] = malloc(sizeof(helixVertices) * HELIX_VERTEX_COUNT * 3 * 33);
+        helixIndices[i] = malloc(sizeof(helixIndices) * HELIX_INDEX_COUNT * 2 * 3 * 33);
+        helixColors[i] = malloc(sizeof(helixColors) * HELIX_VERTEX_COUNT * 4 * 33);
+
+    }
+    [self.helper recolourVerticesInAtomRange:NSMakeRange(0, [self.helper.alphaCarbons count]) withColouringType:CMolColouringTypeCartoonBlue forMasterColorArray:helixColors forNumberOfVertices:HELIX_VERTEX_COUNT difference:30]; 
+
+    self.atomsToFree = self.helper.numberOfAtoms;
+    self.bondsToFree = [self.helper.bonds count];
+    self.alphasToFree = [self.helper.alphaCarbons count];
+}
+
+- (void)loadPDB:(NSString *)pdbToLoad
+{
+    if (!self.loading)
+    {
+        [self performSelectorOnMainThread:@selector(stopAnimation) withObject:nil waitUntilDone:YES];
+        [self.renderer freeEverything];
+        [renderer release];
+        ES1Renderer *newRenderer = [[ES1Renderer alloc] init];
+        renderer = [newRenderer retain];
+        [self performSelectorOnMainThread:@selector(stopAnimation) withObject:nil waitUntilDone:YES]; // need to stop the new renderer animating too!
+        [self.renderer setDelegate:self];
+        [self.renderer setupCamera];
+        self.renderer.pdb = nil;
+        [renderer resizeFromLayer:(CAEAGLLayer*)self.layer];
+        [newRenderer release];
+
+        NSInvocationOperation *invocationOperation = [[NSInvocationOperation alloc] initWithTarget:self selector:@selector(setup:) object:pdbToLoad];
+        [self.queue addOperation:invocationOperation];
+        [invocationOperation release];
+    }
+}
+
+- (void)setup:(NSString *)pdbToLoad
+{
+    self.loading = YES;
+
+    [helper release];
+    [renderer.helper release];
+    PDBHelper *aHelper = [[PDBHelper alloc] initWithContentsOfFile:pdbToLoad];
+    helper = [aHelper retain];
+    renderer.helper = [aHelper retain];
+    [aHelper release];
+
+    if (!resized)
+    {
+        [self.helper resizeVertices:11];
+        resized = YES;
+    }
+
+    self.renderer.helper = self.helper;
+
+    [self.helper setUpAtoms];
+    [self.helper setUpBonds];
+
+    if (self.helper.numberOfAtoms > 0)
+        [self.renderer askForVertexInformation];
+    else
+    {           
+        // LOG ME PLEASE.
+    }
+
+    [self performSelectorOnMainThread:@selector(removeProgressBar) withObject:nil waitUntilDone:YES];
+    [self performSelectorOnMainThread:@selector(startAnimation) withObject:nil waitUntilDone:YES];
+    self.renderer.pdb = pdbToLoad;
+
+    self.loading = NO;
+}
+
+loadPDB:

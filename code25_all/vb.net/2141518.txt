@@ -1,0 +1,723 @@
+Public Class BasePage
+Inherits Page
+#Region "attributes"
+Private _cookie As HttpCookie
+Private _savedCookie As Boolean
+
+Private Const COOKIE_NAME As String = "KDOELog"
+Private Const COOKIE_COLUMNS As String = "cols"
+Private Const COOKIE_SEARCH_BRANCH As String = "b"
+Private Const COOKIE_SEARCH_COLLECTOR As String = "c"
+Private Const COOKIE_SEARCH_CONF_NUMBER As String = "a"
+Private Const COOKIE_SEARCH_NA_NUMBER As String = "n"
+Private Const COOKIE_SEARCH_CUST_NUMBER As String = "u"
+Private Const COOKIE_SEARCH_INV_NUMBER As String = "i"
+Private Const COOKIE_SEARCH_CONTRACT As String = "t"
+Private Const COOKIE_SEARCH_ORDER_TYPE As String = "y"
+Private Const COOKIE_SEARCH_DSR_NUMBER As String = "r"
+Private Const COOKIE_SEARCH_DSM_NUMBER As String = "m"
+Private Const COOKIE_SEARCH_EXCEPTION As String = "e"
+Private Const COOKIE_SEARCH_START_DATE As String = "s"
+Private Const COOKIE_SEARCH_END_DATE As String = "d"
+Private Const COOKIE_PAGE_INDEX As String = "pg"
+Private Const COOKIE_SORT_COLUMN As String = "sc"
+Private Const COOKIE_SORT_DIRECTION As String = "sd"
+
+Private Const SESSION_USER As String = "user"
+#End Region
+
+#Region "constructor"
+Public Sub New()
+    _savedCookie = False
+End Sub
+#End Region
+
+#Region "events"
+Private Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+    If IsPostBack = False Then
+        ' determines whether or not to show the link for Node Search
+        Dim myMaster As Food = DirectCast(Me.Master, Food)
+        If AuthenticatedUser.IsCorporateAdmin Or AuthenticatedUser.IsBranchAdmin Then
+            myMaster.ShowNodeItemLink = True
+        Else
+            myMaster.ShowNodeItemLink = False
+        End If
+    End If
+End Sub
+
+Private Sub Page_LoadComplete(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.LoadComplete
+    If _savedCookie = False Then Response.Cookies.Add(_cookie)
+End Sub
+
+Private Sub Page_PreInit(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.PreInit
+    If IsNothing(Request.Cookies(COOKIE_NAME)) Then
+        _cookie = New HttpCookie(COOKIE_NAME)
+
+        _cookie.Expires = New Date(2999, 12, 31)
+
+        _cookie.Values.Add(COOKIE_COLUMNS, GetDefaultColumnList())
+        _cookie.Values.Add(COOKIE_SEARCH_BRANCH, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_COLLECTOR, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_CONF_NUMBER, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_NA_NUMBER, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_CUST_NUMBER, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_INV_NUMBER, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_CONTRACT, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_ORDER_TYPE, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_DSR_NUMBER, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_DSM_NUMBER, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_EXCEPTION, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_START_DATE, String.Empty)
+        _cookie.Values.Add(COOKIE_SEARCH_END_DATE, String.Empty)
+        _cookie.Values.Add(COOKIE_PAGE_INDEX, 0)
+        _cookie.Values.Add(COOKIE_SORT_COLUMN, "eback_datetime")
+        _cookie.Values.Add(COOKIE_SORT_DIRECTION, SORT_DIRECTION_ASC)
+
+        SaveCookie()
+    Else
+        _cookie = Request.Cookies(COOKIE_NAME)
+    End If
+
+    If IsNothing(Session(SESSION_USER)) Then Session(SESSION_USER) = New User(Context.User.Identity.Name)
+End Sub
+#End Region
+
+#Region "methods"
+Protected Function GetColumnList() As String()
+    Return Server.HtmlEncode(_cookie(COOKIE_COLUMNS)).Split(",")
+End Function
+
+Private Function GetDefaultColumnList() As String
+    ' set the default list of columns
+    Dim columnList As New StringBuilder()
+    columnList.Append(COL_COLLECTOR).Append(",")
+    columnList.Append(COL_CONF_NUM).Append(",")
+    columnList.Append(COL_NODE_NUM).Append(",")
+    columnList.Append(COL_ORDER_TYPE).Append(",")
+    columnList.Append(COL_CUST_NUM).Append(",")
+    columnList.Append(COL_ERROR_IND).Append(",")
+    columnList.Append(COL_DSR_NUM).Append(",")
+    columnList.Append(COL_DSR_NAME).Append(",")
+    columnList.Append(COL_DSM_NUM).Append(",")
+    columnList.Append(COL_CONTRACT).Append(",")
+    columnList.Append(COL_NA_NUM).Append(",")
+    columnList.Append(COL_NA_SUB).Append(",")
+    columnList.Append(COL_INV_NUM).Append(",")
+    columnList.Append(COL_CONF_DATE).Append(",")
+    columnList.Append(COL_LINE_ITEMS).Append(",")
+    columnList.Append(COL_DELV_DATE).Append(",")
+    columnList.Append(COL_SALES_AMT).Append(",")
+    columnList.Append(COL_BRANCH)
+
+    Return columnList.ToString()
+End Function
+
+Protected Function HasSearchValues() As Boolean
+    Return CBool(_cookie(COOKIE_SEARCH_BRANCH) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_COLLECTOR) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_CONF_NUMBER) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_NA_NUMBER) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_CUST_NUMBER) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_INV_NUMBER) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_CONTRACT) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_ORDER_TYPE) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_DSR_NUMBER) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_DSM_NUMBER) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_EXCEPTION) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_START_DATE) > String.Empty Or _
+                 _cookie(COOKIE_SEARCH_END_DATE) > String.Empty)
+End Function
+
+Protected Sub ResetSearchValues()
+    _cookie(COOKIE_SEARCH_BRANCH) = String.Empty
+    _cookie(COOKIE_SEARCH_COLLECTOR) = String.Empty
+    _cookie(COOKIE_SEARCH_CONF_NUMBER) = String.Empty
+    _cookie(COOKIE_SEARCH_NA_NUMBER) = String.Empty
+    _cookie(COOKIE_SEARCH_CUST_NUMBER) = String.Empty
+    _cookie(COOKIE_SEARCH_INV_NUMBER) = String.Empty
+    _cookie(COOKIE_SEARCH_CONTRACT) = String.Empty
+    _cookie(COOKIE_SEARCH_ORDER_TYPE) = String.Empty
+    _cookie(COOKIE_SEARCH_DSR_NUMBER) = String.Empty
+    _cookie(COOKIE_SEARCH_DSM_NUMBER) = String.Empty
+    _cookie(COOKIE_SEARCH_EXCEPTION) = String.Empty
+    _cookie(COOKIE_SEARCH_START_DATE) = String.Empty
+    _cookie(COOKIE_SEARCH_END_DATE) = String.Empty
+    _cookie(COOKIE_PAGE_INDEX) = 0
+    _cookie(COOKIE_SORT_COLUMN) = "eback_datetime"
+    _cookie(COOKIE_SORT_DIRECTION) = SORT_DIRECTION_ASC
+
+    SaveCookie()
+End Sub
+
+Protected Sub SaveCookie()
+    If _savedCookie = False Then
+        Response.Cookies.Add(_cookie)
+        _savedCookie = True
+    End If
+End Sub
+
+Protected Sub SetColumnList(ByVal ColumnList As String)
+    _cookie(COOKIE_COLUMNS) = ColumnList
+
+    SaveCookie()
+End Sub
+#End Region
+
+#Region "properties"
+Public ReadOnly Property AuthenticatedUser() As User
+    Get
+        If IsNothing(Session(SESSION_USER)) Then Session(SESSION_USER) = New User(Context.User.Identity.Name)
+
+        Return DirectCast(Session(SESSION_USER), User)
+    End Get
+End Property
+
+Public ReadOnly Property UserName() As String
+    Get
+        Return Context.User.Identity.Name
+    End Get
+End Property
+
+Public Property SearchBranch() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_BRANCH)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_BRANCH) = value
+    End Set
+End Property
+
+Public Property SearchCollector() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_COLLECTOR)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_COLLECTOR) = value
+    End Set
+End Property
+
+Public Property SearchConfirmationNumber() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_CONF_NUMBER)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_CONF_NUMBER) = value
+    End Set
+End Property
+
+Public Property SearchNationalAccountNumber() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_NA_NUMBER)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_NA_NUMBER) = value
+    End Set
+End Property
+
+Public Property SearchCustomerNumber() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_CUST_NUMBER)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_CUST_NUMBER) = value
+    End Set
+End Property
+
+Public Property SearchInvoiceNumber() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_INV_NUMBER)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_INV_NUMBER) = value
+    End Set
+End Property
+
+Public Property SearchContract() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_CONTRACT)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_CONTRACT) = value
+    End Set
+End Property
+
+Public Property SearchOrderType() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_ORDER_TYPE)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_ORDER_TYPE) = value
+    End Set
+End Property
+
+Public Property SearchDsrNumber() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_DSR_NUMBER)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_DSR_NUMBER) = value
+    End Set
+End Property
+
+Public Property SearchDsmNumber() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_DSM_NUMBER)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_DSM_NUMBER) = value
+    End Set
+End Property
+
+Public Property SearchErrorType() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_EXCEPTION)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_EXCEPTION) = value
+    End Set
+End Property
+
+Public Property SearchStartDate() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_START_DATE)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_START_DATE) = value
+    End Set
+End Property
+
+Public Property SearchEndDate() As String
+    Get
+        Return _cookie(COOKIE_SEARCH_END_DATE)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SEARCH_END_DATE) = value
+    End Set
+End Property
+
+Public Property PageIndex() As String
+    Get
+        Return _cookie(COOKIE_PAGE_INDEX)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_PAGE_INDEX) = value
+    End Set
+End Property
+
+Public Property SortColumn() As String
+    Get
+        Return _cookie(COOKIE_SORT_COLUMN)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SORT_COLUMN) = value
+    End Set
+End Property
+
+Public Property SortDirection() As String
+    Get
+        Return _cookie(COOKIE_SORT_DIRECTION)
+    End Get
+    Set(ByVal value As String)
+        _cookie(COOKIE_SORT_DIRECTION) = value
+    End Set
+End Property
+#End Region
+End Class
+
+Public Partial Class Search
+Inherits BasePage
+
+#Region "attributes"
+
+#End Region
+
+#Region "events"
+Private Sub btnColumnSave_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles btnColumnSave.Click
+    Dim columns As New StringBuilder
+
+    If chkCollector.Checked Then columns.Append(COL_COLLECTOR).Append(",")
+    If chkAckNumber.Checked Then columns.Append(COL_CONF_NUM).Append(",")
+    If chkNodeNumber.Checked Then columns.Append(COL_NODE_NUM).Append(",")
+    If chkOrderType.Checked Then columns.Append(COL_ORDER_TYPE).Append(",")
+    If chkCustNumber.Checked Then columns.Append(COL_CUST_NUM).Append(",")
+    If chkCustName.Checked Then columns.Append(COL_CUST_NAME).Append(",")
+    If chkOrderExceptions.Checked Then columns.Append(COL_ERROR_IND).Append(",")
+    If chkDsrNumber.Checked Then columns.Append(COL_DSR_NUM).Append(",")
+    If chkDsrName.Checked Then columns.Append(COL_DSR_NAME).Append(",")
+    If chkDsmNumber.Checked Then columns.Append(COL_DSM_NUM).Append(",")
+    If chkDsmName.Checked Then columns.Append(COL_DSM_NAME).Append(",")
+    If chkContract.Checked Then columns.Append(COL_CONTRACT).Append(",")
+    If chkNationalAcct.Checked Then columns.Append(COL_NA_NUM).Append(",")
+    If chkNatAcctSub.Checked Then columns.Append(COL_NA_SUB).Append(",")
+    If chkInvoiceNumber.Checked Then columns.Append(COL_INV_NUM).Append(",")
+    If chkAckDateTime.Checked Then columns.Append(COL_CONF_DATE).Append(",")
+    If chkLineItem.Checked Then columns.Append(COL_LINE_ITEMS).Append(",")
+    If chkDeliveryDate.Checked Then columns.Append(COL_DELV_DATE).Append(",")
+    If chkSalesAmount.Checked Then columns.Append(COL_SALES_AMT).Append(",")
+    If chkBranch.Checked Then columns.Append(COL_BRANCH).Append(",")
+
+    ' remove the last comma from the list
+    columns = columns.Remove(columns.Length - 1, 1)
+
+    SetColumnList(columns.ToString())
+    SaveCookie()
+
+    ManageGridColumns()
+End Sub
+
+Private Sub btnEndDate_Click(ByVal sender As Object, ByVal e As System.Web.UI.ImageClickEventArgs) Handles btnEndDate.Click
+    calEndDate.Visible = Not calEndDate.Visible
+
+    If calEndDate.Visible Then
+        Try
+            calEndDate.SelectedDate = Date.Parse(txtEndDate.Text)
+        Catch
+            calEndDate.SelectedDate = Now
+        End Try
+    End If
+
+    modSearch.Show()
+End Sub
+
+Private Sub btnSearchReset_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles btnSearchReset.Click
+    ddlBranch.SelectedIndex = 0
+    SearchBranch = ddlBranch.SelectedValue
+    ddlCollectorType.SelectedIndex = 0
+    SearchCollector = ddlCollectorType.SelectedValue
+    ddlOrderType.SelectedIndex = 0
+    SearchOrderType = ddlOrderType.SelectedValue
+    ddlErrorCode.SelectedIndex = 0
+    SearchErrorType = ddlErrorCode.SelectedValue
+
+    SearchConfirmationNumber = String.Empty
+    SearchNationalAccountNumber = String.Empty
+    SearchCustomerNumber = String.Empty
+    SearchInvoiceNumber = String.Empty
+    SearchContract = String.Empty
+    SearchDsrNumber = String.Empty
+    'SearchDsmNumber = String.Empty
+    SetDsmInfo()
+
+    SearchStartDate = Now.ToShortDateString()
+    SearchEndDate = Now.ToShortDateString()
+
+    SaveCookie()
+
+    SetSearchWindow()
+    modSearch.Show()
+End Sub
+
+Private Sub btnSearchSearch_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles btnSearchSearch.Click
+    SearchBranch = ddlBranch.SelectedValue
+    SearchCollector = ddlCollectorType.SelectedValue
+    SearchConfirmationNumber = txtAckNumber.Text
+    SearchCustomerNumber = txtCustomerNumber.Text
+    SearchInvoiceNumber = txtInvoiceNumber.Text
+    SearchDsrNumber = txtDsrNumber.Text
+    SearchDsmNumber = txtDsmNumber.Text
+    SearchNationalAccountNumber = txtNationalAccountNumber.Text
+    SearchContract = txtContract.Text
+    SearchErrorType = ddlErrorCode.SelectedValue
+    SearchOrderType = ddlOrderType.SelectedValue
+    SearchStartDate = txtStartDate.Text
+    SearchEndDate = txtEndDate.Text
+
+    SaveCookie()
+
+    PageIndex = 0
+    dgResults.CurrentPageIndex = 0
+    BindResults()
+End Sub
+
+Private Sub btnStartDate_Click(ByVal sender As Object, ByVal e As System.Web.UI.ImageClickEventArgs) Handles btnStartDate.Click
+    calStartDate.Visible = Not calStartDate.Visible
+
+    If calStartDate.Visible Then
+        Try
+            calStartDate.SelectedDate = Date.Parse(txtStartDate.Text)
+        Catch
+            calStartDate.SelectedDate = Now
+        End Try
+    End If
+
+    modSearch.Show()
+End Sub
+
+Private Sub calEndDate_SelectionChanged(ByVal sender As Object, ByVal e As System.EventArgs) Handles calEndDate.SelectionChanged
+    txtEndDate.Text = calEndDate.SelectedDate.ToShortDateString()
+    calEndDate.Visible = False
+    modSearch.Show()
+End Sub
+
+Private Sub calStartDate_SelectionChanged(ByVal sender As Object, ByVal e As System.EventArgs) Handles calStartDate.SelectionChanged
+    txtStartDate.Text = calStartDate.SelectedDate.ToShortDateString()
+    calStartDate.Visible = False
+    modSearch.Show()
+End Sub
+
+Private Sub dgResults_PageIndexChanged(ByVal source As Object, ByVal e As System.Web.UI.WebControls.DataGridPageChangedEventArgs) Handles dgResults.PageIndexChanged
+    PageIndex = e.NewPageIndex
+    dgResults.CurrentPageIndex = e.NewPageIndex
+    BindResults()
+End Sub
+
+Private Sub dgResults_SortCommand(ByVal source As Object, ByVal e As System.Web.UI.WebControls.DataGridSortCommandEventArgs) Handles dgResults.SortCommand
+    If SortColumn.Equals(e.SortExpression) Then
+        If SortDirection = SORT_DIRECTION_ASC Then
+            SortDirection = SORT_DIRECTION_DESC
+        Else
+            SortDirection = SORT_DIRECTION_ASC
+        End If
+    Else
+        SortColumn = e.SortExpression
+        SortDirection = SORT_DIRECTION_ASC
+    End If
+
+    PageIndex = 0
+    dgResults.CurrentPageIndex = 0
+
+    BindResults()
+End Sub
+
+Protected Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+    If IsPostBack = False Then
+        SetDsmInfo()
+        txtStartDate.Text = Now.ToShortDateString()
+        txtEndDate.Text = Now.ToShortDateString()
+
+        BindBranches()
+        BindCollectorTypes()
+        BindTransmissionTypes()
+        BindErrorCodes()
+
+        SetupColumnWindow()
+        ManageGridColumns()
+
+        If HasSearchValues() Then
+            SetSearchWindow()
+            dgResults.CurrentPageIndex = CInt(PageIndex)
+            BindResults()
+        Else
+            modSearch.Show()
+        End If
+    End If
+End Sub
+#End Region
+
+#Region "methods"
+Private Sub BindBranches()
+    If AuthenticatedUser.IsCorporateAdmin Then
+        Dim branches As New BranchCollection
+        branches.Load()
+
+        ddlBranch.DataSource = branches
+        ddlBranch.DataTextField = "BranchDescription"
+        ddlBranch.DataValueField = "BranchName"
+        ddlBranch.DataBind()
+    Else
+        Dim myBranch As New Branch(AuthenticatedUser.Division)
+
+        ddlBranch.Items.Clear()
+        ddlBranch.Items.Add(New ListItem(myBranch.BranchDescription, myBranch.BranchName))
+        ddlBranch.Enabled = False
+    End If
+End Sub
+
+Private Sub BindCollectorTypes()
+    Dim types As New OrderTypeCollection
+    types.Load()
+
+    ddlCollectorType.DataSource = types
+    ddlCollectorType.DataTextField = "eb_order_description"
+    ddlCollectorType.DataValueField = "eb_order_type"
+    ddlCollectorType.DataBind()
+End Sub
+
+Private Sub BindErrorCodes()
+    Dim codes As New KDOE_Library.BusinessLayer.ErrorTypeCollection
+    codes.Load()
+
+    ddlErrorCode.DataSource = codes
+    ddlErrorCode.DataTextField = "eb_error_desc"
+    ddlErrorCode.DataValueField = "eb_error_type"
+    ddlErrorCode.DataBind()
+End Sub
+
+Private Sub BindResults()
+    Dim results As New ConfirmationHeaderCollection()
+    results.Search(SearchCollector, SearchConfirmationNumber, SearchBranch, SearchCustomerNumber, SearchInvoiceNumber, _
+                   SearchDsrNumber, SearchDsmNumber, SearchNationalAccountNumber, SearchContract, SearchErrorType, _
+                   SearchOrderType, SearchStartDate, SearchEndDate)
+
+    results.SortExpression = TranslateSortExpression(SortColumn)
+    results.SortDirection = IIf(SortDirection.Equals(SORT_DIRECTION_ASC), _
+                                ConfirmationHeaderCollection.SortOrder.Ascending, _
+                                ConfirmationHeaderCollection.SortOrder.Descending)
+    results.Sort(results)
+
+    dgResults.DataSource = results
+    dgResults.DataBind()
+
+    lblResultCount.Text = String.Format("{0} records found", results.Count.ToString("#,###,###"))
+End Sub
+
+Private Sub BindTransmissionTypes()
+    Dim transTypes As New TransTypeCollection
+    transTypes.Load()
+
+    ddlOrderType.DataSource = transTypes
+    ddlOrderType.DataTextField = "eb_trans_desc"
+    ddlOrderType.DataValueField = "eb_trans_type"
+    ddlOrderType.DataBind()
+End Sub
+
+Private Sub HideAllColumns()
+    For i As Integer = 0 To dgResults.Columns.Count - 1
+        dgResults.Columns(i).Visible = False
+    Next
+End Sub
+
+Private Sub ManageGridColumns()
+    HideAllColumns()
+
+    Dim columns() As String = GetColumnList()
+
+    For i As Integer = 0 To columns.Length - 1
+        Try
+            dgResults.Columns(CInt(columns(i))).Visible = True
+        Catch
+            ' do nothing if an error is detected because it indicates a dirty cookie
+        End Try
+    Next
+End Sub
+
+Private Sub SetupColumnWindow()
+    Dim columns() As String = GetColumnList()
+
+    For i As Integer = 0 To columns.Length - 1
+        Try
+            Select Case CInt(columns(i))
+                Case COL_COLLECTOR
+                    chkCollector.Checked = True
+                Case COL_CONF_NUM
+                    chkAckNumber.Checked = True
+                Case COL_NODE_NUM
+                    chkNodeNumber.Checked = True
+                Case COL_ORDER_TYPE
+                    chkOrderType.Checked = True
+                Case COL_CUST_NUM
+                    chkCustNumber.Checked = True
+                Case COL_CUST_NAME
+                    chkCustName.Checked = True
+                Case COL_ERROR_IND
+                    chkOrderExceptions.Checked = True
+                Case COL_DSR_NUM
+                    chkDsrNumber.Checked = True
+                Case COL_DSR_NAME
+                    chkDsrName.Checked = True
+                Case COL_DSM_NUM
+                    chkDsmNumber.Checked = True
+                Case COL_DSM_NAME
+                    chkDsmName.Checked = True
+                Case COL_CONTRACT
+                    chkContract.Checked = True
+                Case COL_NA_NUM
+                    chkNationalAcct.Checked = True
+                Case COL_NA_SUB
+                    chkNatAcctSub.Checked = True
+                Case COL_INV_NUM
+                    chkInvoiceNumber.Checked = True
+                Case COL_CONF_DATE
+                    chkAckDateTime.Checked = True
+                Case COL_LINE_ITEMS
+                    chkLineItem.Checked = True
+                Case COL_DELV_DATE
+                    chkDeliveryDate.Checked = True
+                Case COL_SALES_AMT
+                    chkSalesAmount.Checked = True
+                Case COL_BRANCH
+                    chkBranch.Checked = True
+                Case Else
+                    ' do nothing
+            End Select
+        Catch
+            ' do nothing because the entry is not an actual column number
+            ' i.e. the cookie has dirty data
+        End Try
+    Next
+End Sub
+
+Private Sub SetDsmInfo()
+    If AuthenticatedUser.IsDsm Then
+        Dim theService As New DsmService.DsmService
+        theService.PreAuthenticate = True
+        theService.Credentials = New System.Net.NetworkCredential("someuser", "somepassword", "somedomain")
+
+        Dim myDsm As DsmService.Dsm = theService.GetDsmByName(AuthenticatedUser.FirstName, AuthenticatedUser.LastName)
+        If IsPostBack Then
+            SearchDsmNumber = myDsm.DsmNumber
+        Else
+            txtDsmNumber.Text = myDsm.DsmNumber
+        End If
+        txtDsmNumber.Enabled = False
+    Else
+        'txtDsmNumber.Text = String.Empty
+        SearchDsmNumber = String.Empty
+        txtDsmNumber.Enabled = True
+    End If
+End Sub
+
+Private Sub SetSearchWindow()
+    Try
+        ddlBranch.SelectedValue = SearchBranch
+        ddlCollectorType.SelectedValue = SearchCollector
+        txtAckNumber.Text = SearchConfirmationNumber
+        txtNationalAccountNumber.Text = SearchNationalAccountNumber
+        txtCustomerNumber.Text = SearchCustomerNumber
+        txtInvoiceNumber.Text = SearchInvoiceNumber
+        txtContract.Text = SearchContract
+        ddlOrderType.SelectedValue = SearchOrderType
+        txtDsrNumber.Text = SearchDsrNumber
+        txtDsmNumber.Text = SearchDsmNumber
+        ddlErrorCode.SelectedValue = SearchErrorType
+        txtStartDate.Text = SearchStartDate
+        calStartDate.SelectedDate = CDate(SearchStartDate)
+        txtEndDate.Text = SearchEndDate
+        calEndDate.SelectedDate = CDate(SearchEndDate)
+    Catch
+        ' do nothing because an error would be caused by dirty data from the cookie
+    End Try
+End Sub
+
+Private Function TranslateSortExpression(ByVal SortExpression As String) As ConfirmationHeaderCollection.SortColumn
+    Dim retVal As ConfirmationHeaderCollection.SortColumn = ConfirmationHeaderCollection.SortColumn.eback_datetime
+
+    Select Case SortExpression
+        Case "ebcollector"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebcollector
+        Case "eback"
+            retVal = ConfirmationHeaderCollection.SortColumn.eback
+        Case "ebnode"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebnode
+        Case "ebordertype"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebordertype
+        Case "ebcust"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebcust
+        Case "CustomerName"
+            retVal = ConfirmationHeaderCollection.SortColumn.CustomerName
+        Case "eberror"
+            retVal = ConfirmationHeaderCollection.SortColumn.eberror
+        Case "ebslm"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebslm
+        Case "DsrName"
+            retVal = ConfirmationHeaderCollection.SortColumn.DsrName
+        Case "DsmNumber"
+            retVal = ConfirmationHeaderCollection.SortColumn.DsmNumber
+        Case "DsmName"
+            retVal = ConfirmationHeaderCollection.SortColumn.DsmName
+        Case "ebcontract"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebcontract
+        Case "ebna"
+            retVal = ConfirmationHeaderCollection.SortColumn.ebna
+        Case "ebnasub"
+

@@ -1,0 +1,89 @@
+Database.ExecuteNonQuery()
+[WebMethod]
+public XmlDocument UpdateSomeItem(Int32 ItemIdNmb, String Foo)
+{
+    try
+    {
+
+        // Create the Database object, using the default database service. The
+        // default database service is determined through configuration.
+        Database db = DatabaseFactory.CreateDatabase();
+        DbParameter param;
+
+        string sqlCommand = "updateSomeItem";
+        DbCommand dbCommand = db.GetStoredProcCommand(sqlCommand);
+
+        db.AddInParameter(dbCommand, "ItemIdNmb", DbType.Int32, ItemIdNmb);
+        db.AddInParameter(dbCommand, "Foo", DbType.String, Foo);
+        db.AddInParameter(dbCommand, "UpdateLoginIdNmb", DbType.Int32, SessionLoginIdNmb);
+
+        #region Return Parameter
+        param = dbCommand.CreateParameter();
+        param.ParameterName = "Return";
+        param.Direction = ParameterDirection.ReturnValue;
+        param.DbType = DbType.Int32;
+
+        dbCommand.Parameters.Add(param);
+        #endregion
+
+        // Execute the Command
+        db.ExecuteNonQuery(dbCommand);
+
+        myDataSet = new DataSet();
+
+        myDataSet.DataSetName = "DataSet";
+        myDataSet.Tables.Add(errorDataTable);
+
+        statusDataRow["Status"] = "Success";
+        statusDataTable.Rows.Add(statusDataRow);
+        myDataSet.Tables.Add(statusDataTable);
+
+        returncodeDataRow["ReturnCode"] = dbCommand.Parameters["Return"].Value;
+        returncodeDataTable.Rows.Add(returncodeDataRow);
+        myDataSet.Tables.Add(returncodeDataTable);
+
+        xmlReturnDoc.LoadXml(myDataSet.GetXml());
+
+        return xmlReturnDoc;
+    }
+    // THIS IS WHERE I WANT MY RAISE ERROR TO GO
+    catch (Exception e) 
+    {
+        return ReturnClientError(e, "someerror");
+    }
+}
+
+CREATE PROCEDURE updateSomeItem
+(
+    @ItemIdNmb             INT,
+    @Foo                   VARCHAR(100),
+    @UpdateLoginIdNmb      INT
+)
+
+AS
+
+SET NOCOUNT ON
+
+/* If the user performing the action did not create the Item in question, 
+    raise an error. */
+IF NOT EXISTS
+    (
+    SELECT 1
+    FROM Items
+    WHERE IdNmb = @ItemIdNmb
+        AND LoginIdNmb = @UpdateLoginIdNmb
+    )
+    RAISERROR (
+        'User action not allowed - User is not the owner of the specified Item', 
+        10, 
+        1)
+
+UPDATE Items
+SET Foo = @Foo
+WHERE IdNmb = @ItemIdNmb
+
+RETURN 0
+
+SET NOCOUNT OFF
+GO
+

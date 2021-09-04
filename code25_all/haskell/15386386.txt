@@ -1,0 +1,149 @@
+withVideoMode :: Camera Undefined -> (Camera a -> IO ()) -> IO ()
+ContT
+State
+{-#LANGUAGE ScopedTypeVariables#-}
+{-#LANGUAGE DataKinds #-}
+
+import CV.CVSU
+import CV.CVSU.Rectangle
+import CV.Image as CV
+import CV.Transforms
+import CV.ImageOp 
+import CV.Drawing as CV
+import CVSU.PixelImage
+import CVSU.TemporalForest
+import Control.Applicative
+import Control.Applicative
+import Control.Concurrent
+import Control.Monad
+import Data.Array.MArray
+import Data.IORef
+import Data.Maybe
+import Data.Word
+import Utils.Rectangle
+import Foreign.Ptr
+import Graphics.UI.Gtk
+
+import System.Camera.Firewire.Simple
+
+convertToPixbuf :: CV.Image RGB D8 -> IO Pixbuf
+convertToPixbuf cv = withRawImageData cv $ \stride d -> do
+    pixbufNewFromData (castPtr d) ColorspaceRgb False 8 w h stride
+   where (w,h) = getSize cv
+
+
+initializeCamera dc e = do 
+    putStrLn $ "Initializing camera "++show e
+    cam <- cameraFromID dc e
+    setOperationMode cam B
+    setISOSpeed  cam ISO_800
+    setFrameRate cam Rate_30
+    setupCamera cam 20 defaultFlags
+    return cam
+
+handleFrame tforest image = do
+  pimg    <- toPixelImage (rgbToGray8 image)
+  uforest <- temporalForestUpdate tforest pimg
+  uimg    <- temporalForestVisualize uforest
+  --uimage  <- expectByteRGB =<< fromPixelImage uimg
+  temporalForestGetSegments uforest
+
+  --mapM (temporalForestGetSegmentBoundary uforest) ss
+
+createThumbnail img = do 
+     pb     <- convertToPixbuf $ unsafeImageTo8Bit $ scaleToSize Linear True (95,95) (unsafeImageTo32F img)
+     imageNewFromPixbuf pb
+
+
+main :: IO ()
+main = withDC1394 $ \dc -> do
+    -- ** CAMERA Setup **
+    cids <- getCameras dc
+    cams <- mapM (initializeCamera dc) $ cids
+
+    -- ** Initialize GUI ** 
+    initGUI
+    pp <- pixbufNew ColorspaceRgb False 8 640 480
+    window <- windowNew
+
+    -- * Create the image widgets 
+    images <- vBoxNew True 3
+    image1  <- imageNewFromPixbuf pp
+    image2  <- imageNewFromPixbuf pp
+    boxPackStart images image1 PackGrow 0 
+    boxPackEnd   images image2 PackGrow 0 
+
+    -- * Create the Control & main widgets
+    screen     <- hBoxNew True 3
+    control    <- vBoxNew True 3
+    info       <- labelNew (Just "This is info")
+    but        <- buttonNewWithLabel "Add thumbnail"
+    thumbnails <- hBoxNew True 2
+    boxPackStart screen images PackGrow 0 
+    boxPackStart screen control PackGrow 0 
+    boxPackStart control info PackGrow 0 
+    boxPackStart control but PackRepel 0 
+    boxPackStart control thumbnails PackGrow 0 
+    but `onClicked` (do
+        info<- labelNew (Just "This is info")
+        widgetShowNow info
+        boxPackStart thumbnails info PackGrow 0)
+
+    set window [ containerBorderWidth := 10
+                   , containerChild := screen ]
+
+    -- ** Start video transmission **
+    withVideoMode (cams !! 0) $ \(c :: Camera Mode_640x480_RGB8) -> do
+--     withVideoMode (cams !! 1) $ \(c2 :: Camera Mode_640x480_RGB8) -> do
+        -- ** Start cameras ** --
+        startVideoTransmission c
+--        startVideoTransmission c2
+        -- ** Setup background subtraction ** --
+        Just f <- getFrame c 
+        pimg <- toPixelImage (rgbToGray8 f)
+        tforest <- temporalForestCreate 16 4 10 130 pimg
+
+        -- * Callback for gtk
+        let grabFrame = do
+            frame <- getFrame c 
+--            frame2 <- getFrame c2 
+            maybe (return ()) 
+                  (\x -> do
+                          ss <- handleFrame tforest x
+                          let area = sum [ rArea r | r <- (map segToRect ss)]
+                          if area > 10000 
+                                then return ()
+                                 --putStrLn "Acquiring a thumbnail"
+                                 --tn <- createThumbnail x
+                                 --boxPackStart thumbnails tn PackGrow 0 
+                                 --widgetShowNow tn
+                                 --containerResizeChildren thumbnails
+                                else return ()
+                          labelSetText info ("Area: "++show area)
+                          pb <- convertToPixbuf
+                                    --  =<< CV.drawLines x (1,0,0) 2 (concat segmentBoundary)
+                                    (x <## map (rectOp (1,0,0) 2) (map segToRect ss) )
+                          pb2 <- convertToPixbuf x
+                          imageSetFromPixbuf image1 pb
+                          imageSetFromPixbuf image2 pb2
+                          )
+                  frame
+--            maybe (return ()) 
+--                  (convertToPixbuf >=> imageSetFromPixbuf image2)
+--                  frame2
+            flushBuffer c 
+--            flushBuffer c2 
+            return True
+
+        timeoutAddFull grabFrame priorityDefaultIdle 20
+
+        -- ** Setup finalizers ** 
+        window `onDestroy` do
+                    stopVideoTransmission c
+                    stopCapture c
+                    mainQuit
+
+        -- ** Start GUI **
+        widgetShowAll window
+        mainGUI
+

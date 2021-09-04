@@ -1,0 +1,91 @@
+#!/bin/bash
+NOWDATE=`date +%Y-%m-%d -d "yesterday"`
+SUBDATE=`date '+%B %e, %G'`
+DIR=/file/report/
+FILE=file-$NOWDATE.csv
+RECIPIENT=email@mail.com
+
+PGPASSWORD=passwrod psql -w -h host -p 5432 -d database -U user -o $DIR/$FILE <<EOF
+select distinct als."Table_AccountID",
+   (select  "Table_val_AccountStatusID" from  "Table_log_AccountStatus"  
+    where "Table_AccountID" = als."Table_AccountID" order by  "Date" desc limit 1)
+    as "Table_val_AccountStatusID",
+
+   CASE  
+   when (select count(*) from  "Table_UsageHistory"  cfuh  
+         where cfuh."Disk">'123456' and date_trunc('day',cfuh."Created") = date_trunc('day','$NOWDATE'::timestamp)
+         -- -'1day':: interval
+         and extrTable('day' from "Created"::timestamp) = ac."DesiredBillingDate" 
+         and date_trunc('day', "Created"::timestamp) = date_trunc('day', '$NOWDATE'::timestamp)
+         and cfuh."Table_AccountID" in (
+             select distinct "Table_AccountID" from "Table_Usage" 
+             where date_trunc('day', "Timestamp"::timestamp) = date_trunc('day','$NOWDATE'::timestamp)
+             and "Table_AccountID" = cfuh."Table_AccountID")
+         and cfuh."Table_AccountID" = als."Table_AccountID") >0
+   then 'Y'
+   else 'N'
+   end as "RollUp",
+
+   (select distinct bc."ID" from "BIL_BillableCharge" bc, "Table_UsageHistory" cfh 
+    where date_trunc('day',bc."Date"::timestamp) = date_trunc('day',cfh."Created"::timestamp)
+    and bc."Table_AccountID" = cfh."Table_AccountID" and bc."BIL_val_InvoiceItemTypeID" = '23' 
+    and extrTable('month' from "Created"::timestamp) = extrTable('month' from '$NOWDATE'::timestamp)
+    and  extrTable('year' from "Created"::timestamp) = extrTable('year' from '$NOWDATE'::timestamp)
+    and cfh."Table_AccountID" = als."Table_AccountID") as "BillableChargeID"
+
+    from "Table_log_AccountStatus" als, "Table_Account" ac
+    group by als."Table_AccountID",  ac."ID", ac."DesiredBillingDate"
+    having (select distinct "Disk" from "Table_UsageHistory" cfu
+    where  date_trunc('day', cfu."Created") = date_trunc('day','$NOWDATE'::timestamp)
+    and ac."ID" = cfu."Table_AccountID")>'123456'
+    and extrTable('day' from '$NOWDATE'::timestamp) = ac."DesiredBillingDate"
+    and ac."ID" = als."Table_AccountID"
+    ORDER BY "RollUp" ASC
+EOF
+
+sed -i '2d' $DIR/$FILE |
+   mailx -a $DIR/$FILE -s " Report for $SUBDATE" -r email@anotheremail.com $RECIPIENT
+
+select distinct 
+  als."Table_AccountID",
+
+  (select  "Table_val_AccountStatusID" 
+   from  "Table_log_AccountStatus"  
+   where "Table_AccountID" = als."Table_AccountID" 
+   order by  "Date" desc limit 1) as "Table_val_AccountStatusID",
+
+   CASE when 
+        (select count(*) 
+         from  "Table_UsageHistory"  cfuh  
+         where  cfuh."Disk">'123456' 
+           and date_trunc('day',cfuh."Created") = date_trunc('day','$NOWDATE'::timestamp) -- -'1day':: interval
+           and extrTable('day' from "Created"::timestamp) = ac."DesiredBillingDate" 
+           and date_trunc('day', "Created"::timestamp) = date_trunc('day', '$NOWDATE'::timestamp)
+           and cfuh."Table_AccountID" in 
+              (select distinct "Table_AccountID" 
+               from "Table_Usage" 
+               where date_trunc('day', "Timestamp"::timestamp) = date_trunc('day','$NOWDATE'::timestamp)
+                 and "Table_AccountID" = cfuh."Table_AccountID")
+                 and cfuh."Table_AccountID" = als."Table_AccountID") > 0
+        then 'Y'
+        else 'N'
+   end as "RollUp",
+
+  (select distinct bc."ID" 
+   from "BIL_BillableCharge" bc, "Table_UsageHistory" cfh 
+   where date_trunc('day',bc."Date"::timestamp) = date_trunc('day',cfh."Created"::timestamp)
+     and bc."Table_AccountID" = cfh."Table_AccountID" and bc."BIL_val_InvoiceItemTypeID" = '23' 
+     and extrTable('month' from "Created"::timestamp) = extrTable('month' from '$NOWDATE'::timestamp)
+     and  extrTable('year' from "Created"::timestamp) = extrTable('year' from '$NOWDATE'::timestamp)
+     and cfh."Table_AccountID" = als."Table_AccountID") as "BillableChargeID"
+
+from "Table_log_AccountStatus" als, "Table_Account" ac
+group by als."Table_AccountID",  ac."ID", ac."DesiredBillingDate"
+having (select distinct "Disk" 
+        from "Table_UsageHistory" cfu  
+        where  date_trunc('day', cfu."Created") = date_trunc('day','$NOWDATE'::timestamp)
+          and ac."ID" = cfu."Table_AccountID")>'123456'  
+   and extrTable('day' from '$NOWDATE'::timestamp) = ac."DesiredBillingDate" 
+   and ac."ID" = als."Table_AccountID"
+ ORDER BY "RollUp" ASC
+

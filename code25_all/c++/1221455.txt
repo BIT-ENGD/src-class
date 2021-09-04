@@ -1,0 +1,102 @@
+mmResult = mixerOpen( (LPHMIXER)&dwMixerHandle, uMixrId, 0L, 0L, 0L);
+if (MMSYSERR_NOERROR != mmResult)
+{   
+    LOG_ERROR("FAILURE: Could not Open mixer, with id: %d. mmResult=%d",uMixrId, mmResult );
+    return  -1;
+}
+
+MIXERLINE MixerLine;
+memset( &MixerLine, 0, sizeof(MIXERLINE) );
+MixerLine.cbStruct = sizeof(MIXERLINE);
+MixerLine.dwComponentType = MIXERLINE_COMPONENTTYPE_DST_WAVEIN;
+mmResult = mixerGetLineInfo( (HMIXEROBJ)dwMixerHandle, &MixerLine, MIXER_GETLINEINFOF_COMPONENTTYPE );
+if (MMSYSERR_NOERROR != mmResult)
+{
+    mixerClose( (HMIXER)dwMixerHandle );
+    LOG_ERROR("FAILURE: Could not get WaveIn Destionation Line for the requested source while enumerating. mmResult=%d", mmResult );
+    return -1;
+}
+
+// get the MUX
+MIXERCONTROL mxc;
+MIXERLINECONTROLS mxlc;
+mxlc.cbStruct = sizeof(MIXERLINECONTROLS);
+mxlc.dwLineID = MixerLine.dwLineID;
+mxlc.dwControlType = MIXERCONTROL_CONTROLTYPE_MUX;
+mxlc.cControls = 1;
+mxlc.cbmxctrl = sizeof(MIXERCONTROL);
+mxlc.pamxctrl = &mxc;
+mmResult = ::mixerGetLineControls(reinterpret_cast<HMIXEROBJ>(uMixrId),
+                           &mxlc,
+                           MIXER_OBJECTF_HMIXER |
+                           MIXER_GETLINECONTROLSF_ONEBYTYPE);
+if (MMSYSERR_NOERROR != mmResult)
+{
+    LOG_INFO0("Could not get Mux control for waveIn line. Get selected id");
+    mixerClose( (HMIXER)dwMixerHandle );
+    return -1;
+}
+LOG_INFO("Got mux controls. Total lines associated with mux = %d", mxc.cMultipleItems); 
+
+// from the MUX get as many lines for "MIXERLINE_COMPONENTTYPE_SRC_MICROPHONE" {from dwParam1/dwParam2 }
+// then get the boolean control for the line and return the one currently selected
+MIXERCONTROLDETAILS_LISTTEXT *pmxcdSelectText = new MIXERCONTROLDETAILS_LISTTEXT[mxc.cMultipleItems];
+if (pmxcdSelectText != NULL)
+{
+    MIXERCONTROLDETAILS mxcd;
+    mxcd.cbStruct = sizeof(MIXERCONTROLDETAILS);
+    mxcd.dwControlID = mxc.dwControlID;
+    mxcd.cChannels = 1;
+    mxcd.cMultipleItems = mxc.cMultipleItems;
+    mxcd.cbDetails = sizeof(MIXERCONTROLDETAILS_LISTTEXT);
+    mxcd.paDetails = pmxcdSelectText;
+    if (::mixerGetControlDetails(reinterpret_cast<HMIXEROBJ>(uMixrId),
+                                 &mxcd,
+                                 MIXER_OBJECTF_HMIXER |
+                                 MIXER_GETCONTROLDETAILSF_LISTTEXT)
+        != MMSYSERR_NOERROR)
+    {
+        delete []pmxcdSelectText;
+        mixerClose( (HMIXER)dwMixerHandle );
+        return -1;
+    }
+}
+
+//get all the boolean values for the mux
+MIXERCONTROLDETAILS_BOOLEAN *pmxcdSelectValue = new MIXERCONTROLDETAILS_BOOLEAN[mxc.cMultipleItems];
+if (pmxcdSelectValue != NULL)
+{
+    MIXERCONTROLDETAILS mxcd;
+    mxcd.cbStruct = sizeof(MIXERCONTROLDETAILS);
+    mxcd.dwControlID = mxc.dwControlID;
+    mxcd.cChannels = 1;
+    mxcd.cMultipleItems = mxc.cMultipleItems;
+    mxcd.cbDetails = sizeof(MIXERCONTROLDETAILS_BOOLEAN);
+    mxcd.paDetails = pmxcdSelectValue;
+    if (::mixerGetControlDetails(reinterpret_cast<HMIXEROBJ>(uMixrId),
+                                 &mxcd,
+                                 MIXER_OBJECTF_HMIXER |
+                                 MIXER_GETCONTROLDETAILSF_VALUE)
+        != MMSYSERR_NOERROR)
+    {
+        delete []pmxcdSelectValue;
+        mixerClose( (HMIXER)dwMixerHandle );
+        return -1;
+    }
+}
+
+for (int i = 0; i < mxc.cMultipleItems; i++)
+{
+    if(/*(pmxcdSelectText[i].dwParam2 == MIXERLINE_COMPONENTTYPE_SRC_MICROPHONE) && */pmxcdSelectValue[i].fValue)
+    {
+        LOG_INFO("Got SELECTED microphone source line. Line index = %d, Line name = %s",i,pmxcdSelectText[i].szName);   
+        iRetVal  = i;
+        break;
+    }
+}
+//LOG_INFO("Got mux controls. Total lines associated with mux = %d", mxc.cMultipleItems);   
+delete []pmxcdSelectText;
+delete []pmxcdSelectValue;
+mixerClose( (HMIXER)dwMixerHandle );
+return iRetVal;
+

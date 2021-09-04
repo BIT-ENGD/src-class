@@ -1,0 +1,144 @@
+module GMC.GMLParser (parseGML) where
+
+import Control.Applicative ((<$>), (<*>))
+import Text.ParserCombinators.Parsec
+import Text.ParserCombinators.Parsec.Expr
+import Text.ParserCombinators.Parsec.Language
+import qualified Text.ParserCombinators.Parsec.Token as P
+
+type VarIdent = String
+type FunIdent = String
+
+data Expr =
+      Var VarIdent
+    | IntLit Integer
+    | StringLit String
+    | BiLit Bool
+    | Op String Expr Expr
+    | UnOp String Expr
+    | Call FunIdent [Expr]
+    deriving (Eq, Show)
+
+data Stat =
+      Seq [Stat]
+    | Skip
+    | Assign (Maybe VarIdent) Expr
+    | If Expr Stat (Maybe Stat)
+    deriving (Eq, Show)
+
+lexer = P.makeTokenParser gmlDef
+
+parens          = P.parens lexer    
+braces          = P.braces lexer    
+semi            = P.semi lexer
+semiSep         = P.semiSep lexer  
+semiSep1        = P.semiSep1 lexer    
+commaSep        = P.commaSep lexer
+commaSep1       = P.commaSep1 lexer
+brackets        = P.brackets lexer
+whiteSpace      = P.whiteSpace lexer    
+symbol          = P.symbol lexer    
+identifier      = P.identifier lexer    
+reserved        = P.reserved lexer    
+reservedOp      = P.reservedOp lexer
+integer         = P.integer lexer    
+charLiteral     = P.charLiteral lexer    
+stringLiteral   = P.stringLiteral lexer
+
+
+operators =
+    [ [ prefix "-" ]
+    , [ op "*"  AssocLeft, op "/"  AssocLeft ]
+    , [ op "+"  AssocLeft, op "-"  AssocLeft ]
+    , [ op "=" AssocNone, op "<>" AssocNone, op "<="  AssocNone
+      , op "<" AssocNone, op ">="  AssocNone, op ">" AssocNone ]
+    , [ op "&" AssocRight, op "&&" AssocRight ] -- Right for shortcircuiting
+    , [ op "|" AssocRight, op "||" AssocRight ] -- Right for shortcircuiting
+    , [ op ":=" AssocRight ]
+    ]
+    where
+      op name assoc   = Infix (do{ reservedOp name
+                                  ; return (\x y -> Op name x y) 
+                                  }) assoc
+      prefix name     = Prefix  (do{ reservedOp name
+                                  ; return (\x -> UnOp name x)
+                                  })
+
+
+gmlDef :: LanguageDef st
+gmlDef = emptyDef
+    { commentStart    = "/*"
+    , commentEnd      = "*/"
+    , commentLine     = "//"
+    , nestedComments  = True
+    , identStart      = letter
+    , identLetter     = alphaNum <|> oneOf "_"
+    , reservedNames   = []
+    , reservedOpNames = []
+    , caseSensitive   = True
+    }
+
+parseGML :: String -> Either ParseError [Stat]
+parseGML input = parse (whiteSpace >> many stat) "" input
+
+intLit :: Parser Expr
+intLit = IntLit <$> integer
+
+strLit :: Parser Expr
+strLit = StringLit <$> stringLiteral
+
+variable :: Parser Expr
+variable = do ident <- identifier
+              memb <- optional $ symbol "." -- ignored for now, only parse its existance
+              vname <- optional identifier -- ignored for now, only parse its existance
+              indx <- optional $ brackets expr -- ignored for now, only parse its existance
+              return (Var ident)
+
+expr :: Parser Expr
+expr = buildExpressionParser operators genExpr
+
+genExpr :: Parser Expr
+genExpr = choice [ intLit
+                 , strLit
+                 , try callExpr
+                 , variable
+                 , parens expr
+                 ]
+
+callExpr :: Parser Expr
+callExpr = Call <$> identifier <*> parens (commaSep expr)
+
+stat :: Parser Stat
+stat =  do optional $ skipMany1 semi
+           choice [ ifStat
+                  , assignStat
+                  , seqStat
+                  ]
+
+seqStat :: Parser Stat
+seqStat = do stmts <- braces $ many stat
+             return $ if null stmts then Skip else Seq stmts
+
+ifStat :: Parser Stat
+ifStat = If <$> (reserved "if" >> expr)
+            <*> (optional (reserved "then") >> stat)
+            <*> (optionMaybe $ reserved "else" >> stat)
+
+assignStat :: Parser Stat
+assignStat = do ident <- (optionMaybe $ try $ variable >> symbol "=")
+                stmt <- case ident of
+                    Just x -> expr
+                    Nothing -> callExpr
+                return (Assign ident stmt)
+
+x=-3
+[Assign (Just "=") (UnOp "-" (IntLit 3))]
+x=5+-3
+x = (arr[4]>-1 && 1)
+x = arr[4]>-1
+[Assign (Just '=') (Var "arr")]
+[Assign (Just "x") (Op ">" (Var "arr") (UnOp "-" (IntLit 1)))]
+x=5+-3
+[Assign (Just "=" (IntLit 5))
+[Assign (Just "x") (Op "+" (IntLit 5) (UnOp "-" (IntLit 3)))]
+-

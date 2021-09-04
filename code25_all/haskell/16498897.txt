@@ -1,0 +1,25 @@
+data Expr
+  = Sym String
+  | List [Expr]
+  | Num Int
+  | Str String
+  | Bool Bool
+  | Func Env [String] Expr
+  | Prim ([Expr] -> ErrorOr Expr)
+  | Action ([Expr] -> IOErrorOr Expr)
+
+eval env (List (op:args)) = do
+  func <- eval env op
+  args <- mapM (eval env) args
+  apply func args
+
+apply :: Expr -> [Expr] -> IOErrorOr Expr
+apply (Prim func) args = liftToIO $ func args
+apply (Action func) args = func args
+apply (Func env params form) args =
+  case length params == length args of
+    True -> (liftIO $ bind env $ zip params args)
+        >>= flip eval form
+    False -> throwError . NumArgs . toInteger $ length params
+apply _ _ = error "apply"
+

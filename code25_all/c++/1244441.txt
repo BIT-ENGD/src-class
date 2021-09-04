@@ -1,0 +1,191 @@
+program libiup_integration;
+{$APPTYPE CONSOLE}
+
+uses
+  SysUtils,
+  WinProcs;
+
+type
+  T_F_GetError = function() : pchar; stdcall;
+
+  T_F_SetPath = function(path: pchar) : integer; stdcall;
+
+  T_F_GetStrat = function(date: integer;time: single;lat:  single;lon:  single) : single; cdecl;
+
+var
+  F_GetError  : T_F_GetError;
+  PF_GetError : TFarProc;
+  F_SetPath   : T_F_SetPath;
+  PF_SetPath  : TFarProc;
+  F_GetStrat  : T_F_GetStrat;
+  PF_GetStrat : TFarProc;
+  DLLHandle   : THandle;
+  errormsg  : pchar;
+  h5path    : pchar;
+  h5err     : integer;
+  date      : integer;
+  time      : single;
+  lat       : single;
+  lon       : single;
+  strat     : single;
+  i         : integer;
+
+begin
+  DLLHandle := LoadLibrary('libiup.dll');
+  if DLLHandle <> 0 then
+    begin
+      { construct the function pointers }
+      PF_GetError := GetProcAddress(DLLHandle, 'getError');
+      PF_SetPath := GetProcAddress(DLLHandle, 'setPath');
+      PF_GetStrat := GetProcAddress(DLLHandle, 'getStrat');
+
+      { If the function pointer is valid ... }
+      if (PF_GetError <> nil) and (PF_SetPath <> nil) and (PF_GetStrat <> nil) then
+        begin
+          { Assign the function pointer to the function handle }
+          @F_GetError := PF_GetError;
+          @F_SetPath := PF_SetPath;
+          @F_GetStrat := PF_GetStrat;
+
+          errormsg := StrAlloc(4096);
+
+          h5path := StrAlloc(256);
+          StrCopy(h5path, 'z:\data\%Y%m.h5');
+          h5err := F_SetPath(h5path);
+          if h5err < 0 then
+            begin
+              errormsg := F_GetError();
+              WriteLn(errormsg);
+            end;
+
+          for i := 1 to 10 do
+            begin
+              date := 4745;
+              time := 12.34 + i/10;
+              lat  := -35.321 + i*i;
+              lon  := 115.67 - i*i;
+
+              strat := F_GetStrat(date, time, lat, lon);
+              if strat < 0. then
+                begin
+                  errormsg := F_GetError();
+                  WriteLn(errormsg);
+                end;
+
+               WriteLn('Value returned by getStrat call no. ' + IntToStr(i) + ': ' + FloatToStr(strat));
+             end;
+
+          { and finally, delete the function pointers ...}
+          PF_SetPath := nil;
+          PF_GetStrat := nil;
+          PF_GetError := nil;
+          FreeLibrary(DLLHandle);
+          WriteLn('Press ENTER to continue ...');
+          ReadLn;
+        end
+
+      else
+      { The function pointer was not valid, so this means that the function was not found in the dll. }
+        begin
+          WriteLn('Function not found');
+          RaiseLastOSError;
+        end;
+    end
+
+  else
+  { The LoadLibrary function did not return a valid DLL handle. }
+    begin
+      WriteLn('DLL not loaded');
+      FreeLibrary(DLLHandle);
+      WriteLn('Press ENTER to continue ...');
+      ReadLn;
+    end;
+end.
+
+#ifndef LIBIUP_DLL_H_
+#define LIBIUP_DLL_H_
+#ifdef BUILD_DLL
+#define WIN32DLL_API __declspec(dllexport)
+#else
+#define WIN32DLL_API __declspec(dllimport)
+#endif
+
+#include "stratcalc/SimpleStratosphericColumnCalculator.h"
+#include <iostream>
+#include <string>
+#include "boost/date_time/posix_time/posix_time.hpp"
+
+#ifdef __cplusplus
+extern "C" {            /* Assume C declarations for C++ */
+#endif
+    WIN32DLL_API BOOL __stdcall DllMain( HANDLE, DWORD, LPVOID);
+    WIN32DLL_API  int setPath(char*);
+    WIN32DLL_API  const char* getError();
+    WIN32DLL_API float getStrat(int, float, float, float);
+    std::string errormsg;
+    SimpleStratosphericColumnCalculator* calc; 
+#ifdef __cplusplus
+}                       /* End of extern "C" */
+#endif
+
+#endif
+
+#ifdef BUILD_DLL
+#include "windows.h"
+#include "dll.h"
+#include <iostream>
+// different functions of this library
+= new SimpleStratosphericColumnCalculator();
+
+
+WIN32DLL_API BOOL __stdcall DllMain( HANDLE hModule,
+                       DWORD  ul_reason_for_call,
+                       LPVOID lpReserved
+                     )
+{
+    switch (ul_reason_for_call)
+    {
+        case DLL_PROCESS_ATTACH:
+            calc = new SimpleStratosphericColumnCalculator();
+            break;
+        case DLL_THREAD_ATTACH:
+            calc = new SimpleStratosphericColumnCalculator();
+            break;
+        case DLL_THREAD_DETACH:
+            delete calc;
+            break;
+        case DLL_PROCESS_DETACH:
+            delete calc;
+            break;
+    }
+
+    return TRUE;
+}
+
+
+WIN32DLL_API int setPath(char* Path)
+{
+    errormsg = "";
+    return calc->setPath(Path);
+}
+
+WIN32DLL_API const char* getError()
+{
+    std::cout << errormsg << std::endl;
+    return errormsg.c_str();
+}
+
+WIN32DLL_API float getStrat(int Date, float Time, float Lat, float Lon)
+{
+    errormsg = "";
+    if (Lat < -90. || Lat > 90.)
+        errormsg += "Latitude value out of bounds.\n";
+    if (Lon < 0. || Lon > 360.)
+        errormsg += "Longitude value out of bounds.\n";
+    if (errormsg != "")
+        return -1.;
+    return (float)calc->getStrat(Date, Time, Lat, Lon);
+}
+#else
+#endif
+

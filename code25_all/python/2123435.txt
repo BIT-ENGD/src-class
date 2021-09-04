@@ -1,0 +1,91 @@
+ #!/usr/bin/python
+
+import os
+import pyinotify import WatchManager, Notifier, ThreadedNotifier, ProcessEvent, EventCodes
+import sys, time, syslog, config
+from os import system
+from daemon import Daemon
+
+class myLog(ProcessEvent):
+ def process_IN_CREATE(self, event):
+  syslog.syslog("creating: " + event.pathname)
+ def process_IN_DELETE(self, event):
+  syslog.syslog("deleting: " + event.pathname)
+ def process_default(self, event):
+  syslog.syslog("default: " + event.pathname)
+
+class MyDaemon(Daemon):
+ def loadConfig(self):
+  """Load user configuration file"""
+  self.config = {}
+  self.parser = ConfigParser.ConfigParser()
+  if not os.path.isfile(self.configfile):
+   self.parser.write(open(self.configfile, 'w'))
+  self.parser.readfp(open(self.configfile, 'r'))
+
+  variables = { \
+   'mplayer':  ['paths', self.findProgram("mplayer")], \
+   'mencoder':  ['paths', self.findProgram("mencoder")], \
+   'tcprobe':  ['paths', self.findProgram("tcprobe")], \
+   'transcode':  ['paths', self.findProgram("transcode")], \
+   'ogmmerge':  ['paths', self.findProgram("ogmmerge")], \
+   'outputdir':  ['paths', os.path.expanduser("~")], \
+   }
+
+  for key in variables.keys():
+   self.cautiousLoad(variables[key][0], key, variables[key][1])
+
+ def cautiousLoad(self, section, var, default):
+  """Load a configurable variable within an exception clause,
+  in case variable is not in configuration file"""
+  try:
+   self.config[var] = int(self.parser.get(section, var))
+  except:
+   self.config[var] = default
+   try:
+    self.parser.set(section, var, default)
+   except:
+    self.parser.add_section(section)
+    self.parser.set(section, var, default)
+   self.parser.write(open(self.configfile, 'w'))
+
+
+ def findProgram(self, program):
+  """Looks for program in path, and returns full path if found"""
+  for path in config.paths:
+   if os.path.isfile(os.path.join(path, program)):
+    return os.path.join(path, program)
+  self.ui_configError(program)
+
+ def run(self):
+  syslog.openlog('mediaConvertor', syslog.LOG_PID,syslog.LOG_DAEMON)
+  syslog.syslog('daemon started, entering loop')
+  wm = WatchManager()
+  mask = IN_DELETE | IN_CREATE
+  notifier = ThreadedNotifier(wm, myLog())
+  notifier.start()
+  wdd = wm.add_watch(self.config['outputdir'], mask, rec=True)
+  while True:
+   time.sleep(1)
+  wm.rm_watch(wdd.values())
+  notifier.stop()
+  syslog.syslog('exiting media convertor')
+  syslog.closelog()
+
+if __name__ == "__main__":
+ daemon = MyDaemon('/tmp/mediaconvertor.pid')
+ if len(sys.argv) == 2:
+  if 'start' == sys.argv[1]:
+   daemon.run()
+  if 'stop' == sys.argv[1]:
+   daemon.stop()
+  if 'restart' == sys.argv[1]:
+   daemon.restart()
+  else:
+   print "Unknown Command"
+   sys.exit(2)
+  sys.exit(0)
+ else:
+  print "Usage: %s start|stop|restart" % sys.argv[0]
+  sys.exit(2)
+

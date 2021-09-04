@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# configuration stuff
+
+# ${1} absolute path file
+# ${2} num_files
+# ${3} output_filename
+# ${4} ipMainframe ip to put files
+# ${5} FTP username
+# ${6} FTP password
+# ${7} destination filename
+
+if [ ! $# == 7 ]; then
+        #number of parameter different of two
+        echo "Number of parameter incorrect"
+        echo "Command use: LLP_split_gzip_sendFTPandTrigger.sh absolute_path_file number_of_pieces output_filename ipMainframe userFTP pwdFTP destinationFilename"
+        exit 1
+fi
+
+if [ -f ${1} ]; then
+        # If file exists
+        if [[ ${2} =~ ^[\-0-9]+$ ]] && (( ${2} > 0)); then
+                # if number of pieces is an integer > 0
+                #Remove old files
+                echo "home directory = $HOME"
+                CMD=`rm -f '"$HOME"/"$3"*'`
+                if [ $? != 0 ]; then
+                        echo "Impossible to remove old files $home/llp_tmp* $home/"$3"* in home directory"
+                        echo $CMD
+                fi
+                # Calculate line for every file splitted
+                total_lines=$(cat ${1} | wc -l)
+                ((lines_per_file = (total_lines + ${2} - 1) / ${2}))
+                # Split the actual file, maintaining lines.
+                CMD=`split -l "$lines_per_file" "$1" "$HOME"/llp_tmp`
+                if [ $? != 0 ]; then
+                        echo "SPLITTING FILE ERROR: problem to split file."
+                        echo $CMD
+                        exit 3
+                fi
+                #For every file splitted rename and zip it
+                i=1
+                for file in $HOME/llp_tmp*; do
+                        CMD=`mv "$file" "$3"."$i"`
+                        if [ $? != 0 ]; then
+                                echo "Impossible to rename file"
+                                echo $CMD
+                                exit 5
+                        fi
+                        CMD=`gzip "$3"."$i"`
+                        if [ $? != 0 ]; then
+                                echo "Impossible to compress file $3.$i"
+                                echo $CMD
+                                exit 6
+                        fi
+                        i=`expr $i + 1`
+                done
+                ftp -n ${4} << EOF
+
+                j=1
+                user ${5} ${6}
+                for file in $3.*; do
+                        put ${file} ${7}.T${j}(+1)
+                        j=`expr $j + 1`
+                done
+                quit
+        else
+                echo "number of pieces second parameter must be more than 0."
+                exit 2
+        fi
+else
+        echo "absolute path first paramater doesnt exist"
+        exit 1
+fi
+exit 0
+

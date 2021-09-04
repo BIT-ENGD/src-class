@@ -1,0 +1,46 @@
+    // (somewhere in the code)
+{
+    MPQFile curAdt(FilePath);    
+    size_t size = curAdt.getSize(); // roughly 1.6 mb
+    bufferstream memorybuf((char*)curAdt.getBuffer(), curAdt.getSize());
+    // bufferstream.m_buf.m_buffer is now 'REVM\0' (Debugger says so), 
+    // but internal length field still at 1.6 mb
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// wrapper around a file oof the mpq_archive of libmpq
+MPQFile::MPQFile(const char* filename)    // I apologize my naming inconsistent convention :P
+{
+    for(ArchiveSet::iterator i=gOpenArchives.begin(); i!=gOpenArchives.end();++i)
+    {
+        // gOpenArchives points to MPQArchive, wrapper around the mpq_archive, has mpq_archive * mpq_a as member
+        mpq_archive &mpq_a = (*i)->mpq_a; 
+
+        // if file exists in that archive, tested via hash table in file, not important here, scroll down if you want
+
+        mpq_hash hash = (*i)->GetHashEntry(filename);
+        uint32 blockindex = hash.blockindex;
+
+        if ((blockindex == 0xFFFFFFFF) || (blockindex == 0)) {
+            continue; //file not found
+        }
+
+        uint32 fileno = blockindex;
+
+        // Found!
+        size = libmpq_file_info(&mpq_a, LIBMPQ_FILE_UNCOMPRESSED_SIZE, fileno);
+        // HACK: in patch.mpq some files don't want to open and give 1 for filesize
+        if (size<=1) {
+            eof = true;
+            buffer = 0;
+            return;
+        }
+        buffer = new char[size];  // note: size is 1.6 mb at this time
+
+        // Now here comes the tricky part... if I step over the libmpq_file_getdata
+        // function, I'll get my truncated char array, which I absolutely don't want^^
+        libmpq_file_getdata(&mpq_a, hash, fileno, (unsigned char*)buffer);
+        return;
+    }
+}
+

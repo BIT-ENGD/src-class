@@ -1,0 +1,614 @@
+btnClear_click
+LoadFilteredEvent
+Imports System.Management
+
+Public Class LogMonitor
+#Region "attributes"
+
+    Private _currentWql As StringBuilder
+    Private _enabled As Boolean
+    Private _entries As ArrayList
+    Private _logWatcher As ManagementEventWatcher
+    Private _machine As StringBuilder
+    Private _previousFromDate As DateTime
+    Private _previousToDate As DateTime
+    Private _previousStatus As Int16
+    Private _previousMessage As StringBuilder
+    Private _scope As ManagementScope
+    Private _service As StringBuilder
+    Private _tempEntries As ArrayList
+
+    Public Event ExportCompleted()
+    Public Event ExportStarted(ByVal ExportedResultCount As Integer)
+    Public Event ExportUpdated(ByVal CurrentEntry As Integer)
+    Public Event FilteringCompleted()
+    Public Event FilteringStarted(ByVal LogEntryCount As Integer)
+    Public Event FilteringUpdated(ByVal CurrentEntry As Integer)
+
+#End Region
+#Region "constructor"
+
+    Public Sub New(ByVal ComputerName As String, ByVal ServiceName As String)
+        ' This call is required by the Windows Form Designer.
+        InitializeComponent()
+
+        ' Add any initialization after the InitializeComponent() call.
+        _machine = New StringBuilder(ComputerName)
+        _service = New StringBuilder(ServiceName)
+
+        Me.Icon = Nothing
+        Me.Text = ServiceName
+
+        _enabled = True
+        _previousFromDate = Now
+        _previousToDate = Now
+        _previousStatus = 0
+        _previousMessage = New StringBuilder()
+
+        _tempEntries = New ArrayList()
+
+        Dim compPath As String = "\\" & _machine.ToString & "\root\cimv2"
+        _scope = New ManagementScope(compPath, New ConnectionOptions())
+
+        _scope.Connect()
+
+        _logWatcher = New ManagementEventWatcher(New EventQuery(BuildWatcherWql()))
+        _logWatcher.Scope = _scope
+        AddHandler _logWatcher.EventArrived, AddressOf EventAdded
+
+        Dim watcherThread As New Threading.Thread(AddressOf _logWatcher.Start)
+        watcherThread.Start()
+    End Sub
+
+#End Region
+#Region "events"
+
+    Private Sub btnClear_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnClear.Click
+        dtpFilter.Value = Now.ToShortDateString
+        SetCurrentWqlToCurrent()
+
+        _logWatcher.Start()
+
+        ' use a thread from the application's thread pool
+        Threading.ThreadPool.QueueUserWorkItem(AddressOf FilterLogWorker)
+    End Sub
+
+    Private Sub btnFilter_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnFilter.Click
+        SetCurrentWqlToFiltered()
+
+        If dtpFilter.Value.Equals(Now.ToShortDateString) Then
+            _logWatcher.Start()
+        Else
+            _logWatcher.Stop()
+        End If
+        ' use a thread from the application's thread pool to load the new working directory
+        Threading.ThreadPool.QueueUserWorkItem(AddressOf FilterLogWorker)
+    End Sub
+
+    Private Sub btnSearch_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnSearch.Click
+        Dim sf As New SearchFields
+        sf.FromDate = _previousFromDate
+        sf.ToDate = _previousToDate
+        sf.EventStatus = _previousStatus
+        sf.Message = _previousMessage.ToString
+
+        If sf.ShowDialog = Windows.Forms.DialogResult.OK Then
+            _previousFromDate = sf.FromDate
+            _previousToDate = sf.ToDate
+            _previousStatus = sf.EventStatus
+            _previousMessage = New StringBuilder(sf.Message.Trim)
+
+            SetCurrentWqlToSearched()
+
+            _logWatcher.Stop()
+
+            ' use a thread from the application's thread pool to load the new working directory
+            Threading.ThreadPool.QueueUserWorkItem(AddressOf FilterLogWorker)
+        End If
+    End Sub
+
+    Private Sub cmExport_ExportToFile_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmExport_ExportToFile.Click
+        If sfdExport.ShowDialog = Windows.Forms.DialogResult.OK Then
+            ExportEntriesToFile(sfdExport.FileName)
+        End If
+    End Sub
+
+    Private Sub cmExport_ExportToEmail_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmExport_ExportToEmail.Click
+        ExportEntriesToEmail()
+    End Sub
+
+    Private Sub cmExport_ExportToExcel_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmExport_ExportToExcel.Click
+        If sfdExcel.ShowDialog = Windows.Forms.DialogResult.OK Then
+            ExportEntriesToExcel(sfdExcel.FileName)
+        End If
+    End Sub
+
+    Private Sub EventAdded(ByVal sender As Object, ByVal e As EventArrivedEventArgs)
+        Dim handler As New ReceiveNewEventHandler(AddressOf ReceiveNewEvent)
+        Dim args() As Object = {e}
+
+        Me.Invoke(handler, args)
+    End Sub
+
+    Private Sub LogMonitor_Disposed(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Disposed
+        _logWatcher.Stop()
+        _logWatcher.Dispose()
+    End Sub
+
+    Private Sub LogMonitor_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+        dtpFilter.Value = Now.ToShortDateString()
+    End Sub
+
+    Private Sub tvEntries_DoubleClick(ByVal sender As Object, ByVal e As System.EventArgs) Handles tvEntries.DoubleClick
+        If IsNothing(tvEntries.SelectedNode) = False Then
+            Dim id As Long = CLng(tvEntries.SelectedNode.Tag)
+
+            Dim ev As New EventViewer(_machine.ToString, id)
+            ev.Show()
+        End If
+    End Sub
+
+#End Region
+#Region "functions"
+
+    Private Sub AddNewEvent(ByVal EventObject As ManagementObject)
+        tvEntries.Nodes.Add(BuildLogNodeFromObject(EventObject))
+    End Sub
+
+    Private Sub AddNewEvent(ByVal EventProperty As PropertyData)
+        tvEntries.Nodes.Add(BuildLogNodeFromProperty(EventProperty))
+    End Sub
+
+    Private Function BuildLogNodeFromObject(ByVal EventObject As ManagementObject) As TreeNode
+        Dim tempGenTime As String = EventObject.GetPropertyValue("TimeGenerated").ToString()
+        Dim eventGenTime As DateTime = New DateTime(CInt(tempGenTime.Substring(0, 4)),
+                                                    CInt(tempGenTime.Substring(4, 2)),
+                                                    CInt(tempGenTime.Substring(6, 2)),
+                                                    CInt(tempGenTime.Substring(8, 2)),
+                                                    CInt(tempGenTime.Substring(10, 2)),
+                                                    CInt(tempGenTime.Substring(12, 2)))
+        Dim eventMessage As String = EventObject.GetPropertyValue("Message").ToString
+        Dim newLineIndex As Integer = eventMessage.IndexOf(vbCrLf)
+
+        Dim msg As New StringBuilder
+        msg.Append(eventGenTime.ToString("MM/dd/yyyy HH:mm:ss"))
+        msg.Append(" - ")
+        msg.Append(eventMessage.Substring(0, newLineIndex))
+        If eventMessage.Length > newLineIndex + 2 Then msg.Append("(more)")
+
+        Dim myNode As New TreeNode
+        myNode.Text = msg.ToString
+        myNode.Tag = EventObject.GetPropertyValue("RecordNumber").ToString
+
+        If EventObject.GetPropertyValue("Type").ToString.Equals("Error") Then myNode.ForeColor = Color.Red
+        If EventObject.GetPropertyValue("Type").ToString.Equals("Warning") Then myNode.ForeColor = Color.Orange
+
+        Return myNode
+    End Function
+
+    Private Function BuildLogNodeFromProperty(ByVal EventProperty As PropertyData) As TreeNode
+        Dim mbo As ManagementBaseObject = CType(EventProperty.Value, ManagementBaseObject)
+        Dim tempGenTime As String = mbo.Properties("TimeGenerated").Value.ToString()
+        Dim eventGenTime As DateTime = New DateTime(CInt(tempGenTime.Substring(0, 4)),
+                                                    CInt(tempGenTime.Substring(4, 2)),
+                                                    CInt(tempGenTime.Substring(6, 2)),
+                                                    CInt(tempGenTime.Substring(8, 2)),
+                                                    CInt(tempGenTime.Substring(10, 2)),
+                                                    CInt(tempGenTime.Substring(12, 2)))
+        Dim eventMessage As String = mbo.Properties("Message").Value.ToString()
+        Dim newLineIndex As Integer = eventMessage.IndexOf(vbCrLf)
+
+        Dim msg As New StringBuilder
+        msg.Append(eventGenTime.ToString("MM/dd/yyyy HH:mm:ss"))
+        msg.Append(" - ")
+        msg.Append(eventMessage.Substring(0, newLineIndex))
+        If eventMessage.Length > newLineIndex + 2 Then msg.Append("(more)")
+
+        Dim myNode As New TreeNode
+        myNode.Text = msg.ToString
+        myNode.Tag = mbo.Properties("RecordNumber").Value.ToString
+
+        If mbo.Properties("Type").Value.ToString.Equals("Error") Then myNode.ForeColor = Color.Red
+        If mbo.Properties("Type").Value.ToString.Equals("Warning") Then myNode.ForeColor = Color.Orange
+
+        Return myNode
+    End Function
+
+    Private Function BuildWatcherWql() As String
+        Dim wql As New StringBuilder("SELECT TimeGenerated, Message, RecordNumber, Type FROM __InstanceCreationEvent WHERE TargetInstance ISA  'Win32_NTLogEvent' ")
+        wql.Append("AND TargetInstance.LogFile = 'Application' AND TargetInstance.SourceName = '")
+        wql.Append(_service.ToString)
+        wql.Append("'")
+
+        Return wql.ToString
+    End Function
+
+    Private Sub DisableControls()
+        Me.Invoke(New DisableControlsHandler(AddressOf DisableControls_Impl))
+    End Sub
+
+    Private Sub DisableControls_Impl()
+        Enabled = False
+    End Sub
+
+    Private Sub EnableControls()
+        Me.Invoke(New EnableControlsHandler(AddressOf EnableControls_Impl))
+    End Sub
+
+    Private Sub EnableControls_Impl()
+        Enabled = True
+    End Sub
+
+    Private Sub EventLogWorker(ByVal state As Object)
+        SyncLock tvEntries.GetType
+            tvEntries.Invoke(CType(AddressOf LoadServiceHistory, MethodInvoker))
+        End SyncLock
+    End Sub
+
+    Private Sub ExportEntriesToEmail()
+        RaiseEvent ExportStarted(tvEntries.Nodes.Count)
+
+        Try
+            Dim outlook As Object = CreateObject("Outlook.Application")
+            Dim mailMsg As Object
+            Const olMailItem = 0
+
+            mailMsg = outlook.CreateItem(olMailItem)
+
+            Dim bodyText As New StringBuilder
+            For i As Integer = 0 To tvEntries.Nodes.Count - 1
+                bodyText.AppendLine(tvEntries.Nodes(i).Text)
+                RaiseEvent ExportUpdated(i)
+            Next
+
+            mailMsg.Body = bodyText.ToString
+            mailMsg.Subject = Me.Text & " exported results"
+            mailMsg.Display()
+
+            mailMsg = Nothing
+            outlook = Nothing
+        Catch ex As Exception
+            MessageBox.Show("Problem exporting to Outlook." & vbCr & ex.Message, "Service Monitor Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+
+        RaiseEvent ExportCompleted()
+    End Sub
+
+    Private Sub ExportEntriesToFile(ByVal FileName As String)
+        RaiseEvent ExportStarted(tvEntries.Nodes.Count)
+
+        Try
+            Dim myFile As New IO.FileInfo(FileName)
+            Dim myWriter As IO.TextWriter = myFile.CreateText()
+
+            For i As Integer = 0 To tvEntries.Nodes.Count - 1
+                myWriter.WriteLine(tvEntries.Nodes(i).Text)
+                RaiseEvent ExportUpdated(i)
+            Next
+
+            myWriter.Close()
+            myWriter.Dispose()
+        Catch ex As Exception
+            MessageBox.Show("Problem exporting to text file." & vbCr & ex.Message, "Service Monitor Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+
+        RaiseEvent ExportCompleted()
+    End Sub
+
+    Private Sub ExportEntriesToExcel(ByVal FileName As String)
+        RaiseEvent ExportStarted(tvEntries.Nodes.Count)
+
+        Dim excel As Object = Nothing
+        Dim xlWorkbook As Object = Nothing
+        Dim xlWorksheet As Object = Nothing
+
+        Try
+            'Try to Open Excel, Add a workbook and worksheet
+            excel = CreateObject("Excel.Application")
+            xlWorkbook = excel.Workbooks.Add
+            xlWorksheet = xlWorkbook.Sheets.Item(1)
+        Catch ex As Exception
+            MessageBox.Show("Problem exporting to Excel." & vbCr & ex.Message, "Service Monitor Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Try
+                If Not IsNothing(xlWorkbook) Then
+                    xlWorkbook.Close()  'If an error occured we want to close the workbook
+                End If
+                If Not IsNothing(excel) Then
+                    excel.Quit() 'If an error occured we want to close Excel
+                End If
+            Catch
+            End Try
+            xlWorksheet = Nothing
+            xlWorkbook = Nothing
+            excel = Nothing
+            RaiseEvent ExportCompleted()
+            Exit Sub
+        End Try
+
+        Try
+            excel.DisplayAlerts = False    'This will prevent any message prompts from Excel (IE.."Do you want to save before closing?")
+            excel.Visible = False    'We don't want the app visible while we are populating it.
+
+            For i As Integer = 0 To tvEntries.Nodes.Count - 1
+                Dim logTimeCell As Object = xlWorksheet.Range("A" & (i + 1))
+                Dim messageCell As Object = xlWorksheet.Range("B" & (i + 1))
+
+                Dim messageParts() As String = tvEntries.Nodes(i).Text.Split("-")
+
+                logTimeCell.Value = messageParts(0).Trim
+                messageCell.Value = messageParts(1).Trim
+
+                logTimeCell = Nothing
+                messageCell = Nothing
+
+                RaiseEvent ExportUpdated(i)
+            Next
+
+            Dim outputRange = xlWorksheet.Range("A1:B" & tvEntries.Nodes.Count)
+            outputRange.Columns.AutoFit()
+            outputRange = Nothing
+
+            xlWorkbook.SaveAs(FileName)
+            xlWorkbook.Close()
+            excel.Quit()
+        Catch ex As Exception
+            MessageBox.Show("While trying to Export to Excel recieved error:" & ex.Message, "Export to Excel Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Try
+                xlWorkbook.Close()  'If an error occured we want to close the workbook
+                excel.Quit() 'If an error occured we want to close Excel
+            Catch
+            End Try
+        Finally
+            xlWorksheet = Nothing
+            xlWorkbook = Nothing
+            excel = Nothing
+        End Try
+
+        RaiseEvent ExportCompleted()
+    End Sub
+
+    Private Sub FilterLogWorker(ByVal state As Object)
+        SyncLock tvEntries.GetType
+            tvEntries.Invoke(CType(AddressOf LoadFilteredEvents, MethodInvoker))
+        End SyncLock
+    End Sub
+
+    Private Sub InsertNewEvent(ByVal EventObject As ManagementObject)
+        tvEntries.Nodes.Insert(0, BuildLogNodeFromObject(EventObject))
+    End Sub
+
+    Private Sub InsertNewEvent(ByVal EventProperty As PropertyData)
+        tvEntries.Nodes.Insert(0, BuildLogNodeFromProperty(EventProperty))
+    End Sub
+
+    Public Sub LoadEntries()
+        ' use a thread from the application's thread pool to load the new working directory
+        Threading.ThreadPool.QueueUserWorkItem(AddressOf EventLogWorker)
+    End Sub
+
+    Public Sub LoadEntries(ByVal LogEntries As ArrayList)
+        _entries = LogEntries
+        LoadEntries()
+    End Sub
+
+    Private Sub LoadFilteredEvents()
+        Dim search As New ManagementObjectSearcher(_scope.Path.ToString, _currentWql.ToString)
+        Dim results As ManagementObjectCollection = search.Get
+        Dim resultCounter As Integer = 0
+
+        RaiseFilteringStartedEvent(results.Count)
+
+        DisableControls()
+
+        tvEntries.Nodes.Clear()
+
+        For Each result As ManagementObject In results
+            AddNewEvent(result)
+
+            resultCounter += 1
+            RaiseFilteringUpdatedEvent(resultCounter)
+        Next
+
+        results.Dispose()
+        search.Dispose()
+
+        EnableControls()
+        RaiseFilteringCompletedEvent()
+    End Sub
+
+    Private Sub LoadServiceHistory()
+        tvEntries.Nodes.Clear()
+
+        For Each entry As ManagementObject In _entries
+            AddNewEvent(entry)
+        Next
+
+        _entries.Clear()
+    End Sub
+
+    Private Sub RaiseFilteringCompletedEvent()
+        Dim handler As New RaiseFilteringCompletedEventHandler(AddressOf RaiseFilteringCompletedEvent_Impl)
+        Me.Invoke(handler)
+    End Sub
+
+    Private Sub RaiseFilteringCompletedEvent_Impl()
+        RaiseEvent FilteringCompleted()
+    End Sub
+
+    Private Sub RaiseFilteringStartedEvent(ByVal MaxValue As Integer)
+        Dim handler As New RaiseFilteringStartedEventHandler(AddressOf RaiseFilteringStartedEvent_Impl)
+        Dim args() As Object = {MaxValue}
+
+        Me.Invoke(handler, args)
+    End Sub
+
+    Private Sub RaiseFilteringStartedEvent_Impl(ByVal MaxValue As Integer)
+        RaiseEvent FilteringStarted(MaxValue)
+    End Sub
+
+    Private Sub RaiseFilteringUpdatedEvent(ByVal Index As Integer)
+        Dim handler As New RaiseFilteringUpdatedEventHandler(AddressOf RaiseFilteringUpdatedEvent_Impl)
+        Dim args() As Object = {Index}
+
+        Me.Invoke(handler, args)
+    End Sub
+
+    Private Sub RaiseFilteringUpdatedEvent_Impl(ByVal Index As Integer)
+        RaiseEvent FilteringUpdated(Index)
+    End Sub
+
+    Private Sub ReceiveNewEvent(ByVal NewEvent As EventArrivedEventArgs)
+        If _enabled Then
+            InsertNewEvent(NewEvent.NewEvent.Properties("TargetInstance"))
+        Else
+            _tempEntries.Add(NewEvent.NewEvent.Properties("TargetInstance"))
+        End If
+    End Sub
+
+    Private Sub RelocateTempEntries()
+        For i As Integer = 0 To _tempEntries.Count - 1
+            InsertNewEvent(_tempEntries(i))
+        Next
+
+        _tempEntries.Clear()
+    End Sub
+
+    Private Sub SetCurrentWqlToCurrent()
+        _currentWql = New StringBuilder
+
+        With _currentWql
+            .Append("SELECT TimeGenerated, Message, RecordNumber, Type FROM Win32_NTLogEvent WHERE LogFile = 'Application' AND SourceName = '")
+            .Append(_service.ToString)
+            .Append("' AND TimeGenerated > '")
+            .Append(Now.Year.ToString("0000"))
+            .Append(Now.Month.ToString("00"))
+            .Append(Now.Day.ToString("00"))
+            .Append("'")
+        End With
+    End Sub
+
+    Private Sub SetCurrentWqlToFiltered()
+        _currentWql = New StringBuilder
+
+        With _currentWql
+            .Append("SELECT TimeGenerated, Message, RecordNumber, Type FROM Win32_NTLogEvent WHERE LogFile = 'Application' AND SourceName = '")
+            .Append(_service.ToString)
+            .Append("' AND TimeGenerated > '")
+            .Append(dtpFilter.Value.Year.ToString("0000"))
+            .Append(dtpFilter.Value.Month.ToString("00"))
+            .Append(dtpFilter.Value.Day.ToString("00"))
+            .Append("' AND TimeGenerated < '")
+
+            Dim filterEnd As DateTime = dtpFilter.Value.AddDays(1)
+            .Append(filterEnd.Year.ToString("0000"))
+            .Append(filterEnd.Month.ToString("00"))
+            .Append(filterEnd.Day.ToString("00"))
+            .Append("'")
+        End With
+    End Sub
+
+    Private Sub SetCurrentWqlToSearched()
+        _currentWql = New StringBuilder
+
+        With _currentWql
+            .Append("SELECT TimeGenerated, Message, RecordNumber, Type FROM Win32_NTLogEvent WHERE LogFile = 'Application' AND SourceName = '")
+            .Append(_service.ToString)
+            .Append("' AND TimeGenerated > '")
+            .Append(_previousFromDate.Year.ToString("0000"))
+            .Append(_previousFromDate.Month.ToString("00"))
+            .Append(_previousFromDate.Day.ToString("00"))
+            .Append("' AND TimeGenerated < '")
+
+            Dim toDate As DateTime = _previousToDate.AddDays(1)
+            .Append(toDate.Year.ToString("0000"))
+            .Append(toDate.Month.ToString("00"))
+            .Append(toDate.Day.ToString("00"))
+            .Append("' ")
+
+            Select Case _previousStatus
+                Case 1
+                    .Append("AND Type = 'Information' ")
+                Case 2
+                    .Append("AND Type = 'Warning' ")
+                Case 3
+                    .Append("AND Type = 'Error' ")
+            End Select
+
+            .Append("AND Message LIKE '%")
+            .Append(_previousMessage.ToString)
+            .Append("%'")
+        End With
+    End Sub
+
+#End Region
+#Region "deletegate methods"
+
+    Private Delegate Sub DisableControlsHandler()
+    Private Delegate Sub EnableControlsHandler()
+    Private Delegate Sub RaiseFilteringCompletedEventHandler()
+    Private Delegate Sub RaiseFilteringStartedEventHandler(ByVal MaxValue As Integer)
+    Private Delegate Sub RaiseFilteringUpdatedEventHandler(ByVal Index As Integer)
+    Private Delegate Sub ReceiveNewEventHandler(ByVal NewEvent As EventArrivedEventArgs)
+
+#End Region
+#Region "properties"
+
+    Public Property ComputerName() As String
+        Get
+            Return _machine.ToString
+        End Get
+        Set(ByVal value As String)
+            _machine = New StringBuilder(value)
+        End Set
+    End Property
+
+    Public Shadows Property Enabled() As Boolean
+        Get
+            Return _enabled
+        End Get
+        Set(ByVal value As Boolean)
+            _enabled = value
+            dtpFilter.Enabled = value
+            btnClear.Enabled = value
+            btnExport.Enabled = value
+            btnFilter.Enabled = value
+            btnSearch.Enabled = value
+
+            If _enabled = False And _tempEntries.Count > 0 Then
+                RelocateTempEntries()
+            End If
+        End Set
+    End Property
+
+    Public Property LogEntries() As ArrayList
+        Get
+            Return _entries
+        End Get
+        Set(ByVal value As ArrayList)
+            _entries = value
+        End Set
+    End Property
+
+    Public Property ServiceName() As String
+        Get
+            Return _service.ToString
+        End Get
+        Set(ByVal value As String)
+            _service = New StringBuilder(value)
+            Me.Text = value
+        End Set
+    End Property
+
+#End Region
+
+    Private Sub tmrReconnect_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles tmrReconnect.Tick
+        'reconect the log watcher
+        _logWatcher.Stop()
+
+        GC.Collect()
+
+        _logWatcher.Start()
+    End Sub
+
+End Class
+

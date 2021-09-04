@@ -1,0 +1,130 @@
+ NSURL *website = [NSURL URLWithString:urlStr]; 
+        if (!website) { 
+            NSLog(@"%@ is not a valid URL"); 
+            return; 
+        } 
+        NSHost *host = [NSHost hostWithName:urlStr]; 
+        // iStream and oStream are instance variables 
+        [NSStream getStreamsToHost:host port:6667 inputStream:&iStream 
+                      outputStream:&oStream]; 
+        [iStream retain]; 
+        [oStream retain]; 
+        [iStream setDelegate:self]; 
+        [oStream setDelegate:self]; 
+        [iStream scheduleInRunLoop:[NSRunLoop currentRunLoop] 
+                           forMode:NSDefaultRunLoopMode]; 
+        [oStream scheduleInRunLoop:[NSRunLoop currentRunLoop] 
+                           forMode:NSDefaultRunLoopMode]; 
+        [iStream open]; 
+        [oStream open]; 
+
+- (void)stream:(NSStream *)theStream handleEvent:(NSStreamEvent)streamEvent
+{
+    NSString *io;
+
+    if (theStream == iStream) io = @">>";
+    else io = @"<<";
+    NSLog(@"stream : %@",theStream);
+
+    NSString *event;
+    switch (streamEvent)
+    {
+        case NSStreamEventNone:
+            event = @"NSStreamEventNone";
+            break;
+        case NSStreamEventOpenCompleted:
+            event = @"NSStreamEventOpenCompleted";
+            break;
+        case NSStreamEventHasBytesAvailable:{
+            event = @"NSStreamEventHasBytesAvailables";
+            if (theStream == iStream)
+            {
+                if(!_data) { 
+                    _data = [[NSMutableData data] retain]; 
+                } 
+                uint8_t buf[1024]; 
+                unsigned int len = 0; 
+                len = [iStream read:buf maxLength:1024]; 
+                NSLog(@"Lenght data read : %d", len);
+                if(len) { 
+                    NSData * dataReceived= [[NSString stringWithFormat:@"%s\n", (char *)buf] dataUsingEncoding:NSUTF8StringEncoding];
+                    NSString *s = [[NSString alloc] initWithData:dataReceived encoding:NSUTF8StringEncoding];
+                    NSLog(@"Received _data: \"%@\"\n",s);
+
+
+
+                } else { 
+                    NSLog(@"nothing to read!"); 
+                } 
+            }else {
+                NSLog(@"Not the good stream");
+            }
+
+            break;
+        }
+
+        case NSStreamEventHasSpaceAvailable:{
+            event = @"NSStreamEventHasSpaceAvailable";
+            if (theStream == oStream )
+            {
+                if(isConnexionCommandSent == NO){
+                    [self sendCommand:@"My connection command"];    
+                    isConnexionCommandSent = YES;
+                }
+
+            }
+
+            break;
+        }
+
+        case NSStreamEventErrorOccurred:
+            event = @"NSStreamEventErrorOccurred";
+            NSError *theError = [theStream streamError]; 
+            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Error" message:[theError localizedDescription]
+                                                           delegate:nil cancelButtonTitle:@"OK" otherButtonTitles: nil];
+            [alert show];
+            [alert release];
+            break;
+        case NSStreamEventEndEncountered:
+            event = @"NSStreamEventEndEncountered";
+
+            break;
+        default:
+            event = @"** Unknown";
+    }
+
+    NSLog(@"%@ : %@", io, event);
+}
+
+- (IBAction)join:(id)sender{
+    if([oStream hasSpaceAvailable]){
+        NSLog(@"iStream Status : %d",[iStream streamStatus]);
+        NSLog(@"oStream Status : %d",[oStream streamStatus]);
+        [self sendCommand:@"join"];
+
+    }else{
+        NSLog(@"Error command can't be sent");      
+    }
+}
+
+-(void) sendCommand:(NSString *) command{
+    NSLog(@"space : %d",[oStream hasSpaceAvailable]);
+    if ([oStream hasSpaceAvailable])
+    {
+        NSLog(@"Command writen : %s\n",[command cStringUsingEncoding:NSASCIIStringEncoding]);
+        NSInteger i=[oStream write:(const uint8_t *)[command cStringUsingEncoding:NSASCIIStringEncoding] maxLength:(NSInteger)[command lengthOfBytesUsingEncoding:NSASCIIStringEncoding]];
+        if (i<0)
+        {
+            NSLog(@"erreur lors de l'envoi, status:%i, erreur:%@", [oStream streamStatus], [oStream streamError]);
+        }
+        isReadyToSend = NO;
+    }
+
+    else
+    {
+        NSLog(@"impossible d'envoyer, status:%i, erreur:%@", [oStream streamStatus], [oStream streamError]);
+    }
+}
+
+NSInteger i=[oStream write:(const uint8_t *)[command cStringUsingEncoding:NSASCIIStringEncoding] maxLength:(NSInteger)[command lengthOfBytesUsingEncoding:NSASCIIStringEncoding]];
+

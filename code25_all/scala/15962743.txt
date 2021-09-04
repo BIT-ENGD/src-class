@@ -1,0 +1,87 @@
+def notFunctor[M[_] : Not[Functor]](m: M[_]) = s"$m is not a functor"
+
+Not[Functor]
+// type class for obtaining serialization size in bytes.
+trait SizeOf[A] { def sizeOf(a: A): Long }
+
+// type class specialized for types whose size may vary between instances
+trait VarSizeOf[A] extends SizeOf[A]
+
+// type class specialized for types whose elements share the same size (e.g. Int)
+trait FixedSizeOf[A] extends SizeOf[A] {
+  def fixedSize: Long
+  def sizeOf(a: A) = fixedSize
+}
+
+// SizeOf for container with fixed-sized elements and Length (using scalaz.Length)
+implicit def fixedSizeOf[T[_] : Length, A : FixedSizeOf] = new VarSizeOf[T[A]] {
+  def sizeOf(as: T[A]) = ... // length(as) * sizeOf[A]
+}
+
+// SizeOf for container with scalaz.Foldable, and elements with VarSizeOf
+implicit def foldSizeOf[T[_] : Foldable, A : SizeOf] = new VarSizeOf[T[A]] {
+  def sizeOf(as: T[A]) = ... // foldMap(a => sizeOf(a))
+}
+
+fixedSizeOf()
+Length
+Foldable
+FixedSizeOf
+Length
+Foldable
+FixedSizeOf
+List[Int]
+scala> implicitly[SizeOf[List[Int]]].sizeOf(List(1,2,3))
+<console>:24: error: ambiguous implicit values:
+ both method foldSizeOf of type [T[_], A](implicit evidence$1: scalaz.Foldable[T], implicit evidence$2: SizeOf[A])VarSizeOf[T[A]]
+ and method fixedSizeOf of type [T[_], A](implicit evidence$1: scalaz.Length[T], implicit evidence$2: FixedSizeOf[A])VarSizeOf[T[A]]
+ match expected type SizeOf[List[Int]]
+              implicitly[SizeOf[List[Int]]].sizeOf(List(1,2,3))
+
+Foldable
+Length
+FixedSizeOf
+foldSizeOf()
+VarSizeOf
+implicit def foldSizeOfVar[T[_] : Foldable, A : VarSizeOf] = // ...
+
+Foldable
+FixedSizeOf
+Length
+implicit def foldSizeOfFixed[T[_] : Foldable : Not[Length], A : FixedSizeOf] = // ...
+
+Not[Length]
+object Predef extends LowPriorityImplicits
+foldSizeOfFixed()
+SizeOf
+Option[TypeClass]
+Option[Length[List]]
+Foldable
+SizeOf
+Length
+FixedSizeOf
+implicit def optionalTypeClass[TC](implicit tc: TC = null) = Option(tc)
+type OptionalLength[T[_]] = Option[Length[T]]
+type OptionalFixedSizeOf[T[_]] = Option[FixedSizeOf[T]]
+
+implicit def sizeOfContainer[
+    T[_] : Foldable : OptionalLength,
+    A : SizeOf : OptionalFixedSizeOf]: SizeOf[T[A]] = new SizeOf[T[A]] {
+  def sizeOf(as: T[A]) = {
+
+    // optionally calculate using Length + FixedSizeOf is possible
+    val fixedLength = for {
+      lengthOf <- implicitly[OptionalLength[T]]
+      sizeOf <- implicitly[OptionalFixedSizeOf[A]]
+    } yield lengthOf.length(as) * sizeOf.fixedSize
+
+    // otherwise fall back to Foldable
+    fixedLength.getOrElse { 
+      val foldable = implicitly[Foldable[T]]
+      val sizeOf = implicitly[SizeOf[A]]
+      foldable.foldMap(as)(a => sizeOf.sizeOf(a))
+    }
+  }
+}
+
+fixedSizeOf()

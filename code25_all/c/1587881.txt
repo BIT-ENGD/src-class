@@ -1,0 +1,253 @@
+viper[1052]% gcc -Wall -o server server.c
+server.c: In function âMainServerLoopâ:
+server.c:45: warning: pointer targets in passing argument 3 of âacceptâ differ in signedness
+/tmp/ccQIY5wn.o: In function `MainServerLoop':
+server.c:(.text+0x6c): undefined reference to `ListCreate'
+server.c:(.text+0xb3): undefined reference to `ListCreate'
+server.c:(.text+0xcc): undefined reference to `ListAddInt'
+server.c:(.text+0x25b): undefined reference to `ListAddString'
+server.c:(.text+0x27d): undefined reference to `ListAddInt'
+server.c:(.text+0x4bf): undefined reference to `ListDeleteInt'
+server.c:(.text+0x4cc): undefined reference to `ListDeleteString'
+server.c:(.text+0x6d0): undefined reference to `ListDestroy'
+server.c:(.text+0x6d9): undefined reference to `ListDestroy'
+collect2: ld returned 1 exit status
+
+
+/*List.h */
+#ifndef __RUL_LIST_H__
+#define __RUL_LIST_H__
+
+#define MAX_STRING_LEN 21
+
+typedef struct TAG_LIST_ITEM {
+ union {
+  char strval[MAX_STRING_LEN];
+  int  intval;
+ } values;
+ struct TAG_LIST_ITEM *next;
+} ListItem;
+
+typedef struct TAG_LIST {
+ ListItem *first;
+ ListItem *last;
+ unsigned int count;
+} List;
+
+List *ListCreate();
+void ListDestroy(List **list);
+
+void ListAddString(List *, const char *item);
+void ListDeleteString(List *, const char *item);
+
+void ListAddInt(List *, int item);
+void ListDeleteInt(List *, int item);
+
+#endif
+/* List.h */
+
+/*Server.c*/
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h> 
+#include <errno.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "list.h"
+
+const int SERVER_PORT   = 13000;
+const int BUFFER_SIZE  = 256;
+const int MAX_BUFFER_NUM = 100;
+
+const int MAX_CLIENT_ID_LEN = MAX_STRING_LEN - 1;
+
+void MainServerLoop(int);
+void HandleClient(int connfd);
+int  Max(List *list);
+
+void MainServerLoop(int sockfd)
+{
+ char clientID[MAX_CLIENT_ID_LEN + 1];
+ List *listClientID = ListCreate();
+
+ int connfd, i;
+ struct sockaddr_in cliAddr;
+ int lenAddr = sizeof(cliAddr);
+
+ fd_set readfds;
+ FD_ZERO(&readfds);
+ List *listSock = ListCreate();
+ ListAddInt(listSock, sockfd);
+ FD_SET(sockfd, &readfds);
+
+ char readbuf[BUFFER_SIZE];
+ char writebuf[MAX_BUFFER_NUM][BUFFER_SIZE];
+ int numWriteBuf = 0;
+
+ while (select(Max(listSock) + 1, &readfds, NULL, NULL, NULL) >= 0)
+ {
+  if (FD_ISSET(sockfd, &readfds))  // listening socket
+  {
+   connfd = accept(sockfd, (struct sockaddr *)&cliAddr, &lenAddr);
+   if (connfd < 0)
+   {
+    printf("error while calling accept()\n");
+    exit(1);
+   }
+
+   int len = read(connfd, clientID, MAX_CLIENT_ID_LEN);
+   if (len > 0)
+   {
+    if (clientID[len] != '\0')
+    {
+     clientID[len] = '\0';
+    }
+
+    ListAddString(listClientID, clientID);
+    printf("user %s logged in\n", clientID);
+    ListAddInt(listSock, connfd);
+    printf("Number of user : %d\n", listClientID->count);
+    printf("Number of sock desc : %d\n" , listSock->count);
+
+    if (numWriteBuf < MAX_BUFFER_NUM)
+    {
+     sprintf(writebuf[numWriteBuf++], "User %s logged in\n", clientID);
+    }
+   }
+   else
+   {
+    close(connfd);
+   }
+  }
+
+  ListItem *sockItem = listSock->first;
+  if (sockItem) sockItem = sockItem->next; // bypass listening socket
+  ListItem *clientIDItem = listClientID->first;
+  while (sockItem != 0 && clientIDItem != 0)
+  {
+   if (FD_ISSET(sockItem->values.intval, &readfds)) // connected socket
+   {
+    int len = read(sockItem->values.intval, readbuf, BUFFER_SIZE - 1);
+    if (len > 0)
+    {
+     if (numWriteBuf < MAX_BUFFER_NUM)
+     {
+      readbuf[len] = '\0';
+      strcpy(writebuf[numWriteBuf], clientIDItem->values.strval);
+      strncat(writebuf[numWriteBuf], ": ", 2);
+      strncat(writebuf[numWriteBuf], readbuf, len);
+      ++numWriteBuf;
+     }
+    }
+    else if (len == 0)
+    {
+     ListItem *nextSock = sockItem->next;
+     ListItem *nextClient = clientIDItem->next;
+
+     FD_CLR(sockItem->values.intval, &readfds);
+     close(sockItem->values.intval);
+     printf("user %s logged off\n", clientIDItem->values.strval);
+     ListDeleteInt(listSock, sockItem->values.intval);
+     ListDeleteString(listClientID, clientIDItem->values.strval);
+     printf("Number of user : %d\n", listClientID->count);
+     printf("Number of sock desc : %d\n" , listSock->count);
+
+     if (numWriteBuf < MAX_BUFFER_NUM)
+     {
+      sprintf(writebuf[numWriteBuf++], 
+       "User %s logged off\n", clientIDItem->values.strval);
+     }
+
+     sockItem = nextSock;
+     clientIDItem = nextClient;
+     continue;
+    }
+   }
+
+   sockItem = sockItem->next;
+   clientIDItem = clientIDItem->next;
+  }
+
+  for (i = 0; i < numWriteBuf; ++i)
+  {
+   sockItem = listSock->first;
+   if (sockItem) sockItem = sockItem->next; // bypass listening socket
+   while (sockItem != 0)
+   {
+    write(sockItem->values.intval, writebuf[i], strlen(writebuf[i]) + 1);
+    sockItem = sockItem->next;
+   }
+  }
+  numWriteBuf = 0;
+
+  sockItem = listSock->first;
+  while (sockItem != 0)
+  {
+   FD_SET(sockItem->values.intval, &readfds);
+   sockItem = sockItem->next;
+  } 
+ }
+
+ printf("server error %d, exit !\n",errno);
+ ListDestroy(&listSock);
+ ListDestroy(&listClientID);
+}
+
+int Max(List *listInt)
+{
+ if (listInt->first == 0) return 0;
+
+ ListItem *curItem = listInt->first;
+ int max = curItem->values.intval;
+ curItem = curItem->next;
+
+ while (curItem != 0)
+ {
+  if (curItem->values.intval > max) 
+  {
+   max = curItem->values.intval;
+  }
+  curItem = curItem->next;
+ }
+
+ return max;
+}
+
+
+int main()
+{
+ int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+ if (sockfd < 0)
+ {
+  printf("socket() function failed\n");
+  exit(1);
+ }
+
+ struct sockaddr_in addr;
+ addr.sin_family = AF_INET;
+ addr.sin_addr.s_addr = htonl(INADDR_ANY);
+ addr.sin_port = htons(SERVER_PORT);
+
+ if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+ {
+  printf("bind() function failed\n");
+  exit(1);
+ }
+
+ if (listen(sockfd, SOMAXCONN) < 0)
+ {
+  printf("listen() function failed\n");
+  exit(1);
+ }
+
+ printf("server started, listening at port %d\n", SERVER_PORT);
+
+ MainServerLoop(sockfd);
+
+ return 0;
+}
+/* Server.c*/
+

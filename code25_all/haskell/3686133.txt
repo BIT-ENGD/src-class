@@ -1,0 +1,87 @@
+{-# LANGUAGE Arrows#-}
+module StatefulFunc where
+
+import Control.Category
+import Control.Arrow
+
+newtype StatefulFunc a b = SF { unSF :: a -> (StatefulFunc a b, b) }
+
+idSF :: StatefulFunc a a
+idSF = SF $ \a -> (idSF, a)
+
+dotSF :: StatefulFunc b c -> StatefulFunc a b -> StatefulFunc a c
+dotSF f g = SF $ \a -> 
+    let (g', b) = unSF g a
+        (f', c) = unSF f b
+    in (dotSF f' g', c)
+
+instance Category StatefulFunc where
+  id = idSF
+  (.) = dotSF
+
+arrSF :: (a -> b) -> StatefulFunc a b
+arrSF f = ret
+  where ret = SF fun
+        fun a = (ret, f a)
+
+bothSF :: StatefulFunc a b -> StatefulFunc a' b' -> StatefulFunc (a, a') (b, b')
+bothSF f g = SF $ \(a,a') ->
+    let (f', b) = unSF f a
+        (g', b') = unSF g a'
+    in (bothSF f' g', (b, b'))
+
+splitSF :: StatefulFunc a b -> StatefulFunc a b' -> StatefulFunc a (b, b')
+splitSF f g = SF $ \a ->
+    let (f', b) = unSF f a
+        (g', b') = unSF g a
+    in (splitSF f' g', (b, b'))
+
+instance Arrow StatefulFunc where
+  arr  = arrSF
+  first = flip bothSF idSF
+  second = bothSF idSF
+  (***) = bothSF
+  (&&&) = splitSF
+
+eitherSF :: StatefulFunc a b -> StatefulFunc a' b' -> StatefulFunc (Either a a') (Either b b')
+eitherSF f g = SF $ \e -> case e of
+      Left a -> let (f', b) = unSF f a in (eitherSF f' g, Left b)
+      Right a' -> let (g', b') = unSF g a' in (eitherSF f g', Right b')
+
+mergeSF :: StatefulFunc a b -> StatefulFunc a' b -> StatefulFunc (Either a a') b
+mergeSF f g = SF $ \e -> case e of 
+      Left a -> let (f', b) = unSF f a in (mergeSF f' g, b)
+      Right a' -> let (g', b) = unSF g a' in (mergeSF f g', b)
+
+instance ArrowChoice StatefulFunc where
+  left = flip eitherSF idSF
+  right = eitherSF idSF
+  (+++) = eitherSF
+  (|||) = mergeSF
+
+evalSF :: (StatefulFunc a b) -> a -> b
+evalSF f a = snd (unSF f a)
+
+givenState :: s -> (s -> a -> (s, b)) -> StatefulFunc a b
+givenState s f = SF $ \a -> let (s', b) = f s a in (givenState s' f, b)
+
+count :: StatefulFunc a Integer
+count = givenState 1 $ \c _ -> (c+1, c)
+
+countExample :: StatefulFunc a Integer
+countExample = proc _ -> do
+                  (count', one) <- count -< ()
+                  (count'', two) <- count' -< ()
+                  (count''', three) <- count'' -< ()
+                  returnA -< three
+
+countExample
+count'
+count''
+countExample :: Integer
+countExample =
+  let (count', one) = unSF count ()
+      (count'', two) = unSF count' ()
+      (count''', three) = unSF count'' ()
+  in three
+

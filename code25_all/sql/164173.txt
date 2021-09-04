@@ -1,0 +1,114 @@
+select 
+  score,
+  count(*) students,
+  count(finished) finished,
+  count(finished) / count(*)students   
+--  round((count(finished) / count(*)students),2) 
+from now_calc 
+group by score
+order by score
+
+select 
+  score,
+  count(students) students,
+  count(finished) finished,
+  round((count(finished) / count(students) * 100),2) perc
+from now_calc 
+group by score
+order by score
+
+--count of cohort members and total count of all students (for reference)
+select 
+  cohort_yr, 
+  count (*) id,
+  (select count (*) id from prog_enr_rec where cohort_yr is not null and prog = 'UNDG' and cohort_yr >=1998) grand
+from prog_enr_rec
+where cohort_yr is not null 
+and prog = 'UNDG'
+and cohort_yr >=1998
+group by cohort_yr
+order by cohort_yr;
+
+--cohort members from all years for population
+select 
+  id,  
+  cohort_yr,
+  cl,
+  enr_date,
+  prog
+from prog_enr_rec
+where cohort_yr is not null 
+and prog = 'UNDG'
+and cohort_yr >=1998
+order by cohort_yr
+into temp pop with no log;
+
+--which in population are still attending (726)
+select 
+  pop.id, 
+  'Y' fin 
+from pop, stu_acad_rec
+where pop.id = stu_acad_rec.id 
+and pop.prog = stu_acad_rec.prog
+and sess = 'FA'
+and yr = 2008
+and reg_hrs > 0
+and stu_acad_rec.cl[1,1] <> 'P'
+into temp att with no log;
+
+--which in population graduated with either A or B deg (702)
+select 
+  pop.id,
+  'Y' fin
+from pop, ed_rec
+where pop.id = ed_rec.id
+and pop.prog = ed_rec.prog
+and ed_rec.sch_id = 10 
+and (ed_rec.deg_earn[1,1] = 'B'
+or  (ed_rec.deg_earn[1,1] = 'A'
+and pop.id not in (select pop.id 
+           from pop, ed_rec
+           where pop.id = ed_rec.id
+           and pop.prog = ed_rec.prog
+           and ed_rec.deg_earn[1,1] = 'B'
+           and ed_rec.sch_id = 10)))
+into temp grad with no log;
+
+--combine all those that either graduated or are still attending
+select * from att
+union
+select * from grad
+into temp all_fin with no log;
+
+--ACT scores for all students in population who have a score (inner join to eliminate null values)
+--score > 50 eliminates people who have data entry errors - SAT scores in ACT field
+--2270
+select 
+  pop.id,
+  max (exam_rec.score5) score
+from pop, exam_rec
+where pop.id = exam_rec.id
+and ctgry = 'ACT'
+and score5 > 0 
+and score5 < 50
+group by pop.id
+into temp pop_score with no log;
+
+select 
+  pop.id students,
+  Case when all_fin.fin = 'Y' then 1 else null end finished,
+  pop_score.score
+from pop, pop_score, outer all_fin
+where pop.id = all_fin.id 
+and pop.id = pop_score.id
+into temp now_calc with no log;
+
+select 
+  score,
+  count(students) students,
+  count(finished) finished,
+  round((count(finished) / count(students) * 100),2) perc
+from now_calc 
+group by score
+order by score
+

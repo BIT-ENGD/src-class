@@ -1,0 +1,142 @@
+>>> def foo(x, y):
+...     print x, y
+...
+>>> bar = bind(foo, y=3)
+>>> bar(2)
+2 3
+
+>>> class Foo(object):
+...     def bar(self, x, y):
+...             print x, y
+...
+>>> a = Foo()
+>>> b = PureProxy(a, bar=bind(Foo.bar, y=3))
+>>> b.bar(2)
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+TypeError: bar() takes exactly 3 arguments (2 given)
+
+from types import MethodType
+
+class PureProxy(object):
+    def __init__(self, underlying, **substitutions):
+        self.underlying = underlying
+
+        for name in substitutions:
+            subst_attr = substitutions[name]
+            if hasattr(subst_attr, "underlying"):
+                setattr(self, name, MethodType(subst_attr, self, PureProxy))
+
+    def __getattribute__(self, name):
+        return getattr(object.__getattribute__(self, "underlying"), name)
+
+def bind(f, *args, **kwargs):
+    """ Lets you freeze arguments of a function be certain values. Unlike
+    functools.partial, you can freeze arguments by name, which has the bonus
+    of letting you freeze them out of order. args will be treated just like
+    partial, but kwargs will properly take into account if you are specifying
+    a regular argument by name. """
+    argspec = inspect.getargspec(f)
+    argdict = copy(kwargs)
+
+    if hasattr(f, "im_func"):
+        f = f.im_func
+
+    args_idx = 0
+    for arg in argspec.args:
+        if args_idx >= len(args):
+            break
+
+        argdict[arg] = args[args_idx]
+        args_idx += 1
+
+    num_plugged = args_idx
+
+    def new_func(*inner_args, **inner_kwargs):
+        args_idx = 0
+        for arg in argspec.args[num_plugged:]:
+            if arg in argdict:
+                continue
+            if args_idx >= len(inner_args):
+                # We can't raise an error here because some remaining arguments
+                # may have been passed in by keyword.
+                break
+            argdict[arg] = inner_args[args_idx]
+            args_idx += 1
+
+        f(**dict(argdict, **inner_kwargs))
+
+    new_func.underlying = f
+
+    return new_func
+
+from types import MethodType
+
+class PureProxy(object):
+    """ Intended usage:
+    >>> class Foo(object):
+    ...     def bar(self, x, y):
+    ...             print x, y
+    ...
+    >>> a = Foo()
+    >>> b = PureProxy(a, bar=FreezeArgs(y=3))
+    >>> b.bar(1)
+    1 3
+    """
+
+    def __init__(self, underlying, **substitutions):
+        self.underlying = underlying
+
+        for name in substitutions:
+            subst_attr = substitutions[name]
+            if isinstance(subst_attr, FreezeArgs):
+                underlying_func = getattr(underlying, name)
+                new_method_func = bind(underlying_func, *subst_attr.args, **subst_attr.kwargs)
+                setattr(self, name, MethodType(new_method_func, self, PureProxy))
+
+    def __getattr__(self, name):
+        return getattr(self.underlying, name)
+
+class FreezeArgs(object):
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+def bind(f, *args, **kwargs):
+    """ Lets you freeze arguments of a function be certain values. Unlike
+    functools.partial, you can freeze arguments by name, which has the bonus
+    of letting you freeze them out of order. args will be treated just like
+    partial, but kwargs will properly take into account if you are specifying
+    a regular argument by name. """
+    argspec = inspect.getargspec(f)
+    argdict = copy(kwargs)
+
+    if hasattr(f, "im_func"):
+        f = f.im_func
+
+    args_idx = 0
+    for arg in argspec.args:
+        if args_idx >= len(args):
+            break
+
+        argdict[arg] = args[args_idx]
+        args_idx += 1
+
+    num_plugged = args_idx
+
+    def new_func(*inner_args, **inner_kwargs):
+        args_idx = 0
+        for arg in argspec.args[num_plugged:]:
+            if arg in argdict:
+                continue
+            if args_idx >= len(inner_args):
+                # We can't raise an error here because some remaining arguments
+                # may have been passed in by keyword.
+                break
+            argdict[arg] = inner_args[args_idx]
+            args_idx += 1
+
+        f(**dict(argdict, **inner_kwargs))
+
+    return new_func
+

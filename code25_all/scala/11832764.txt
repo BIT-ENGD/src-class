@@ -1,0 +1,59 @@
+java.lang.NullPointerException
+at
+ org.jboss.netty.handler.codec.http.HttpMessageDecoder.skipControlCharacters(HttpMessageDecoder.java:409)
+at org.jboss.netty.handler.codec.http.HttpMessageDecoder.decode(HttpMessageDecoder.java:184)
+at org.jboss.netty.handler.codec.http.HttpMessageDecoder.decode(HttpMessageDecoder.java:107)
+at org.jboss.netty.handler.codec.replay.ReplayingDecoder.callDecode(ReplayingDecoder.java:470)
+at org.jboss.netty.handler.codec.replay.ReplayingDecoder.messageReceived(ReplayingDecoder.java:443)
+at org.jboss.netty.channel.Channels.fireMessageReceived(Channels.java:274)
+at org.jboss.netty.channel.Channels.fireMessageReceived(Channels.java:261)
+at org.jboss.netty.channel.socket.nio.NioWorker.read(NioWorker.java:351)
+at org.jboss.netty.channel.socket.nio.NioWorker.processSelectedKeys(NioWorker.java:282)
+at org.jboss.netty.channel.socket.nio.NioWorker.run(NioWorker.java:202)
+at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1110)
+at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:603)
+at java.lang.Thread.run(Thread.java:679)
+
+class RouteHandler(default: Tuple2[String, Int]) extends SimpleChannelUpstreamHandler {
+
+  override def handleUpstream(ctx: ChannelHandlerContext, e: ChannelEvent) {
+    e match {
+      case evt: UpstreamMessageEvent =>
+        evt.getMessage match {
+          case req: HttpRequest => {
+            val projectHdr = req.getHeader("HDR")
+            RouteHandler.log.info("Project ID: {}", projectHdr)
+            val backendServerUri = projectHdr match {
+              case null => default
+              case uri: String =>
+                if (ObjectId.isValid(projectHdr)) {
+                  val serverData = MappingService.resolveServer(new ObjectId(projectHdr))
+                  (serverData.host(), serverData.port())
+                }
+                else
+                  default
+            }
+            RouteHandler.log.info("Route to {}", backendServerUri)
+            val pipeline = ctx.getPipeline
+            pipeline.synchronized {
+              val handler = new ForwardRequestHandler(backendServerUri._1, backendServerUri._2)
+              pipeline.get(HANDLER_NAME) match {
+                case null => pipeline.addLast(HANDLER_NAME, handler)
+                case _ => pipeline.replace(HANDLER_NAME, HANDLER_NAME, handler)
+              }
+            }
+          }
+          case z => RouteHandler.log.warn("Can not handle {}", z.getClass)
+        }
+      case z: DefaultExceptionEvent => RouteHandler.log.error("Exception from Netty", z.getCause)
+      case z =>
+    }
+    super.handleUpstream(ctx, e)
+  }
+
+  override def exceptionCaught(ctx: ChannelHandlerContext, e: ExceptionEvent) {
+    RouteHandler.log.error("Caught", e.getCause)
+    e.getChannel.close()
+  }
+}
+

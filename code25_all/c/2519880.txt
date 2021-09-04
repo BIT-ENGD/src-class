@@ -1,0 +1,55 @@
+mmap()
+send()
+stat()
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+#define FILENAME        "./datafile"
+
+int main()
+{
+    unsigned long i, j;
+
+    srand(time(NULL));
+    unsigned long pagesize = sysconf(_SC_PAGESIZE);
+
+    unsigned long basesize = 4 * pagesize;
+    unsigned long cropsize = 2 * pagesize;
+
+    // create 4*pagesize sized file
+    int f = creat(FILENAME, 0644);
+    for (i = 0; i < basesize; i++) {
+        unsigned char c = (unsigned char)rand();
+        if (write(f, &c, 1) < 1) { perror("write"); break; }
+    }
+    close(f);
+
+    f = open(FILENAME, O_RDONLY);
+
+    // walk trough file
+    unsigned char xor = 0;
+    unsigned long offset = 0;
+    for (j = 0; j < 4; j++) {
+        // trunc file to 2*pagesize
+        if (j == 2) truncate(FILENAME, cropsize);
+
+        char *data = mmap(NULL, pagesize, PROT_READ, MAP_PRIVATE, f, offset);
+        if (data == MAP_FAILED) { perror("mmap"); break; }
+        printf("mmap: %lu@%lu for %i\n", pagesize, offset, f);
+
+        for (i = 0; i < pagesize; i++) xor ^= data[i];
+
+        offset += pagesize;
+    }
+
+    close(f);
+
+    return 0;
+}
+

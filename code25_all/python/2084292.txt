@@ -1,0 +1,72 @@
+import os.path
+import logging
+import cherrypy
+from pyamf.remoting.gateway.wsgi import WSGIGateway
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s %(levelname)-5.5s [%(name)s] %(message)s'
+)
+
+def auth(username, password):
+    users = {"user": "pwd"}
+    if (users.has_key(username) and users[username] == password):
+            return True
+    return False
+
+def echo(data):
+   return data
+
+class Root(object):
+    @cherrypy.expose
+    def index(self):
+            return "This is your main website"
+
+gateway = WSGIGateway({'myservice.echo': echo,}, logger=logging, debug=True, authenticator=auth)
+
+localDir = os.path.abspath(os.path.dirname(__file__))
+CA = os.path.join(localDir, 'new.cert.cert')
+KEY = os.path.join(localDir, 'new.cert.key')
+global_conf = {'global': {'server.socket_port': 8443,
+                      'environment': 'production',
+                      'log.screen': True,
+                      'server.ssl_certificate': CA,
+                      'server.ssl_private_key': KEY}}
+
+cherrypy.tree.graft(gateway, '/gateway/')
+cherrypy.quickstart(Root(), config=global_conf)
+
+import logging
+from pyamf.remoting.client import RemotingService
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s %(levelname)-5.5s [%(name)s] %(message)s'
+)
+
+client = RemotingService('https://localhost:8443/gateway', logger=logging)
+client.setCredentials('user', 'pwd')
+
+service = client.getService('myservice')
+print service.echo('Echo this')
+
+2010-01-18 00:50:56,323 INFO  [root] Connecting to https://localhost:8443/gateway
+2010-01-18 00:50:56,323 DEBUG [root] Referer: None
+2010-01-18 00:50:56,323 DEBUG [root] User-Agent: PyAMF/0.5.1
+2010-01-18 00:50:56,323 DEBUG [root] Adding request myservice.echo('Echo this',)
+2010-01-18 00:50:56,324 DEBUG [root] Executing single request: /1
+2010-01-18 00:50:56,324 DEBUG [root] AMF version: 0
+2010-01-18 00:50:56,324 DEBUG [root] Client type: 0
+2010-01-18 00:50:56,326 DEBUG [root] Sending POST request to /gateway
+2010-01-18 00:50:56,412 DEBUG [root] Waiting for response...
+2010-01-18 00:50:56,467 DEBUG [root] Got response status: 200
+2010-01-18 00:50:56,467 DEBUG [root] Content-Type: application/x-amf
+2010-01-18 00:50:56,467 DEBUG [root] Content-Length: 41
+2010-01-18 00:50:56,467 DEBUG [root] Server: PyAMF/0.5.1 Python/2.5.2
+2010-01-18 00:50:56,467 DEBUG [root] Read 41 bytes for the response
+2010-01-18 00:50:56,468 DEBUG [root] Response: <Envelope amfVersion=0 clientType=0>
+ (u'/1', <Response status=/onResult>u'Echo this'</Response>)
+</Envelope>
+2010-01-18 00:50:56,468 DEBUG [root] Removing request: /1
+Echo this
+

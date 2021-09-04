@@ -1,0 +1,60 @@
+readFile
+Control.Concurrent.Chan
+data Global = Global {done :: MVar Bool, consumers :: Consumers}
+type Done = Bool
+type Linenum = Int
+type Line = (Linenum, Maybe String)
+type Output = MVar [Line]
+type Input = Chan Line
+type Consumers = MVar (M.Map ThreadId (Done, (Input, Output)))
+type State a = ReaderT Global IO a
+
+
+producer :: [Input] -> FilePath -> State ()
+producer c p = do
+  liftIO $ Main.log "Starting producer"
+  d <- asks done
+  f <- liftIO $ readFile p
+  mapM_ (\l -> mapM_
+    (liftIO . flip writeChan l) c)
+    $ zip [1..] $ map Just $ lines f
+  liftIO $ modifyMVar_ d (return . not)
+
+printer :: State ()
+printer = do
+  liftIO $ Main.log "Starting printer"
+  c <- (fmap (map (snd . snd) . M.elems)
+    (asks consumers >>= liftIO . readMVar))
+  uniq' c
+  where head' :: Output -> IO Line
+    head' ch = fmap head (readMVar ch)
+
+    tail' = mapM_ (liftIO . flip modifyMVar_
+        (return . tail))
+
+    cont ch = tail' ch >> uniq' ch
+
+    printMsg ch = readMVar (head ch) >>=
+        liftIO . putStrLn . fromJust . snd . head
+
+    cempty :: [Output] -> IO Bool
+    cempty ch = fmap (any id)
+        (mapM (fmap ((==) 0 . length) . readMVar ) ch)
+
+    {- Return false unless none are Nothing -}
+    uniq :: [Output] -> IO Bool
+    uniq ch = fmap (any id . map (isNothing . snd))
+        (mapM (liftIO . head') ch)
+
+    uniq' :: [Output] -> State ()
+    uniq' ch = do
+      d <- consumersDone
+      e <- liftIO $ cempty ch
+      if not e
+        then  do
+          u <- liftIO $ uniq ch
+          if u then cont ch else do
+        liftIO $ printMsg ch
+        cont ch
+          else unless d $ uniq' ch
+

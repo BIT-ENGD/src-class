@@ -1,0 +1,110 @@
+void UDPecho(const char *, const char *);
+
+void errexit(const char *, ...);
+
+#define LINELEN  128
+#define WSVERS  MAKEWORD(2, 0)
+
+void main(int argc, char *argv[])
+{
+    char *host = "localhost";
+    char *service = "echo";
+    WSADATA wsadata;
+    switch (argc) {
+    case 1:
+        host = "localhost";
+        break;
+
+    case 3:
+        service = argv[2];
+        /* FALL THROUGH */
+
+    case 2:
+        host = argv[1];
+        break;
+
+    default:
+        fprintf(stderr, "usage: UDPecho [host [port]]\n");
+        exit(1);
+
+    }
+
+    if (WSAStartup(WSVERS, &wsadata))
+        errexit("WSAStartup failed\n");
+
+    UDPecho(host, service);
+
+    WSACleanup();
+
+    exit(0);
+}
+
+void UDPecho(const char *host, const char *service)
+{
+    char buf[LINELEN+1];
+    SOCKET s;
+    int nchars;
+    struct hostent *phe;
+    struct servent *pse;
+    struct protoent *ppe;
+    struct sockaddr_in sin, my_sin;
+    int type, status, client_port, size;
+    char *transport = "udp";
+
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+
+    /* Map service name to port number */
+    if ( pse = getservbyname(service, transport) )
+        sin.sin_port = pse->s_port;
+    else if ( (sin.sin_port = htons((u_short)atoi(service)))== 0)
+        errexit("can't get \"%s\" service entry\n", service);
+
+    /* Map host name to IP address, allowing for dotted decimal */
+    if ( phe = gethostbyname(host) )
+        memcpy(&sin.sin_addr, phe->h_addr, phe->h_length);
+    else if ( (sin.sin_addr.s_addr = inet_addr(host)) == INADDR_NONE)
+        errexit("can't get \"%s\" host entry\n", host);
+
+    printf("Our target server is at address %s\n", inet_ntoa(sin.sin_addr));
+    printf("The size of an FD set is %d\n", sizeof(FD_SET));
+
+    /* Map protocol name to protocol number */
+    if ( (ppe = getprotobyname(transport)) == 0)
+        errexit("can't get \"%s\" protocol entry\n", transport);
+
+    /* Use protocol to choose a socket type */
+    if (strcmp(transport, "udp") == 0)
+        type = SOCK_DGRAM;
+    else
+        type = SOCK_STREAM;
+
+    /* Allocate a socket */
+    s = socket(PF_INET, type, ppe->p_proto);
+    if (s == INVALID_SOCKET)
+        errexit("can't create socket: %d\n", GetLastError());
+
+    size = sizeof(sin);
+    memset(&my_sin, 0, sizeof(sin));
+    getsockname (s, (struct sockaddr *) &my_sin, &size);
+    client_port = ntohs(my_sin.sin_port);
+
+    if (client_port != 0)
+        printf ("We are using port %2d\n", client_port);
+    else {
+        printf("No port assigned yet\n");
+    }
+}
+
+
+void errexit(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    WSACleanup();
+
+    exit(1);
+}
+

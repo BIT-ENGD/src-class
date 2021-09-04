@@ -1,0 +1,119 @@
+#!/usr/bin/perl
+# v5.10.1 / linux
+use strict;
+use warnings;
+use Shell;
+use Tk;
+
+# to enable you to pick a window to record +
+my $result  =`xwininfo | grep -e Width -e Height -e Absolute -e "xwininfo: Window id:"`;
+
+# get picked window's position (abs_x and abs_y)
+# its width and heigh too, and make these divisible by 2 with no remainder (for even)
+my ($abs_x, $abs_y, $window_width, $window_height, $windowid);
+my @linesofoutput= $result=~/(.*?)\n/g; # needs checking to see if I'm getting the lines right with this?!
+
+ foreach my $temp(@linesofoutput){
+
+    if ($temp  =~ /^\s*Absolute upper-left X:/){ 
+                 my  @words = split(/\s/, $temp);           # make an array out of the line, splitting on any whitespace character: space, tab, newline, etc
+                 @words = grep(!/^$/, @words);            # remove empty elements.  check this(not, starting with, ending with)???                       
+                # print "$words[0] \t $words[1] \t $words[2] \t $words[3]\n";  
+                 $abs_x = $words[3];
+                 # print "Got Absolute X:\t $abs_x\n";
+             }
+             elsif($temp  =~ /^\s*Absolute upper-left Y:/){
+                   my  @words = split(/\s/, $temp);
+                 @words = grep(!/^$/, @words);
+                 $abs_y = $words[3];
+             }
+             elsif($temp  =~ /^\s*Width:/){
+                my  @words = split(/\s/, $temp);           # make an array out of the line, splitting on any whitespace character: space, tab, newline, etc
+                 @words = grep(!/^$/, @words);            # remove empty elements.  check this(not, starting with, ending with)???                        
+                 #print "$words[0] \t $words[1]\n";  
+                 $window_width = $words[1];
+                 # print "Got width:\t  $window_width\n";
+             }
+             elsif($temp  =~ /^\s*Height:/){
+                my  @words = split(/\s/, $temp);
+                 @words = grep(!/^$/, @words);
+                 $window_height = $words[1];
+             }
+             elsif($temp  =~ /^\s*xwininfo: Window id:/){
+                my  @words = split(/\s/, $temp);
+                 @words = grep(!/^$/, @words);
+               # print "Window id: $words[3]\n";
+                $windowid = $words[3];
+             }
+              else{
+               #print "Something is wrong!\n";
+               }
+}
+
+# make window_width and height divisible by 2 (ffmpeg requires even)
+if ($window_width %2 != 0 ){ $window_width = $window_width -1;}
+if ($window_height %2 != 0){ $window_height = $window_height -1;} # height problem...
+
+# make a [ ] frame around the window # think about --- if the selected window were to be moved and/or resized???
+my $offset = 3;  
+my $lenght = 70;
+my $colour = "#83857d"; # # maybe remove/fade the shadow a bit
+my $mw = MainWindow->new(-background => "$colour",); 
+my $abs_yM3 = $abs_y - $offset;    
+my $abs_xM3 = $abs_x -   $offset;                                                                   
+$mw->geometry("$lenght"."x"."1+$abs_xM3+$abs_yM3");        
+$mw->resizable(0,0); 
+$mw->overrideredirect(1);
+
+my $mw2 = MainWindow->new(-background => "$colour",);                                                                   
+$mw2->geometry("1"."x"."$lenght+$abs_xM3+$abs_yM3");     
+$mw2->resizable(0,0); 
+$mw2->overrideredirect(1);
+
+my $abs_xPwless70P3 = $abs_x + $window_width - $lenght + $offset; 
+my $abs_yPhP3 = $abs_y + $window_height + $offset;   
+my $mw3 = MainWindow->new(-background => "$colour",);                                                                   
+$mw3->geometry("$lenght"."x"."1+$abs_xPwless70P3+$abs_yPhP3");     
+$mw3->resizable(0,0); 
+$mw3->overrideredirect(1);
+
+my $abs_xPwP3 = $abs_x + $window_width + $offset; 
+my $abs_yPhless70P3 = $abs_y + $window_height -$lenght + $offset;   
+my $mw4 = MainWindow->new(-background => "$colour",);                                                                   
+$mw4->geometry("1"."x"."$lenght+$abs_xPwP3+$abs_yPhless70P3");     
+$mw4->resizable(0,0); 
+$mw4->overrideredirect(1);
+
+ # bring the selected window to the front... but keep the frame above all?!
+
+ # save dialog
+ my $types = [
+['mpg files',        '.mpg',          ],         # MPEG-2 is a high quality video standard used for DVD discs and Digital TV broadcasts. 
+['avi files',        '.avi',          ],               # The AVI file created by Microsoft is the primary audio/video format for Windows platforms and may be compressed with a variety of codecs.
+['mov files',        '.mov',          ],           # MOV - Apple QuickTime 
+['All Files',        '*',             ],
+];
+## need a proper list of well known ones that ffmpeg can save to...
+
+my $sfile = $mw->getSaveFile( # could look better... # position it
+                                          -defaultextension => ".mpg",
+                                          -initialdir => "/home/frank/Perl/screencaps", # standardise...
+                                          -initialfile => "ScreenCast01",
+                                          -title => "ScreenCast Capture file",
+                                          -filetypes => $types
+                                          ); 
+
+&do_saveFileWithType($sfile) if defined $sfile;
+
+sub do_saveFileWithType {
+  my @InboundParameters = @_;
+    print "This is what was passed:\t$InboundParameters[0]\n";
+
+   # fix the "if the file is already there problem
+   # show the file-extention with the "filename" & tie the filetype/defaultextension to the "Files of type:" selection...
+   # all files problem...
+ }
+
+# 1. just capture the desktop/selected window -- no sound
+my $result2 = ffmpeg ("-f x11grab", "-s $window_width"."x"."$window_height", "-r 25", "-i :0.0+$abs_x,$abs_y", " -sameq", " $sfile"); 
+

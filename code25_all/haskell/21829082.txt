@@ -1,0 +1,173 @@
+weight_of_longest_path :: Graph -> Char -> Char -> Int
+
+weight_of_longest_path :: Graph w -> Char -> Char -> (w -> w) -> (w -> w) -> w
+
+-- Graph representation
+
+module Badgraph
+(Graph(Graph)
+, create_graph
+, add_vertex
+, add_edge
+, topological_ordering
+, weight_of_longest_path
+) where
+
+import Data.Char
+import qualified Data.Set as Set
+import Data.List
+
+-- Datatype
+data Graph = Graph {vertices :: [(Char, Int)],
+                      edges :: [(Char, Char, Int)]} deriving Show
+
+-- Creates an empty graph.
+create_graph :: Graph  -> Graph
+create_graph emptyGraph = Graph [] []
+
+-- Adds a vertex to the graph and returns a char
+-- identifier which is the length of the vertice
+-- list + 97.
+add_vertex :: Graph ->  Int -> Graph
+add_vertex (Graph v w) weight = Graph (tuple:v) w
+        where tuple = (chr((length v)+97), weight)
+
+-- Adds an edge to the graph.
+add_edge :: Graph -> Char -> Char -> Int -> Graph
+add_edge (Graph v w) a b weight = Graph v (edge:w)
+        where edge = (find_vertice v a, find_vertice v b, weight)
+
+-- Checks to see if the vertex identifier is
+-- present in the graph.
+find_vertice :: [(Char, Int)] -> Char -> Char
+find_vertice [] a = error "Can not find vertice"
+find_vertice (x:xs) a =
+                if fst x == a then a
+                else find_vertice xs a
+
+
+-- Checks to see if the vertex identifier is
+-- present in the graph.
+find_vertice :: [(Char, Int)] -> Char -> Char
+find_vertice [] a = error "Can not find vertice"
+find_vertice (x:xs) a =
+                if fst x == a then a
+                else find_vertice xs a
+
+-- Gets a topological ordering of the graph.
+topological_ordering :: Graph -> [Char]
+topological_ordering (Graph v w) =
+                let startingNodes = noIncEdges (Graph v w)
+                    emptyList = []
+                    sorted = sortAlgorithm startingNodes emptyList (Graph v w)
+                in sorted
+
+-- Sort algorithm for topological ordering.
+sortAlgorithm :: [Char] -> [Char] -> Graph -> [Char]
+sortAlgorithm [] sorted _ = sorted
+sortAlgorithm (firstVert:remainingVert) sorted (Graph v w) =
+                let neighbours = secondNodes $ filter (\(a,b,w) -> a == firstVert) w
+                    edges = edgesToRemove firstVert neighbours w
+                    newEdges = removeEdges edges w
+                    nodes = selectNodes neighbours newEdges
+                in  sortAlgorithm (remainingVert ++ nodes) (sorted ++ [firstVert]) (Graph v newEdges)
+
+weight_of_longest_path :: Graph -> Char -> Char -> Int
+weight_of_longest_path  (Graph v w) startVert endVert =
+                        let topSort = dropWhile (/= startVert) $ topological_ordering (Graph v w)
+                            finalList = getFinalList (Graph v w) topSort (makeDistList v topSort startVert)
+                        in  getVerticeWeight endVert finalList
+
+getFinalList :: Graph -> [Char] -> [(Char, Int)] -> [(Char, Int)]
+getFinalList _  [] finalList  = finalList
+getFinalList (Graph v w) (firstVert:rest) distList =
+            let neighbours = findNeighbours firstVert w
+                finalList = updateList firstVert neighbours distList (Graph v w)
+            in  getFinalList (Graph v w) rest finalList
+
+updateList :: Char -> [Char] -> [(Char, Int)] -> Graph -> [(Char, Int)]
+updateList _ [] updatedList _  = updatedList
+updateList firstVert (neighbour:rest) distList (Graph vertices weights) =
+           let edgeWeight = getEdgeWeight firstVert neighbour weights
+               verticeWeight = getVerticeWeight neighbour vertices
+               newDist = calcDist firstVert neighbour verticeWeight edgeWeight distList
+               updatedList = replace distList neighbour newDist
+           in  updateList firstVert rest updatedList (Graph vertices weights)
+
+calcDist :: Char -> Char -> Int -> Int -> [(Char, Int)] -> Int
+calcDist firstVert neighbour verticeWeight edgeWeight distList =
+         if compareTo (getVerticeWeight neighbour distList) ((getVerticeWeight firstVert distList) + edgeWeight)
+         then (getVerticeWeight firstVert distList) + edgeWeight + verticeWeight
+         else getVerticeWeight neighbour distList
+
+compareTo :: Int -> Int -> Bool
+compareTo val1 val2 =
+          if val1 < val2
+          then True
+          else False
+
+replace :: [(Char, Int)] -> Char -> Int -> [(Char, Int)]
+replace distList vertice value = map (\p@(f, _) -> if f == vertice then (vertice, value) else p) distList
+
+makeDistList :: [(Char, Int)] -> [Char] -> Char -> [(Char, Int)]
+makeDistList vertices topSort startVert = distList
+             where distList = zip topSort $ (snd $ head $ filter (\(a,b) -> a == startVert) vertices):(repeat (-999))
+
+findNeighbours :: Char -> [(Char, Char, Int)] -> [Char]
+findNeighbours vert edges = secondNodes $ filter (\(a,b,w) -> a == vert) edges
+
+getVerticeWeight :: Char -> [(Char, Int)] -> Int
+getVerticeWeight vert vertList = snd $ head $ filter (\(a,b) -> a == vert) vertList
+
+getEdgeWeight :: Char -> Char -> [(Char, Char, Int)] -> Int
+getEdgeWeight vert1 vert2 edges = selectThird $ head $ filter (\(a,b,w) -> a == vert1 && b == vert2) edges
+
+-- Checks which vertices has no incoming edges.
+noIncEdges :: Graph -> [Char]
+noIncEdges (Graph v w) =
+        let set1 = Set.fromList $ firstNodes w
+            set2 = Set.fromList $ secondNodes w
+            startNodes = Set.toList $ Set.difference set1 set2
+        in  startNodes
+
+-- Checks which edges to remove
+edgesToRemove :: Char -> [Char] -> [(Char, Char, Int)] -> [(Char, Char, Int)]
+edgesToRemove _ [] _ = []
+edgesToRemove firstVert (firstNbr:neighbours) edges =
+            filter (\(a,b,w) -> (a == firstVert && b == firstNbr)) edges ++
+            edgesToRemove firstVert neighbours edges
+
+-- Removes edges
+removeEdges :: [(Char, Char, Int)] -> [(Char, Char, Int)] -> [(Char, Char, Int)]
+removeEdges edgesToRemove edges =
+                let set1 = Set.fromList edgesToRemove
+                    set2 = Set.fromList edges
+                    newEdges = Set.toList $ Set.difference set2 set1
+                in  newEdges
+
+-- Selects vertices depending on
+selectNodes :: [Char] -> [(Char, Char, Int)] -> [Char]
+selectNodes  [] _ = []
+selectNodes  (firstNbr:neighbours) edges =
+             if filter (\(a,b,w) -> b == firstNbr) edges == []
+             then firstNbr:selectNodes neighbours edges
+             else selectNodes neighbours edges
+
+selectFirst :: (Char, Char, Int) -> Char
+selectFirst (a, _, _) = a
+
+selectSecond :: (Char, Char, Int) -> Char
+selectSecond (_, a, _) = a
+
+
+selectThird :: (Char, Char, Int) -> Int
+selectThird (_, _, w) = w
+
+firstNodes :: [(Char, Char, Int)] -> [Char]
+firstNodes [] = []
+firstNodes (x:xs) = selectFirst x:firstNodes xs
+
+secondNodes :: [(Char, Char, Int)] -> [Char]
+secondNodes [] = []
+secondNodes (x:xs) = selectSecond x:secondNodes xs
+

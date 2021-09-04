@@ -1,0 +1,483 @@
+#include "header.h"
+
+#define BASE_ADDR   0x20
+
+#define READ_ATMEGA(ADDR)   *((P_CHAR)(BASE_ADDR + ((ADDR) * ADDR_MULTIPLIER)))
+
+#define WRITE_ATMEGA(ADDR, DATA)    *((P_CHAR)(BASE_ADDR + ((ADDR) * ADDR_MULTIPLIER))) = DATA
+
+#define LED_DELAY 10
+
+#define F_CPU 8000000
+
+#define BAUDRATE 9600
+
+#define BAUD_PRESCALER (((F_CPU/(BAUDRATE * 16UL)))-1)
+
+volatile UINT intrs, i = 1, count, switch_pressed = 0, uiAdd, uiAddEnd, flag_led_intr;
+volatile UINT record, play_recorded_keys, RX, flag_serial_receiver, TX_complete; 
+
+volatile unsigned char get_switch=0, data;
+
+extern void __vector_23 (void) __attribute__ ((interrupt)); 
+extern void __vector_25 (void) __attribute__ ((signal)); 
+extern void __vector_27 (void) __attribute__ ((interrupt)); 
+
+void enable_ports(void); 
+int get_switchpressed(void);
+void call_interruptHandler(void);
+void usart_init(void); 
+//void usart_bounce();
+void initialize(void);
+void ReadWriteSerialPort(void);
+void EEPROM_write(unsigned int uiAddress, unsigned char ucData);
+unsigned char EEPROM_read(unsigned int uiAddress);
+
+
+void initialize(void)
+{
+    cli();      //stop all interrupts
+
+    flag_led_intr = 0;
+    record = 0;
+    play_recorded_keys = 0;
+    RX = 0;
+    flag_serial_receiver = 0;
+
+    uiAdd = 0;
+    uiAddEnd = 0;
+    TX_complete = 0;
+
+    enable_ports();
+    usart_init();
+
+    sei();
+}
+
+void enable_ports() //Enables PORTB, PORTD & TIMER
+{ 
+
+    WRITE_ATMEGA(DDRB,0xff);    //PORTB as output for leds 
+
+    WRITE_ATMEGA(PORTB,0xff);   //Initialize PORTB
+
+    WRITE_ATMEGA(DDRD, 0x00);    //PORTD as input for switches
+
+    WRITE_ATMEGA(TCCR0B, 0x05);     //Setting TIMER to 1024 prescaler
+
+    WRITE_ATMEGA(TIMSK0, 0x01); 
+
+    WRITE_ATMEGA(TCNT0, 256-LED_DELAY);
+
+    intrs = 0; 
+} 
+
+void usart_init(void) //Enables USART
+{ 
+   /* Set baud rate */ 
+
+   WRITE_ATMEGA(UBRR0L, BAUD_PRESCALER); 
+   WRITE_ATMEGA(UBRR0H,(BAUD_PRESCALER>>8)); 
+
+   /* Set frame format: 8 bit data + start bit + stop bit */ 
+
+   WRITE_ATMEGA(UCSR0C, 0x06);
+
+   /* Enable reciever and transmitter */ 
+
+   WRITE_ATMEGA(UCSR0B, 0xD8); 
+} 
+
+
+void __vector_23 (void)
+{ 
+   call_interruptHandler();
+}
+
+void __vector_25 (void)
+{ 
+    RX = UDR0;
+    flag_serial_receiver = 1;
+    sei();
+}
+
+void __vector_27 (void)
+{
+    TX_complete = 1;
+}
+void call_interruptHandler()
+{
+    intrs++;
+    if(intrs > LED_DELAY)
+    {
+        WRITE_ATMEGA(PORTB, 0xff<<i);
+        i++;
+
+        if(i==10)
+        {
+            WRITE_ATMEGA(PORTB, 0xff);
+            i = 1;
+        }
+    }
+
+    count = get_switchpressed();
+
+    if(count != 0) 
+    {
+        WRITE_ATMEGA(PORTB, 0xff<<count); 
+        intrs = 0;
+
+    }
+
+   //sei(); 
+} 
+
+int get_switchpressed()
+{ 
+
+    get_switch = READ_ATMEGA(PIND);
+
+    switch(get_switch) {
+
+        case 0xFE:  
+                switch_pressed = 1;
+                break;
+
+        case 0xFD:  
+                switch_pressed = 2;
+                break;
+
+        case 0xFB:  
+                switch_pressed = 3;
+                break;
+
+        case 0xF7:  
+                switch_pressed = 4;
+                break;
+
+        case 0xEF:
+                switch_pressed = 5;
+                break;
+
+        case 0xDF:
+                switch_pressed = 6;
+                break;
+
+        case 0xBF:
+                switch_pressed = 7;
+                break;
+
+        case 0x7F:
+                switch_pressed = 8;
+                break;
+
+    };
+
+    return (switch_pressed);
+}
+
+void ReadWriteSerialPort(void)
+{
+    if(RX == 0x1A)
+    {
+        record = !record;
+        play_recorded_keys = 0;
+    }
+
+    else if(RX == 0x19)
+    {
+        record = 0;
+        play_recorded_keys = !play_recorded_keys;
+    }
+
+    if(record)
+    {
+        EEPROM_write(uiAdd++, RX);
+    }
+    if(uiAdd == 4096)
+    {
+        record = 0;
+        uiAddEnd = 4096;
+    }
+    else
+        uiAddEnd = uiAdd;
+}   
+
+void EEPROM_write(unsigned int uiAddress, unsigned char ucData)
+{
+    while(EECR & (1<<EEPE));            /* Wait for completion of previous write */
+
+    WRITE_ATMEGA(EEARH,(uiAddress>>8)); /* Set up address and Data Registers */
+    WRITE_ATMEGA(EEARL, uiAddress);
+
+    WRITE_ATMEGA(EEDR, ucData);
+
+    WRITE_ATMEGA(EECR, (EECR |(1<<EEMPE))); /* Write logical one to EEMPE */
+
+    WRITE_ATMEGA(EECR, (EECR |(1<<EERE)));  /* Start eeprom write by setting EEPE */
+}
+
+unsigned char EEPROM_read(unsigned int uiAddress)
+{
+    while(EECR & (1<<EEPE));    /* Wait for completion of previous write */
+
+    WRITE_ATMEGA(EEARH,(uiAddress>>8));     /* Set up address register */
+    WRITE_ATMEGA(EEARL,uiAddress);
+
+    WRITE_ATMEGA(EECR, (EECR |(1<<EERE)));      /* Start eeprom read by writing EERE */
+    return EEDR;            /* Return data from Data Register */
+}
+
+int main(void) 
+{ 
+   initialize(); 
+   while(1) 
+   { 
+        if(flag_serial_receiver == 1)
+        {
+            flag_serial_receiver = 0;
+            ReadWriteSerialPort();
+        }
+        if(play_recorded_keys)
+        {
+            unsigned char TX = EEPROM_read(uiAdd++);
+
+            if(uiAdd == 4096 || uiAdd >= uiAddEnd)
+            {
+                play_recorded_keys = 0;
+                uiAdd = 0;
+            }
+
+            while((UCSR0A & (1<<UDRE0)) == 0);
+            WRITE_ATMEGA(UDR0,TX);
+
+            while(TX_complete == 0);
+                TX_complete;
+        }
+
+   } 
+return(0);
+}
+
+#ifndef HEADER_H
+
+#define HEADER_H
+
+/*******PORTS******************/
+
+#define PINA  0x0
+#define DDRA  0x1
+#define PORTA 0x2
+
+#define PINB  0x3
+#define DDRB  0x4
+#define PORTB 0x5
+
+#define PINC  0x6
+#define DDRC  0x7
+#define PORTC 0x8
+
+#define PIND  0x9
+#define DDRD  0xA
+#define PORTD 0xB
+
+#define PINE  0xC
+#define DDRE  0xD
+#define PORTE 0xE
+
+#define PINF  0xF
+#define DDRF  0x10
+#define PORTF 0x11
+
+#define PING  0x12
+#define DDRG  0x13
+#define PORTG 0x14
+
+#define PINH  0xE0
+#define DDRH  0xE1
+#define PORTH 0xE2
+
+#define PINJ  0xE3
+#define DDRJ  0xE4
+#define PORTJ 0xE5
+
+#define PINK  0xE6
+#define DDRK  0xE7
+#define PORTK 0xE8
+
+#define PINL  0xE9
+#define DDRL  0xEA
+#define PORTL 0xEB
+
+
+/************TIMERS ************/
+#define TCCR0A  0x24  
+#define TCCR0B  0x25  
+#define TCNT0   0x26  
+#define OCR0A   0x27  
+#define OCR0B   0x28  
+#define TIMSK0  0x4E  
+#define TIFR0   0x15  
+#define COM0A1  0x7   
+#define COM0A0  0x6   
+#define COM0B1  0x5   
+#define COM0B0  0x4   
+#define WGM02   0x3   
+#define WGM01   0x1   
+#define WGM00   0x0   
+#define CS02    0x2   
+#define CS01    0x1   
+#define CS00    0x0   
+#define OCIE0B  0x2   
+#define OCIE0A  0x1   
+#define TOIE0   0x0   
+
+
+/****** Interrupts *******/
+#define EICRA   0x49  
+#define EICRB   0x4A  
+#define EIMSK   0x1D  
+
+#define PCICR   0x48
+#define PCMSK0  0x4B
+#define PCMSK1  0x4C
+#define PCMSK2  0x4D
+
+/************EEPROM************/
+
+#define EECR    0x1F
+
+#define EEDR    0x20
+
+#define EEARL   0x21
+
+#define EEARH   0x22
+
+#define EEAR0   0
+#define EEAR1   1
+#define EEAR2   2
+#define EEAR3   3
+#define EEAR4   4
+#define EEAR5   5
+#define EEAR6   6
+#define EEAR7   7
+#define EEAR8   8
+#define EEAR9   9
+#define EEAR10  10
+#define EEAR11  11
+
+#define LSB     0
+#define MSB     7
+
+#define EERE    0
+#define EEPE    1
+#define EEMPE   2
+#define EERIE   3
+#define EEPM0   4
+#define EEPM1   5
+
+
+
+/************UART Status Control Registers & Data Registers **************/
+
+/** USART3 **/
+#define UCSR3A      0x130 
+#define UCSR3B      0x131 
+#define UCSR3C      0x132 
+#define UBRR3L      0x134 
+#define UBRR3H      0x135 
+#define UDR3        0x136 
+#define UDR3_TXB    UDR3  /* transmit data buffer register */
+#define UDR3_RXB    UDR3  /* receive data buffer register  */
+
+/** USART2 **/
+
+#define UDR2        0xD6
+#define UBRR2H      0xD5
+#define UBRR2L      0xD4
+#define UCSR2C      0xD2
+#define UCSR2B      0xD1
+#define UCSR2A      0xD0
+#define UDR2_TXB    UDR2  /* transmit data buffer register */
+#define UDR2_RXB    UDR2  /* receive data buffer register  */
+
+/** USART1 **/
+#define UDR1        0xCE    
+#define UBRR1H      0xCD
+#define UBRR1L      0xCC    
+#define UCSR1C      0xCA
+#define UCSR1B      0xC9
+#define UCSR1A      0xC8
+#define UDR1_TXB    UDR1  /* transmit data buffer register */
+#define UDR1_RXB    UDR1  /* receive data buffer register  */
+
+/** USART0 **/
+#define UDR0        0xC6    
+#define UBRR0H      0xC5
+#define UBRR0L      0xC4    
+#define UCSR0C      0xC2
+#define UCSR0B      0xC1
+#define UCSR0A      0xC0
+#define UDR0_TXB    UDR0  /* transmit data buffer register */
+#define UDR0_RXB    UDR0  /* receive data buffer register  */
+
+#define TXB80       0
+#define RXB80       1
+#define UCSZ02      2
+#define TXEN0       3
+#define RXEN0       4
+#define UDRIE0      5
+#define TXCIE0      6
+#define RXCIE0      7
+
+#define MPCM0   0
+#define U2X0    1
+#define UPE0    2
+#define DOR0    3
+#define FE0     4
+#define UDRE0   5
+#define TXC0    6
+#define RXC0    7
+
+#define UCPOL0  0
+#define UCSZ00  1
+#define UCSZ01  2
+#define USBS0   3
+#define UPM00   4
+#define UPM01   5
+#define UMSEL00 6
+#define UMSEL01 7
+
+/******************************/
+
+# define sei()  __asm__ __volatile__ ("sei" ::)
+
+# define cli()  __asm__ __volatile__ ("cli" ::)
+
+
+/* vectors in AVR are hard cided to a function by name */
+extern void __vector_23 (void) __attribute__ ((interrupt));
+
+/* interrupt is disabled at initilization */
+extern void __vector_11 (void) __attribute__ ((interrupt));
+
+
+/*******ADDR_MULTIPLIER********/
+
+#define ADDR_MULTIPLIER     1
+
+
+/*******Type Declaration*******/
+
+#define UINT unsigned int
+#define P_CHAR volatile unsigned char *
+
+
+
+/***LEDs ON-OFF Declaration****/
+
+#define LED_ON      0x00
+#define LED_OFF     0xff
+
+#endif
+

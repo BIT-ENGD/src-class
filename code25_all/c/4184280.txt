@@ -1,0 +1,171 @@
+malloc
+free
+free
+malloc
+free
+malloc
+free'
+#include <stdlib.h>
+#include <stdio.h>
+#include <pthread.h>
+#include <new>
+#include <unistd.h>
+#include <string.h>
+#include <malloc.h>
+
+pthread_mutex_t lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+
+static void push_memhooks();
+static void pop_memhooks();
+
+static void *malloc_hook(size_t size, const void *ret)
+{
+
+    pthread_mutex_lock(&lock);
+
+    pop_memhooks();
+
+    void *mem = malloc(size);
+
+    if (mem) {
+        printf("malloc %p\n", mem);
+    }
+
+    push_memhooks();
+
+    pthread_mutex_unlock(&lock);
+
+    return mem;
+}
+
+static void *realloc_hook(void* ptr, size_t size, const void *ret)
+{
+    pthread_mutex_lock(&lock);
+
+    pop_memhooks();
+
+    void* mem = realloc(ptr, size);
+
+    if (mem) {
+        printf("realloc %p -> %p\n", ptr, mem);
+    }
+
+    push_memhooks();
+
+    pthread_mutex_unlock(&lock);
+
+    return mem;
+}
+
+static void* memalign_hook(size_t boundary, size_t size, const void *ret)
+{
+    pthread_mutex_lock(&lock);
+    pop_memhooks();
+
+    void* mem = memalign(boundary, size);
+
+    if (mem) {
+        printf("memalign %p\n", mem);
+    }
+
+    push_memhooks();
+
+    pthread_mutex_unlock(&lock);
+
+    return mem;
+}
+
+static void free_hook(void *mem, const void *ret)
+{
+    pthread_mutex_lock(&lock);
+
+    pop_memhooks();
+
+    free(mem);
+
+    printf("free %p\n", mem);
+
+    push_memhooks();
+
+    pthread_mutex_unlock(&lock);
+}
+
+void *operator new(size_t size)
+{
+    void* mem = malloc(size);
+
+    if (!mem) {
+        throw std::bad_alloc();
+    }
+
+    return mem;
+}
+
+void operator delete(void* mem)
+{
+    free(mem);
+}
+
+void *operator new[](size_t size)
+{       
+    void* mem = malloc(size);
+
+    if (!mem) {
+        throw std::bad_alloc();
+    }
+
+    return mem;
+}
+
+void operator delete[](void* mem)
+{
+    free(mem);
+}
+
+static int memhooks = 0;
+
+static void push_memhooks()
+{
+    if (++memhooks == 1) {
+        __malloc_hook = malloc_hook;
+        __realloc_hook = realloc_hook;
+        __free_hook = free_hook;
+        __memalign_hook = memalign_hook;
+    }
+}
+
+static void pop_memhooks()
+{
+    if (--memhooks == 0) {
+        __malloc_hook = NULL;
+        __realloc_hook = NULL;
+        __free_hook = NULL;
+        __memalign_hook = NULL;
+    }
+}
+
+static void install_memhooks ()
+{
+    push_memhooks();
+}
+
+void (*__malloc_initialize_hook)(void) = install_memhooks;
+
+<snip>
+malloc 0x8234818
+free 0x8234818
+malloc 0x8234818
+malloc 0x8234818
+free 0x8234818
+<snip>
+
+malloc
+realloc
+free
+dlsym(RTLD_NEXT, "malloc")
+dlsym
+calloc
+malloc
+__malloc_initialize_hook
+malloc
+malloc

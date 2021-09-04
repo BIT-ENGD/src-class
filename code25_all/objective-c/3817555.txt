@@ -1,0 +1,95 @@
+insert
+sqlite-database
+"sqlite3_open"
+- (void)viewDidLoad 
+{
+    [super viewDidLoad];
+
+    self.title = @"Animals";
+    animalsArray = [[NSMutableArray alloc] init];
+    animalDetailController = [[AnimalDetailViewController alloc] init];
+    addAnimalController = [[AddAnimalViewController alloc] init];
+    addAnimalController.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+    UIBarButtonItem *addItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addAction)];
+    self.navigationItem.rightBarButtonItem = addItem;
+
+    databaseName = @"AnimalDatabase.sql";
+
+    NSArray *documentsPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDir = [documentsPath objectAtIndex:0];
+    databasePath = [documentsDir stringByAppendingPathComponent:databaseName];
+    [self checkAndCreateDatabase];
+
+    [self readDataFromDatabase];
+
+    // Uncomment the following line to display an Edit button in the navigation bar for this view controller.
+    // self.navigationItem.rightBarButtonItem = self.editButtonItem;
+}
+
+- (void)addAction{  
+    [self presentModalViewController:addAnimalController animated:YES];     
+}
+
+- (void)checkAndCreateDatabase{     
+    BOOL databaseIsSaved;   
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    databaseIsSaved = [fileManager fileExistsAtPath:databasePath];  
+    if (databaseIsSaved == YES) {
+        return;
+    }
+    else {
+        NSString *databasePathFromApp = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:databaseName];
+        [fileManager copyItemAtPath:databasePathFromApp toPath:databasePath error:nil];
+    }
+    [fileManager release];
+}
+
+- (void)readDataFromDatabase{
+
+    sqlite3 *database;
+    if (sqlite3_open([databasePath UTF8String], &database) == SQLITE_OK) {
+            const char *sqlStatement = "select * from animals";
+            sqlite3_stmt *compiledStatement;
+            if (sqlite3_prepare_v2(database, sqlStatement, -1, &compiledStatement, NULL) == SQLITE_OK) {
+
+                    while (sqlite3_step(compiledStatement) == SQLITE_ROW) {
+                            [animalsArray addObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithUTF8String:(char *)sqlite3_column_text(compiledStatement, 1)], @"name", [NSString stringWithUTF8String:(char *)sqlite3_column_text(compiledStatement, 2)], @"description", nil]];
+                    }
+            }
+
+            sqlite3_finalize(compiledStatement);
+    }
+    sqlite3_close(database);
+}
+
+- (void)writeToDatabase{    
+    sqlite3 *database;
+    if (sqlite3_open([databasePath UTF8String], &database) == SQLITE_OK) {
+            const char *sqlStatement = "insert into animals(name, description) VALUES(?, ?)";
+            sqlite3_stmt *compiledStatement;                
+            if (sqlite3_prepare_v2(database, sqlStatement, -1, &compiledStatement, NULL) == SQLITE_OK){
+                    sqlite3_bind_text(compiledStatement, 1, [addAnimalController.animalName UTF8String], -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(compiledStatement, 2, [addAnimalController.animalDescription UTF8String], -1, SQLITE_TRANSIENT);
+            }
+
+            if(sqlite3_step(compiledStatement) != SQLITE_DONE ) {
+                    NSLog( @"Error: %s", sqlite3_errmsg(database) );
+            } else {
+                    NSLog( @"Insert into row id = %d", sqlite3_last_insert_rowid(database));
+            }
+            sqlite3_finalize(compiledStatement);
+    }
+    sqlite3_close(database);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (addAnimalController.saveButtonPressed == YES && [addAnimalController.animalName length] != 0 && [addAnimalController.animalDescription length] != 0) {
+            [animalsArray addObject:[NSDictionary dictionaryWithObjectsAndKeys:addAnimalController.animalName, @"name", addAnimalController.animalDescription, @"description", nil]];
+            [self.tableView reloadData];
+
+            [self writeToDatabase];
+            addAnimalController.saveButtonPressed = NO;
+        }
+}
+

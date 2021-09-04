@@ -1,0 +1,241 @@
+#include <cstdlib>
+#include <iostream>
+#include <boost/asio.hpp>
+#include <boost/bind.hpp>
+
+using namespace boost;
+using namespace boost::asio;
+using namespace boost::asio::ip;
+using namespace std;
+
+class Session {
+  public:
+
+    Session(io_service& ioService)
+      : m_socket(ioService) {}
+
+    tcp::socket& GetSocket() {
+      return m_socket;
+    }
+
+    void StartRead() {
+      m_messageSizeIterator = reinterpret_cast<char*>(&m_messageSize);
+      async_read(m_socket, buffer(m_messageSizeIterator, sizeof(m_messageSize)),
+        bind(&Session::HandleSizeRead, this, placeholders::error,
+        placeholders::bytes_transferred));
+    }
+
+    void StartWrite(const char* message, int messageSize) {
+      m_messageSize = messageSize;
+      m_message = new char[m_messageSize];
+      memcpy(m_message, message, m_messageSize);
+      async_write(m_socket, buffer(&m_messageSize, sizeof(int)),
+        bind(&Session::HandleSizeWritten, this, placeholders::error));
+    }
+
+    void HandleSizeRead(const system::error_code& error,
+        size_t bytes_transferred) {
+      if(!error) {
+        m_message = new char[m_messageSize];
+        async_read(m_socket, buffer(m_message, m_messageSize),
+          bind(&Session::HandleMessageRead, this, placeholders::error,
+          placeholders::bytes_transferred));
+      } else {
+        delete this;
+      }
+    }
+
+    void HandleMessageRead(const system::error_code& error,
+        size_t bytes_transferred) {
+      if(!error) {
+        cout << string(m_message, m_messageSize) << endl;
+        async_write(m_socket, buffer(&m_messageSize, sizeof(int)),
+          bind(&Session::HandleSizeWritten, this, placeholders::error));
+      } else {
+        delete this;
+      }
+    }
+
+    void HandleSizeWritten(const system::error_code& error) {
+      if(!error) {
+        async_write(m_socket, buffer(m_message, m_messageSize),
+          bind(&Session::HandleMessageWritten, this, placeholders::error));
+      } else {
+        delete this;
+      }
+    }
+
+    void HandleMessageWritten(const system::error_code& error) {
+      if(!error) {
+        delete m_message;
+        m_messageSizeIterator = reinterpret_cast<char*>(&m_messageSize);
+        async_read(m_socket, buffer(m_messageSizeIterator,
+          sizeof(m_messageSize)), bind(&Session::HandleSizeRead, this,
+          placeholders::error, placeholders::bytes_transferred));
+      } else {
+        delete this;
+      }
+    }
+
+  private:
+    tcp::socket m_socket;
+    int m_messageSize;
+    char* m_messageSizeIterator;
+    char* m_message;
+};
+
+class Server {
+  public:
+
+    Server(io_service& ioService, short port)
+        : m_ioService(ioService),
+          m_acceptor(ioService, tcp::endpoint(tcp::v4(), port)) {
+      Session* new_session = new Session(m_ioService);
+      m_acceptor.async_accept(new_session->GetSocket(), bind(&Server::HandleAccept,
+        this, new_session,asio::placeholders::error));
+    }
+
+    void HandleAccept(Session* new_session, const system::error_code& error) {
+      if(!error) {
+        new_session->StartRead();
+        new_session = new Session(m_ioService);
+        m_acceptor.async_accept(new_session->GetSocket(), bind(
+          &Server::HandleAccept, this, new_session, placeholders::error));
+      } else {
+        delete new_session;
+      }
+    }
+
+  private:
+    io_service& m_ioService;
+    tcp::acceptor m_acceptor;
+};
+
+int main(int argc, char* argv[]) {
+  try {
+    if(argc != 2) {
+      cerr << "Usage: server <port>\n";
+      return 1;
+    }
+    io_service io_service;
+    Server s(io_service, atoi(argv[1]));
+    io_service.run();
+  } catch(std::exception& e) {
+    cerr << "Exception: " << e.what() << "\n";
+  }
+  return 0;
+}
+
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <boost/bind.hpp>
+#include <boost/asio.hpp>
+
+using namespace boost;
+using namespace boost::asio;
+using namespace boost::asio::ip;
+using namespace std;
+
+class Session {
+  public:
+
+    Session(io_service& ioService)
+      : m_socket(ioService) {}
+
+    tcp::socket& GetSocket() {
+      return m_socket;
+    }
+
+    void StartRead() {
+      m_messageSizeIterator = reinterpret_cast<char*>(&m_messageSize);
+      async_read(m_socket, buffer(m_messageSizeIterator, sizeof(m_messageSize)),
+        bind(&Session::HandleSizeRead, this, placeholders::error,
+        placeholders::bytes_transferred));
+    }
+
+    void StartWrite(const char* message, int messageSize) {
+      m_messageSize = messageSize;
+      m_message = new char[m_messageSize];
+      memcpy(m_message, message, m_messageSize);
+      async_write(m_socket, buffer(&m_messageSize, sizeof(int)),
+        bind(&Session::HandleSizeWritten, this, placeholders::error));
+    }
+
+    void HandleSizeRead(const system::error_code& error,
+        size_t bytes_transferred) {
+      if(!error) {
+        m_message = new char[m_messageSize];
+        async_read(m_socket, buffer(m_message, m_messageSize),
+          bind(&Session::HandleMessageRead, this, placeholders::error,
+          placeholders::bytes_transferred));
+      } else {
+        delete this;
+      }
+    }
+
+    void HandleMessageRead(const system::error_code& error,
+        size_t bytes_transferred) {
+      if(!error) {
+        cout << string(m_message, m_messageSize) << endl;
+        async_write(m_socket, buffer(&m_messageSize, sizeof(int)),
+          bind(&Session::HandleSizeWritten, this, placeholders::error));
+      } else {
+        delete this;
+      }
+    }
+
+    void HandleSizeWritten(const system::error_code& error) {
+      if(!error) {
+        async_write(m_socket, buffer(m_message, m_messageSize),
+          bind(&Session::HandleMessageWritten, this, placeholders::error));
+      } else {
+        delete this;
+      }
+    }
+
+    void HandleMessageWritten(const system::error_code& error) {
+      if(!error) {
+        delete m_message;
+        m_messageSizeIterator = reinterpret_cast<char*>(&m_messageSize);
+        async_read(m_socket, buffer(m_messageSizeIterator,
+          sizeof(m_messageSize)), bind(&Session::HandleSizeRead, this,
+          placeholders::error, placeholders::bytes_transferred));
+      } else {
+        delete this;
+      }
+    }
+
+  private:
+    tcp::socket m_socket;
+    int m_messageSize;
+    char* m_messageSizeIterator;
+    char* m_message;
+};
+
+int main(int argc, char* argv[]) {
+  try {
+    if(argc != 3) {
+      cerr << "Usage: client <host> <port>\n";
+      return 1;
+    }
+    io_service io_service;
+    tcp::resolver resolver(io_service);
+    tcp::resolver::query query(tcp::v4(), argv[1], argv[2]);
+    tcp::resolver::iterator iterator = resolver.resolve(query);
+    Session session(io_service);
+    tcp::socket& s = session.GetSocket();
+    s.connect(*iterator);
+    cout << "Enter message: ";
+    const int MAX_LENGTH = 1024;
+    char request[MAX_LENGTH];
+    cin.getline(request, MAX_LENGTH);
+    int requestLength = strlen(request);
+    session.StartWrite(request, requestLength);
+    io_service.run();
+  } catch (std::exception& e) {
+    cerr << "Exception: " << e.what() << "\n";
+  }
+  return 0;
+}
+

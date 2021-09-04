@@ -1,0 +1,228 @@
+# Be sure to restart your web server when you modify this file.
+
+# Uncomment below to force Rails into production mode when 
+# you don't control web/app server and can't set it the proper way
+# ENV['RAILS_ENV'] ||= 'production'
+
+# Specifies gem version of Rails to use when vendor/rails is not present
+#RAILS_GEM_VERSION = '2.1.0'  unless defined? RAILS_GEM_VERSION
+RAILS_GEM_VERSION = '2.2.2'  unless defined? RAILS_GEM_VERSION
+puts "loading rails..."
+# Bootstrap the Rails environment, frameworks, and default configuration
+require File.join(File.dirname(__FILE__), 'boot')
+puts "require boot file"
+require 'socket'
+puts "require socket"
+
+Rails::Initializer.run do |config|
+puts "inside config section"
+  # Settings in config/environments/* take precedence over those specified here
+
+  # Skip frameworks you're not going to use (only works if using vendor/rails)
+  # config.frameworks -= [ :action_web_service, :action_mailer ]
+
+  # Only load the plugins named here, by default all plugins in vendor/plugins are loaded
+  # config.plugins = %W( exception_notification ssl_requirement )
+
+  # Add additional load paths for your own custom dirs
+  # config.load_paths += %W( #{RAILS_ROOT}/extras )
+
+  # Force all environments to use the same logger level 
+  # (by default production uses :info, the others :debug)
+  # config.log_level = :debug
+
+  # Use the database for sessions instead of the file system
+  # (create the session table with 'rake db:sessions:create')
+  config.action_controller.session_store = :active_record_store
+puts "setting session store type"
+  # Use SQL instead of Active Record's schema dumper when creating the test database.
+  # This is necessary if your schema can't be completely dumped by the schema dumper, 
+  # like if you have constraints or database-specific column types
+  # config.active_record.schema_format = :sql
+
+  # Activate observers that should always be running
+  # config.active_record.observers = :cacher, :garbage_collector
+
+  # Make Active Record use UTC-base instead of local time
+  # config.active_record.default_timezone = :utc
+  #config.gem "will_paginate", :source => "http://gems.rubyforge.org"
+
+
+  # Action Mailer configuration - from page 567-568 of the Agile Development book
+  #  config.action_mailer.delivery_method = :smtp
+  #  
+  config.action_mailer.smtp_settings = {
+    :address    => "smtp.redacted.com",
+    :port       => "25",
+    :domain     => "redacted.com"
+  }
+
+puts "setting smtp settings"
+  # See Rails::Configuration for more options
+
+end
+
+puts "outside config section ... before inflectors"
+# Add new inflection rules using the following format 
+# (all these examples are active by default):
+ActiveSupport::Inflector.inflections do |inflect|
+#   inflect.plural /^(ox)$/i, '\1en'
+#   inflect.singular /^(ox)en/i, '\1'
+#   inflect.irregular 'person', 'people'
+#   inflect.uncountable %w( fish sheep )
+   inflect.uncountable %w( sid fcc )
+end
+
+puts "after inflectors"
+# Add new mime types for use in respond_to blocks:
+# Mime::Type.register "text/richtext", :rtf
+# Mime::Type.register "application/x-mobile", :mobile
+
+# Include your application configuration below
+require 'will_paginate'
+puts "require will paginate"
+
+# insert at top of ActiveRecord::Base.rb
+    # Indicates whether field names should be lowercased for legacy databse fields.
+    # If true, the field Product_Name will be +product_name+. If false, it will remain +Product_Name+.
+    # This is false, by default.
+    #cattr_accessor :downcase_legacy_field_names, :instance_writer => false
+    #@@downcase_legacy_field_names = false
+
+# insert into column_methods_hash of ActiveRecord::Base.rb
+#          attr_final = downcase_legacy_field_names ? attr.to_s.downcase : attr
+
+puts "here comes the monkey patch"
+module ActiveRecord
+  class Base
+    # Indicates whether field names should be lowercased for legacy databse fields.
+    # If true, the field Product_Name will be +product_name+. If false, it will remain +Product_Name+.
+    # This is false, by default.
+    cattr_accessor :downcase_legacy_field_names, :instance_writer => false
+    @@downcase_legacy_field_names = false
+
+  end
+end
+
+puts "monkey patch part 2"
+# set all accessor methods to lowercase (underscore)
+# add set_columns_to_lower to each model that needs it 
+class << ActiveRecord::Base
+
+    # Returns a hash of all the methods added to query each of the columns in the table with the name of the method as the key
+    # and true as the value. This makes it possible to do O(1) lookups in respond_to? to check if a given method for attribute
+    # is available.
+    def column_methods_hash #:nodoc:
+      @dynamic_methods_hash ||= column_names.inject(Hash.new(false)) do |methods, attr|
+
+        attr_final = downcase_legacy_field_names ? attr.to_s.downcase : attr
+
+        attr_name = attr_final
+        methods[attr_final.to_sym]       = attr_name
+        methods["#{attr_final}=".to_sym] = attr_name
+        methods["#{attr_final}?".to_sym] = attr_name
+        methods["#{attr_final}_before_type_cast".to_sym] = attr_name
+        methods
+      end
+    end
+
+   # adapted from: http://wiki.rubyonrails.org/rails/pages/HowToUseLegacySchemas
+    def downcase_legacy_field_methods
+      column_names.each do |name|
+       next if name == primary_key
+       a = name.to_s.underscore
+
+       define_method(a.to_sym) do
+         read_attribute(name)
+       end
+
+       define_method("#{a}=".to_sym) do |value|
+         write_attribute(name, value)
+       end
+
+       define_method("#{a}?".to_sym) do
+         self.send("#{name}?".to_sym)
+       end
+
+      end
+    end
+
+
+end 
+
+puts "monkey patch part 3"
+
+
+
+ActiveRecord::Base.downcase_legacy_field_names = true
+
+puts "monkey patch part 4"
+module ActiveSupport
+  module Inflector
+    def textize(str)
+      str.to_s.gsub(/'/, '').downcase
+        #gsub(/([A-Z]+)([A-Z][a-z])/,'\1_\2').
+        #gsub(/([a-z\d])([A-Z])/,'\1_\2').
+        #tr("-", "_").
+        #downcase
+    end
+
+  end
+end
+
+puts "monkey patch part 5"
+module ActiveSupport #:nodoc:
+  module CoreExtensions #:nodoc:
+    module String #:nodoc:
+      module Inflections
+        def textize
+          Inflector.textize(self)
+        end
+      end
+    end
+  end
+end
+
+###################################################################
+### Code moved to the specific environment files.
+### This way the schema gets reloaded on a deploy
+###################################################################
+## Establishes connections for the root classes of the various databases that 
+## must be connected to for SUI.
+
+
+puts "load the database if we are in test mode"
+if RAILS_ENV == "test" then
+puts "if I see this and I'm not loading test, we have a problem"
+  Ird.load_database
+end
+
+
+
+puts "setting up the execption notifier"
+ExceptionNotifier.exception_recipients = %w(me@redacted.com)
+if RAILS_ENV == "Production"
+  ExceptionNotifier.sender_address = %("SUI Service" <service@redacted.com>)
+  ExceptionNotifier.email_prefix = "[SUI ERROR] "
+else
+  ExceptionNotifier.sender_address = %("SUI #{RAILS_ENV.to_s.humanize} Service" <service@redacted.com>)
+  ExceptionNotifier.email_prefix = "[#{RAILS_ENV.to_s.humanize}: SUI ERROR] "
+end
+
+
+puts "local_ip function"
+def local_ip
+  orig, Socket.do_not_reverse_lookup = Socket.do_not_reverse_lookup, true
+  UDPSocket.open do |s|
+    s.connect '64.233.187.99', 1
+    s.addr.last
+  end
+ensure
+  Socket.do_not_reverse_lookup = orig
+end
+puts "I am located at:#{local_ip}:"
+puts "environment.rb is loaded"
+
+puts
+setting smtp settings
+Rails::Initializer do |config|

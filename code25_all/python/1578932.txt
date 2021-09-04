@@ -1,0 +1,194 @@
+ss.shutdown()
+"bye"
+SocketServer
+BaseRequestHandler
+shutdown()
+Tkinter
+from sys import argv, stderr
+from threading import Thread
+import socket
+import SocketServer
+import threading
+import sys
+
+class ThreadedRecv(Thread):
+    def __init__(self,socket):
+        Thread.__init__(self)
+        self.__socket = socket
+        self.__message = ''
+        self.__done = False
+    def recv(self):
+        while self.__message.strip() != "bye" and not self.getStatus():
+            self.__message = self.__socket.recv(4096)
+            print 'received',self.__message
+        self.setStatus(True)
+
+    def run(self):
+        self.recv()
+
+    def setStatus(self,status):
+        self.__done = status
+
+    def getStatus(self):
+        return self.__done
+
+class ThreadedSend(Thread):
+    def __init__(self,socket):
+        Thread.__init__(self)
+        self.__socket = socket
+        self.__message = ''
+        self.__done = False
+    def send(self):
+        while self.__message != "bye" and not self.getStatus():
+            self.__message = raw_input()
+            self.__socket.send(self.__message)
+        self.setStatus(True)
+
+    def run(self):
+        self.send()
+
+    def setStatus(self,status):
+        self.__done = status
+
+    def getStatus(self):
+        return self.__done
+
+
+
+class HostException(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+class EchoServer(SocketServer.BaseRequestHandler):
+    def setup(self):
+        print self.client_address, 'is connected!'
+        self.request.send('Hello ' + str(self.client_address) + '\n')
+        self.__done = False
+    def handle(self):
+
+        sender = ThreadedSend(self.request)
+        recver = ThreadedRecv(self.request)
+        sender.start()
+        recver.start()
+        while 1:
+            if recver.getStatus():
+                sender.setStatus(True)
+                break
+            if sender.getStatus():
+                recver.setStatus(True)
+                break         
+
+    def finish(self):
+        print self.client_address, 'disconnected'
+        self.request.send('bye client %s\n' % str(self.client_address))
+        self.setDone(True)
+
+    def setDone(self,done):
+        self.__done = done
+
+    def getDone(self):
+        return self.__done
+
+
+
+def setup(arg1, arg2, arg3):
+    server = False
+    defaultPort,defaultHost = 2358,"localhost"
+    hosts = []
+    port = defaultPort
+    serverNames = ["TRUE","SERVER","S","YES"]
+    arg1 = arg1.upper()
+    arg2 = arg2.upper()
+    arg3 = arg3.upper()
+    if arg1 in serverNames or arg2 in serverNames or arg3 in serverNames:
+    server = True
+    try:
+        port = int(arg1)
+        if arg2 != '':
+            hosts.append(arg2)
+    except ValueError:
+        if arg1 != '':
+            hosts.append(arg1)
+        try:
+            port = int(arg2)
+            if arg3 != '':
+                hosts.append(arg3)
+        except ValueError:
+            if arg2 != '':
+                hosts.append(arg2)
+            try:
+                port = int(arg3)
+            except ValueError:
+                if arg3 != '':
+                    hosts.append(arg3)
+                port = defaultPort
+
+    for sn in serverNames:
+        if sn in hosts:
+            hosts.remove(sn)
+
+    try:
+        if len(hosts) != 1:
+            raise HostException("Either more than one or no host "+ \
+                                "declared.  Setting host to localhost.")
+    except HostException as error:
+        print error.value, "Setting hosts to default"
+        return (server,defaultHost,port)
+
+    return (server,hosts[0].lower(),port)
+
+def main():
+    bufsize = 4096
+    while len(argv[1:4]) < 3:
+        argv.append('')
+    settings = setup(*argv[1:4])
+    connections = (settings[1],settings[2])
+    print connections
+    if not settings[0]:
+        try:
+            mySocket = socket.socket(socket.AF_INET,\
+                                     socket.SOCK_STREAM)
+        except socket.error, msg:
+            stderr.write("[ERROR] %s\n" % msg[1])
+            sys.exit(1)
+        try:
+            mySocket.connect(connections)
+        except socket.error, msg:
+            stderr.write("[ERROR] %s\n" % msg[1])
+            sys.exit(2)
+
+        message = ""
+        print "Enter a message to send to the server. "+\
+              "Enter \"bye\" to quit."
+        sender = ThreadedSend(mySocket)
+        recver = ThreadedRecv(mySocket)
+        sender.start()
+        recver.start()
+        while 1:
+            if sender.getStatus():
+                recver.setStatus(True)
+                break
+            if recver.getStatus():
+                sender.setStatus(True)
+                break    
+
+    else:
+        xserverhandler = EchoServer
+        serversocket = SocketServer.ThreadedTCPServer(\
+            connections,xserverhandler)
+        server_thread = Thread(target = serversocket.serve_forever)
+        server_thread.setDaemon(True)
+        server_thread.start()
+        # I would like to shut down this server whenever 
+        # I get done talking to it.
+        """while 1:
+            if xserverhandler.getDone():
+                print 'This is now true!'
+                serversocket.shutdown()
+                break"""
+
+if __name__ == '__main__':
+    main()
+

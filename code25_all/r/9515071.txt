@@ -1,0 +1,274 @@
+library(scatterplot3d)
+library(rgl)
+
+plotresults = function()
+
+{
+
+r_start = 0.5
+r_end = 1
+r_step = 0.1
+nsteps = (r_end-r_start)/r_step+1
+
+riskstart = 0.01
+riskend = 1
+risksteps = 0.005
+
+plotcols=NULL
+
+for(i in 1:((r_end-r_start)/r_step+1))
+  {
+  plotcols = c(plotcols, rep(i, (riskend-riskstart)/risksteps+1))
+  }
+
+risk=NULL
+rout=NULL
+foregone=NULL
+colour = 
+
+for (r in seq(r_start,r_end,r_step))
+  {
+  output = species2(r, riskstart, riskend, risksteps)
+  risk = c(risk, output$risk)
+  rout = c(rout,rep(r, length(output$risk)))
+  foregone = c(foregone, output$foregone)   
+  #]mod = lm(results$foregone ~ poly(results$risk, 3))  
+  }
+r= rout  
+
+plot3d(risk, r, foregone, col=plotcols, size=3)
+}
+
+species2 = function(r, riskstart,riskend,risksteps)
+
+{
+  #set how many years to run the model for when testing risk
+  nYears = 3
+
+  #setup the variables for risk values
+
+  #init outputs
+  #effort=NULL
+  catch=numeric((riskend-riskstart)/risksteps)
+
+  #read in the parameters for the 2 species
+  SpeciesParams = as.matrix(read.csv("C:/Documents and Settings/localuser/My Documents/DefineIt/Code/R/speciesparams.csv", sep=",", header=T))
+
+  # set the species parameter for species B to r (this enables us to get results for a range of r's
+  SpeciesParams[2,4]=r
+
+  #Calc optimum catch for species A
+  maxcatch = optimcatch(SpeciesParams[1,])[[2]]
+
+  #Create vector for risk
+  risk = seq(riskstart, riskend, risksteps)
+
+  i=1
+    #browser() 
+  #Determine the level of effort that subjects species B to a given level of risk
+  for(risk in seq(riskstart,riskend,risksteps))
+    {
+    #calc the effort that would subject vulnerable species (B) to each level of risk
+    effort=optimbreach(nYears,risk, SpeciesParams[2,])[[1]]
+
+    #calc the catch of target species (A) for effort calculated in previous line
+    catch[i]=maxcatch-meancatch(effort, SpeciesParams[1,])
+
+    #if(catch[length(catch)]>200){browser()}
+    i=i+1
+    }
+
+    #plot(x=seq(riskstart,riskend,risksteps), y=catch, xlab = "risk", ylab="Foregone Yield")
+    output = list(risk=seq(riskstart,riskend,risksteps), foregone=catch)
+    return (output)
+
+
+
+}
+
+
+RunDisplay = function(nTimeSteps, e) # e=effort, nTimeSteps=number of timesteps per run
+#Runs the model and outputs the biomass and catches as two timeseries plots
+  {
+
+  output = RunModelnTimeSteps(nTimeSteps, stddevr_global, r_global, Init_B_global, k_global, q_global, e, 0)
+
+  split.screen(c(1,2))
+  screen(1)
+  plot(output[[2]], ylim=c(0,k_global), type="l", ylab="Biomass", xlab="Timestep")
+  screen(2)
+  plot(output[[3]], ylim=c(0,k_global), type="l", ylab="Catch", xlab="TimeStep")
+
+  }
+
+displayProbEff = function()
+#A simple subroutine that graphs the change in probability of breaching Bpa for different efforts
+  {
+
+  prob_lessBpa = NULL
+  for(x in seq(0,2,0.02))
+    {
+    prob_lessBpa=c(prob_lessBpa,calcprob(x,3,Bpa_global))
+    }
+  plot(x=seq(0,2,0.02), y=prob_lessBpa, ylab="Probability", xlab="Effort")
+
+  }
+
+optimbreach = function(nTimeSteps, opt_prob, spec_params)
+#Calculates the level of effort that meets management objective
+#nTimeSteps is length of time to run simulation while checking not falling beneath Bpa
+#opt_prob is the maximum probability of going beneath Bpa in a given time period (see previous line)
+#that is acceptable by the management objective
+
+  {
+
+  diffprob = function(e, params, spec_params)
+    {
+    nTimeSteps=params[1]
+    opt_prob=params[2]
+    prob_breach = calcprob(e, nTimeSteps, spec_params)
+    (prob_breach-opt_prob)^2
+    }
+
+
+  params=c(nTimeSteps, opt_prob)  
+  a=optimise(diffprob, c(0,1.5), params, spec_params, maximum=FALSE)
+  #browser()
+  a
+
+  }
+
+optimcatch = function(species_params)
+#Calculates the effort that gives the optimum catch
+  {
+
+  optimise(meancatch, c(0,2), species_params, maximum=TRUE)
+
+  }
+
+meancatch = function(ef, species_params)
+  {
+  output=RunModelnTimeSteps(nTimeSteps=1000, species_params, ef)  
+  mean(output[[3]])
+  }
+
+calcmeans = function(effort)
+#Calculates the mean catch and biomass over 1000 timesteps
+  {
+
+  output = RunModelnTimeSteps(1000, species_params, e)
+  print(paste("Mean Biomass = ", mean(output[[2]])))
+  print(paste("Mean Catch = ", mean(output[[3]])))
+
+  }
+
+RunModelnTimeSteps = function(nTimeSteps, sparams, e)
+#Runs the surplus production model for nTimeSteps
+  {
+  #indexes in sparams for various parameters
+  #Bpa = 2
+  #sd_ = 3
+  #r = 4
+  #B = 5
+  #k = 6
+  #q_ = 7 
+
+  P = 0                         #initial production
+
+  Breached = FALSE              #This records whether the biomass fell beneath Bpa
+  Biomass = numeric(nTimeSteps)                #biomass
+  Catch = numeric(nTimeSteps)          #catch
+
+  Biomass[1]=sparams[5]
+  Catch[1]=2
+
+  for (x in 2:nTimeSteps)
+    {
+    ModOutput = RunTimeStep(sparams[3], sparams[4], Biomass[x-1], sparams[6], sparams[7], e)  #Run the model for 1 timestep
+
+    Biomass[x] = ModOutput[1]  #Get the biomass at end of timestep
+
+    Catch[x] = ModOutput[2]  #Get the catch for this timestep
+    #print(Biomass[x])
+    #print(sparams[2])
+    if (Biomass[x]<=sparams[2])  #Check if biomass has fallen beneath Bpa
+      {                            
+      Breached=TRUE
+      if(Biomass[x]<0){Biomass[x]=0}
+      }      
+    }
+  #if(Bpa==600){browser()   }
+  list(Breached, Biomass, Catch)
+
+  }
+
+
+RunTimeStep = function(sd_, r, B, k, q_, e)
+#Calculates one timestep of the model
+#outputs the biomass[1] at the end of the timestep and catches[2] through timestep
+  {
+
+  change_r = rnorm(n=1, mean=0, sd=sd_) #random change in r
+  P = (r + change_r) * B * (1-B/k)  #calc production
+  Catch = q_ * e * B  #calc catch
+  B = B + P - q_*e*B  #calc results biomass
+  c(B,Catch)  #output biomass at end of timestep and catch
+
+  }
+
+
+calcprob = function(e, nTimeSteps, species_params) # e=effort, Bpa=precautionary biomass limit, nTimeSteps=number of timesteps per run
+#Calculates the probability of going beneath Bpa within nTimeSteps
+  {
+
+  nIterations = 200            #number of times the simulation is run
+  nFails = 0                    #Counts the number of times the biomass goes benath Bpa
+
+  nFails = RunModelnTimeSteps2(nTimeSteps, species_params, e, nIterations)
+
+  nFails/nIterations
+
+  }
+
+
+RunModelnTimeSteps2 = function(nTimeSteps, sparams, e, nIterations)
+#Runs the surplus production model for nTimeSteps
+  {
+  #indexes in sparams for various parameters
+  #Bpa = 2
+  #sd_ = 3
+  #r = 4
+  #B = 5
+  #k = 6
+  #q_ = 7 
+
+  P = 0                         #initial production
+
+  Breached = rep(F,nIterations)              #This records whether the biomass fell beneath Bpa
+  Biomass = matrix(nrow=nTimeSteps, ncol=nIterations)                #biomass
+  Catch = matrix(nrow=nTimeSteps, ncol=nIterations)          #catch
+  randomvalues = matrix(rnorm(nTimeSteps*nIterations,0,sparams[3]),ncol=nIterations)
+
+  Biomass[1,]=sparams[5]
+  Catch[1,]=2
+
+  #ModOutput = RunTimeStep2(sparams[3], sparams[4], Biomass[x-1,], sparams[6], sparams[7], e)
+
+  for (x in 2:nTimeSteps)
+    {
+    #ModOutput = RunTimeStep2(sparams[3], sparams[4], Biomass[x-1,], sparams[6], sparams[7], e) #Run the model for 1 timestep
+
+    P = (sparams[4] + randomvalues[x,]) * Biomass[x-1] * (1-Biomass[x-1]/sparams[6])  #calc production
+    Catch[x,] = sparams[7] * e * Biomass[x-1]
+    Biomass[x,] = Biomass[x-1,] + P - Catch[x,]
+
+    Breached = ifelse (Biomass[x,]<=sparams[2], T, Breached)
+    ifelse (Biomass[x,]<0,0,Biomass[x,]) 
+
+    }
+
+  #if(Bpa==600){browser()   }
+
+  sum(Breached)
+  }
+

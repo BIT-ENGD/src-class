@@ -1,0 +1,223 @@
+require 'nn'
+require 'image'
+
+404
+th classify.lua
+404
+500
+200
+luarocks
+nn
+image
+.\/app\/?.lua;\/opt\/openresty\/lualib\/?.lua;\/opt\/openresty\/lualib\/?\/init.lua;\/root\/.luarocks\/share\/lua\/5.1\/?.lua;\/root\/.luarocks\/share\/lua\/5.1\/?\/init.lua;\/root\/torch\/install\/share\/lua\/5.1\/?.lua;\/root\/torch\/install\/share\/lua\/5.1\/?\/init.lua;.\/?.lua;\/root\/torch\/install\/share\/luajit-2.1.0-beta1\/?.lua;\/usr\/local\/share\/lua\/5.1\/?.lua;\/usr\/local\/share\/lua\/5.1\/?\/init.lua;
+
+-- these require statements throw an error
+require 'nn'
+require 'image'
+
+
+function classifyImage()
+  local ParamBank = require 'ParamBank'
+  local label     = require 'classifier_label'
+  torch.setdefaulttensortype('torch.FloatTensor')
+  torch.setnumthreads(opt.threads)
+
+
+  -- set modules to be in use
+  if opt.backend == 'nn' or opt.backend == 'cunn' then
+     require(opt.backend)
+     SpatialConvolution = nn.SpatialConvolutionMM
+     SpatialMaxPooling = nn.SpatialMaxPooling
+     ReLU = nn.ReLU
+     SpatialSoftMax = nn.SpatialSoftMax
+  else
+     assert(false, 'Unknown backend type')
+  end
+
+
+  local net = nn.Sequential()
+     net:add(SpatialConvolution(3, 96, 7, 7, 2, 2))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialMaxPooling(3, 3, 3, 3))
+     net:add(SpatialConvolution(96, 256, 7, 7, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialMaxPooling(2, 2, 2, 2))
+     net:add(SpatialConvolution(256, 512, 3, 3, 1, 1, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialConvolution(512, 512, 3, 3, 1, 1, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialConvolution(512, 1024, 3, 3, 1, 1, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialConvolution(1024, 1024, 3, 3, 1, 1, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialMaxPooling(3, 3, 3, 3))
+     net:add(SpatialConvolution(1024, 4096, 5, 5, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialConvolution(4096, 4096, 1, 1, 1, 1))
+     net:add(ReLU(opt.inplace))
+     net:add(SpatialConvolution(4096, 1000, 1, 1, 1, 1))
+     if not opt.spatial then net:add(nn.View(1000)) end
+     net:add(SpatialSoftMax())
+     print(net)
+
+     -- init file pointer
+     print('==> overwrite network parameters with pre-trained weigts')
+     ParamBank:init("net_weight_1")
+     ParamBank:read(        0, {96,3,7,7},      net:get(1).weight)
+     ParamBank:read(    14112, {96},            net:get(1).bias)
+     ParamBank:read(    14208, {256,96,7,7},    net:get(4).weight)
+     ParamBank:read(  1218432, {256},           net:get(4).bias)
+     ParamBank:read(  1218688, {512,256,3,3},   net:get(7).weight)
+     ParamBank:read(  2398336, {512},           net:get(7).bias)
+     ParamBank:read(  2398848, {512,512,3,3},   net:get(9).weight)
+     ParamBank:read(  4758144, {512},           net:get(9).bias)
+     ParamBank:read(  4758656, {1024,512,3,3},  net:get(11).weight)
+     ParamBank:read(  9477248, {1024},          net:get(11).bias)
+     ParamBank:read(  9478272, {1024,1024,3,3}, net:get(13).weight)
+     ParamBank:read( 18915456, {1024},          net:get(13).bias)
+     ParamBank:read( 18916480, {4096,1024,5,5}, net:get(16).weight)
+     ParamBank:read(123774080, {4096},          net:get(16).bias)
+     ParamBank:read(123778176, {4096,4096,1,1}, net:get(18).weight)
+     ParamBank:read(140555392, {4096},          net:get(18).bias)
+     ParamBank:read(140559488, {1000,4096,1,1}, net:get(20).weight)
+     ParamBank:read(144655488, {1000},          net:get(20).bias)
+  -- close file pointer
+  ParamBank:close()
+
+
+  -- load and preprocess image
+  print('==> prepare an input image')
+  local img = image.load(opt.img):mul(255)
+
+  -- use image larger than the eye size in spatial mode
+  if not opt.spatial then
+     local dim = (opt.network == 'small') and 231 or 221
+     local img_scale = image.scale(img, '^'..dim)
+     local h = math.ceil((img_scale:size(2) - dim)/2)
+     local w = math.ceil((img_scale:size(3) - dim)/2)
+     img = image.crop(img_scale, w, h, w + dim, h + dim):floor()
+  end
+
+
+  -- memcpy from system RAM to GPU RAM if cuda enabled
+  if opt.backend == 'cunn' or opt.backend == 'cudnn' then
+     net:cuda()
+     img = img:cuda()
+  end
+
+
+  -- save bare network (before its buffer filled with temp results)
+  print('==> save model to:', opt.save)
+  torch.save(opt.save, net)
+
+
+  -- feedforward network
+  print('==> feed the input image')
+  timer = torch.Timer()
+  img:add(-118.380948):div(61.896913)
+  local out = net:forward(img)
+
+
+  -- find output class name in non-spatial mode
+  local results = {}
+  local topN = 10
+  local probs, idxs = torch.topk(out, topN, 1, true)
+
+  for i=1,topN do
+     print(label[idxs[i]], probs[i])
+     local r = {}
+     r.label = label[idxs[i]]
+     r.prob = probs[i]
+     results[i] = r
+  end
+
+  return results
+end
+
+function errorHandler(error)
+  return {message: "error"}
+end
+
+context.template = {
+  type = "mustache",
+  name = "app/templates/layout",
+
+  partials = {
+    content = "app/templates/classify",
+  }
+}
+
+
+context.output = {
+  message = xpcall(classifyImage, errorHandler)
+}
+
+context.response.status = 200
+
+xpcall
+local resultCode, error = xpcall(func, errHandler)
+{"message":false,"errorMessage":"[string \".\/app\/requests\/classify.lua\"]:3: module 'nn' not found:\n\tno field package.preload['nn']\n\tno file '.\/app\/nn.lua'\n\tno file '\/opt\/openresty\/lualib\/nn.lua'\n\tno file '\/opt\/openresty\/lualib\/nn\/init.lua'\n\tno file '\/root\/.luarocks\/share\/lua\/5.1\/nn.lua'\n\tno file '\/root\/.luarocks\/share\/lua\/5.1\/nn\/init.lua'\n\tno file '\/root\/torch\/install\/share\/lua\/5.1\/nn.lua'\n\tno file '\/root\/torch\/install\/share\/lua\/5.1\/nn\/init.lua'\n\tno file '.\/nn.lua'\n\tno file '\/root\/torch\/install\/share\/luajit-2.1.0-beta1\/nn.lua'\n\tno file '\/usr\/local\/share\/lua\/5.1\/nn.lua'\n\tno file '\/usr\/local\/share\/lua\/5.1\/nn\/init.lua'\n\tno file '\/opt\/openresty\/lualib\/nn.so'\n\tno file '\/root\/torch\/install\/lib\/nn.so'\n\tno file '\/root\/.luarocks\/lib\/lua\/5.1\/nn.so'\n\tno file '\/root\/torch\/install\/lib\/lua\/5.1\/nn.so'\n\tno file '.\/nn.so'\n\tno file '\/usr\/local\/lib\/lua\/5.1\/nn.so'\n\tno file '\/usr\/local\/lib\/lua\/5.1\/loadall.so'"}
+
+[string "./app/requests/classify.lua"]:5: module 'nn' not found:
+    no field package.preload['nn']
+    no file './app/nn.lua'
+    no file '/opt/openresty/lualib/nn.lua'
+    no file '/opt/openresty/lualib/nn/init.lua'
+    no file '/root/.luarocks/share/lua/5.1/nn.lua'
+    no file '/root/.luarocks/share/lua/5.1/nn/init.lua'
+    no file '/root/torch/install/share/lua/5.1/nn.lua'
+    no file '/root/torch/install/share/lua/5.1/nn/init.lua'
+    no file './nn.lua'
+    no file '/root/torch/install/share/luajit-2.1.0-beta1/nn.lua'
+    no file '/usr/local/share/lua/5.1/nn.lua'
+    no file '/usr/local/share/lua/5.1/nn/init.lua'
+    no file '/root/torch/extra/nn/nn.lua'
+    no file '/opt/openresty/lualib/nn.lua'
+    no file '/opt/openresty/lualib/nn/init.lua'
+    no file '/root/.luarocks/share/lua/5.1/nn.lua'
+    no file '/root/.luarocks/share/lua/5.1/nn/init.lua'
+    no file '/root/torch/install/share/lua/5.1/nn.lua'
+    no file '/root/torch/install/share/lua/5.1/nn/init.lua'
+    no file './nn.lua'
+    no file '/root/torch/install/share/luajit-2.1.0-beta1/nn.lua'
+    no file '/usr/local/share/lua/5.1/nn.lua'
+    no file '/usr/local/share/lua/5.1/nn/init.lua'
+    no file '/root/torch/extra/image/nn.lua'
+    no file '/root/torch/extra/nn/nn.lua'
+    no file '/opt/openresty/lualib/nn.so'
+    no file '/root/torch/install/lib/nn.so'
+    no file '/root/.luarocks/lib/lua/5.1/nn.so'
+    no file '/root/torch/install/lib/lua/5.1/nn.so'
+    no file './nn.so'
+    no file '/usr/local/lib/lua/5.1/nn.so'
+    no file '/usr/local/lib/lua/5.1/loadall.so'
+
+nn
+find -name nn
+./root/torch/install/share/lua/5.1/nn
+./root/torch/install/share/lua/5.1/nngraph
+./root/torch/install/share/lua/5.1/nnx
+./root/torch/install/lib/luarocks/rocks/nn
+./root/torch/install/lib/luarocks/rocks/nn/scm-1/nn-scm-1.rockspec
+./root/torch/install/lib/luarocks/rocks/nngraph
+./root/torch/install/lib/luarocks/rocks/nngraph/scm-1/nngraph-scm-1.rockspec
+./root/torch/install/lib/luarocks/rocks/nnx
+./root/torch/install/lib/luarocks/rocks/nnx/0.1-1/nnx-0.1-1.rockspec
+./root/torch/extra/nngraph
+./root/torch/extra/nngraph/nngraph-scm-1.rockspec
+./root/torch/extra/nnx
+./root/torch/extra/nnx/build/CMakeFiles/nnx.dir
+./root/torch/extra/nnx/nnx-0.1-1.rockspec
+./root/torch/extra/nn
+./root/torch/extra/nn/rocks/nn-scm-1.rockspec
+./root/torch/.git/modules/extra/nngraph
+./root/torch/.git/modules/extra/nnx
+./root/torch/.git/modules/extra/nn
+./usr/local/include/opencv2/flann/nn_index.h
+./usr/share/locale/nn
+./usr/share/i18n/locales/nn_NO
+./usr/share/perl/5.18.2/Unicode/Collate/Locale/nn.pl
+./usr/lib/python3.4/nntplib.py
+./usr/lib/python2.7/nntplib.pyc
+./usr/lib/python2.7/nntplib.py
+

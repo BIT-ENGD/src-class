@@ -1,0 +1,64 @@
+my $ua = LWP::UserAgent->new;
+ua->timeout(5); $ua->cookie_jar({});
+
+my $req = HTTP::Request->new(POST => "http://$host:$port/auth/login");
+$req->content_type('application/x-www-form-urlencoded');
+$req->content("login[user]=$username&login[password]=$password");
+
+# This line never returns 
+$res = $ua->request($req);
+
+eval {
+    local $SIG{ALRM} = sub { die "alarm\n" };
+    alarm(1);
+    $res = $ua->request($req);
+    alarm(0);
+};
+# This never runs
+print "here\n";
+
+# Takes a LWP::UserAgent, and a HTTP::Request, returns a HTTP::Request
+sub ua_request_with_timeout {
+    my $ua = $_[0];
+    my $req = $_[1];
+    # Get whatever timeout is set for LWP and use that to 
+    #  enforce a maximum timeout per request in case of server
+    #  deadlock. (This has happened.)
+    use Sys::SigAction qw( timeout_call );
+    our $res = undef;
+    if( timeout_call( 5, sub {$res = $ua->request($req);}) ) {
+        return HTTP::Response->new( 408 ); #408 is the HTTP timeout
+    } else {
+        return $res;
+    }
+}
+sub ua_request_with_timeout2 {
+    print "ua_request_with_timeout\n";
+    my $ua = $_[0];
+    my $req = $_[1];
+    # Get whatever timeout is set for LWP and use that to 
+    #  enforce a maximum timeout per request in case of server
+    #  deadlock. (This has happened.)
+    my $timeout_for_client = $ua->timeout() - 2;
+    our $socket_has_timedout = 0;
+
+    use POSIX;
+    sigaction SIGALRM, new POSIX::SigAction(
+                                            sub {
+                                                $socket_has_timedout = 1;
+                                                die "alarm timeout";
+                                            }
+                                            ) or die "Error setting SIGALRM handler: $!\n";
+    my $res = undef;
+    eval {
+        alarm ($timeout_for_client);
+        $res = $ua->request($req);
+        alarm(0);
+    };
+    if ( $socket_has_timedout ) {
+        return HTTP::Response->new( 408 ); #408 is the HTTP timeout
+    } else {
+        return $res;
+    }
+}
+

@@ -1,0 +1,143 @@
+ if (arg_gui || Environment.UserInteractive || Debugger.IsAttached)
+
+
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Windows.Forms;
+using System.ComponentModel;
+using System.ServiceProcess;
+using System.Configuration.Install;
+using System.Diagnostics;
+
+namespace Form_Service
+{
+   static class Program
+   {
+      /// 
+      /// The main entry point for the application.
+      /// 
+      [STAThread]
+      static int Main(string[] args)
+      {
+         bool arg_install =  false;
+         bool arg_uninstall = false;
+         bool arg_gui = false;
+         bool rethrow = false;
+         try
+         {
+            foreach (string arg in args)
+            {
+               switch (arg)
+               {
+                  case "-i":
+                  case "-install":
+                     arg_install = true; break;
+                  case "-u":
+                  case "-uninstall":
+                     arg_uninstall = true; break;
+                  case "-g":
+                  case "-gui":
+                     arg_gui = true; break;
+                  default:
+                     Console.Error.WriteLine("Argument not expected: " + arg);
+                     break;
+               }
+            }
+            if (arg_uninstall)
+            {
+               Install(true, args);
+            }
+            if (arg_install)
+            {
+               Install(false, args);
+            }
+            if (!(arg_install || arg_uninstall))
+            {
+               if (arg_gui || Environment.UserInteractive || Debugger.IsAttached)
+               {
+                  Application.EnableVisualStyles();
+                  Application.SetCompatibleTextRenderingDefault(false);
+                  Application.Run(new Form1());
+               }
+               else
+               {
+                  rethrow = true; // so that windows sees error... 
+                  ServiceBase[] services = { new Service1() };
+                  ServiceBase.Run(services);
+                  rethrow = false;
+               }
+            }
+            return 0;
+         }
+         catch (Exception ex)
+         {
+            if (rethrow) throw;
+            Console.Error.WriteLine(ex.Message);
+            return -1;
+         }
+      }
+
+      static void Install(bool undo, string[] args)
+      {
+         try
+         {
+            Console.WriteLine(undo ? "uninstalling" : "installing");
+            using (AssemblyInstaller inst = new AssemblyInstaller(typeof(Program).Assembly, args))
+            {
+               IDictionary state = new Hashtable();
+               inst.UseNewContext = true;
+               try
+               {
+                  if (undo)
+                  {
+                     inst.Uninstall(state);
+                  }
+                  else
+                  {
+                     inst.Install(state);
+                     inst.Commit(state);
+                  }
+               }
+               catch
+               {
+                  try
+                  {
+                     inst.Rollback(state);
+                  }
+                  catch { }
+                  throw;
+               }
+            }
+         }
+         catch (Exception ex)
+         {
+            Console.Error.WriteLine(ex.Message);
+         }
+      }
+   }
+
+   [RunInstaller(true)]
+   public sealed class MyServiceInstallerProcess : ServiceProcessInstaller
+   {
+      public MyServiceInstallerProcess()
+      {
+         this.Account = ServiceAccount.NetworkService;
+      }
+   }
+
+   [RunInstaller(true)]
+   public sealed class MyServiceInstaller : ServiceInstaller
+   {
+      public MyServiceInstaller()
+      {
+         this.Description = "My Service";
+         this.DisplayName = "My Service";
+         this.ServiceName = "My Service";
+         this.StartType = System.ServiceProcess.ServiceStartMode.Manual;
+      }
+   }
+
+}
+

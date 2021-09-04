@@ -1,0 +1,193 @@
+ {-# OPTIONS_GHC -Odph -rtsopts  -fno-liberate-case -fllvm -optlo-O3 -XTypeOperators -XNoMonomorphismRestriction #-}
+
+ module Scanner where
+
+ import Data.Word
+ import Data.Fixed
+ import Data.Array.Repa.Eval
+ import qualified Data.Array.Repa as R
+ import qualified Data.Array.Repa.Repr.Unboxed as U
+ import qualified Data.Array.Repa.Repr.ForeignPtr as P
+ import Codec.BMP
+ import Data.Array.Repa.IO.BMP
+ import Control.Monad.Identity (runIdentity)
+ import System.Environment( getArgs )
+
+ type ImRead = Either Error Image
+ type Avg    = P.Array R.U R.DIM2 (ImageT, ImageT, ImageT)
+ type ImageT = (Word8, Word8, Word8)
+ type PhaseT = (Float, Float, Float)
+ type WrapT  = (Float, Int)
+ type Image  = P.Array R.U R.DIM2 (Word8, Word8, Word8)
+ type Phase  = P.Array R.U R.DIM2 (Float, Float, Float)
+ type Wrap   = P.Array R.U R.DIM2 (Float, Int)
+ type UWrapT = (Float, Int, [(Int, Int)], String)
+ type DepthT = (Float, Int, String)
+
+ {-# INLINE noise #-}
+ {-# INLINE zskew #-}
+ {-# INLINE zscale #-}
+ {-# INLINE compute #-}
+ {-# INLINE main #-}
+ {-# INLINE doMain #-}
+ {-# INLINE zipImg #-}
+ {-# INLINE mapWrap #-}
+ {-# INLINE avgPhase #-}
+ {-# INLINE doAvg #-}
+ {-# INLINE doWrap #-}
+ {-# INLINE doPhase #-}
+ {-# INLINE isPhase #-}
+ {-# INLINE diffPhase #-}
+ {-# INLINE shape #-}
+ {-# INLINE countM #-}
+ {-# INLINE inArr #-}
+ {-# INLINE idx #-}
+ {-# INLINE getElem #-}
+ {-# INLINE start #-}
+ {-# INLINE unwrap #-}
+ {-# INLINE doUnwrap #-}
+ {-# INLINE doDepth #-}
+ {-# INLINE write #-}
+
+ noise :: Float
+ noise = 0.1
+
+ zskew :: Float
+ zskew = 24
+
+ zscale :: Float
+ zscale = 130
+
+ compute :: (R.Shape sh, U.Unbox e) => P.Array R.D sh e -> P.Array R.U sh e
+ compute a = runIdentity (R.computeP a) 
+
+ main :: IO ()
+ main = do
+      commandArguments <- getArgs
+      case commandArguments of
+           (file1 : file2 : file3 : _ ) -> do
+                image1 <- readImageFromBMP file1
+                image2 <- readImageFromBMP file2
+                image3 <- readImageFromBMP file3
+                doMain image1 image2 image3                                             
+           _ -> putStrLn "Not enough arguments"
+
+ doMain :: ImRead -> ImRead -> ImRead -> IO()
+ doMain (Right i1) (Right i2) (Right i3) = write
+      where 
+           write = writeFile "out.txt" str
+           (p, m, d, str) = start $ mapWrap i1 i2 i3
+ doMain _ _ _ = putStrLn "Error loading image"
+
+ zipImg :: Image -> Image -> Image -> Avg
+ zipImg i1 i2 i3 = U.zip3 i1 i2 i3
+
+ mapWrap :: Image -> Image -> Image -> Wrap
+ mapWrap i1 i2 i3 = compute $ R.map wrap avg
+      where
+           wrap = (doWrap . avgPhase) 
+           avg = zipImg i1 i2 i3
+
+ avgPhase :: (ImageT, ImageT, ImageT) -> PhaseT
+ avgPhase (i1, i2, i3) = (doAvg i1, doAvg i2, doAvg i3)
+
+ doAvg :: ImageT -> Float
+ doAvg (r, g, b) = (r1 + g1 + b1) / d1
+      where
+           r1 = fromIntegral r
+           g1 = fromIntegral g
+           b1 = fromIntegral b
+           d1 = fromIntegral 765
+
+ doWrap :: PhaseT -> WrapT
+ doWrap (p1, p2, p3) = (wrap, mask)
+      where 
+           wrap  = isPhase $ doPhase (p1, p2, p3)
+           mask  = isNoise $ diffPhase [p1, p2, p3]
+
+ doPhase :: PhaseT -> (Float, Float)
+ doPhase (p1, p2, p3) = (x1, x2)
+      where
+           x1 = sqrt 3 * (p1 - p3)
+           x2 = 2 * p2 - p1 - p3  
+
+ isPhase :: (Float, Float) -> Float
+ isPhase (x1, x2) = atan2 x1 x2 / (2 * pi)
+
+ diffPhase :: [Float] -> Float
+ diffPhase phases = maximum phases - minimum phases
+
+ isNoise :: Float -> Int
+ isNoise phase = fromEnum $ phase <= noise
+
+ shape :: Wrap -> [Int]
+ shape wrap = R.listOfShape $ R.extent wrap
+
+ countM :: Wrap -> (Float, Int)
+ countM wrap = R.foldAllS count (0,0) wrap
+      where count = (\(x, y) (i, j) -> (x, y))
+
+ start :: Wrap -> UWrapT
+ start wrap = unwrap wrap (x, y) (ph, m, [], "")
+      where 
+           [x0, y0] = shape wrap
+           x        = quot x0 2
+           y        = quot y0 2
+           (ph, m)  = getElem wrap (x0, y0)
+
+ inArr :: Wrap -> (Int, Int) -> Bool
+ inArr wrap (x,y) = x >= 0 && y >= 0 && x < x0 && y < y0
+      where 
+           [x0, y0] = shape wrap
+
+ idx :: (Int, Int) -> (R.Z R.:. Int R.:. Int)
+ idx (x, y) = (R.Z R.:. x R.:. y)
+
+ getElem :: Wrap -> (Int, Int) -> WrapT
+ getElem wrap (x, y) = wrap R.! idx (x, y)
+
+ unwrap :: Wrap -> (Int, Int) -> UWrapT -> UWrapT
+ unwrap wrap (x, y) (ph, m, done, str) =
+      if
+           not $ inArr wrap (x, y) || 
+           (x, y) `elem` done ||
+           toEnum m::Bool
+      then
+           (ph, m, done, str) 
+      else
+           up
+           where
+                unwrap' = doUnwrap wrap (x, y) (ph, m, done, str)
+                right   = unwrap wrap (x+1, y) unwrap'
+                left    = unwrap wrap (x-1, y) right
+                down    = unwrap wrap (x, y+1) left
+                up      = unwrap wrap (x, y-1) down
+
+ doUnwrap :: Wrap -> (Int, Int) -> UWrapT -> UWrapT
+ doUnwrap wrap (x, y) (ph, m, done, str) = unwrapped
+      where
+           unwrapped = (nph, m, (x, y):done, out)
+           (phase, mask) = getElem wrap (x, y)
+           rph   = fromIntegral $ round ph
+           off   = phase - (ph - rph)
+           nph   = ph + (mod' (off + 0.5) 1) - 0.5
+           out   = doDepth wrap (x, y) (nph, m, str)
+
+ doDepth :: Wrap -> (Int, Int) -> DepthT -> String
+ doDepth wrap (x, y) (ph, m, str) = write (x, ys, d, str)
+      where
+           [x0, y0] = shape wrap
+           ys       = y0 - y
+           ydiff    = fromIntegral (y - (quot y0 2))
+           plane    = 0.5 - ydiff / zskew
+           d        = (ph - plane) * zscale
+
+
+ write :: (Int, Int, Float, String) -> String
+ write (x, y, depth, str) = str ++ vertex
+      where
+           vertex = xstr ++ ystr ++ zstr
+           xstr   = show x ++ " "
+           ystr   = show y ++ " "
+           zstr   = show depth ++ "\n"
+

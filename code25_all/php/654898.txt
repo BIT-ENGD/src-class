@@ -1,0 +1,71 @@
+ts:1236630752
+ts:nonnumeric
+ts:*
+<?php
+
+//=========================================================
+// Initializes Zend Framework (Zend_Loader).
+//=========================================================
+set_include_path(realpath('../library') . PATH_SEPARATOR . get_include_path());
+require_once('Zend/Loader.php');
+Zend_Loader::registerAutoload();
+
+//=========================================================
+// Delete existing index and create a new one
+//=========================================================
+define('SEARCH_INDEX', 'test_search_index');
+if(file_exists(SEARCH_INDEX))
+  foreach(scandir(SEARCH_INDEX) as $file)
+    if(!is_dir($file))
+      unlink(SEARCH_INDEX . "/$file");
+
+$index = Zend_Search_Lucene::create(SEARCH_INDEX);
+
+//=========================================================
+// Create this data in index:
+//         ts      |    contents
+//   --------------+-----------------
+//     1236917100  | dog cat gerbil
+//     1236630752  |  cow pig goat
+//     1235680249  | lion tiger bear
+//     nonnumeric  | bass goby trout
+//=========================================================
+
+function add_to_index($index, $ts, $contents) {
+  $doc = new Zend_Search_Lucene_Document();
+  $doc->addField(Zend_Search_Lucene_Field::Keyword('ts', $ts));
+  $doc->addField(Zend_Search_Lucene_Field::Text('contents', $contents));
+  $index->addDocument($doc);
+}
+
+add_to_index($index, '1236917100', 'dog cat gerbil');
+add_to_index($index, '1236630752', 'cow pig goat');
+add_to_index($index, '1235680249', 'lion tiger bear');
+add_to_index($index, 'nonnumeric', 'bass goby trout');
+
+//=========================================================
+// Run some test queries and output results
+//=========================================================
+
+echo '<html><body><pre>';
+
+function run_query($index, $query) {
+  echo "Running query:  $query\n";
+  $hits = $index->find($query);
+  echo 'Got ' . count($hits) . " hits.\n";
+  foreach($hits as $hit)
+    echo "  ts='$hit->ts', contents='$hit->contents'\n";
+  echo "\n";
+}
+
+run_query($index, 'pig');           //1 hit
+run_query($index, 'ts:1236630752'); //0 hits
+run_query($index, '1236630752');    //0 hits
+run_query($index, 'ts:pig');        //0 hits
+run_query($index, 'contents:pig');  //1 hits
+run_query($index, 'ts:[1236630700 TO 1236630800]'); //0 hits (range query)
+run_query($index, 'ts:*');          //4 hits if ts is keyword, 1 hit otherwise
+run_query($index, 'nonnumeric');    //1 hits
+run_query($index, 'ts:nonnumeric'); //1 hits
+run_query($index, 'trout');         //1 hits
+

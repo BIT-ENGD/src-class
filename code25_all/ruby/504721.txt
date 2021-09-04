@@ -1,0 +1,1 @@
+tar -cvzf app.tgz app

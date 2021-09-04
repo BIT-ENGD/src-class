@@ -1,0 +1,93 @@
+#include "llvm/Module.h"
+#include "llvm/Function.h"
+#include "llvm/PassManager.h"
+#include "llvm/CallingConv.h"
+#include "llvm/Analysis/Verifier.h"
+#include "llvm/Assembly/PrintModulePass.h"
+#include "llvm/Support/IRBuilder.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/ExecutionEngine/JIT.h"
+#include "llvm/ExecutionEngine/GenericValue.h"
+
+
+using namespace llvm;
+
+
+Module* makeLLVMModule() {
+  // Module Construction
+  LLVMContext& ctx = getGlobalContext();
+  Module* mod = new Module("test", ctx);
+  Constant* c = mod->getOrInsertFunction("fact64",
+  /*ret type*/                           IntegerType::get(ctx,64),
+                                         IntegerType::get(ctx,64),
+  /*varargs terminated with null*/       NULL);
+
+  Function* fact64 = cast<Function>(c);
+  fact64->setCallingConv(CallingConv::C);
+  /* Arg names */
+  Function::arg_iterator args = fact64->arg_begin();
+  Value* x = args++;
+  x->setName("x");
+
+
+  /* Body */
+  BasicBlock* block = BasicBlock::Create(ctx, "entry", fact64);
+  BasicBlock* xLessThan2Block= BasicBlock::Create(ctx, "xlst2_block", fact64);
+  BasicBlock* elseBlock = BasicBlock::Create(ctx, "else_block", fact64);
+  IRBuilder<> builder(block);
+
+  Value *One = ConstantInt::get(Type::getInt64Ty(ctx), 1);
+  Value *Two = ConstantInt::get(Type::getInt64Ty(ctx), 2);
+
+  Value* xLessThan2 = builder.CreateICmpULT(x, Two, "tmp");
+ //builder.CreateCondBr(xLessThan2, xLessThan2Block, cond_false_2);
+  builder.CreateCondBr(xLessThan2, xLessThan2Block, elseBlock);
+
+
+  /* Recursion */
+  builder.SetInsertPoint(elseBlock);
+  Value* xMinus1 = builder.CreateSub(x, One, "tmp");
+  std::vector<Value*> args1;
+  args1.push_back(xMinus1);
+  Value* recur_1 = builder.CreateCall(fact64, args1.begin(), args1.end(), "tmp");
+  Value* retVal = builder.CreateBinOp(Instruction::Mul, x, recur_1, "tmp");
+  builder.CreateRet(retVal);
+
+  /* x<2 */
+  builder.SetInsertPoint(xLessThan2Block);
+  builder.CreateRet(One);
+  return mod;
+}
+
+int main(int argc, char**argv) {
+  long long x;
+  if(argc > 1)
+    x = atol(argv[1]);
+  else
+    x = 4;
+
+  Module* Mod = makeLLVMModule();
+
+  verifyModule(*Mod, PrintMessageAction);
+  PassManager PM;
+  PM.add(createPrintModulePass(&outs()));
+  PM.run(*Mod);
+
+  // Now we going to create JIT
+  ExecutionEngine *EE = EngineBuilder(Mod).create();
+  // Call the  function with argument x:
+  std::vector<GenericValue> Args(1);
+  Args[0].IntVal =  APInt(64, x);  
+  Function* TheF = cast<Function>(Mod->getFunction("fact64"))  ;
+
+  /* The following CRASHES.. */
+  GenericValue GV = EE->runFunction(TheF, Args);
+  outs() << "Result: " << GV.IntVal << "\n";
+  delete Mod;
+  return 0;
+}
+
+1.#include "llvm/ExecutionEngine/Jit.h"`
+
+2.InitializeNativeTarget();
+

@@ -1,0 +1,90 @@
+CREATE UNIQUE INDEX measurement_001_stc_idx
+  ON climate.measurement_001
+  USING btree
+  (station_id, taken, category_id);
+
+random_page_cost
+sc.taken_start >= '1900-01-01'::date AND
+sc.taken_end <= '1997-12-31'::date AND
+
+  SELECT
+    extract(YEAR FROM m.taken) AS year,
+    avg(m.amount) AS amount
+  FROM
+    climate.city c,
+    climate.station s,
+    climate.station_category sc,
+    climate.measurement m
+  WHERE
+    c.id = 5182 AND
+    earth_distance(
+      ll_to_earth(c.latitude_decimal,c.longitude_decimal),
+      ll_to_earth(s.latitude_decimal,s.longitude_decimal)) / 1000 <= 30 AND
+    s.elevation BETWEEN 0 AND 3000 AND
+    s.applicable = TRUE AND
+    sc.station_id = s.id AND
+    sc.category_id = 1 AND
+    sc.taken_start >= '1900-01-01'::date AND
+    sc.taken_end <= '1996-12-31'::date AND
+    m.station_id = s.id AND
+    m.taken BETWEEN sc.taken_start AND sc.taken_end AND
+    m.category_id = sc.category_id
+  GROUP BY
+    extract(YEAR FROM m.taken)
+  ORDER BY
+    extract(YEAR FROM m.taken)
+
+"Sort  (cost=1348597.71..1348598.21 rows=200 width=12) (actual time=2268.929..2268.935 rows=92 loops=1)"
+"  Sort Key: (date_part('year'::text, (m.taken)::timestamp without time zone))"
+"  Sort Method:  quicksort  Memory: 32kB"
+"  ->  HashAggregate  (cost=1348586.56..1348590.06 rows=200 width=12) (actual time=2268.829..2268.886 rows=92 loops=1)"
+"        ->  Nested Loop  (cost=0.00..1344864.01 rows=744510 width=12) (actual time=0.807..2084.206 rows=134893 loops=1)"
+"              Join Filter: ((m.taken >= sc.taken_start) AND (m.taken <= sc.taken_end) AND (sc.station_id = m.station_id))"
+"              ->  Nested Loop  (cost=0.00..12755.07 rows=1220 width=18) (actual time=0.502..521.937 rows=23 loops=1)"
+"                    Join Filter: ((sec_to_gc(cube_distance((ll_to_earth((c.latitude_decimal)::double precision, (c.longitude_decimal)::double precision))::cube, (ll_to_earth((s.latitude_decimal)::double precision, (s.longitude_decimal)::double precision))::cube)) / 1000::double precision) <= 30::double precision)"
+"                    ->  Index Scan using city_pkey1 on city c  (cost=0.00..2.47 rows=1 width=16) (actual time=0.014..0.015 rows=1 loops=1)"
+"                          Index Cond: (id = 5182)"
+"                    ->  Nested Loop  (cost=0.00..9907.73 rows=3659 width=34) (actual time=0.014..28.937 rows=3458 loops=1)"
+"                          ->  Seq Scan on station_category sc  (cost=0.00..970.20 rows=3659 width=14) (actual time=0.008..10.947 rows=3458 loops=1)"
+"                                Filter: ((taken_start >= '1900-01-01'::date) AND (taken_end <= '1996-12-31'::date) AND (category_id = 1))"
+"                          ->  Index Scan using station_pkey1 on station s  (cost=0.00..2.43 rows=1 width=20) (actual time=0.004..0.004 rows=1 loops=3458)"
+"                                Index Cond: (s.id = sc.station_id)"
+"                                Filter: (s.applicable AND (s.elevation >= 0) AND (s.elevation <= 3000))"
+"              ->  Append  (cost=0.00..1072.27 rows=947 width=18) (actual time=6.996..63.199 rows=5865 loops=23)"
+"                    ->  Seq Scan on measurement m  (cost=0.00..25.00 rows=6 width=22) (actual time=0.000..0.000 rows=0 loops=23)"
+"                          Filter: (m.category_id = 1)"
+"                    ->  Bitmap Heap Scan on measurement_001 m  (cost=20.79..1047.27 rows=941 width=18) (actual time=6.995..62.390 rows=5865 loops=23)"
+"                          Recheck Cond: ((m.station_id = sc.station_id) AND (m.taken >= sc.taken_start) AND (m.taken <= sc.taken_end) AND (m.category_id = 1))"
+"                          ->  Bitmap Index Scan on measurement_001_stc_idx  (cost=0.00..20.55 rows=941 width=0) (actual time=5.775..5.775 rows=5865 loops=23)"
+"                                Index Cond: ((m.station_id = sc.station_id) AND (m.taken >= sc.taken_start) AND (m.taken <= sc.taken_end) AND (m.category_id = 1))"
+"Total runtime: 2269.264 ms"
+
+"Sort  (cost=1370192.26..1370192.76 rows=200 width=12) (actual time=86165.797..86165.809 rows=94 loops=1)"
+"  Sort Key: (date_part('year'::text, (m.taken)::timestamp without time zone))"
+"  Sort Method:  quicksort  Memory: 32kB"
+"  ->  HashAggregate  (cost=1370181.12..1370184.62 rows=200 width=12) (actual time=86165.654..86165.736 rows=94 loops=1)"
+"        ->  Hash Join  (cost=4293.60..1366355.81 rows=765061 width=12) (actual time=534.786..85920.007 rows=139721 loops=1)"
+"              Hash Cond: (m.station_id = sc.station_id)"
+"              Join Filter: ((m.taken >= sc.taken_start) AND (m.taken <= sc.taken_end))"
+"              ->  Append  (cost=0.00..867005.80 rows=43670150 width=18) (actual time=0.009..79202.329 rows=43670079 loops=1)"
+"                    ->  Seq Scan on measurement m  (cost=0.00..25.00 rows=6 width=22) (actual time=0.001..0.001 rows=0 loops=1)"
+"                          Filter: (category_id = 1)"
+"                    ->  Seq Scan on measurement_001 m  (cost=0.00..866980.80 rows=43670144 width=18) (actual time=0.008..73312.008 rows=43670079 loops=1)"
+"                          Filter: (category_id = 1)"
+"              ->  Hash  (cost=4277.93..4277.93 rows=1253 width=18) (actual time=534.704..534.704 rows=25 loops=1)"
+"                    ->  Nested Loop  (cost=847.87..4277.93 rows=1253 width=18) (actual time=415.837..534.682 rows=25 loops=1)"
+"                          Join Filter: ((sec_to_gc(cube_distance((ll_to_earth((c.latitude_decimal)::double precision, (c.longitude_decimal)::double precision))::cube, (ll_to_earth((s.latitude_decimal)::double precision, (s.longitude_decimal)::double precision))::cube)) / 1000::double precision) <= 30::double precision)"
+"                          ->  Index Scan using city_pkey1 on city c  (cost=0.00..2.47 rows=1 width=16) (actual time=0.012..0.014 rows=1 loops=1)"
+"                                Index Cond: (id = 5182)"
+"                          ->  Hash Join  (cost=847.87..1352.07 rows=3760 width=34) (actual time=6.427..35.107 rows=3552 loops=1)"
+"                                Hash Cond: (s.id = sc.station_id)"
+"                                ->  Seq Scan on station s  (cost=0.00..367.25 rows=7948 width=20) (actual time=0.004..23.529 rows=7949 loops=1)"
+"                                      Filter: (applicable AND (elevation >= 0) AND (elevation <= 3000))"
+"                                ->  Hash  (cost=800.87..800.87 rows=3760 width=14) (actual time=6.416..6.416 rows=3552 loops=1)"
+"                                      ->  Bitmap Heap Scan on station_category sc  (cost=430.29..800.87 rows=3760 width=14) (actual time=2.316..5.353 rows=3552 loops=1)"
+"                                            Recheck Cond: (category_id = 1)"
+"                                            Filter: ((taken_start >= '1900-01-01'::date) AND (taken_end <= '1997-12-31'::date))"
+"                                            ->  Bitmap Index Scan on station_category_station_category_idx  (cost=0.00..429.35 rows=6376 width=0) (actual time=2.268..2.268 rows=6339 loops=1)"
+"                                                  Index Cond: (category_id = 1)"
+"Total runtime: 86165.936 ms"
+

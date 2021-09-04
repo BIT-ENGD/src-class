@@ -1,0 +1,162 @@
+self.currentElement = [[[XMLElement alloc] init] autorelease];
+
+// --- XMLElement
+
+#import <Foundation/Foundation.h>
+
+
+@interface XMLElement : NSObject {
+     NSDictionary *attributes;
+     NSMutableArray *children;
+     NSString *textValue;
+     NSString *tagName;
+     XMLElement *parentElement;
+}
+
+-(id) init;
+-(void) addChild:(XMLElement*) child;
+
+@property(nonatomic, retain) NSDictionary *attributes;
+@property(nonatomic, retain) NSMutableArray *children;
+@property(nonatomic, retain) NSString *textValue;
+@property(nonatomic, retain) NSString *tagName;
+@property(nonatomic, retain) XMLElement *parentElement;
+
+@end
+
+
+#import "XMLElement.h"
+
+
+@implementation XMLElement
+
+@synthesize attributes, children, textValue, parentElement, tagName;
+
+-(id)init {
+     if(self = [super init]) {
+          children = [[NSMutableArray alloc] init];
+     }
+     return self;
+}
+
+-(void) addChild:(XMLElement*) child{
+     [self.children addObject:child];
+}
+
+- (void)dealloc {
+     [attributes release];
+     [children release];
+     [textValue release];
+     [tagName release];
+     [parentElement release];
+    [super dealloc];
+}
+
+@end
+
+
+
+
+
+// --- XMLParser
+
+#import <Foundation/Foundation.h>
+#import "XMLElement.h"
+
+@interface XMLParser : NSObject<NSXMLParserDelegate> {
+     XMLElement *currentElement;
+     XMLElement *currentParentElement;
+     NSMutableString *currentElementValue;
+}
+
+- (BOOL)parseData: (NSData*) dataToParse;
+
+- (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)elementName
+  namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qualifiedName
+     attributes:(NSDictionary *)attributeDict;
+
+- (void)parser:(NSXMLParser *)parser foundCharacters:(NSString *)string;
+
+- (void)parser:(NSXMLParser *)parser didEndElement:(NSString *)elementName
+  namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName;
+
+@property (nonatomic, retain) XMLElement *currentParentElement;
+@property (nonatomic, retain) XMLElement *currentElement;
+@property (nonatomic, retain) NSMutableString *currentElementValue;
+
+@end
+
+
+#import "XMLParser.h"
+
+
+@implementation XMLParser
+
+@synthesize currentElementValue, currentElement, currentParentElement;
+
+- (BOOL)parseData: (NSData*) dataToParse {
+
+     NSXMLParser *parser = [[NSXMLParser alloc] initWithData:dataToParse];
+     [parser setDelegate:self];
+     BOOL success = [parser parse];
+     [parser release];
+     return success;
+}
+
+- (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)elementName
+  namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qualifiedName
+     attributes:(NSDictionary *)attributeDict{
+     if(currentElement){
+          self.currentParentElement = currentElement;
+     }
+
+
+     // ------------------------------------------------------------
+     // Instruments is marking this line as source of the leak with 90%
+     self.currentElement = [[[XMLElement alloc] init] autorelease];
+     // --------
+
+     currentElement.tagName = elementName;
+     currentElement.attributes = attributeDict;
+     currentElement.parentElement = self.currentParentElement;
+     if(self.currentParentElement){
+          [self.currentParentElement addChild:currentElement]; // and this one with 10%
+     }
+
+     self.currentElementValue = nil;
+}
+
+- (void)parser:(NSXMLParser *)parser foundCharacters:(NSString *)string{
+     if(!currentElement) {
+          return;
+     }
+
+     if(currentElementValue == nil)
+          self.currentElementValue = [NSMutableString stringWithString:string];
+     else
+          [currentElementValue appendString:string];
+}
+
+- (void)parser:(NSXMLParser *)parser didEndElement:(NSString *)elementName
+  namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName{
+     if(currentElement == nil){
+          if( currentParentElement.parentElement){
+               self.currentParentElement = currentParentElement.parentElement;
+          }
+     }else{
+          currentElement.textValue = currentElementValue; 
+          [currentElementValue release];
+          currentElementValue = nil;
+          self.currentParentElement = currentElement.parentElement;
+          currentElement = nil;
+     }
+}
+
+- (void)dealloc {
+     [currentParentElement release];
+     [currentElement release];
+    [super dealloc];
+}
+
+@end
+

@@ -1,0 +1,141 @@
+vector --any
+JuicyPixels >= 2
+{-# LANGUAGE Haskell2010 #-}
+{-# LANGUAGE BangPatterns #-}
+
+import Control.Arrow
+import Data.Bits
+import Data.Vector.Unboxed ((!))
+import Data.Word
+import System.Environment (getArgs)
+
+import qualified Codec.Picture as P
+import qualified Data.ByteString as B
+import qualified Data.Vector.Unboxed as V
+
+perlin3 :: (Ord a, Num a, RealFrac a, V.Unbox a) => Permutation -> (a, a, a) -> a
+perlin3 p (!x', !y', !z')
+  = let (!xX, !x) = actuallyProperFraction x'
+        (!yY, !y) = actuallyProperFraction y'
+        (!zZ, !z) = actuallyProperFraction z'
+
+        !u = fade x
+        !v = fade y
+        !w = fade z
+
+        !h = xX
+        !a = next p h + yY
+        !b = next p (h+1) + yY
+        !aa = next p a + zZ
+        !ab = next p (a+1) + zZ
+        !ba = next p b + zZ
+        !bb = next p (b+1) + zZ
+        !aaa = next p aa
+        !aab = next p (aa+1)
+        !aba = next p ab
+        !abb = next p (ab+1)
+        !baa = next p ba
+        !bab = next p (ba+1)
+        !bba = next p bb
+        !bbb = next p (bb+1)
+
+    in
+        lerp w
+            (lerp v
+                (lerp u
+                    (grad aaa (x, y, z))
+                    (grad baa (x-1, y, z)))
+                (lerp u
+                    (grad aba (x, y-1, z))
+                    (grad bba (x-1, y-1, z))))
+            (lerp v
+                (lerp u
+                    (grad aab (x, y, z-1))
+                    (grad bab (x-1, y, z-1)))
+                (lerp u
+                    (grad abb (x, y-1, z-1))
+                    (grad bbb (x-1, y-1, z-1))))
+
+perlin3
+fade :: (Ord a, Num a) => a -> a
+fade !t | 0 <= t, t <= 1 = t * t * t * (t * (t * 6 - 15) + 10)
+
+lerp :: (Ord a, Num a) => a -> a -> a -> a
+lerp !t !a !b | 0 <= t, t <= 1 = a + t * (b - a)
+
+grad :: (Bits hash, Integral hash, Num a, V.Unbox a) => hash -> (a, a, a) -> a
+grad !hash (!x, !y, !z) = dot3 (vks `V.unsafeIndex` fromIntegral (hash .&. 15)) (x, y, z)
+  where
+    vks = V.fromList
+        [ (1,1,0), (-1,1,0), (1,-1,0), (-1,-1,0)
+        , (1,0,1), (-1,0,1), (1,0,-1), (-1,0,-1)
+        , (0,1,1), (0,-1,1), (0,1,-1), (0,-1,-1)
+        , (1,1,0), (-1,1,0), (0,-1,1), (0,-1,-1)
+        ]
+
+dot3 :: Num a => (a, a, a) -> (a, a, a) -> a
+dot3 (!x0, !y0, !z0) (!x1, !y1, !z1) = x0 * x1 + y0 * y1 + z0 * z1
+
+-- Unlike `properFraction`, `actuallyProperFraction` rounds as intended.
+actuallyProperFraction :: (RealFrac a, Integral b) => a -> (b, a)
+actuallyProperFraction x
+  = let (ipart, fpart) = properFraction x
+        r = if x >= 0 then (ipart, fpart)
+                      else (ipart-1, 1+fpart)
+    in r
+
+newtype Permutation = Permutation (V.Vector Word8)
+
+mkPermutation :: [Word8] -> Permutation
+mkPermutation xs
+    | length xs >= 256
+    = Permutation . V.fromList $ xs
+
+permutation :: Permutation
+permutation = mkPermutation
+    [151,160,137,91,90,15,
+   131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,
+   190, 6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,
+   88,237,149,56,87,174,20,125,136,171,168, 68,175,74,165,71,134,139,48,27,166,
+   77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,
+   102,143,54, 65,25,63,161, 1,216,80,73,209,76,132,187,208, 89,18,169,200,196,
+   135,130,116,188,159,86,164,100,109,198,173,186, 3,64,52,217,226,250,124,123,
+   5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,
+   223,183,170,213,119,248,152, 2,44,154,163, 70,221,153,101,155,167, 43,172,9,
+   129,22,39,253, 19,98,108,110,79,113,224,232,178,185, 112,104,218,246,97,228,
+   251,34,242,193,238,210,144,12,191,179,162,241, 81,51,145,235,249,14,239,107,
+   49,192,214, 31,181,199,106,157,184, 84,204,176,115,121,50,45,127, 4,150,254,
+   138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180
+   ]
+
+next :: Permutation -> Word8 -> Word8
+next (Permutation !v) !idx'
+  = v `V.unsafeIndex` (fromIntegral $ idx' .&. 0xFF)
+
+main = do
+    [target] <- getArgs
+    let image = P.generateImage pixelRenderer 512 512
+    P.writePng target image
+  where
+    pixelRenderer, pixelRenderer' :: Int -> Int -> Word8
+    pixelRenderer !x !y
+        = floor $ ((perlin3 permutation ((fromIntegral x - 256) / 32,
+          (fromIntegral y - 256) / 32, 0 :: Double))+1)/2 * 128
+
+    -- This code is much more readable, but also much slower.
+    pixelRenderer' x y
+        = (\w -> floor $ ((w+1)/2 * 128)) -- w should be in [-1,+1]
+        . perlin3 permutation
+        . (\(x,y,z) -> ((x-256)/32, (y-256)/32, (z-256)/32))
+        $ (fromIntegral x, fromIntegral y, 0 :: Double)
+
+perlin3
+pixelRenderer
+perlin3
+ghc -O
+perlin3
+actuallyProperFraction
+Word8
+Word8
+0
+255

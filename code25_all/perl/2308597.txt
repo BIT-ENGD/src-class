@@ -1,0 +1,69 @@
+*DATA
+*STDIN
+use strict;
+use warnings;
+use FileHandle;
+
+sub file_thing_type {
+    my ($f) = shift;
+    my $type;
+    my $r = ref $f;
+    if ($r eq 'GLOB' or ref(\$f) eq 'GLOB'){
+        # Regular and built-in file handles.
+        my $fn = fileno $f;
+        if (defined $fn){
+            my %built_in = (
+                'STDIN'  => fileno(*STDIN),
+                'STDOUT' => fileno(*STDOUT),
+                'STDERR' => fileno(*STDERR),
+                'DATA'   => fileno(*DATA),
+            );
+            for my $k (keys %built_in){
+                if (defined $built_in{$k} and $built_in{$k} == $fn){
+                    $type = $k;
+                    last;
+                }
+            }
+            $type = 'regular file handle' unless defined $type;
+        }
+        else {
+            $type = 'non-IO glob';
+        }
+    }
+    elsif ($r){
+        # A reference of some kind.
+        $type = $r;
+        # Might be an IO object. Has it been opened?
+        {
+            no warnings 'unopened';
+            $type .= ' opened' if -f $f;
+        }
+    }
+    else {
+        # File name or just some other value?
+        $type = -f $f ? 'file name' : 'other';
+    }
+    return $type;
+}
+
+open(my $h, '<', $0) or die $!;
+
+printf "%12s => %s\n",
+       $_->[0],
+       file_thing_type($_->[1])
+for (
+    [ 'handle',     $h                  ], # regular file handle
+    [ 'DATA',       *DATA               ], # DATA if source has DATA section; else non-IO glob
+    [ 'STDIN',      *STDIN              ], # STDIN
+    [ 'STDOUT',     *STDOUT             ], # STDOUT
+    [ 'STDERR',     *STDERR             ], # STDERR
+    [ 'FOO',        *FOO, *FOO          ], # non-IO glob
+    [ 'FileHandle', FileHandle->new     ], # FileHandle
+    [ 'FileHandle', FileHandle->new($0) ], # FileHandle opened
+    [ 'file name',  $0                  ], # file name
+    [ 'not file',   ''                  ], # other
+    [ 'misc',       {bar=>1}            ], # HASH
+);
+
+__END__
+

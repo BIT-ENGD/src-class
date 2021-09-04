@@ -1,0 +1,92 @@
+function jqs
+{
+  pipe=/tmp/__job_control_manager__
+  trap "rm -f $pipe; exit"  EXIT SIGKILL
+
+  if [[ ! -p "$pipe" ]]; then
+      mkfifo "$pipe"
+  fi
+
+  while true
+  do
+    if read txt <"$pipe"
+    then
+      echo "$(date +'%Y'): new text is [[$txt]]"
+
+      if [[ "$txt" == 'quit' ]]
+      then
+    break
+      fi
+    fi
+  done
+}
+
+> jqs&
+[1] 5336
+
+for i in 1 2 3 4 5 6 7 8
+do
+  (echo aaa$i > /tmp/__job_control_manager__ && echo success$i &)
+done
+
+function jq_manage
+{
+  export __gn__="$1"
+
+  pipe=/tmp/__job_control_manager_"$__gn__"__
+  trap "rm -f $pipe"    EXIT
+  trap "break"      SIGKILL
+
+  if [[ ! -p "$pipe" ]]; then
+      mkfifo "$pipe"
+  fi
+
+  while true
+  do
+    date
+    jobs
+    if (($(jobs | egrep "Running.*echo '%#_Group_#%_$__gn__'" | wc -l) < $__jN__))
+    then
+      echo "Waiting for new job"
+      if read new_job <"$pipe"
+      then
+    echo "new job is [[$new_job]]"
+
+    if [[ "$new_job" == 'quit' ]]
+    then
+      break
+    fi
+
+    echo "In group $__gn__, starting job $new_job"
+    eval "(echo '%#_Group_#%_$__gn__' > /dev/null; $new_job) &"
+      fi
+    else
+      sleep 3
+    fi
+  done
+}
+
+function jq
+{
+  # __gn__ = first parameter to this function, the job group name (the pool within which to allocate __jN__ jobs)
+  # __jN__ = second parameter to this function, the maximum of job numbers to run concurrently
+
+  export __gn__="$1"
+  shift
+  export __jN__="$1"
+  shift
+
+  export __jq__=$(jobs | egrep "Running.*echo '%#_GroupQueue_#%_$__gn__'" | wc -l)
+  if (($__jq__ '<' 1))
+  then
+    eval "(echo '%#_GroupQueue_#%_$__gn__' > /dev/null; jq_manage $__gn__) &"
+  fi
+
+  pipe=/tmp/__job_control_manager_"$__gn__"__
+
+  echo $@ >$pipe
+}
+
+jq <name> <max processes> <command>
+jq abc 2 sleep 20
+

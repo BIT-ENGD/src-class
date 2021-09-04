@@ -1,0 +1,59 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main(int argc, char *argv[]){
+    int fd[2], i, aux, std0, std1;
+
+    do {
+        std0 = dup(0); // backup stdin
+        std1 = dup(1); // backup stdout
+
+        // let's pretend I'm reading commands here in a shell prompt
+        READ_COMMAND_FROM_PROMPT();
+
+        for(i=1; i<argc; i++) {
+            // do we have a previous command?
+            if(i > 1) {
+                dup2(aux, 0);
+                close(aux);
+            }
+
+            // do we have a next command?
+            if(i < argc-1) {
+                pipe(fd);
+
+                aux = fd[0];
+                dup2(fd[1], 1);
+                close(fd[1]);
+            }
+
+            // last command? restore stdout...
+            if(i == argc-1) {
+                dup2(std1, 1);
+                close(std1);
+            }
+
+            if(!fork()) {
+                // if not last command, close all pipe ends
+                // (the child doesn't use them)
+                if(i < argc-1) {
+                    close(std0);
+                    close(std1);
+                    close(fd[0]);
+                }
+
+                execlp(argv[i], argv[i], NULL);
+                exit(0);
+            }
+        }
+
+        // restore stdin to be able to keep using the shell
+        dup2(std0, 0);
+        close(std0);
+    }
+
+    return 0;
+}
+

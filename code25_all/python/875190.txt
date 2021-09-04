@@ -1,0 +1,294 @@
+output_fds  {8: 'dvi', 5: 'log', 6: 'logfile', 7: 'err'}
+input_fds  3
+readable, writable [] [3]  outflds, inputflds:  [8, 5, 6, 7] [3]
+pointer len_str:  0 63
+folder fd:  7
+readable, writable [5] []  outflds, inputflds:  [8, 5, 6, 7] []
+pointer len_str:  63 63
+folder fd:  7
+readable, writable [5] []  outflds, inputflds:  [8, 5, 6, 7] []
+pointer len_str:  63 63
+folder fd:  5
+readable, writable [] []  outflds, inputflds:  [8, 5, 6, 7] []
+pointer len_str:  63 63
+folder fd:  5
+SUB IO ERROR: readable []  pointer == len_str: 63 , 63
+
+Traceback (most recent call last):
+  File "/usr/local/bin/mathtrand", line 18, in <module>
+    server.start()
+  File "/usr/local/lib/python2.6/dist-packages/mathtran/server.py", line 71, in start
+    self.secplain.start()
+  File "/usr/local/lib/python2.6/dist-packages/tex/texdp.py", line 159, in start
+    self.process(self._params.start)
+  File "/usr/local/lib/python2.6/dist-packages/tex/texdp.py", line 175, in process
+    value = self._process(str + self._params.done, self._params.done_str)
+  File "/usr/local/lib/python2.6/dist-packages/tex/texdp.py", line 210, in _process
+    raise SubprocessError, 'subprocess I/O timed out'
+
+# Copyright: (c) 2007 The Open University, Milton Keynes, UK
+# License: GPL version 2 or (at your option) any later version.
+# Author: Jonathan Fine <jfine@pytex.org>, <J.Fine@open.ac.uk>
+
+"""Wrapper around TeX process, to handle input and output.
+
+Further comments to go here.
+"""
+
+__version__ = '$Revision: 116 $'[11:-2]
+# $Source$
+
+# TODO:  Move interface instances to elsewhere.
+# TODO:  error recovery, e.g. undefined control sequence.
+# TODO:  Abnormal exit is leaving orphaned processes.
+# TODO:  Refactor _process into tex.util, share with metapostdp.
+
+import os                               # Create directories and fifos
+from select import select               # Helps handle i/o to TeX process
+from tex.util import make_nonblocking   # For non-blocking file descriptor
+from tex.util import DaemonSubprocess
+from tex.dviopcode import FNT_DEF1, FNT_DEF4
+import signal
+
+
+class SubprocessError(EnvironmentError):
+
+    pass
+
+# TODO:  This belongs elsewhere.
+class Interface(object):
+    """Stores useful, but format specific, constants."""
+
+    def __init__(self, **kwargs):
+        # TODO:  Be more specific about the parameters.
+        self.__dict__ = kwargs
+
+
+# TeX knows about these fonts, but Python does not yet know.
+# This list created by command: $tex --ini '&plain' \\dump
+preloaded_fonts = ( 'cmr10', 'cmr9', 'cmr8', 'cmr7', 'cmr6', 'cmr5',
+                    'cmmi10', 'cmmi9', 'cmmi8', 'cmmi7', 'cmmi6',
+                    'cmmi5', 'cmsy10', 'cmsy9', 'cmsy8', 'cmsy7',
+                    'cmsy6', 'cmsy5', 'cmex10', 'cmss10', 'cmssq8',
+                    'cmssi10', 'cmssqi8', 'cmbx10', 'cmbx9', 'cmbx8',
+                    'cmbx7', 'cmbx6', 'cmbx5', 'cmtt10', 'cmtt9',
+                    'cmtt8', 'cmsltt10', 'cmsl10', 'cmsl9', 'cmsl8',
+                    'cmti10', 'cmti9', 'cmti8', 'cmti7', 'cmu10',
+                    'cmmib10', 'cmbsy10', 'cmcsc10', 'cmssbx10',
+                    'cmdunh10', 'cmr7 scaled 2074',
+                    'cmtt10 scaled 1440', 'cmssbx10 scaled 1440',
+                    'manfnt', )
+
+# Ship out a page that starts with a font def.
+load_font_template = \
+r'''%%
+\begingroup
+  \hoffset 0sp
+  \voffset 0sp
+  \setbox0\hbox{\font\tmp %s\relax\tmp M}%%
+  \ht0 0sp
+  \shipout\box 0
+\endgroup
+'''
+
+secplain_load_font_template = \
+r'''%%
+\_begingroup
+  \_hoffset 0sp
+  \_voffset 0sp
+  \_setbox0\_hbox{\_font\_tmp %s\_relax\_tmp M}%%
+  \_ht0 0sp
+  \_shipout\_box 0
+\_endgroup
+'''
+
+
+plain = Interface(format='plain',
+                  start = r'\shipout\hbox{}' '\n',
+                  done = '\n' r'\immediate\write16{DONE}\read-1to\temp ' '\n',
+                  done_str = 'DONE\n',
+                  stop = '\end' '\n',
+                  preloaded_fonts = preloaded_fonts,
+                  load_font_template = load_font_template,
+                  )
+
+secplain = Interface(format='secplain',
+                  start = r'\_shipout\_hbox{}' '\n',
+                  done = '\n' r'\_immediate\_write16{DONE}\_read-1to\_temp ' '\n',
+                  done_str = 'DONE\n',
+                  stop = '\_end' '\n',
+                  preloaded_fonts = preloaded_fonts,
+                  load_font_template = secplain_load_font_template,
+                  )
+
+
+
+class Texdp(DaemonSubprocess):
+    """Wrapper around TeX process that handles input and output.
+
+    More comments go here.    
+    """
+
+    _fifos = ('texput.tex', 'texput.log', 'texput.dvi')
+
+    def _make_args(self):
+
+        # Don Knuth created plain.fmt, renamed by some to tex.fmt.
+        fmt = self._params.format
+        if fmt == 'plain' or fmt == 'tex':
+            fmt = ''
+        else:
+            fmt = '--fmt=' + fmt
+
+        # Build up the arguments list.
+        args = ('tex', '--ipc',)
+        args += ('--output-comment=""',) # Don't record time of run.
+        if fmt:
+            args += (fmt,)
+        args += ('texput.tex',)
+        return args
+
+    def start(self):
+
+        super(Texdp, self).start()      # Start the TeX process.
+
+        # We will now initialise TeX, and conprocessnect to file descriptors.
+        # We need to do some low-level input/output, in order to
+        # manage long input strings.  Therefore, we use file
+        # descriptors rather than file objects.
+
+        # We map output fds to what will be a dictionary key.
+        ofd = self._output_fd_dict = {}
+
+        cwd = self._cwd                 # Shorthand.
+        child = self._child 
+
+        # For us, stdin and stdout are special.
+        self._stdin = child.stdin.fileno()
+        self._stdout = child.stdout.fileno()
+
+        # Read stdout and stderr to 'log' and 'err' respectively.
+        ofd[self._stdout] = 'log'
+        ofd[child.stderr.fileno()] = 'err'
+
+        # Open 'texput.tex', and block until it is available, which is
+        # when TeX has started.  Then make 'texput.tex' non-blocking,
+        # in case of a long write.
+        self._texin = os.open(os.path.join(cwd, 'texput.tex'), os.O_WRONLY)
+        make_nonblocking(self._texin)
+
+        # Read 'texput.log' and 'texput.dvi' to 'logfile' and 'dvi'.
+        for src, tgt in (('texput.log', 'logfile'), ('texput.dvi', 'dvi')):
+            fd = os.open(os.path.join(cwd, src),
+                         os.O_RDONLY|os.O_NONBLOCK)
+            ofd[fd] = tgt
+
+        # Ship out blank page, and initialise preloaded fonts.
+        self.process(self._params.start)
+        self._fontdefs = []
+        for font_spec in self._params.preloaded_fonts:
+            self.load_new_font(font_spec)
+
+    def process(self, str):
+        "Return dictionary with log, dvi, logfile and err entries."
+
+        # TeX will read the data, following by the 'done' command.
+        # The 'done' command will cause TeX to write the 'done_str',
+        # which signals the end of the process.  It will also pause
+        # TeX for input.
+
+        # TODO: I do not know why the pause is required, but it is.
+        # Remove it here and in the _params, and the program hangs.
+
+        value = self._process(str + self._params.done, self._params.done_str)
+        self._child.stdin.write('\n')   # TeX is paused for input.
+        return value
+
+    def _process(self, str, done_str):
+
+        # Write str, and read output, until we are done.  Then gather
+        # up the accumulated output, and return as a dictionary.  The
+        # input string might be long.  Later, we might allow writing to
+        # stdin, in response to errors.
+
+        # Initialisation.
+        print "output_fds ", self._output_fd_dict
+        output_fds = self._output_fd_dict.keys()
+        print "input_fds ", self._texin
+        input_fds = [self._texin]
+
+        accumulator = {}
+        for fd in output_fds:
+            accumulator[fd] = []
+
+        pointer, len_str = 0, len(str)
+
+        # The main input/ouput loop.
+        # TOD0: magic number, timeout.
+        done = False
+        while not done:
+            readable, writable = select(output_fds, input_fds, [], 0.1)[0:2]
+            print "readable, writable", readable, writable, " outflds, inputflds: ", output_fds, input_fds
+            print "pointer len_str: ", pointer, len_str
+            print "folder fd: ", fd
+            if not readable and pointer == len_str:
+                print "SUB IO ERROR: readable", readable, " pointer == len_str:", pointer, ",", len_str
+                os.kill(self._child.pid, signal.SIGKILL)
+                self._child.wait()
+                raise SubprocessError, 'subprocess I/O timed out'
+
+            if pointer != len_str and writable:
+                written = os.write(self._texin, str[pointer:pointer+4096])
+                pointer += written
+                if pointer == len_str:
+                    input_fds = []
+
+            for fd in readable:
+                if self._child.poll() is not None:
+                    raise SubprocessError, 'read from terminated subprocess'
+
+                tmp = os.read(fd, 4096)
+                if fd == self._stdout:
+                    if tmp.endswith(done_str):
+                        tmp = tmp[:-len(done_str)]
+                        done = True
+                accumulator[fd].append(tmp)
+
+        if pointer != len_str:
+            raise SystemError, "TeX said 'done' before end of input."
+
+        # Join accumulated output, create and return ouput dictionary.
+        value = {}
+        for fd, name in self._output_fd_dict.items():
+            value[name] = ''.join(accumulator[fd])
+        return value
+
+    def load_new_font(self, font_spec):
+        """Tell both TeX and Python about a new font.
+
+        Raises an exception if the font is not new.
+        """
+
+        # Ask TeX to load font, and ship out page that uses it.
+        command mathtran= self._params.load_font_template % font_spec
+        dvi = self.process(command)['dvi']
+
+        bytes = dvi[45:-1]                  # Page body.
+        opcode = ord(bytes[0])              # First opcode.
+
+        # The first opcode should be a fontdef, which we extract.
+        if FNT_DEF1 <= opcode <= FNT_DEF4:
+            body_len = (2 + (opcode - FNT_DEF1)
+                        + 12                # Checksum, scale, design size.
+                        + 2)                # Length of 'area' and font name.
+
+            name_len = ord(bytes[body_len - 2]) \
+                       + ord(bytes[body_len - 1])
+
+            fontdef = bytes[:body_len + name_len]
+            self._fontdefs.append(fontdef)
+            return
+
+        else:
+            raise ValueError, "font '%s' not new or not found" % font_spec
+

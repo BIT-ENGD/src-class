@@ -1,0 +1,111 @@
+Actor Sender{
+
+        Active behavior (must be active once the actor boots):
+            do-in-sequence{
+                send to Stdout A
+                send to Stdout B
+                send to Stdout C
+                send stop to Stdout and then exit
+            }
+
+        Reactive behavior (must be active once the actor boots):
+            as soon as received stop from StopNotifier -> send stop to Stdout and then exit
+    }
+}
+
+Actor Stdout{
+    Purely reactive behavior (i.e. wait for msg){
+        as soon as received A -> print A
+        as soon as received B -> print B
+        as soon as received C -> print C
+        as soon as received stop from Sender -> exit
+    }
+}
+Actor StopNotifier
+    Purely active behavior {
+        compute, and when some condition is met -> send stop to Sender
+    }
+
+case object START
+case object A
+case object B
+case object C
+case object SENT_A
+case object SENT_B
+case object ACK_A
+case object ACK_B
+case object ACK_C
+case object STOP
+
+class Sender(stdout: Stdout) extends Actor {
+    def act() {
+        self!START
+        while (true){
+            receive {
+                case START =>
+                    stdout!?A
+                    self!SENT_A
+                case SENT_A =>
+                    stdout!?B
+                    self!SENT_B
+                case SENT_B =>
+                    stdout!?C
+                    stdout!?STOP
+                    exit()
+                case STOP => {
+                    Console.println("[Sender:]Received STOP, terminating")
+                    stdout!?STOP
+                    exit()
+                }
+            }
+        }
+    }
+}
+
+class Stdout() extends Actor {
+    def act() { 
+        while (true) {
+            receive{
+                case A =>
+                    Console.println("[Stdout:]A")
+                    reply(ACK_A)
+                case B =>
+                    Console.println("[Stdout:]B")
+                    reply(ACK_B)
+              case C =>
+                    Console.println("[Stdout:]C")
+                    reply(ACK_C)
+                    exit()
+              case STOP =>
+                    Console.println("[Stdout:]Received STOP, terminating")
+                    exit()
+            }
+        }
+    }
+}
+
+class StopNotifier(sender: Sender) extends Actor {
+    def act() {
+        /*
+         * The idea is that the StopNotifier should send a STOP message to the Sender
+         * when a certain condition is met.
+         * The sleep used here is just a semplification, since the detection of such
+         * a condition is not relevant for the example.
+         */
+
+        Thread.sleep(200)
+        Console.println("[StopNotifier:]Sending STOP to sender")
+        sender ! STOP
+        exit()
+   }
+}
+
+object app extends Application {
+    val stdout = new Stdout
+    stdout.start
+    val sender = new Sender(stdout)
+    sender.start
+    val stopNotifier = new StopNotifier(sender)
+    stopNotifier.start
+}
+

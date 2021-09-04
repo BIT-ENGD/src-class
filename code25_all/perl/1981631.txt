@@ -1,0 +1,89 @@
+package Example;
+use Moose;
+
+use My::Trait::Order;
+use My::Class;
+
+with 'My::Role::Load', 'My::Role::Save';
+
+has 'foo' => (
+    traits => [ 'Order' ],
+    isa => 'Num',
+    is => 'rw',
+    default => 0,
+    order => 1,
+);
+
+has 'bar' => (
+    traits => [ 'Order' ],
+    isa => 'ArrayRef[Str]',
+    is => 'rw',
+    default => sub { [ map { "" } 1..8 ] }
+    order => 2,
+);
+
+has 'baz' => (
+    traits => [ 'Order' ],
+    isa => 'Custom::Class',
+    is => 'rw',
+    default => sub { Custom::Class->new() },
+    order => 3,
+);
+
+__PACKAGE__->meta->make_immutable;
+1;
+
+My::Role::Load
+My::Role::Save
+My::Role::Load
+package My::Role::Load;
+use Moose;    
+
+...
+
+sub load {
+    my ($self, $path) = @_;
+
+    foreach my $attribute ( $self->meta->get_all_attributes ) {
+        if (does_role($attribute, 'My::Trait::Order') ) {
+            $self->load_attribute($attribute) # do the loading
+        }
+    }
+}
+
+isa
+use 5.010_001; # need smartmatch fix.
+...
+sub load_attribute {
+    my ($self, $attribute, $fh) = @_;
+    my $value = $attribute->get_value($self); # <-- ERROR PRONE PROBLEM HERE!
+    if (ref($value) && ! blessed($value)) { # get the arrayref types.
+        given (ref($value)) {
+            when('ARRAY') { 
+                $self->load_array($attribute);
+            }
+            when('HASH') {
+                $self->load_hash($attribute);
+            }
+            default {
+                confess "unable to serialize ref of type '$_'";
+            }
+        }
+    }
+    else {
+        when (\&blessed) {
+            confess "don't know how to load it if it doesn't 'load'."
+                if ! $_->can('load');
+            $_->load();
+        }
+        default {
+            $attribute->set_value($self, <$fh>);
+        }
+    }
+}
+
+# <-- ERROR PRONE PROBLEM HERE!
+$attribute->get_value($self)
+Class::MOP::Attribute
+Moose::Meta::Attribute
+Moose::Meta::TypeConstraint

@@ -1,0 +1,43 @@
+readline
+vi
+less
+^[
+  pty <- do
+    parentTerminal <- getControllingTerminalName >>= 
+                      \a -> openFd a ReadWrite Nothing defaultFileFlags
+    sttyp <- getTerminalAttributes parentTerminal
+    (a, b) <- openPseudoTerminal
+    let rawModes = [ProcessInput, KeyboardInterrupts, ExtendedFunctions, 
+                    EnableEcho, InterruptOnBreak, MapCRtoLF, IgnoreBreak, 
+                    IgnoreCR, MapLFtoCR, CheckParity, StripHighBit, 
+                    StartStopOutput, MarkParityErrors, ProcessOutput]
+        sttym = withoutModes rawModes sttyp
+        withoutModes modes tty = foldl withoutMode tty modes
+    setTerminalAttributes b sttym Immediately
+    setTerminalAttributes a sttym Immediately
+    a' <- fdToHandle a
+    b' <- fdToHandle b
+    return (a',b')
+
+System.Posix.Terminal
+createProcess
+waitForProcess
+eval :: (Handle, Handle) -> String -> IO ()
+eval pty command = do
+    let (ptym, ptys) = pty
+    (_, _, hErr, ph) <- createProcess $ (shell command) { 
+          delegate_ctlc = True
+        , std_err = CreatePipe
+        , std_out = UseHandle ptys
+        , std_in = UseHandle ptys
+      }
+    snipOut <- tee ptym stdout
+    snipErr <- sequence $ fmap (\h -> tee h stderr) hErr
+    exitCode <- waitForProcess ph
+    return ()
+  where tee :: Handle -> Handle -> IO B.ByteString
+        tee from to = DCB.sourceHandle from
+            $= DCB.conduitHandle to -- Sink contents to out Handle
+            $$ DCB.take 256 -- Pull off the start of the stream
+
+stty

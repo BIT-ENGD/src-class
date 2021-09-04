@@ -1,0 +1,97 @@
+static void do_write (void * data, gint samples)
+{
+    void * allocated = NULL;
+
+    samples = flow_execute (get_postproc_flow (), 0, & data, sizeof (gfloat) *
+     samples, FMT_FLOAT, effect_rate, effect_channels) / sizeof (gfloat);
+
+    if (data != allocated)
+    {
+        g_free (allocated);
+        allocated = NULL;
+    }
+
+    apply_software_volume (data, output_channels, samples / output_channels);
+
+    if (output_format != FMT_FLOAT)
+    {
+        void * new = g_malloc (FMT_SIZEOF (output_format) * samples);
+
+        audio_to_int (data, new, output_format, samples);
+
+        data = new;
+        g_free (allocated);
+        allocated = new;
+    }
+
+    if (output_format == FMT_S16_NE)
+    {
+        samples = flow_execute (get_legacy_flow (), 0, & data, 2 * samples,
+         output_format, output_rate, output_channels) / 2;
+
+        if (data != allocated)
+        {
+            g_free (allocated);
+            allocated = NULL;
+        }
+    }
+    if (COP->buffer_free == NULL)
+        COP->write_audio (data, FMT_SIZEOF (output_format) * samples);
+    else
+    {
+        while (1)
+        {
+            gint ready = COP->buffer_free () / FMT_SIZEOF (output_format);
+
+            ready = MIN (ready, samples);
+            COP->write_audio (data, FMT_SIZEOF (output_format) * ready);
+            data = (char *) data + FMT_SIZEOF (output_format) * ready;
+            samples -= ready;
+
+            if (samples == 0)
+                break;
+
+            g_usleep (50000);
+        }
+    }
+
+    g_free (allocated);
+}
+
+//This function is where COP->write_audio point to.
+
+static void output_write_audio (void * data, gint size)
+{
+    gint samples = size / FMT_SIZEOF (decoder_format);
+    void * allocated = NULL;
+
+    LOCK;
+    frames_written += samples / decoder_channels;
+    UNLOCK;
+
+    if (decoder_format != FMT_FLOAT)
+    {
+        gfloat * new = g_malloc (sizeof (gfloat) * samples);
+
+        audio_from_int (data, decoder_format, new, samples);
+
+        data = new;
+        g_free (allocated);
+        allocated = new;
+    }
+
+    apply_replay_gain (data, samples);
+    vis_runner_pass_audio (frames_written * 1000 / decoder_rate, data, samples,
+     decoder_channels);
+    new_effect_process ((gfloat * *) & data, & samples);
+
+    if (data != allocated)
+    {
+        g_free (allocated);
+        allocated = NULL;
+    }
+
+    do_write (data, samples);
+    g_free (allocated);
+}
+

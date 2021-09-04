@@ -1,0 +1,210 @@
+|--------|  |-------------|  |-----|  |--------------|
+|Column  |  |ColumnValue  |  |Row  |  |RowColumnValue|
+|--------|  |-------------|  |-----|  |--------------|
+|ColumnId|  |ColumnValueId|  |RowId|  |RowId         |
+|Name    |  |ColumnId     |  |Name |  |ColumnValueId |
+|--------|  |Value        |  |-----|  |--------------|
+            |-------------|
+
+SELECT COUNT(*)
+[ColumnValue].[PK_ColumnValue]
+DECLARE @columnDataList NVARCHAR(MAX)
+SELECT
+    @columnDataList = 
+    CAST
+    (
+        (
+            SELECT
+                ', CONVERT(xml, [PVT].[' + [Column].[Name] + ']) [Column.' + [Column].[Name] + ']'
+            FROM
+                [Column]
+            ORDER BY
+                [Column].[Name]
+            FOR XML PATH('')
+        ) AS XML
+    ).value('.', 'NVARCHAR(MAX)')
+
+DECLARE @columnPivotList NVARCHAR(MAX)
+SELECT
+    @columnPivotList = 
+    CAST
+    (
+        (
+            SELECT
+                ', [' + [Column].[Name] + ']'
+            FROM
+                [Column]
+            ORDER BY
+                [Column].[Name]
+            FOR XML PATH('')
+        ) AS XML
+    ).value('.', 'NVARCHAR(MAX)')
+
+EXEC('
+    SELECT
+        COUNT(*)
+    FROM
+    (
+        SELECT
+            [PVT].[RowId]
+            ' + @columnDataList + '
+        FROM
+        (
+            SELECT
+                [Row].[RowId],
+                [Column].[Name] [ColumnName],
+                [XmlRowColumnValues].[XmlRowColumnValues] [XmlRowColumnValues]
+            FROM
+                [Row]
+            CROSS JOIN
+                [Column]
+            CROSS APPLY
+            (
+                SELECT
+                    [ColumnValue].[Value] [Value]
+                FROM
+                    [RowColumnValue]
+                INNER JOIN
+                    [ColumnValue]
+                ON
+                    [ColumnValue].[ColumnValueId] = [RowColumnValue].[ColumnValueId]
+                WHERE
+                    [RowColumnValue].[RowId] = [Row].[RowId]
+                AND
+                    [ColumnValue].[ColumnId] = [Column].[ColumnId]
+                FOR XML PATH (''''), ROOT(''Values'')
+            ) [XmlRowColumnValues] ([XmlRowColumnValues])
+        ) [PivotData]
+        PIVOT
+        (
+            MAX([PivotData].[XmlRowColumnValues])
+        FOR
+            [ColumnName]
+            IN
+            ([0]' + @columnPivotList + ')
+        ) PVT
+    ) RowColumnData
+')
+
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[Row](
+    [RowId] [int] IDENTITY(1,1) NOT NULL,
+    [Name] [nvarchar](50) NOT NULL,
+ CONSTRAINT [PK_Row] PRIMARY KEY CLUSTERED 
+(
+    [RowId] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[Column](
+    [ColumnId] [int] IDENTITY(1,1) NOT NULL,
+    [Name] [nvarchar](50) NOT NULL,
+ CONSTRAINT [PK_Column] PRIMARY KEY CLUSTERED 
+(
+    [ColumnId] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[RowColumnValue](
+    [RowId] [int] NOT NULL,
+    [ColumnValueId] [int] NOT NULL,
+ CONSTRAINT [PK_RowColumnValue] PRIMARY KEY CLUSTERED 
+(
+    [RowId] ASC,
+    [ColumnValueId] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[ColumnValue](
+    [ColumnValueId] [int] IDENTITY(1,1) NOT NULL,
+    [ColumnId] [int] NOT NULL,
+    [Value] [nvarchar](50) NOT NULL,
+ CONSTRAINT [PK_ColumnValue] PRIMARY KEY CLUSTERED 
+(
+    [ColumnValueId] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+CREATE NONCLUSTERED INDEX [FKIX_ColumnValue_ColumnId] ON [dbo].[ColumnValue] 
+(
+    [ColumnId] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, SORT_IN_TEMPDB = OFF, IGNORE_DUP_KEY = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+GO
+ALTER TABLE [dbo].[ColumnValue]  WITH CHECK ADD  CONSTRAINT [FK_ColumnValue_Column] FOREIGN KEY([ColumnId])
+REFERENCES [dbo].[Column] ([ColumnId])
+GO
+ALTER TABLE [dbo].[ColumnValue] CHECK CONSTRAINT [FK_ColumnValue_Column]
+GO
+ALTER TABLE [dbo].[RowColumnValue]  WITH CHECK ADD  CONSTRAINT [FK_RowColumnValue_ColumnValue] FOREIGN KEY([ColumnValueId])
+REFERENCES [dbo].[ColumnValue] ([ColumnValueId])
+GO
+ALTER TABLE [dbo].[RowColumnValue] CHECK CONSTRAINT [FK_RowColumnValue_ColumnValue]
+GO
+ALTER TABLE [dbo].[RowColumnValue]  WITH CHECK ADD  CONSTRAINT [FK_RowColumnValue_Row] FOREIGN KEY([RowId])
+REFERENCES [dbo].[Row] ([RowId])
+GO
+ALTER TABLE [dbo].[RowColumnValue] CHECK CONSTRAINT [FK_RowColumnValue_Row]
+GO
+
+DECLARE @columnLoop INT
+DECLARE @columnValueLoop INT
+DECLARE @rowLoop INT
+
+DECLARE @columnId INT
+DECLARE @columnValueId INT
+DECLARE @rowId INT
+
+SET @columnLoop = 0
+
+WHILE @columnLoop < 10
+BEGIN
+
+    INSERT INTO [Column] ([Name]) VALUES(NEWID())
+
+    SET @columnId = @@IDENTITY
+
+    SET @columnValueLoop = 0
+
+    WHILE @columnValueLoop < 50
+    BEGIN
+
+        INSERT INTO [ColumnValue] ([ColumnId], [Value]) VALUES(@columnId, NEWID())
+
+        SET @columnValueLoop = @columnValueLoop + 1
+
+    END
+
+    SET @columnLoop = @columnLoop + 1
+
+END
+
+SET @rowLoop = 0
+
+WHILE @rowLoop < 10000
+BEGIN
+
+    INSERT INTO [Row] ([Name]) VALUES(NEWID())
+
+    SET @rowId = @@IDENTITY
+
+    INSERT INTO [RowColumnValue] ([RowId], [ColumnValueId]) SELECT TOP 25 @rowId, [ColumnValueId] FROM [ColumnValue] ORDER BY NEWID()
+
+    SET @rowLoop = @rowLoop + 1
+
+END
+

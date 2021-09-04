@@ -1,0 +1,181 @@
+local fileutil=require("fileutility")
+local wifiutil=require("wifiutility")
+local httputil=require("httputility")
+
+local dvconf="dvconf.cnf"
+local wificonf="wificonf.cnf"
+local post_method="TestSrv"
+msg=""
+
+wifi.eventmon.register(wifi.eventmon.STA_GOT_IP,
+    function(T)
+        print("IP Received")
+        if wifitout then
+            wifitout:unregister()
+            print("WiFi Timout Monitor was Running...hence stopped")
+            wifitout=nil
+        end
+        local dconf=fileutil.loadDeviceConfigs(dvconf)
+        local srv_url=dconf.server
+        local auth_id=dconf.auth_id
+        local pwd=dconf.pwd
+        local len=string.len(srv_url)
+        if string.sub(srv_url,len,len)~="/" then
+            srv_url=srv_url.."/"
+        end
+        httpTimeoutMon()
+        httputil.getServerLogin(srv_url..post_method,
+        auth_id,pwd,function() startPollSlave() end)
+    end)
+
+spi.setup(1,spi.MASTER,spi.CPOL_HIGH,spi.CPHA_LOW,8,80,spi.FULLDUPLEX)
+
+wifi.setphymode(wifi.PHYMODE_N)
+
+
+function startPollSlave()
+    pollslavetimer=tmr.create()
+    pollslavetimer:alarm(10,tmr.ALARM_AUTO,function() dofile("pollslave.lua") end)
+end
+
+function httpTimeoutMon()
+    srvtout=tmr.create()
+    print("Starting Server Timeout Monitor..")
+    srvtout:alarm(20000,tmr.ALARM_SINGLE,function()
+        print("http server Timeout Occured...")
+        if pollslavetimer then
+            local s,m=pollslavetimer:state()
+            if s==false then
+                msg="Server is offline.."
+                pollslavetimer:start()
+                print("Pollslave was created but not running..hence started..")
+            end
+        else
+            print("Pollslave was not created...hence started...")
+            msg="Server is offline.."
+            startPollSlave()
+        end
+    end)
+    print("Started Server Timeout Monitor...")
+end
+
+function wifiTimeoutMon()
+    wifitout=tmr.create()
+    print("Starting WiFi Timeout Monitor")
+    wifitout:alarm(20000,tmr.ALARM_SINGLE,function()
+        print("20 sec Timeout Occured..")
+        if pollslavetimer then
+            local s,m=pollslavetimer:state()
+            if s==false then
+                wifi.sta.clearconfig()
+                msg="No Internet Access.."
+                pollslavetimer:start() 
+            end
+        else
+            wifi.sta.clearconfig()
+            msg="No Internet Access.."
+            startPollSlave()
+        end
+    end)
+    print("WiFi Timeout Monitor Started..")
+end
+
+if file.exists(dvconf) then
+    print("Device Settings File found...")
+    local dconf=fileutil.loadDeviceConfigs(dvconf)
+    if file.exists(wificonf) then
+        print("WiFi Configurations found...")
+        wifi.sta.getap(1,function(table)
+            print("WiFi Scan Complete...")
+            local count,wtable=wifiutil.indexWiFiList(table)
+            print("Detected Usable WiFi: "..count)
+            print("Sorting WiFi..")
+            wtable=wifiutil.sortWiFiList(wtable,count)
+            local i=0
+            print("Loading Stored WiFi..")
+            local wconf=fileutil.loadWiFiConfig(wificonf)
+            while i<count do
+                local j=0
+                while wconf and wconf[j] do
+                    if wtable[i].ssid==wconf[j].ssid and wtable[i].bssid==wconf[j].bssid then
+                        print("Stored WiFi Matches with detected wifi no. "..i)
+                        wifiTimeoutMon()
+                        print("Configuring detected WiFi..")
+wifi.sta.config({ssid=wtable[i].ssid,pwd=wconf[j].pwd,bssid=wtable[i].bssid})
+                        print("Configured..Now Wait For IP...")
+                        i=count;break
+                    end
+                    j=j+1
+                end
+                i=i+1
+            end
+            if i==count then
+                msg="Please Connect To WiFi.."
+                startPollSlave()
+            end
+            print("Leaving now..")
+        end)
+    else
+        print("WiFi Configurations not found...")
+        --startPollSlave()
+    end
+else
+    print("Device Configurations not found...")
+    --startPollSlave()
+end
+
+dofile("init_test.lua")
+Device Settings File found...
+Device Configurations loaded...
+WiFi Configurations found...
+> WiFi Scan Complete...
+
+Detected Usable WiFi: 4
+Sorting WiFi..
+Loading Stored WiFi..
+Loading line 0
+Stored WiFi Matches with detected wifi no. 0
+Starting WiFi Timeout Monitor
+WiFi Timeout Monitor Started..
+Configuring detected WiFi..
+Configured..Now Wait For IP...
+Leaving now..
+IP Received
+WiFi Timout Monitor was Running...hence stopped
+Device Configurations loaded...
+Starting Server Timeout Monitor..
+Started Server Timeout Monitor...
+http post issued..now wait for server response...
+HTTP client: Disconnected with error: -11
+HTTP client: Connection timeout
+HTTP client: Connection timeout
+http server Timeout Occured...
+Pollslave was not created...hence started...
+Got:255 Heap Remaining:19840
+Got:255 Heap Remaining:19840
+Got:255 Heap Remaining:19840
+Got:255 Heap Remaining:19840
+...........
+Got:255 Heap Remaining:1312
+Got:255 Heap Remaining:1312
+Got:255 Heap Remaining:1312
+Got:255 Heap Remaining:1104
+Got:255 Heap Remaining:1104
+...........
+Got:255 Heap Remaining:1104
+E:M 520
+PANIC: unprotected error in call to Lua API (not enough memory)
+
+ ets Jan  8 2013,rst cause:2, boot mode:(3,6)
+
+load 0x40100000, len 27264, room 16 
+tail 0
+chksum 0xc0
+load 0x3ffe8000, len 2432, room 8 
+tail 8
+chksum 0x7b
+load 0x3ffe8980, len 136, room 0 
+tail 8
+chksum 0xe0
+csum 0xe0
+

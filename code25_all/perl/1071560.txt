@@ -1,0 +1,41 @@
+die
+DBIx::Class
+use Time::HiRes 'sleep';
+use Carp;
+
+# [...]
+
+for (0..150) {
+    sleep 0.1 if $_;
+    eval {
+        # database access
+    };
+    next if $@ =~ /database is locked/;
+}
+croak $@ if $@;
+
+sub _retry {
+    my ( $timeout, $func ) = @_;
+    for (0..$timeout*10) {
+        sleep 0.1 if $_;
+        eval { $func->(); };
+        next if $@ =~ /database is locked/;
+    }
+    croak $@ if $@;
+}
+
+my @thingies;
+_retry 15, sub {
+    $schema->txn_do(
+        sub {
+            @thingies = $thingie_rs->search(
+                { state => 0, job_id => $job->job_id },
+                { rows  => $self->{batchsize} } );
+            if (@thingies) {
+                for my $thingie (@thingies) {
+                    $thingie->update( { state => 1 } );
+                }
+            }
+        } );
+};
+

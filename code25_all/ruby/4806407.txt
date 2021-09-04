@@ -1,0 +1,62 @@
+/usr/lib/xen/bin/xenconsole
+Net::SSH
+CTRL + ]
+CTRL + ]
+def execute_remote_console(hostname, port, username, password, uuid)
+
+begin
+
+Net::SSH.start( hostname, username, :password => password, :port => port ) do |session|
+
+  dom_list_line = session.exec! "list_domains | grep #{uuid}"
+  if dom_list_line.match(/(\d+)/)
+    dom_id = $1
+    puts "found #{uuid} on DOM #{dom_id}"
+  else
+    raise "couldn't find DOM id"
+  end
+
+  console_command = "/usr/lib/xen/bin/xenconsole #{dom_id}"
+  puts "connecting to console: #{console_command}"
+
+  session.exec!( console_command ) do |ch,stream,data|
+
+    puts "pressing (enter)"
+    ch.send_data "\n"
+
+    case stream
+      when :stderr
+        puts "E-> #{data}"
+        ch.exec "cat /etc/hostname" do |chan, success|
+          raise "could not execute command" unless success
+
+          # "on_data" is called when the process writes something to stdout
+          chan.on_data do |c, data|
+            $STDOUT.print data
+          end
+
+          # "on_extended_data" is called when the process writes something to stderr
+          chan.on_extended_data do |c, type, data|
+            $STDERR.print data
+          end
+
+          chan.on_close { puts "done!" }
+        end
+      when :stdout
+        puts "O-> #{data}"
+      else
+        puts" other: #{data}"
+    end 
+
+  end #end session.exec
+
+
+end #end SSH.start
+
+
+  rescue
+    puts "\t\t\tok (#{$!.message})" 
+  end 
+
+end #end function
+

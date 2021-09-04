@@ -1,0 +1,29 @@
+SELECT DailyLeaveLedger.dldEmployeeID, 
+       Sum(IIf([tolAnnualLeaveType]<>0,1,0)) AS ALDays, 
+       Sum(IIf([tolPersonalLeaveType]<>0,1,0)) AS PLDays, 
+       Sum(IIf([tolPublicHolidayType]<>0,1,0)) AS PHDays, 
+       DailyLeaveLedger.dldPHID
+
+FROM (DailyLeaveLedger 
+      INNER JOIN Employees ON DailyLeaveLedger.dldEmployeeID = Employees.EmployeeID)   
+      INNER JOIN TypeOfLesterLeave ON DailyLeaveLedger.dldLeaveType = TypeOfLesterLeave.tolID
+
+WHERE (((DailyLeaveLedger.dldAuthDecline)=1) AND 
+       ((DailyLeaveLedger.dldAuthorisedBy) Is Not Null) AND 
+       ((DailyLeaveLedger.dldReleaseToPayroll)=True) AND 
+       ((IIf([forms]![TransferTBRToPayrollForm]![chkOnlyPayLeave]=True,
+                Exists (SELECT DISTINCT InvoiceHeader.InvDate 
+                        FROM (InvoiceHeader 
+                         INNER JOIN ReceiptDetail ON InvoiceHeader.InvNumber = ReceiptDetail.RDInvNumber) 
+                         INNER JOIN [Work Codes] ON ReceiptDetail.RDWorkCodeID = [Work Codes].WorkCodeID 
+                        WHERE ((ReceiptDetail.RDPayRun=0 Or 
+                                ReceiptDetail.RDPayRun Is Null) AND 
+                               (ReceiptDetail.RDRctToPayrollFlag=0) AND 
+                               ([Work Codes].WorkCodePayrollAccount1<>0) AND 
+                               (InvoiceHeader.EmployeeID = DailyLeaveLedger.dldEmployeeID) AND 
+                              (DailyLeaveLedger.dldLeaveDate > DateAdd("ww", -InvoiceHeader.InvWeeksOfPay, InvoiceHeader.InvBeginDate)) AND 
+                              (DailyLeaveLedger.dldLeaveDate <= InvoiceHeader.InvBeginDate)))
+             ,True))=True))
+GROUP BY DailyLeaveLedger.dldEmployeeID, DailyLeaveLedger.dldPHID
+HAVING (((DailyLeaveLedger.dldPHID) Is Null));
+

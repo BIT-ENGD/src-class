@@ -1,0 +1,67 @@
+java.sql.Connection
+!?
+Connection
+sealed abstract class ConnectionPoolMessage
+case class NewConnection extends ConnectionPoolMessage
+case class CloseConnection(c:Connection) extends ConnectionPoolMessage
+
+class ConnectionPool extends Actor {
+  def act() {
+    while (true) {
+      receive() {
+        case NewConnection => sender ! getConnectionFromPool
+        case CloseConnection(conn) => returnConnection(conn)
+      }
+    }
+  }
+}
+
+// Here, my "do stuff" method is all in one place, and I block waiting
+// on the Future from the pool; however this could take forever and cause trouble
+class UsingFuture {
+  val pool = new ConnectionPool
+  def doSomething() {
+    val connectionFuture = pool !! NewConnection
+    val connection = connectionFuture() // concerned that we can't timeout here
+    // do stuff with my Connection instance
+    pool ! CloseConnection(connection)  
+  }
+}
+
+
+// here, I wait and just use a timeout
+// Seems clean to me, I guess.
+class UsingBangQuestion {
+  val pool = new ConnectionPool
+  def doSomething() {
+    pool !?(TIMEOUT,NewConnection) match {
+      case Some(conn) => {
+        // do something with connection
+        pool ! CloseConnection(conn)
+      }
+      case None => throw new RuntimeException("timed out")
+    }
+  }
+}
+
+// here, I don't worry about timeouts, cause I only use the
+// the connection when I receive a message back with it.  
+// The problem is that I now have to split my logic up
+// with two methods
+class AsAnActor extends Actor {
+  val pool = new ConnectionPool
+  def startSomething() {
+    start
+    pool ! NewConnection
+  }
+  def act() {
+    receive() {
+      case conn:Connection => finishSomething(conn)
+    }
+  }
+  def finishSomething(conn:Connection) {
+    // do stuff with my Connection
+    pool ! CloseConnection(conn)
+  }
+}
+

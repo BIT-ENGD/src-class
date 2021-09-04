@@ -1,0 +1,175 @@
+Function fncCopyDataTo(ByVal objFrom As OleDb.OleDbConnection, _
+    ByVal objTo As OleDb.OleDbConnection, _
+    ByVal objTrans As OleDb.OleDbTransaction, _
+    ByVal strTable As String, _
+    ByVal strFieldNames() As String, _
+    ByVal strWhereClause As String, _
+    ByVal blnBackup As Boolean, _
+    ByRef strErrorText As String) As Boolean
+        Dim objCmd As OleDb.OleDbCommand
+        Dim drTemp As OleDb.OleDbDataReader
+        Dim intAffected As Integer
+        Dim strSQL As String
+        Dim blnDeleteTo As Boolean
+        Dim blnOK As Boolean
+
+
+        blnOK = True
+        strSQL = "SELECT * FROM " & strTable
+        If Not strWhereClause Is Nothing Then
+            strSQL = strSQL & " WHERE " & strWhereClause
+        End If
+
+        If Not blnBackup Then
+            objCmd = objTo.CreateCommand()
+            objCmd.Transaction = objTrans
+            objCmd.CommandType = CommandType.Text
+            objCmd.CommandText = strSQL
+            drTemp = objCmd.ExecuteReader(CommandBehavior.Default)
+
+            If drTemp.HasRows Then
+                blnDeleteTo = True
+            Else
+                blnDeleteTo = False
+            End If
+            drTemp.Close()
+
+            If blnDeleteTo Then
+                strSQL = "DELETE FROM " & strTable
+                If Not strWhereClause Is Nothing Then
+                    strSQL = strSQL & " WHERE " & strWhereClause
+                End If
+                objCmd.CommandText = strSQL
+                intAffected = objCmd.ExecuteNonQuery()
+                If intAffected < 1 Then
+                    blnOK = False
+                    strErrorText = "Failed to delete table '" & strTable _
+                    & "' because of issue with: intAffected = " & intAffected
+                End If
+            End If
+
+        End If
+
+        If blnOK Then
+            objCmd = objFrom.CreateCommand()
+            objCmd.CommandText = "SELECT COUNT(*) FROM " & strTable
+            If Not strWhereClause Is Nothing Then
+                strSQL = strSQL & " WHERE " & strWhereClause
+            End If
+            pbrVTReleaser.Maximum = objCmd.ExecuteScalar()
+            pbrVTReleaser.Minimum = 0
+            pbrVTReleaser.Value = 0
+            objCmd.CommandType = CommandType.Text
+            strSQL = "SELECT * FROM " & strTable
+            If Not strWhereClause Is Nothing Then
+                strSQL = strSQL & " WHERE " & strWhereClause
+            End If
+
+            objCmd.CommandText = strSQL
+
+            drTemp = objCmd.ExecuteReader(CommandBehavior.SequentialAccess)
+            While drTemp.Read() And blnOK
+                StsBar.Text = "Releasing " & strTable
+                blnOK = fncCopyRowTo(strTable, Nothing, objTo, objTrans, drTemp, blnBackup, strErrorText)
+                pbrVTReleaser.Value = pbrVTReleaser.Value + 1
+
+            End While
+
+            strSQL = "SELECT * FROM " & strTable
+
+            If Not blnBackup Then
+                objCmd = objTo.CreateCommand()
+                objCmd.Transaction = objTrans
+                objCmd.CommandType = CommandType.Text
+                objCmd.CommandText = strSQL
+                intAffected = objCmd.ExecuteNonQuery()
+            End If
+
+        End If
+        drTemp.Close()
+        fncCopyDataTo = blnOK
+        objCmd.Dispose()
+    End Function 
+
+Function fncCopyRowTo(ByVal strTable As String, _
+    ByVal strFieldName As String, _
+    ByVal objTo As OleDb.OleDbConnection, _
+    ByVal objTrans As OleDb.OleDbTransaction, _
+    ByVal drFrom As OleDb.OleDbDataReader, _
+    ByVal blnBackup As Boolean, _
+    ByRef strErrorText As String) As Boolean
+        Dim objCmd As OleDb.OleDbCommand
+        Dim strSQL As String, strSQLCreateTB As String
+        Dim strParam As String
+        Dim intIndex As Integer
+        Dim intAffected As Integer
+        Dim blnOK As Boolean
+        Dim strField As String
+
+
+        blnOK = True
+        objCmd = objTo.CreateCommand()
+        objCmd.Transaction = objTrans
+        objCmd.CommandType = CommandType.Text
+
+        strSQL = "INSERT INTO " & strTable & " ( "
+        strParam = ""
+        objCmd.Parameters.Clear()
+
+        strSQLCreateTB = "CREATE TABLE " & strTable & " ( "    
+        For intIndex = 0 To drFrom.FieldCount - 1
+            If intIndex > 0 Then
+                strSQL = strSQL & ", "
+                strSQLCreateTB = strSQLCreateTB & " char(10)"
+                strSQLCreateTB = strSQLCreateTB & ", "
+                strParam = strParam & ", "
+            End If
+            strField = drFrom.GetName(intIndex)
+            strSQL = strSQL & strField
+            strSQLCreateTB = strSQLCreateTB & strField
+            objCmd.Parameters.Add(New OleDb.OleDbParameter(drFrom.GetName(intIndex), drFrom.GetValue(intIndex)))
+
+            strParam = strParam & "?"
+        Next
+        strSQL = strSQL & " ) VALUES ( " & strParam & " )" '
+        strSQLCreateTB = strSQLCreateTB & " char(10))"
+
+        If blnBackup Then
+            blnOK = fncCreateTblDB(strSQLCreateTB)
+        End If
+
+        objCmd.CommandText = strSQL
+
+        If Not blnBackup Then
+            intAffected = objCmd.ExecuteNonQuery()
+            If intAffected < 1 Then
+                blnOK = False
+                strErrorText = "Failed to insert into table '" & strTable _
+                & "' because of issue with: intAffected = " & intAffected
+            End If
+        End If
+
+        fncCopyRowTo = blnOK
+    End Function
+
+DEV data  has 4 columns   1   2   3   4 
+                          x   x   x   x
+                          x   x   x   x
+                          x   x   x   x
+
+
+SAT data                  1  2  3  4     identical with different data  
+                          0  0  0  0
+                          0  0  0  0
+                          0  0  0  0
+
+SAT COPY data             1  2  3  4 
+                          0  0  0  0
+                          0  0  0  0 
+                          0  0  0  0
+
+new SAT DATA(merge)       1  2  3  4
+                          0  x  0  x 
+                          0  x  0  x
+                          0  x  0  x
+

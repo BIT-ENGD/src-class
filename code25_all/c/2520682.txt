@@ -1,0 +1,71 @@
+  rowSize = cinfo.output_width * cinfo.num_components;
+  /* Windows needs bitmaps to be defined on Four Byte Boundaries */
+  winRowSize = (rowSize + 3) & -4;
+  imgSize = (cinfo.output_height * winRowSize + 3) & -4;
+  while(cinfo.output_scanline < cinfo.output_height){
+        jpeg_read_scanlines(&cinfo, &row_pointer, 1);
+
+        /* stagger read to get lines Bottom->Top (As BMP Requires) */
+        location = (imgSize) - (cinfo.output_scanline * winRowSize);
+        rowsRead++;
+
+        for(i = 0; i < winRowSize; i++){
+           rawImage[location++] = row_pointer[i];
+        }
+     }
+
+     /* Convert BGR to RGB */
+     if(cinfo.num_components == 3){
+        for(i = 0; i < imgSize; i += 3){
+           tmp = rawImage[i+2];
+           rawImage[i+2] = rawImage[i];
+           rawImage[i] = tmp;
+        }
+     }
+
+     biSize = sizeof(BITMAPINFOHEADER);
+     if(cinfo.num_components == 1){ /* Greyscale */
+        biPallete = 32 * 256;
+        biSize += biPallete;
+     }
+
+     bitInf = (BITMAPINFO *)malloc(biSize);
+
+     bitInf->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+     bitInf->bmiHeader.biWidth = cinfo.output_width;
+     bitInf->bmiHeader.biHeight = cinfo.output_height;
+     bitInf->bmiHeader.biPlanes = 1;
+     bitInf->bmiHeader.biBitCount = 8*cinfo.num_components;
+     bitInf->bmiHeader.biCompression = BI_RGB;
+     bitInf->bmiHeader.biSizeImage = 0;
+     bitInf->bmiHeader.biXPelsPerMeter = 0;
+     bitInf->bmiHeader.biYPelsPerMeter = 0;
+     bitInf->bmiHeader.biClrUsed       = 0;
+     bitInf->bmiHeader.biClrImportant  = 0;
+
+     if(cinfo.num_components == 1){
+        for(i = 0; i < 256; i++){
+           bitInf->bmiColors[i].rgbBlue = i;
+           bitInf->bmiColors[i].rgbGreen = i;
+           bitInf->bmiColors[i].rgbRed = i;
+           bitInf->bmiColors[i].rgbReserved = 0;
+        }
+     }
+
+     /* Loads rawImage into an HBITMAP */
+     /* retval = CreateDIBitmap(inDC, &bitInf->bmiHeader, CBM_INIT, rawImage, bitInf, DIB_RGB_COLORS); */
+     retval = CreateCompatibleBitmap(inDC, cinfo.output_width, cinfo.output_height);
+     errorCode = SetDIBits(inDC, retval, 0, cinfo.output_height, rawImage, bitInf, DIB_RGB_COLORS);
+
+if(cinfo.num_components == 3){
+   for(i = 0; i < cinfo.output_height; i++){
+      location = (i * winRowSize);
+      for(j = 0; j < rowSize; j += 3){
+         tmp = rawImage[location+2];
+         rawImage[location+2] = rawImage[location];
+         rawImage[location] = tmp;
+         location += 3;
+      }
+   }
+}
+

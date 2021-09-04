@@ -1,0 +1,184 @@
+connect() failed
+// thanks to cs.baylor.edu/~donahoo/practical/CSockets/code/TCPEchoClientWS.c
+
+#include <stdio.h>
+#include <winsock.h>
+#include <stdlib.h>
+
+#define RCVBUFSIZE 32 // size of receive buffer
+
+void DieWithError(char *errorMessage);
+
+int main(int argc, char* argv[])
+{
+  int sock;
+  struct sockaddr_in echoServAddr;
+  unsigned short echoServPort;
+  char *servIP;
+  char *echoString;
+  char echoBuffer[RCVBUFSIZE];
+  int echoStringLen;
+  int bytesRcvd, totalBytesRcvd;
+  WSAData wsaData;
+
+  if((argc < 3) || (argc > 4)){
+    fprintf(stderr, "Usage: %s <Sever IP> <Echo Word> [<Echo Port>]\n", argv[0]);
+    exit(1);
+  }
+
+  if (argc==4)
+    echoServPort = atoi(argv[3]); // use given port if any
+  else
+    echoServPort = 7; // echo is well-known port for echo service
+
+  if(WSAStartup(MAKEWORD(2, 0), &wsaData) != 0){ // load winsock 2.0 dll
+    fprintf(stderr, "WSAStartup() failed");
+    exit(1);
+  }
+
+  // create reliable, stream socket using tcp
+  if((sock=socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    DieWithError("socket() failed");
+
+  // construct the server address structure
+  memset(&echoServAddr, 0, sizeof(echoServAddr));
+  echoServAddr.sin_family = AF_INET;
+  echoServAddr.sin_addr.s_addr = inet_addr(servIP); // server IP address
+  echoServAddr.sin_port = htons(echoServPort);
+  // establish connection to the echo server
+  if(connect(sock, (struct sockaddr*)&echoServAddr, sizeof(echoServAddr)) < 0)
+    DieWithError("connect() failed");
+
+  echoStringLen = strlen(echoString); // determine input length
+
+  // send the string, includeing the null terminator to the server
+  if(send(sock, echoString, echoStringLen, 0)!= echoStringLen)
+    DieWithError("send() sent a different number of bytes than expected");
+
+  totalBytesRcvd = 0;
+  printf("Received: "); // setup to print the echoed string
+  while(totalBytesRcvd < echoStringLen){
+    // receive up to the buffer size (minus 1 to leave space for a null terminator) bytes from the sender
+    if(bytesRcvd = recv(sock, echoBuffer, RCVBUFSIZE-1, 0) <= 0)
+      DieWithError("recv() failed or connection closed prematurely");
+    totalBytesRcvd += bytesRcvd; // keep tally of total bytes
+    echoBuffer[bytesRcvd] = '\0';
+    printf("%s", echoBuffer); // print the echo buffer
+  }
+
+  printf("\n");
+  closesocket(sock);
+  WSACleanup(); 
+
+  exit(0);
+}
+
+void DieWithError(char *errorMessage)
+{
+  fprintf(stderr, "%s: %d\n", errorMessage, WSAGetLastError());
+  exit(1);
+}
+
+// thanks cs.baylor.edu/~donahoo/practical/CSockets/code/TCPEchoServerWS.c
+
+#include <stdio.h>
+#include <winsock.h>
+#include <stdlib.h>
+
+#define MAXPENDING 5 // maximum outstanding connection requests
+#define RCVBUFSIZE 1000
+
+void DieWithError(char *errorMessage);
+void HandleTCPClient(int clntSocket); // tcp client handling function
+
+int main(int argc, char **argv)
+{
+  int serverSock;
+  int clientSock;
+  struct sockaddr_in echoServerAddr;
+  struct sockaddr_in echoClientAddr;
+  unsigned short echoServerPort;
+  int clientLen; // length of client address data structure
+  WSAData wsaData;
+
+  if (argc!=2){
+    fprintf(stderr, "Usage: %s <Server Port>\n", argv[0]);
+    exit(1);
+  }
+
+  echoServerPort = atoi(argv[1]);
+
+  if(WSAStartup(MAKEWORD(2, 0), &wsaData)!=0){
+    fprintf(stderr, "WSAStartup() failed");
+    exit(1);
+  }
+
+  // create socket for incoming connections
+  if((serverSock=socket(PF_INET, SOCK_STREAM, IPPROTO_TCP))<0)
+    DieWithError("socket() failed");
+
+  // construct local address structure
+  memset(&echoServerAddr, 0, sizeof(echoServerAddr));
+  echoServerAddr.sin_family = AF_INET;
+  echoServerAddr.sin_addr.s_addr = htonl(INADDR_ANY); // any incoming interface
+  echoServerAddr.sin_port = htons(echoServerPort); // local port
+
+  // bind to the local address
+  if(bind(serverSock, 
+      (struct sockaddr*)&echoServerAddr, 
+      sizeof(echoServerAddr)
+      )<0)
+    DieWithError("bind() failed");
+
+  // mark the socket so it will listen for incoming connections
+  if(listen(serverSock, MAXPENDING)<0)
+    DieWithError("listen() failed");
+
+  for (;;){ // run forever
+    // set the size of the in-out parameter
+    clientLen = sizeof(echoClientAddr);
+
+    // wait for a client to connect
+    if((clientSock = accept(serverSock, (struct sockaddr*)&echoClientAddr,
+                &clientLen)) < 0)
+      DieWithError("accept() failed");
+
+    // clientSock is connected to a client
+
+    printf("Handling client %s\n", inet_ntoa(echoClientAddr.sin_addr));
+
+    HandleTCPClient(clientSock);
+  }
+
+  // NOT REACHED
+}
+
+void DieWithError(char *errorMessage)
+{
+  fprintf(stderr, "%s: %d\n", errorMessage, WSAGetLastError());
+  exit(1);
+}
+
+void HandleTCPClient(int clientSocket)
+{
+  char echoBuffer[RCVBUFSIZE]; // buffer for echostring
+  int recvMsgSize; // size of received message
+
+  // receive message from client
+  if((recvMsgSize = recv(clientSocket, echoBuffer, RCVBUFSIZE, 0) <0))
+    DieWithError("recv() failed");
+
+  // send received string and receive again until end of transmission
+  while(recvMsgSize > 0){
+    // echo message back to client
+    if(send(clientSocket, echoBuffer, recvMsgSize, 0)!=recvMsgSize)
+      DieWithError("send() failed");
+
+    // see if there's more data to receive
+    if((recvMsgSize = recv(clientSocket, echoBuffer, RCVBUFSIZE, 0)) <0)
+      DieWithError("recv() failed");
+  }
+
+  closesocket(clientSocket); // close client socket
+}
+

@@ -1,0 +1,68 @@
+lock=e32.Ao_lock()
+
+# Quit the script
+def quit():
+    lock.signal()
+
+# Callback function will be called when the requested service is complete. 
+def launch_app_callback(trans_id, event_id, input_params):
+    if trans_id != appmanager_id and event_id != scriptext.EventCompleted:
+        print "Error in servicing the request"
+        print "Error code is: " + str(input_params["ReturnValue"]["ErrorCode"])
+        if "ErrorMessage" in input_params["ReturnValue"]:
+            print "Error message is: " + input_params["ReturnValue"]["ErrorMessage"]
+    else:
+        print "\nWaiting for UpCode to close"
+    #lock.signal()
+
+# launch UpCode to scan barcode and get barcode from clipboard
+def scan_barcode():
+    msg('Launching UpCode to scan barcode.\nPlease exit UpCode after the barcode has been copied to the clipboard')
+    # Load appmanage service
+    appmanager_handle = scriptext.load('Service.AppManager', 'IAppManager')
+    # Make a request to query the required information in asynchronous mode
+    appmanager_id = appmanager_handle.call('LaunchApp', {'ApplicationID': u's60uid://0x2000c83e'}, callback=launch_app_callback)
+    #lock.wait()
+    #print "Request complete!"
+    barcode = clipboard.Get()
+    return barcode
+
+# handle the selection made from the main body listbox
+def handle_selection():
+    if (lb.current() == 0):
+        barcode = scan_barcode()
+    elif (lb.current() ==1):
+        barcode = clipboard.Get()
+    elif (lb.current() ==2):
+        barcode = input_barcode()
+
+    found = False
+    if is_barcode(barcode):
+        found, mbid, album, artist = identify_release(barcode)
+    else:
+        msg('Valid barcode not found. Please try again/ another method/ another CD')
+        return
+
+    if found:
+        go = appuifw.query(unicode('Found: ' + artist + ' - ' + album + '\nScrobble it?'), 'query')
+        if (go == 1):
+            now = datetime.datetime.utcnow()
+            scrobble_tracks(mbid, album, artist, now)
+        else:
+            appuifw.note(u'Scrobbling cancelled', 'info')
+    else:
+        appuifw.note(u'No match found for this barcode.', 'info')
+
+# Set the application body up
+appuifw.app.exit_key_handler = quit
+appuifw.app.title = u"ScanScrobbler"
+entries = [(u"Scan a barcode", u"Opens UpCode for scanning"),
+           (u"Submit barcode from clipboard", u"If you've already copied a barcode there"),
+           (u"Enter barcode by hand", u"Using numeric keypad")
+          ]
+
+lb = appuifw.Listbox(entries, handle_selection)
+appuifw.app.body = lb
+
+lock.wait()
+

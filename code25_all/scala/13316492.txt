@@ -1,0 +1,92 @@
+import java.net.Socket
+import scala.actors._
+import Actor._
+import scala.collection.mutable.ArrayBuffer
+
+object LowPortScanner {
+
+  var lastPort = 0
+  var openPorts = ArrayBuffer[Int]()
+  var longestRunTime = 00.00
+  var results = List[Tuple3[Int, Range, Long]]()
+
+  val host = "localhost"
+  val numProcs = 1 to Runtime.getRuntime().availableProcessors()
+  val portsPerProc = 1024 / numProcs.size
+  val caller = self
+  val procPortRanges = numProcs.foldLeft(List[Tuple2[Int, Range]]()) { (portRanges, proc) =>
+    val tuple2 = (proc.toInt, (lastPort + 1) to (lastPort + portsPerProc))
+    lastPort += portsPerProc
+    tuple2 :: portRanges
+  }
+
+  def main(args: Array[String]): Unit = {
+
+    //spawn an actor for each processor that scans a given port range
+    procPortRanges.foreach { proc =>
+      actor {
+        caller ! scan(proc._1, proc._2)
+      } //end inner actors
+    } //end numProcs.foreach  
+
+    //catch results from the processor actors above
+    def act {
+      loop {
+        reactWithin(100) {
+          //update the list of results returned from scan
+          case scanResult: Tuple3[Int, Range, Long] =>
+            println("Processor " + scanResult._1 + " completed scan of ports " + scanResult._2.first + " through " + scanResult._2.last)
+            results = results ::: List(scanResult)
+
+          //check if results have been returned for each actor
+          case TIMEOUT =>
+            println("Main actor timed out")
+            if (results.size == numProcs.size) wrapUp
+
+          case _ =>
+            println("got back something weird from one of the port scan actors!")
+            wrapUp
+        }
+      }
+    }    
+
+    //Attempt to open a socket on each port in the given range
+    //returns a Tuple3[procID: Int, ports: Range, time: Long
+    def scan(proc: Int, ports: Range) = {
+      val startTime = System.nanoTime()
+      ports.foreach { n =>
+        try {
+          //println("Processor " + proc + " is checking port " + n)
+          print(".")
+
+          val socket = new Socket(host, n)
+
+          //println("Found open port: " + n)
+          openPorts += n
+
+          socket.close
+        } catch {
+          case e: Exception =>
+          //println("While scanning port " + n + " caught Exception: " + e)
+        }
+      }
+      (proc, ports, startTime - System.nanoTime())
+    }
+
+    //output results and kill the main actor
+    def wrapUp {
+      println("These are the open ports in the range 1-1024:")
+      openPorts.foreach { port => println(port) }
+      results.foreach { result => if (result._3 > longestRunTime) { longestRunTime = result._3 } }
+      println("Time to scan ports 1 through 1024 is: %3.3f".format(longestRunTime / 1000))
+      caller ! exit
+    }
+  }
+}
+
+caller ! scan(proc._1, proc._2)  
+
+          case scanResult: Tuple3[Int, Range, Long] =>
+            println("Processor " + scanResult._1 + " completed scan of ports " + scanResult._2.first + " through " + scanResult._2.last)
+            results = results ::: List(scanResult)  
+

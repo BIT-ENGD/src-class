@@ -1,0 +1,63 @@
+out of memory (requested 1048576 bytes)
+-H64m
+-Ksize
+http
+httpLbs
+import Control.Monad.IO.Class (liftIO)
+import qualified Data.Text as T
+import qualified Data.ByteString.Lazy as BL
+import Text.Regex.PCRE
+import Network.HTTP.Conduit
+
+main :: IO ()
+main = do
+    manager <- newManager def
+    daemonLoop manager
+
+daemonLoop :: Manager -> IO ()
+daemonLoop manager = do
+    rows <- scrapeWebpage manager
+    putStrLn $ "number of rows parsed: " ++ (show $ length rows)
+    doSleep
+    daemonLoop manager
+
+scrapeWebpage :: Manager -> IO [[BL.ByteString]]
+scrapeWebpage manager = do
+    putStrLn "before makeRequest"
+    html <- makeRequest manager
+    -- Force evaluation of html.
+    putStrLn $ "html length: " ++ (show $ BL.length html)
+    putStrLn "after makeRequest"
+    -- Breaks ~10M html table into 2d list of bytestrings.
+    -- Max memory usage is about 45M, which is about 15M more than when sleeping.
+    return $ map tail $ html =~ pattern
+    where
+        pattern :: BL.ByteString
+        pattern = BL.concat $ replicate 12 "<td[^>]*>([^<]+)</td>\\s*"
+
+makeRequest :: Manager -> IO BL.ByteString
+makeRequest manager = runResourceT $ do
+    defReq <- parseUrl url
+    let request = urlEncodedBody params $ defReq
+                    -- Don't throw errors for bad statuses.
+                    { checkStatus = \_ _ -> Nothing
+                    -- 1 minute.
+                    , responseTimeout = Just 60000000
+                    }
+    response <- httpLbs request manager
+    return $ responseBody response
+
+before makeRequest
+html length: 1555212
+after makeRequest
+number of rows parsed: 3608
+...
+before makeRequest
+html length: 1555212
+after makeRequest
+bannerstalkerd: out of memory (requested 2097152 bytes)
+
+Could not find module `Network.HTTP.Conduit'
+Perhaps you haven't installed the profiling libraries for package `http-conduit-1.8.9'?
+
+http-conduit

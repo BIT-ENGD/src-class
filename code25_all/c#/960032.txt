@@ -1,0 +1,124 @@
+InternetExplorerApplication
+IDisposable
+InternetExplorer
+InternetExporer
+using System;
+using System.Windows.Forms;
+
+// IE COM interface
+// reference ~ C:\Windows\System32\SHDocVw.dll 
+using SHDocVw; 
+
+namespace QuitAppFromCaptiveIE
+{
+    static class Program {
+        [STAThread]
+        static void Main() {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new MyApp());
+        }
+    }
+
+    interface IQuitable {
+        void Quit();
+    }
+
+    public class MyApp : ApplicationContext, IQuitable {
+        private InternetExplorer ie = null; 
+
+        public MyApp() {
+            // create a new Internet Explorer COM component - starts IE application.
+            this.ie = new InternetExplorer(this);
+            this.ie.Open("www.microsoft.com");
+        }
+
+        #region IQuitable Members
+
+        public void Quit() {
+            if (ie != null) {
+                ie.Dispose();
+                ie = null;
+            }
+            Application.Exit();
+        }
+
+        #endregion
+    }
+
+    class InternetExplorer : IDisposable, IQuitable
+    {
+        // allows us to end the parent application when IE is closed.
+        private IQuitable parent;
+        private bool _parentIsQuited = false;
+        private bool _ieIsQuited = false;
+
+        private SHDocVw.InternetExplorer ie; // Old (VB4 era) IE COM component
+
+        public InternetExplorer(IQuitable parent) {
+            // lock-onto the parent app to quit it when IE is closed.
+            this.parent = parent;
+            // create a new Internet Explorer COM component - starts IE application.
+            this.ie = new SHDocVw.InternetExplorerClass();
+            // hook-up our navigate-event interceptor
+            ie.BeforeNavigate2 += new DWebBrowserEvents2_BeforeNavigate2EventHandler(ie_BeforeNavigate2);
+        }
+
+        public void Open(string url) {
+            object o = null;
+            // make the captive IE session navigate to the given URL.
+            ie.Navigate(url, ref o, ref o, ref o, ref o);
+            // now make the ie window visible
+            ie.Visible = true;
+        }
+
+        // this callback event handler is invoked prior to the captive IE 
+        // session navigating (opening) a URL. Navigate-TWO handles both
+        // external (normal) and internal (AJAX) requests. 
+        // For example: You could create a history-log file of every page
+        // visited by each captive session.
+        // Being fired BEFORE the actual navigation allows you to hijack
+        // (ie intercept) requests to certain URLs; in this case a request
+        // to http://support.microsoft.com/ terminates the Browser session
+        // and this program!
+        void ie_BeforeNavigate2(object pDisp, ref object URL, ref object Flags, ref object TargetFrameName, ref object PostData, ref object Headers, ref bool Cancel) {
+            if (URL.Equals("http://support.microsoft.com/")) {
+                this.Quit();
+            }
+        }
+
+        #region IDisposable Members
+
+        public void Dispose() {
+            quitIE();
+        }
+
+        #endregion
+
+        private void quitIE() {
+            // close my unmanaged COM object
+            if (ie != null && !_ieIsQuited) {
+                _ieIsQuited = true;
+                ie.Quit();
+                ie = null;
+            }
+        }
+
+        #region IQuitable Members
+
+        public void Quit() {
+            // close my unmanaged COM object
+            quitIE();
+            // quit the parent app as well.
+            if (parent != null && !_parentIsQuited) {
+                _parentIsQuited = true;
+                parent.Quit();
+                parent = null;
+            }
+        }
+
+        #endregion
+    }
+
+}
+

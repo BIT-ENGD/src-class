@@ -1,0 +1,41 @@
+PATH=/usr/bin
+10 3 * * * ruby /home/deploy/bin/datadump.rb
+
+#!/usr/bin/ruby
+require 'yaml'
+require 'logger'
+require 'rubygems'
+require 'net/ssh'
+require 'net/sftp'
+
+APP        = '/home/deploy/apps/myapp/current'
+LOGFILE    = '/home/deploy/log/data.log'
+TIMESTAMP  = '%Y%m%d-%H%M'
+TABLES     = 'table1 table2'
+
+log        = Logger.new(LOGFILE, 5, 10 * 1024)
+dump       = "myapp-#{Time.now.strftime(TIMESTAMP)}.sql.gz"
+ftpconfig  = YAML::load(open('/home/deploy/apps/myapp/shared/config/sftp.yml'))
+config     = YAML::load(open(APP + '/config/database.yml'))['production']
+cmd        = "mysqldump -u #{config['username']} -p#{config['password']} -h #{config['host']} --add-drop-table --add-locks --extended-insert --lock-tables #{config['database']} #{TABLES} | gzip -cf9 > #{dump}"
+
+log.info 'Getting ready to create a backup'
+`#{cmd}`    
+
+# Strongspace
+log.info 'Backup created, starting the transfer to Strongspace'
+Net::SSH.start(ftpconfig['strongspace']['host'], ftpconfig['strongspace']['username'], ftpconfig['strongspace']['password']) do |ssh|
+  ssh.sftp.connect do |sftp|
+    sftp.open_handle("#{ftpconfig['strongspace']['dir']}/#{dump}", 'w') do |handle|
+      sftp.write(handle, open("#{dump}").read)
+    end
+  end
+end
+log.info 'Finished transferring backup to Strongspace'
+
+log.info 'Removing local file'
+cmd       = "rm -f #{dump}" 
+log.debug "Executing: #{cmd}"
+`#{cmd}`
+log.info 'Local file removed'
+

@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetWeatherResponse xmlns="http://www.webserviceX.NET"><GetWeatherResult>&lt;?xml version="1.0" encoding="utf-16"?&gt;
+&lt;CurrentWeather&gt;
+  &lt;Location&gt;BERLIN MUNICIPAL AIRPORT, NH, United States (KBML) 44-35N 71-11W 345M&lt;/Location&gt;
+  &lt;Time&gt;Oct 19, 2010 - 03:52 AM EDT / 2010.10.19 0752 UTC&lt;/Time&gt;
+  &lt;Wind&gt; Calm:0&lt;/Wind&gt;
+  &lt;Visibility&gt; 10 mile(s):0&lt;/Visibility&gt;
+  &lt;SkyConditions&gt; clear&lt;/SkyConditions&gt;
+  &lt;Temperature&gt; 23.0 F (-5.0 C)&lt;/Temperature&gt;
+  &lt;DewPoint&gt; 21.0 F (-6.1 C)&lt;/DewPoint&gt;
+  &lt;RelativeHumidity&gt; 91&lt;/RelativeHumidity&gt;
+  &lt;Pressure&gt; 29.83 in. Hg (1010 hPa)&lt;/Pressure&gt;
+  &lt;Status&gt;Success&lt;/Status&gt;
+&lt;/CurrentWeather&gt;</GetWeatherResult></GetWeatherResponse></soap:Body></soap:Envelope>
+
+#import "DemoWebServiceConsumeViewController.h"
+
+@implementation DemoWebServiceConsumeViewController
+
+@synthesize cityName;
+@synthesize activityIndicator;
+@synthesize location;
+
+- (IBAction) hideKeyboard{
+    [cityName resignFirstResponder];
+}
+
+- (IBAction) buttonClicked: (id)sender{
+
+    [cityName resignFirstResponder];    
+
+    NSString *soapMsg = 
+    [NSString stringWithFormat:
+     @"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+     "<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">"
+     "<soap:Body>"
+     "<GetWeather xmlns=\"http://www.webserviceX.NET\">"
+     "<CityName>%@</CityName>"
+     "<CountryName>%@</CountryName>"
+     "</GetWeather>"
+     "</soap:Body>"
+     "</soap:Envelope>", cityName.text, @"united states"
+     ];
+
+    NSLog(soapMsg);    
+
+    NSURL *url = [NSURL URLWithString: 
+                  @"http://www.webservicex.com/globalweather.asmx"];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+
+    //---set the headers---
+    // here copy method name to be called SOAP Action read from WS description
+    NSString *msgLength = [NSString stringWithFormat:@"%d", [soapMsg length]];
+    [req addValue:@"text/xml; charset=utf-8" 
+    forHTTPHeaderField:@"Content-Type"];
+    [req addValue:@"http://www.webserviceX.NET/GetWeather" 
+    forHTTPHeaderField:@"SOAPAction"];
+    [req addValue:msgLength forHTTPHeaderField:@"Content-Length"];
+
+    //---set the HTTP method and body---
+    [req setHTTPMethod:@"POST"];
+    [req setHTTPBody: [soapMsg dataUsingEncoding:NSUTF8StringEncoding]];
+
+
+    [activityIndicator startAnimating];    
+
+    conn = [[NSURLConnection alloc] initWithRequest:req delegate:self];
+    if (conn) {
+        webData = [[NSMutableData data] retain];
+    }  
+}
+
+-(void) connection:(NSURLConnection *) connection 
+didReceiveResponse:(NSURLResponse *) response {
+    [webData setLength: 0];
+}
+
+-(void) connection:(NSURLConnection *) connection 
+    didReceiveData:(NSData *) data {
+    [webData appendData:data];
+}
+
+-(void) connection:(NSURLConnection *) connection 
+  didFailWithError:(NSError *) error {
+    [webData release];    
+    [connection release];
+}
+
+-(void) connectionDidFinishLoading:(NSURLConnection *) connection {
+    NSLog(@"DONE READING WEATHER WEB SERVICE. Received Bytes: %d", [webData length]);
+    NSString *theXML = [[NSString alloc] 
+                        initWithBytes: [webData mutableBytes] 
+                        length:[webData length] 
+                        encoding:NSUTF8StringEncoding];
+    //---shows the XML---
+    NSLog(theXML);  
+
+    [theXML release]; 
+
+    [activityIndicator stopAnimating];    
+
+    if (xmlParser)
+    {
+        [xmlParser release];
+    }
+    xmlParser = [[NSXMLParser alloc] initWithData: webData];
+                [xmlParser setDelegate:self];   
+                [xmlParser setShouldResolveExternalEntities:YES];
+                [xmlParser parse];
+
+
+    [connection release];
+    [webData release];
+}
+
+//---when the start of an element is found---
+-(void) parser:(NSXMLParser *) parser 
+    didStartElement:(NSString *) elementName 
+    namespaceURI:(NSString *) namespaceURI 
+    qualifiedName:(NSString *) qName
+    attributes:(NSDictionary *) attributeDict {
+
+
+    NSLog(elementName);
+    if( [elementName isEqualToString:@"GetWeatherResult"])
+    {
+        if (!soapResults)
+        {
+            soapResults = [[NSMutableString alloc] init];
+        }
+        elementFound = YES;
+    }
+    else if([elementName isEqualToString:@"Location"])
+    {
+        elementFound = YES;
+    }   
+}
+
+-(void)parser:(NSXMLParser *) parser foundCharacters:(NSString *)string
+{
+    if (elementFound)
+    {
+        [soapResults appendString: string];
+    }   
+}
+
+-(void)parser:(NSXMLParser *)parser 
+        didEndElement:(NSString *)elementName 
+        namespaceURI:(NSString *)namespaceURI 
+        qualifiedName:(NSString *)qName
+{
+    if ([elementName isEqualToString:@"GetWeatherResult"])
+    {   
+        NSLog(soapResults);        
+        UIAlertView *alert = [[UIAlertView alloc] 
+                              initWithTitle:@"Current Temperature!"                                                                                   
+                              message:soapResults 
+                              delegate:self  
+                              cancelButtonTitle:@"OK" 
+                              otherButtonTitles:nil];
+        [alert show];
+        [alert release];
+        [soapResults setString:@""];
+        elementFound = FALSE; 
+    }
+}
+
+@end
+

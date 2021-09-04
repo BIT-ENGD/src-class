@@ -1,0 +1,118 @@
+    [YS {ser = "MSG"
+        , ori =[YO {site = "Bordeaux" , perfM = ["0","0"]  }
+               ,YO {site = "Paris"    , perfM = ["1","1"]}]}
+    ,YS {ser = "OTP"
+        , ori =[YO {site = "Marseilles" , perfM = ["20","20"]}
+               ,YO {site = "Lyon"       , perfM = ["21","21"]}]}
+    ]
+
+    [YS {ser = "MSG"
+        , ori = [YO {site = "Bordeaux", perfM = ["0"]}
+                ,YO {site = "Paris", perfM =["1"]}
+                ,YO {site = "Bordeaux", perfM = ["0","0"]}
+                ,YO {site = "Paris", perfM = ["1","1"]}]}
+    ,YS {ser = "OTP"
+        , ori = [YO {site = "Marseilles"
+                , perfM = ["20"]}
+                ,YO {site = "Lyon", perfM =["21"]}
+                ,YO {site = "Marseilles", perfM = ["20","20"]}
+                ,YO {site = "Lyon", perfM = ["21","21"]}]}
+    ]
+
+    {-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
+
+    import Text.XML.HXT.Core
+
+    type Site = String
+    type Service = String
+    data YScen = YS
+      { ser   :: Service
+      , ori   :: [YOri]
+      }
+      deriving (Show,Eq)
+
+    data YOri = YO
+      {  site                 :: Site
+        ,perfM                :: [String]
+      }
+      deriving (Show,Eq)
+
+
+
+    xml= "<DATAS LANG='en'>\
+        \ <SCENARIO ID='MSG'>\
+        \   <ORIGIN ID='Bordeaux'>\
+        \       <SCENARIO_M PERF_MOY='0'></SCENARIO_M>\
+        \   </ORIGIN>\
+        \   <ORIGIN ID='Paris'>\
+        \       <SCENARIO_M PERF_MOY='1'></SCENARIO_M>\
+        \   </ORIGIN>\
+        \ </SCENARIO>\
+        \ <SCENARIO ID='OTP'>\
+        \   <ORIGIN ID='Marseilles'>\
+        \       <SCENARIO_M PERF_MOY='20'></SCENARIO_M>\
+        \   </ORIGIN>\
+        \   <ORIGIN ID='Lyon'>\
+        \       <SCENARIO_M PERF_MOY='21'></SCENARIO_M>\
+        \   </ORIGIN>\
+        \ </SCENARIO>\
+        \</DATAS>"
+
+
+    parseXML :: String -> IOStateArrow s b XmlTree
+    parseXML s = readString [ withValidate no
+                            , withRemoveWS yes  
+                            ] s
+
+    atTag ::  ArrowXml a =>  String -> a XmlTree XmlTree
+    atTag tag = deep (isElem >>> hasName tag)
+
+
+    getYearOri :: ArrowXml cat =>  [YOri] -> cat XmlTree  YOri 
+    getYearOri yo = atTag "ORIGIN" >>>
+      proc tagSite -> do
+        siteName1 <- getAttrValue "ID"     -< tagSite
+
+        tagScen_M <- atTag "SCENARIO_M"         -< tagSite
+        perfM1     <- getAttrValue "PERF_MOY"    -< tagScen_M
+
+        returnA -<  addOri (YO siteName1 [perfM1]) yo
+        where 
+            addOri::YOri -> [YOri]-> YOri
+            addOri o [] = o 
+
+            addOri o (x:xs) 
+                     | site o == site x
+                                = YO  {site     = site o 
+                                      ,perfM    = (perfM x) ++ (perfM o)}
+
+                     | otherwise = addOri o xs
+
+
+    getYearScen :: ArrowXml cat => [YScen] -> cat XmlTree  YScen 
+    getYearScen ys = atTag "SCENARIO" >>>
+      proc l -> do
+        scenName <- getAttrValue "ID"      -< l
+        orig     <- listA (getYearOri (concat (map ori ys)))    -< l
+        returnA -< addScen (YS scenName orig) ys
+        where
+            addScen :: YScen -> [YScen] -> YScen
+            addScen sc [] = sc
+            addScen sc (x:xs) 
+                        | ser sc == ser x
+                                    = YS {ser=ser x
+                                         ,ori=(ori x) ++ (ori sc)}  
+                        | otherwise = addScen sc xs
+
+    parse :: [YScen]-> IO [YScen]
+    parse ys = do
+        res <- runX (parseXML xml >>> getYearScen ys)
+        return res
+
+    ysc1 = [YS "" []]
+
+    test = do 
+        ysc2 <- parse ysc1
+        ysc3 <- parse ysc2
+        return ysc3
+

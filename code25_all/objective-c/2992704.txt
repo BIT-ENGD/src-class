@@ -1,0 +1,49 @@
+NSURLCache
+NSHTTPURLResponseInternal
+- (NSCachedURLResponse *)cachedResponseForRequest:(NSURLRequest *)request
+{
+    NSCachedURLResponse *memoryResponse = [super cachedResponseForRequest:request];
+    if (memoryResponse)
+    {
+        return memoryResponse;
+    }
+
+    NSString *cacheKey = [SDURLCache cacheKeyForURL:request.URL];
+
+    // NOTE: We don't handle expiration here as even staled cache data is necessary for NSURLConnection to handle cache revalidation.
+    //       Staled cache data is also needed for cachePolicies which force the use of the cache.
+    NSMutableDictionary *accesses = [self.diskCacheInfo objectForKey:kSDURLCacheInfoAccessesKey];
+    if ([accesses objectForKey:cacheKey]) // OPTI: Check for cache-hit in a in-memory dictionnary before to hit the FS
+    {
+        NSCachedURLResponse *diskResponse = [NSKeyedUnarchiver unarchiveObjectWithFile:[diskCachePath stringByAppendingPathComponent:cacheKey]];
+        if (diskResponse)
+        {
+            // OPTI: Log the entry last access time for LRU cache eviction algorithm but don't save the dictionary
+            //       on disk now in order to save IO and time
+            [accesses setObject:[NSDate date] forKey:cacheKey];
+            diskCacheInfoDirty = YES;
+
+            // OPTI: Store the response to memory cache for potential future requests
+            [super storeCachedResponse:diskResponse forRequest:request];
+            return diskResponse;
+        }
+    }
+
+    return nil;
+}
+
+NSHTTPURLResponseInternal
+SDURLCache
+[accesses setObject:[NSDate date] forKey:cacheKey];
+@implementation NSCachedURLResponse(NSCoder)
+
+- (id)initWithCoder:(NSCoder *)coder
+{
+    return [self initWithResponse:[coder decodeObjectForKey:@"response"]
+                             data:[coder decodeDataObject]
+                         userInfo:[coder decodeObjectForKey:@"userInfo"]
+                    storagePolicy:[coder decodeIntForKey:@"storagePolicy"]];
+}
+
+@end 
+

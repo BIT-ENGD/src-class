@@ -1,0 +1,168 @@
+{-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE PolyKinds                 #-}
+{-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE StandaloneDeriving        #-}
+{-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE TypeOperators             #-}
+{-# LANGUAGE UndecidableInstances      #-}
+module Cata where
+
+-- 'Fix' for indexed types (1 index)
+newtype Mu1 f a = Roll1 { unRoll1 :: f (Mu1 f) a }
+deriving instance Show (f (Mu1 f) a) => Show (Mu1 f a)
+
+-- 'Fix' for indexed types (2 index)
+newtype Mu2 f a b = Roll2 { unRoll2 :: f (Mu2 f) a b }
+deriving instance Show (f (Mu2 f) a b) => Show (Mu2 f a b)
+
+-- index-preserving function (1 index)
+type s :-> t = forall i. s i -> t i
+
+-- index-preserving function (2 index)
+type s :--> t = forall i j. s i j -> t i j
+
+-- indexed functor (1 index)
+class IFunctor1 f where
+  imap1 :: (s :-> t) -> (f s :-> f t)
+
+-- indexed functor (2 index)
+class IFunctor2 f where
+  imap2 :: (s :--> t) -> (f s :--> f t)
+
+-- dummy container type to store a solid result type
+-- the shape should follow an indexed type
+type family Dummy (x :: i -> k) :: * -> k
+
+type Algebra1 f a = forall t. f ((Dummy f) a) t -> (Dummy f) a t
+type Algebra2 f a = forall s t. f ((Dummy f) a) s t -> (Dummy f) a s t
+
+cata1 :: IFunctor1 f => Algebra1 f a -> Mu1 f t -> (Dummy f) a t
+cata1 alg = alg . imap1 (cata1 alg) . unRoll1
+
+cata2 :: IFunctor2 f => Algebra2 f a -> Mu2 f s t -> (Dummy f) a s t
+cata2 alg = alg . imap2 (cata2 alg) . unRoll2
+
+-- our indexed type, which we want to use in an F-algebra (1 index)
+data ExprF1 f t where
+     ConstI1 :: Int -> ExprF1 f Int
+     ConstB1 :: Bool -> ExprF1 f Bool
+     Add1    :: f Int  -> f Int -> ExprF1 f Int
+     Mul1    :: f Int  -> f Int -> ExprF1 f Int
+     If1     :: f Bool -> f t -> f t -> ExprF1 f t
+deriving instance (Show (f t), Show (f Bool)) => Show (ExprF1 f t)
+
+-- our indexed type, which we want to use in an F-algebra (2 index)
+data ExprF2 f s t where
+     ConstI2 :: Int -> ExprF2 f Int True
+     ConstB2 :: Bool -> ExprF2 f Bool True
+     Add2    :: f Int True -> f Int True -> ExprF2 f Int True
+     Mul2    :: f Int True -> f Int True -> ExprF2 f Int True
+     If2     :: f Bool True -> f t True -> f t True -> ExprF2 f t True
+deriving instance (Show (f s t), Show (f Bool t)) => Show (ExprF2 f s t)
+
+-- mapper for f-algebra (1 index)
+instance IFunctor1 ExprF1 where
+  imap1 _    (ConstI1 x)  = ConstI1 x
+  imap1 _    (ConstB1 x)  = ConstB1 x
+  imap1 eval (x `Add1` y) = eval x `Add1` eval y
+  imap1 eval (x `Mul1` y) = eval x `Mul1` eval y
+  imap1 eval (If1 p t e)  = If1 (eval p) (eval t) (eval e)
+
+-- mapper for f-algebra (2 index)
+instance IFunctor2 ExprF2 where
+  imap2 _    (ConstI2 x)  = ConstI2 x
+  imap2 _    (ConstB2 x)  = ConstB2 x
+  imap2 eval (x `Add2` y) = eval x `Add2` eval y
+  imap2 eval (x `Mul2` y) = eval x `Mul2` eval y
+  imap2 eval (If2 p t e)  = If2 (eval p) (eval t) (eval e)
+
+-- turned into a nested expression
+type Expr1 = Mu1 ExprF1
+
+-- turned into a nested expression
+type Expr2 = Mu2 ExprF2
+
+-- dummy containers
+newtype X1 x y = X1 x deriving Show
+newtype X2 x y z = X2 x deriving Show
+
+type instance Dummy ExprF1 = X1
+type instance Dummy ExprF2 = X2
+
+
+-- a simple example agebra that evaluates the expression
+-- turning bools into 0/1    
+alg1 :: Algebra1 ExprF1 Int
+alg1 (ConstI1 x)            = X1 x
+alg1 (ConstB1 False)        = X1 0
+alg1 (ConstB1 True)         = X1 1
+alg1 ((X1 x) `Add1` (X1 y)) = X1 $ x + y
+alg1 ((X1 x) `Mul1` (X1 y)) = X1 $ x * y
+alg1 (If1 (X1 0) _ (X1 e))  = X1 e
+alg1 (If1 _ (X1 t) _)       = X1 t
+
+alg2 :: Algebra2 ExprF2 Int
+alg2 (ConstI2 x)            = X2 x
+alg2 (ConstB2 False)        = X2 0
+alg2 (ConstB2 True)         = X2 1
+alg2 ((X2 x) `Add2` (X2 y)) = X2 $ x + y
+alg2 ((X2 x) `Mul2` (X2 y)) = X2 $ x * y
+alg2 (If2 (X2 0) _ (X2 e))  = X2 e
+alg2 (If2 _ (X2 t) _)       = X2 t
+
+
+-- simple helpers for construction
+ci1 :: Int -> Expr1 Int
+ci1 = Roll1 . ConstI1
+
+cb1 :: Bool -> Expr1 Bool
+cb1 = Roll1 . ConstB1
+
+if1 :: Expr1 Bool -> Expr1 a -> Expr1 a -> Expr1 a
+if1 p t e = Roll1 $ If1 p t e
+
+add1 :: Expr1 Int -> Expr1 Int -> Expr1 Int
+add1 x y = Roll1 $ Add1 x y
+
+mul1 :: Expr1 Int -> Expr1 Int -> Expr1 Int
+mul1 x y = Roll1 $ Mul1 x y
+
+ci2 :: Int -> Expr2 Int True
+ci2 = Roll2 . ConstI2
+
+cb2 :: Bool -> Expr2 Bool True
+cb2 = Roll2 . ConstB2
+
+if2 :: Expr2 Bool True -> Expr2 a True-> Expr2 a True -> Expr2 a True
+if2 p t e = Roll2 $ If2 p t e
+
+add2 :: Expr2 Int True -> Expr2 Int True -> Expr2 Int True
+add2 x y = Roll2 $ Add2 x y
+
+mul2 :: Expr2 Int True -> Expr2 Int True -> Expr2 Int True
+mul2 x y = Roll2 $ Mul2 x y
+
+
+-- test case
+test1 :: Expr1 Int
+test1 = if1 (cb1 True)
+            (ci1 3 `mul1` ci1 4 `add1` ci1 5)
+            (ci1 2)
+
+test2 :: Expr2 Int True
+test2 = if2 (cb2 True)
+            (ci2 3 `mul2` ci2 4 `add2` ci2 5)
+            (ci2 2)
+
+
+main :: IO ()
+main = let (X1 x1) = cata1 alg1 test1
+           (X2 x2) = cata2 alg2 test2
+       in do print x1
+             print x2
+
+17
+17
+

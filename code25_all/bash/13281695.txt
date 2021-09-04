@@ -1,0 +1,81 @@
+FNR == 1 {
+    CMD = "basename " FILENAME
+    CMD | getline FILE;
+    FILE = "." FILE ".last";
+    if (system("[ -f "FILE" ]") == 0) {
+        getline FIRSTLINE < FILE;
+        close(FILE);
+        print FIRSTLINE;
+    }
+    else {
+        FIRSTLINE = "1970-01-01 00:00:00,000";
+    }
+ }
+$0 ~ EXPRESSION {
+    if (($2 " " $3) > FIRSTLINE) {
+        print $0;
+        LASTLINE=$2 " " $3;
+    }
+}
+END {
+    if (LASTLINE != "") {
+        print LASTLINE > FILE;
+    }
+}
+
+#!/bin/bash
+while getopts i:r:e:h:p: option
+do
+    case "${option}"
+    in
+        i) INPUT=${OPTARG};;
+        r) RULES=${OPTARG};;
+        e) PATFILE=${OPTARG};;
+        h) HOST=${OPTARG};;
+        p) PORT=${OPTARG};;
+        ?) printf "Usage: %s: -i <\"file1.log file2.log\"> -r <\"rules1.awk rules2.awk\"> -e <\"patterns.pat\"> -h <host> -p <port>\n" $0;
+           exit 1;
+    esac
+done
+
+#prepare expression with sed
+EXPRESSION=`cat $PATFILE | sed ':a;N;$!ba;s/\n/|/g'`;
+EXPRESSION="^(INFO|DEBUG|WARNING|ERROR|FATAL)[[:space:]]{2}[[:digit:]]{4}\\\\-[[:digit:]]{1,2}\\\\-[[:digit:]]{1,2}[[:space:]][[:digit:]]{1,2}:[[:digit:]]{2}:[[:digit:]]{2},[[:digit:]]{3}.*"$EXPRESSION".*";
+
+#Make sure the temp file is empty
+echo "" > .temp;
+
+#input through awk.
+for file in $INPUT
+do
+    awk -v EXPRESSION="$EXPRESSION" -f $RULES $file >> .temp;
+done
+
+#send contents of file to splunk indexer over udp
+cat .temp;
+#cat .temp | netcat -t $HOST $PORT;
+
+#cleanup temporary files
+if [ -f .temp ]
+then
+    rm .temp;
+fi
+
+Warning
+Exception
+
+info  2012-09-04 16:00:11,638 [[adr-com-adaptor-stub].connector.http.mule.default.receiver.02] nz.co.amsco.interop.multidriveinterop: session not initialised
+error 2012-09-04 16:00:11,639 [[adr-com-adaptor-stub].connector.http.mule.default.receiver.02] nz.co.amsco.adrcomadaptor.processor.comadaptorprocessor: nz.co.amsco.interop.exceptions.systemdownexception
+nz.co.amsco.interop.exceptions.systemdownexception
+    at nz.co.amsco.adrcomadaptor.processor.comadaptorprocessor.getdeviceconfig(comadaptorprocessor.java:233)
+    at nz.co.amsco.adrcomadaptor.processor.comadaptorprocessor.process(comadaptorprocessor.java:129)
+    at org.mule.processor.chain.defaultmessageprocessorchain.doprocess(defaultmessageprocessorchain.java:99)
+    at org.mule.processor.chain.abstractmessageprocessorchain.process(abstractmessageprocessorchain.java:66)
+    at org.mule.processor.abstractinterceptingmessageprocessorbase.processnext(abstractinterceptingmessageprocessorbase.java:105)
+    at org.mule.processor.asyncinterceptingmessageprocessor.process(asyncinterceptingmessageprocessor.java:90)
+    at org.mule.processor.chain.defaultmessageprocessorchain.doprocess(defaultmessageprocessorchain.java:99)
+    at org.mule.processor.chain.abstractmessageprocessorchain.process(abstractmessageprocessorchain.java:66)
+    at org.mule.processor.AbstractInterceptingMessageProcessorBase.processNext(AbstractInterceptingMessageProcessorBase.java:105)
+    at org.mule.interceptor.AbstractEnvelopeInterceptor.process(AbstractEnvelopeInterceptor.java:55)
+    at org.mule.processor.AbstractInterceptingMessageProcessorBase.processNext(AbstractInterceptingMessageProcessorBase.java:105)
+

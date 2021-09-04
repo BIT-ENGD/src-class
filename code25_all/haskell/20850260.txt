@@ -1,0 +1,141 @@
+{-# LANGUAGE BangPatterns #-}
+
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.MVar
+import qualified Data.IntMap as IntMap
+import Data.IntMap.Strict (IntMap)
+import Control.Monad.Fix
+import Control.Monad (when)
+import qualified Data.Char as Char
+import qualified System.IO as IO
+import System.IO (hSetBinaryMode, hFlush)
+import Data.List as List
+import Text.PrettyPrint.Boxes as Boxes
+import Text.Printf (printf)
+import Data.Function
+
+data BFreq = BFreq Integer (IntMap Integer)
+
+main :: IO ()
+main = do
+  putStrLn "analyze data from stdin"
+  hSetBinaryMode IO.stdin True
+  mv <- newEmptyMVar
+  tid <- forkIO $ statusUpdater mv
+  bf <- run mv
+  killThread tid
+  displayResults bf
+
+resultTable :: [[String]] -> Box
+resultTable rows =
+  Boxes.hsep 4 Boxes.left boxed_cols
+  where
+    cols       = transpose rows
+    boxed_cols = map (Boxes.vcat Boxes.left . map text) cols
+
+displayResults :: BFreq -> IO ()
+displayResults (BFreq n counts) = do
+  putStrLn $ "read " ++ (show n) ++ " bytes"
+  when (n > 0) (displayFreqs n counts)
+
+displayFreqs :: Integer -> IntMap Integer -> IO ()
+displayFreqs n counts =
+  do
+    putStrLn "frequencies:"
+    Boxes.printBox $ resultTable rows
+  where
+    cmp x y       = compare (snd y) (snd x)
+    sorted_counts = List.sortBy cmp $ IntMap.assocs counts
+
+    intdiv :: Integer -> Integer -> Float
+    intdiv a b = (fromIntegral a) / (fromIntegral b)
+
+    percent y    = printf "%.2f" (100*intdiv y n)
+    show_byte x  = (show $ Char.chr x) ++ " (" ++ (show x) ++ "):"
+    show_count y = (percent y) ++ "% (" ++ (show y) ++ ")"
+
+    rows = map (\(x,y) -> [show_byte x, show_count y]) sorted_counts
+
+
+run :: MVar Integer -> IO BFreq
+run mv = 
+  fn mv 0 IntMap.empty 
+  where
+    fn mv !n !mp =
+      do
+        tryPutMVar mv n
+        eof <- IO.isEOF
+        if eof
+          then return $ BFreq n mp
+          else do
+            b <- getChar
+            fn mv (1+n) (new_map b)
+      where
+        k x       = Char.ord x
+        old_val x = IntMap.findWithDefault 0 (k x) mp
+        new_map x = IntMap.insert (k x) ((old_val x)+1) mp
+
+statusUpdater :: MVar Integer -> IO ()
+statusUpdater mv = 
+  do
+    takeMVar mv >>= print_progress
+    statusUpdater mv
+  where
+    print_progress n = 
+      do
+        putStr $ "\rbytes: "
+        when (gbs > 0) $ putStr $ (show gbs) ++ " GBs "
+        when (mbs > 0) $ putStr $ (show mbs) ++ " MBs "
+        when (kbs > 0) $ putStr $ (show kbs) ++ " KBs "
+        when (gbs < 1 && mbs < 1 && kbs < 1) $ putStr $ (show bs) ++ " Bs "
+        hFlush IO.stdout
+      where
+        (gbs, gbr)   = quotRem n 0x40000000
+        (mbs, mbr)   = quotRem gbr 0x100000
+        (kbs, bs)    = quotRem mbr 0x400
+
+$> cabal build -v                                                                                             
+creating dist/build                                                                                                                       
+creating dist/build/autogen                                                                                                                 
+Building bfreq-0.1.0.0...                                                                                                                   
+Preprocessing executable 'bfreq' for bfreq-0.1.0.0...                                                                                       
+Building executable bfreq...                                                                                                                  
+creating dist/build/bfreq                                                                                                                     
+creating dist/build/bfreq/bfreq-tmp                                                                                                           
+/usr/bin/ghc --make -o dist/build/bfreq/bfreq -hide-all-packages -fbuilding-cabal-package -package-conf dist/package.conf.inplace -i -idist/build/bfreq/bfreq-tmp -i. -idist/build/autogen -Idist/build/autogen -Idist/build/bfreq/bfreq-tmp -optP-include -optPdist/build/autogen/cabal_macros.h -odir dist/build/bfreq/bfreq-tmp -hidir dist/build/bfreq/bfreq-tmp -stubdir dist/build/bfreq/bfreq-tmp -package-id base-4.5.0.0-40b99d05fae6a4eea95ea69e6e0c9702 -package-id boxes-0.1.3-e03668bca38fe3e879f9d695618ddef3 -package-id containers-0.5.3.1-80819105034e34d03d22b1c20d6fd868 -O -O2 -rtsopts -XHaskell98 ./bfreq.hs
+[1 of 1] Compiling Main             ( bfreq.hs, dist/build/bfreq/bfreq-tmp/Main.o )
+Linking dist/build/bfreq/bfreq ...
+$> cat /dev/urandom | head -c 9999999 > test_data
+$> cat ./test_data | ./dist/build/bfreq/bfreq +RTS -sstderr
+analyze data from stdin
+bytes: 9 MBs 521 KBs read 9999999 bytes
+frequencies:
+'\137' (137):    0.40% (39642)
+'H' (72):        0.40% (39608)
+<...>
+'L' (76):        0.39% (38617)
+'\246' (246):    0.39% (38609)
+'I' (73):        0.38% (38462)
+'q' (113):       0.38% (38437)
+   9,857,106,520 bytes allocated in the heap
+  14,492,245,840 bytes copied during GC
+   3,406,696,360 bytes maximum residency (13 sample(s))
+      14,691,672 bytes maximum slop
+            6629 MB total memory in use (0 MB lost due to fragmentation)
+
+                                    Tot time (elapsed)  Avg pause  Max pause
+  Gen  0     18348 colls,     0 par   10.90s   10.90s     0.0006s    0.0180s
+  Gen  1        13 colls,     0 par   15.20s   19.65s     1.5119s    12.6403s
+
+  INIT    time    0.00s  (  0.00s elapsed)
+  MUT     time   14.45s  ( 14.79s elapsed)
+  GC      time   26.10s  ( 30.56s elapsed)
+  EXIT    time    0.00s  (  0.00s elapsed)
+  Total   time   40.55s  ( 45.35s elapsed)
+
+  %GC     time      64.4%  (67.4% elapsed)
+
+  Alloc rate    682,148,818 bytes per MUT second
+
+  Productivity  35.6% of total user, 31.9% of total elapsed
+

@@ -1,0 +1,108 @@
+void disconnect()
+{
+    boost::system::error_code error;
+    //just creates a simple buffer with a shutdown header
+    boost::uint8_t *packet = createPacket(PC_SHUTDOWN,0);
+    //sends it
+    if(!sendBlocking(socket,packet,&error))
+    {
+        //didnt get here in my tests, so its not that the write failed...
+        logWrite(LOG_ERROR,"server",
+            std::string("Error sending shutdown message.\n")
+            + boost::system::system_error(error).what());
+    }
+
+    //actaully disconnect
+    socket.close();
+    ioService.stop();
+}
+bool sendBlocking(boost::asio::ip::tcp::socket &socket,
+    boost::uint8_t *data, boost::system::error_code* error)
+{
+    //get the length section from the message
+    boost::uint16_t len = *(boost::uint16_t*)(data - 3);
+    //send it
+    asio::write(socket, asio::buffer(data-3,len+3),
+        asio::transfer_all(), *error);
+    deletePacket(data);
+    return !(*error);
+}
+
+void Client::clientShutdown()
+{
+    //not getting here in problem cases
+    disconnect();
+}
+void Client::packetHandler(boost::uint8_t type, boost::uint8_t *data,
+    boost::uint16_t len, const boost::system::error_code& error)
+{
+    if(error)
+    {
+        //error handled here
+        delete[] data;
+        std::stringstream ss;
+        ss << "Error recieving packet.\n";
+        ss << logInfo() << "\n";
+        ss << "Error: " << boost::system::system_error(error).what();
+        logWrite(LOG_ERROR,"Client",ss.str());
+
+        disconnect();
+    }
+    else
+    {
+        //call handlers based on type, most will then call startRead when
+        //done to get the next packet. Note however, that clientShutdown
+        //does not
+        ...
+    }
+}
+
+
+
+void startRead(boost::asio::ip::tcp::socket &socket, PacketHandler handler)
+{
+    boost::uint8_t *header = new boost::uint8_t[3];
+    boost::asio::async_read(socket,boost::asio::buffer(header,3),
+        boost::bind(&handleReadHeader,&socket,handler,header, 
+        boost::asio::placeholders::bytes_transferred,boost::asio::placeholders::error));
+}
+void handleReadHeader(boost::asio::ip::tcp::socket *socket, PacketHandler handler,
+    boost::uint8_t *header, size_t len, const boost::system::error_code& error)
+{
+    if(error)
+    {
+        //error "thrown" here, len always = 0 in problem cases...
+        delete[] header;
+        handler(0,0,0,error);
+    }
+    else
+    {
+        assert(len == 3);
+        boost::uint16_t payLoadLen  = *((boost::uint16_t*)(header + 0));
+        boost::uint8_t  type        = *((boost::uint8_t*) (header + 2));
+        delete[] header;
+        boost::uint8_t *payLoad = new boost::uint8_t[payLoadLen];
+
+        boost::asio::async_read(*socket,boost::asio::buffer(payLoad,payLoadLen),
+            boost::bind(&handleReadBody,socket,handler,
+            type,payLoad,payLoadLen,
+            boost::asio::placeholders::bytes_transferred,boost::asio::placeholders::error));
+    }
+}
+void handleReadBody(ip::tcp::socket *socket, PacketHandler handler,
+    boost::uint8_t type, boost::uint8_t *payLoad, boost::uint16_t len,
+    size_t readLen, const boost::system::error_code& error)
+{
+    if(error)
+    {
+        delete[] payLoad;
+        handler(0,0,0,error);
+    }
+    else
+    {
+        assert(len == readLen);
+        handler(type,payLoad,len,error);
+        //delete[] payLoad;
+    }
+}
+

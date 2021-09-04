@@ -1,0 +1,125 @@
+Imports System.Text.RegularExpressions
+Imports System.Net.Sockets
+Imports System.Net
+Imports System.IO
+
+Public Class Service1
+
+Public Shared Function CheckProxy(ByVal Proxy As String) As Boolean
+    Dim myWebRequest As HttpWebRequest = CType(WebRequest.Create("http://google.com"),    HttpWebRequest)
+    myWebRequest.Proxy = New WebProxy(Proxy, False)
+    myWebRequest.Timeout = 10000
+    Try
+        Dim myWebResponse As HttpWebResponse = CType(myWebRequest.GetResponse(), HttpWebResponse)
+        Dim loResponseStream As StreamReader = New StreamReader(myWebResponse.GetResponseStream())
+        Return True
+    Catch ex As WebException
+        If (ex.Status = WebExceptionStatus.ConnectFailure) Then
+
+        End If
+        Return False
+    End Try
+End Function
+
+
+Protected Overrides Sub OnStart(ByVal args() As String)
+    System.IO.File.AppendAllText("C:\AuthorLog.txt",
+        "AuthorLogService has been started at " & Now.ToString())
+    MsgBox("1")
+    Timer1.Enabled = True
+End Sub
+
+Protected Overrides Sub OnStop()
+    ' Add code here to perform any tear-down necessary to stop your service.
+    Timer1.Enabled = False
+End Sub
+
+Private Sub Timer1_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Timer1.Tick
+    MsgBox("2")
+    ' Check if the the Event Log Exists 
+    If Not Diagnostics.EventLog.SourceExists("Evoain Proxy Bot") Then
+        Diagnostics.EventLog.CreateEventSource("MyService", "Myservice Log") ' Create Log 
+    End If
+    ' Write to the Log 
+    Diagnostics.EventLog.WriteEntry("MyService Log", "This is log on " & _
+    CStr(TimeOfDay), EventLogEntryType.Information)
+
+    Dim ProxyURLList As New Chilkat.CkString
+    Dim ProxyListPath As New Chilkat.CkString
+    Dim WorkingProxiesFileData As New Chilkat.CkString
+    Dim ProxyArray(10000000) As String
+    Dim event1 As New Chilkat.CkString
+    event1.setString("started")
+    event1.saveToFile("B:\serv.txt", "utf-8")
+    Dim ns As Integer = 0
+    'Read Configuration File
+    Dim sFileName As String
+    Dim srFileReader As System.IO.StreamReader
+    Dim sInputLine As String
+    sFileName = "config.ini"
+    srFileReader = System.IO.File.OpenText(sFileName)
+    sInputLine = srFileReader.ReadLine()
+    Dim temp As New Chilkat.CkString
+    Do Until sInputLine Is Nothing
+        temp.setString(sInputLine)
+        If temp.containsSubstring("proxyurllist=") = True Then
+            'Read Proxy-URL-List
+            ProxyURLList.setString(sInputLine)
+            If ProxyURLList.containsSubstring("proxyurllist=") = True Then
+                ProxyURLList.replaceFirstOccurance("proxyurllist=", "")
+            End If
+        ElseIf temp.containsSubstring("finalproxylistpath=") = True Then
+            'Read Proxy-List-Path
+            ProxyListPath.setString(sInputLine)
+            If ProxyListPath.containsSubstring("finalproxylistpath=") = True Then
+                ProxyListPath.replaceFirstOccurance("finalproxylistpath=", "")
+
+            End If
+        End If
+        sInputLine = srFileReader.ReadLine()
+    Loop
+    '*********Scrape URLs From Proxy-URL-List*********************
+    Dim ProxyURLFileData As New Chilkat.CkString
+    ProxyURLFileData.loadFile(ProxyURLList.getString, "utf-8")
+
+
+    Dim MultiLineString As String = ProxyURLFileData.getString
+
+    Dim ProxyURLArray() As String = MultiLineString.Split(Environment.NewLine.ToCharArray, System.StringSplitOptions.RemoveEmptyEntries)
+    Dim i As Integer
+    For i = 0 To ProxyURLArray.Count - 1
+
+        '********Scrape Proxies From Proxy URLs***********************
+        Dim http As New Chilkat.Http()
+        Dim success As Boolean
+        ' Any string unlocks the component for the 1st 30-days.
+        success = http.UnlockComponent("Anything for 30-day trial")
+        If (success <> True) Then
+            Exit Sub
+        End If
+        ' Send the HTTP GET and return the content in a string.
+        Dim html As String
+        html = http.QuickGetStr(ProxyURLArray(i))
+        Dim links As MatchCollection
+        links = Regex.Matches(html, "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5}")
+        For Each match As Match In links
+            Dim matchUrl As String = match.Groups(0).Value
+            ProxyArray(ns) = matchUrl
+            ns = ns + 1
+        Next
+    Next
+    '*************CHECK URLs*****************
+    Dim cnt As Integer = 0
+    For cnt = 0 To 1
+
+        Dim ProxyStatus As Boolean = CheckProxy("http://" + ProxyArray(cnt) + "/")
+
+        If ProxyStatus = True Then
+            WorkingProxiesFileData.append(Environment.NewLine)
+            WorkingProxiesFileData.append(ProxyArray(cnt))
+        End If
+    Next
+    WorkingProxiesFileData.saveToFile(ProxyListPath.getString, "utf-8")
+End Sub
+End Class
+

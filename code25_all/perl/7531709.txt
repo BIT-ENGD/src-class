@@ -1,0 +1,306 @@
+#!/usr/bin/env perl
+# testloop01.pl
+
+use strict;
+use warnings;
+
+use Time::HiRes qw ( setitimer ITIMER_VIRTUAL time );
+
+my @tstamps;
+my $cnt = 0;
+my $numloops = 10;
+my $loopperiod = 500e-6; # 0.000500 - 500 us
+
+sub myfunc() {
+  push(@tstamps, time);
+
+  # repeat call for looping
+  if ($cnt < $numloops) {
+    $cnt++;
+    $SIG{VTALRM} = &myfunc; # must have this!
+    setitimer(ITIMER_VIRTUAL, 1, $loopperiod );
+  }
+}
+
+# take first timestamp at start
+push(@tstamps, time);
+
+# start it off
+#~ $SIG{VTALRM} = sub { print time, "\n"; }; # no work like this on Linux ?!
+$SIG{VTALRM} = &myfunc;
+setitimer(ITIMER_VIRTUAL, 1, $loopperiod );
+
+# wait - sleep 2 s
+Time::HiRes::sleep(2);
+
+# output results
+my ($firstts, $ts, $td);
+$firstts = -1; # init
+for(my $ix=0; $ix<scalar(@tstamps); $ix++) {
+  $ts = $tstamps[$ix];
+  if ($firstts == -1) { # $ix == 0
+    $firstts = $ts;
+    $td = 0;
+  } else {  # $ix > 0
+    $td = $ts - $tstamps[$ix-1];
+  }
+  printf "%10d (diff: %d)\n", ($ts-$firstts)*1e6, $td*1e6 ;
+}
+
+$ ./testloop01.pl 
+         0 (diff: 0)
+        10 (diff: 10)
+        25 (diff: 15)
+        36 (diff: 10)
+        46 (diff: 10)
+        57 (diff: 10)
+        66 (diff: 9)
+        75 (diff: 8)
+        83 (diff: 8)
+        92 (diff: 9)
+       102 (diff: 9)
+       118 (diff: 15)
+
+ITIMER_VIRTUAL
+#!/usr/bin/env perl
+# testloop02.pl
+
+use strict;
+use warnings;
+
+use POSIX qw(pause);
+# this does NOT work w/ ITIMER_VIRTUAL
+use Time::HiRes qw(setitimer ITIMER_REAL time);
+
+my @tstamps;
+my $cnt = 0;
+my $numloops = 10;
+my $loopperiod = 500e-6; # 0.000500 - 500 us
+
+
+# take first timestamp at start
+push(@tstamps, time);
+
+
+# how often do we trigger (seconds)?
+my $first_interval = $loopperiod;
+my $interval = $loopperiod;
+
+# signal handler is empty
+$SIG{ALRM} = sub { };
+
+# first value is the initial wait, second is the wait thereafter
+setitimer(ITIMER_REAL, $first_interval, $interval);
+
+while (1) {
+
+  # wait for alarm from timer
+  pause;
+
+  # do work that takes less than $interval to complete
+  push(@tstamps, time);
+
+  # repeat call for looping
+  if ($cnt < $numloops) {
+    $cnt++;
+  } else {
+    last;
+  }
+
+}
+
+Time::HiRes::sleep(2); # helps avoid segfault, but doesn't seem to do anything;
+                       # "it's apparently not safe to use sleep and a timer at
+                       #   the same time, as one may reset the other"
+
+# output results
+my ($firstts, $ts, $td);
+$firstts = -1; # init
+for(my $ix=0; $ix<scalar(@tstamps); $ix++) {
+  $ts = $tstamps[$ix];
+  if ($firstts == -1) { # $ix == 0
+    $firstts = $ts;
+    $td = 0;
+  } else {  # $ix > 0
+    $td = $ts - $tstamps[$ix-1];
+  }
+  printf "%10d (diff: %d)\n", ($ts-$firstts)*1e6, $td*1e6 ;
+}
+
+$ ./testloop02.pl 
+         0 (diff: 0)
+       717 (diff: 717)
+      1190 (diff: 473)
+      1724 (diff: 534)
+      2206 (diff: 481)
+      2705 (diff: 499)
+      3204 (diff: 499)
+      3705 (diff: 500)
+      4203 (diff: 498)
+      4682 (diff: 478)
+      5206 (diff: 524)
+      5704 (diff: 498)
+
+usleep
+usleep
+#!/usr/bin/env perl
+# testloop03.pl
+
+use strict;
+use warnings;
+
+use Time::HiRes qw ( usleep time );
+
+use threads;
+use threads::shared; # for shared variables
+
+my @tstamps :shared;
+my $cnt :shared = 0;
+my $numloops :shared = 10;
+my $loopperiod = 500e-6; # 0.000500 s - 500 us
+my $loopperiodus :shared = $loopperiod*1e6; # 500 us
+
+sub myfunc() {
+
+  # repeat call for looping
+  while ($cnt < $numloops) {
+    push(@tstamps, time);
+    $cnt++;
+    usleep($loopperiodus);
+  }
+}
+
+# take first timestamp at start
+push(@tstamps, time);
+
+# start it off
+my $mthr = threads->create('myfunc');
+$mthr->join();
+
+# wait - sleep 2 s
+Time::HiRes::sleep(2);
+
+# output results
+my ($firstts, $ts, $td);
+$firstts = -1; # init
+for(my $ix=0; $ix<scalar(@tstamps); $ix++) {
+  $ts = $tstamps[$ix];
+  if ($firstts == -1) { # $ix == 0
+    $firstts = $ts;
+    $td = 0;
+  } else {  # $ix > 0
+    $td = $ts - $tstamps[$ix-1];
+  }
+  printf "%10d (diff: %d)\n", ($ts-$firstts)*1e6, $td*1e6 ;
+}
+
+$ ./testloop03.pl 
+         0 (diff: 0)
+      7498 (diff: 7498)
+      8569 (diff: 1070)
+      9300 (diff: 731)
+      9992 (diff: 691)
+     10657 (diff: 664)
+     11328 (diff: 671)
+     11979 (diff: 650)
+     12623 (diff: 643)
+     13284 (diff: 661)
+     13924 (diff: 639)
+
+setitimer
+...
+sub myfunc() {
+
+  setitimer(ITIMER_REAL, $loopperiod, $loopperiod);
+
+  # repeat call for looping
+  while ($cnt < $numloops) {
+    push(@tstamps, time);
+    $cnt++;
+    pause;
+    # usleep($loopperiodus);
+    # wait for alarm from timer
+  }
+}
+
+
+# signal handler is empty
+$SIG{ALRM} = sub { };
+
+# take first timestamp at start
+push(@tstamps, time);
+
+# start it off
+my $mthr = threads->create('myfunc');
+
+# first value is the initial wait, second is the wait thereafter
+#~ setitimer(ITIMER_REAL, $loopperiod, $loopperiod);
+
+$mthr->join();
+...
+
+$ ./testloop04.pl 
+Maximal count of pending signals (120) exceeded at ./testloop04.pl line 48.
+Perl exited with active threads:
+    1 running and unjoined
+    -1 finished and unjoined
+    0 running and detached
+
+fork
+#!/usr/bin/env perl
+# http://linux.die.net/man/3/anyevent
+# http://search.cpan.org/~mlehmann/AnyEvent-6.02/lib/AnyEvent.pm
+
+use 5.010;
+use AnyEvent qw();
+
+my @tstamps;
+my $cnt = 0;
+my $numloops = 10;
+my $loopperiod = 500e-6; # 0.000500 - 500 us
+
+my $result_ready = AnyEvent->condvar;
+
+my %events = (
+    timer => AE::timer(0, $loopperiod, sub {
+      push(@tstamps, AE::time);
+      if ($cnt < $numloops) {
+        $cnt++;
+      } else {
+        #~ AE::cv->send; # doesn't exit loop?
+        $result_ready->broadcast; # exits loop
+      }
+    }),
+    #~ quit  => AE::cv->recv,
+    quit  => $result_ready->wait,
+);
+
+sleep 1; # this will kick in only after loop is complete!
+
+# output results
+my ($firstts, $ts, $td);
+$firstts = -1; # init
+for(my $ix=0; $ix<scalar(@tstamps); $ix++) {
+  $ts = $tstamps[$ix];
+  if ($firstts == -1) { # $ix == 0
+    $firstts = $ts;
+    $td = 0;
+  } else {  # $ix > 0
+    $td = $ts - $tstamps[$ix-1];
+  }
+  printf "%10d (diff: %d)\n", ($ts-$firstts)*1e6, $td*1e6 ;
+}
+
+$ ./testloop05.pl 
+         0 (diff: 0)             0 (diff: 0) 
+        34 (diff: 34)           32 (diff: 32) 
+       117 (diff: 82)         2152 (diff: 2120) 
+      1665 (diff: 1548)       3597 (diff: 1445)   
+      1691 (diff: 25)         5090 (diff: 1492) 
+      3300 (diff: 1609)       6547 (diff: 1456)   
+      3319 (diff: 18)         8090 (diff: 1542) 
+      4970 (diff: 1651)       9592 (diff: 1502)   
+      4990 (diff: 20)        11089 (diff: 1497) 
+      6607 (diff: 1616)      12589 (diff: 1500)   
+      6625 (diff: 18)        14091 (diff: 1501)    
+

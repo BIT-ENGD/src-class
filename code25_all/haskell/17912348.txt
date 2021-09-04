@@ -1,0 +1,72 @@
+import qualified Data.Vector.Unboxed.Mutable as MV
+import qualified Data.Vector.Generic.Mutable as GM
+
+type Vector = MV.IOVector Int
+type Sort = Vector -> IO ()
+
+medianofthreepartition :: Vector -> Int -> IO Int
+medianofthreepartition uv li = do
+    p1 <- MV.unsafeRead uv li
+    p2 <- MV.unsafeRead uv $ li `div` 2
+    p3 <- MV.unsafeRead uv 0
+    let p = median p1 p2 p3
+    GM.unstablePartition (< p) uv
+
+vquicksort :: Sort
+vquicksort uv = do
+    let li = MV.length uv - 1
+    j <- medianofthreepartition uv li
+    when (j > 1) (vquicksort (MV.unsafeSlice 0 j uv))
+    when (j + 1 < li) (vquicksort (MV.unsafeSlice (j+1) (li-j) uv))
+
+vparquicksort :: Sort
+vparquicksort uv = do
+    let li = MV.length uv - 1
+    j <- medianofthreepartition uv li
+    t1 <- tryfork (j > 1) (vparquicksort (MV.unsafeSlice 0 j uv))
+    t2 <- tryfork (j + 1 < li) (vparquicksort (MV.unsafeSlice (j+1) (li-j) uv))
+    wait t1
+    wait t2
+
+tryfork :: Bool -> IO () -> IO (Maybe (MVar ()))
+tryfork False _ = return Nothing
+tryfork True action = do
+  done <- newEmptyMVar :: IO (MVar ())
+  _ <- forkFinally action (\_ -> putMVar done ())
+  return $ Just done
+
+wait :: Maybe (MVar ()) -> IO ()
+wait Nothing = return ()
+wait (Just done) = swapMVar done ()
+
+median :: Int -> Int -> Int -> Int
+median a b c
+        | a > b =
+                if b > c then b
+                        else if a > c then c
+                                else a
+        | otherwise =
+                if a > c then a
+                        else if b > c then c
+                                else b
+
+"Number of threads: 4"
+
+"**** Parallel ****"
+"Testing sort with length: 1000000"
+"Creating vector"
+"Printing vector"
+"Sorting random vector"
+CPU time:  12.30 s
+"Sorting ordered vector"
+CPU time:   9.44 s
+
+"**** Single thread ****"
+"Testing sort with length: 1000000"
+"Creating vector"
+"Printing vector"
+"Sorting random vector"
+CPU time:   0.27 s
+"Sorting ordered vector"
+CPU time:   0.39 s
+

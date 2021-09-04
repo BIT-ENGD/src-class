@@ -1,0 +1,99 @@
+% ./httperf --server localhost --port 8080 --num-conn 100
+...
+Request rate: 1320.4 req/s (0.8 ms/req)
+...
+
+% ./httperf --server localhost --port 8080 --num-call 100
+...
+Request rate: 11.2 req/s (89.4 ms/req)
+...
+
+from paste import httpserver
+
+def echo_app(environ, start_response):
+    n = 10000
+    start_response("200 Ok", [("Content-Type", "text/plain"),
+                              ("Content-Length", str(n))])
+    return ["*" * n]
+
+httpserver.serve(echo_app, protocol_version="HTTP/1.1")
+
+from paste import httpserver
+
+class MyHandler(httpserver.WSGIHandler):
+    sys_version = None
+    server_version = "MyServer/0.0"
+    protocol_version = "HTTP/1.1"
+
+    def log_request(self, *args, **kwargs):
+        pass
+
+
+def echo_app(environ, start_response):
+    n = 10000
+    start_response("200 Ok", [("Content-Type", "text/plain"),
+                              ("Content-Length", str(n))])
+    return ["*" * n]
+
+# WSGIServerBase is single-threaded
+server = httpserver.WSGIServerBase(echo_app, ("localhost", 8080), MyHandler)
+server.handle_request()
+
+% python2.6 -m cProfile -o paste.prof paste_slowdown.py
+
+%httperf --client=0/1 --server=localhost --port=8080 --uri=/ \ 
+   --send-buffer=4096 --recv-buffer=16384 --num-conns=1 --num-calls=500
+
+>>> p=pstats.Stats("paste.prof")
+>>> p.strip_dirs().sort_stats("cumulative").print_stats()
+Sun Nov 22 21:31:57 2009    paste.prof
+
+         109749 function calls in 46.570 CPU seconds
+
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   46.571   46.571 {execfile}
+        1    0.001    0.001   46.570   46.570 paste_slowdown.py:2(<module>)
+        1    0.000    0.000   46.115   46.115 SocketServer.py:250(handle_request)
+        1    0.000    0.000   44.675   44.675 SocketServer.py:268(_handle_request_noblock)
+        1    0.000    0.000   44.675   44.675 SocketServer.py:301(process_request)
+        1    0.000    0.000   44.675   44.675 SocketServer.py:318(finish_request)
+        1    0.000    0.000   44.675   44.675 SocketServer.py:609(__init__)
+        1    0.000    0.000   44.675   44.675 httpserver.py:456(handle)
+        1    0.001    0.001   44.675   44.675 BaseHTTPServer.py:325(handle)
+      501    0.006    0.000   44.674    0.089 httpserver.py:440(handle_one_request)
+     2001    0.020    0.000   44.383    0.022 socket.py:373(readline)
+      501   44.354    0.089   44.354    0.089 {method 'recv' of '_socket.socket' objects}
+        1    1.440    1.440    1.440    1.440 {select.select}
+         ....
+
+GET / HTTP/1.1
+Location: localhost
+Connection: Keep-Alive
+Content-Length: 0
+
+GET / HTTP/1.1
+Location: localhost
+Connection: Keep-Alive
+Content-Length: 0
+
+ ... repeat 97 more times, to have 99 keep-alives in total ...
+
+GET / HTTP/1.1
+Location: localhost
+Connection: Close
+Content-Length: 0
+
+nc localhost 8080 < ~/src/send_to_paste.txt
+
+% ab -n 100 -k localhost:8080/
+This is ApacheBench, Version 1.3d <$Revision: 1.73 $> apache-1.3
+Copyright (c) 1996 Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
+Copyright (c) 2006 The Apache Software Foundation, http://www.apache.org/
+
+Benchmarking localhost (be patient)...
+Server timed out
+
+: Operation now in progress
+

@@ -1,0 +1,125 @@
+==4712== 1 errors in context 1 of 1:
+==4712== Jump to the invalid address stated on the next line
+==4712==    at 0xFFFFFFFF: ???
+==4712==    by 0x40B646: ??? 
+==4712==    by 0x40B646: ??? 
+==4712==    by 0x40B646: ??? 
+==4712==    by 0x40B646: ??? 
+==4712==    by 0x40B483: ??? 
+==4712==  Address 0xffffffff is not stack'd, malloc'd or (recently) free'd   
+
+linked_list_t *_GetExistingKeysByPattern(linked_list_t *keys,
+                                         session_t *session)
+{
+    char *cKey;
+    linked_list_t *existingKeys = ListNew(NULL);
+    ListIterSet(keys);
+    while (cKey = ListIterNext(keys))
+    {   //cKey could be SOFTWARE\\something\\([0-9]\.1) for example
+        char keyPath[512];
+        keyPath[0] = '\0';
+        _GetExistingKeysByPatternHelper(cKey, keyPath, existingKeys, session);
+    }
+    return existingKeys;
+}
+
+
+void _GetExistingKeysByPatternHelper(char *patternStart,
+                                     char *keyPath,
+                                     linked_list_t *existing,
+                                     session_t *session)
+{
+    char *ptr, currentKeyPath[512];
+    unsigned short endOfPattern = 0;
+    char *patternStartCopy = strdup(patternStart);
+
+    if (ptr = strstr(patternStartCopy, "\\\\"))
+        *ptr = '\0';
+    else
+        endOfPattern = 1;
+
+    snprintf(currentKeyPath,
+             512,
+             "%s%s%s",
+             keyPath,
+             keyPath[0] == '\0' ? "" : "\\",
+             patternStartCopy[0]=='^'?patternStartCopy+1:patternStartCopy);
+
+    if (OpenRegistryEntry(session, currentKeyPath))
+    {
+        if (!endOfPattern)
+            _GetExistingKeysByPatternHelper(ptr + 2,
+                                            currentKeyPath,
+                                            existing,
+                                            session);
+        else
+            ListInsert(existing, (void *) strdup(currentKeyPath));
+    }
+    else if (keyPath[0] != '\0')
+    {
+        // Potential pattern
+        if (OpenRegistryEntry(session, keyPath))
+        {
+            char *subKey;
+            unsigned short i = 0;
+            while (subKey = EnumerateRegistry(session, i++))
+            {
+                if (PatternEval(subKey, patternStartCopy, 1))
+                {
+                    char keyPathCopy[512];
+                    snprintf(keyPathCopy,
+                             512,
+                             "%s\\%s",
+                             keyPath,
+                             subKey);
+
+                    if (!endOfPattern)
+                    {
+                        _GetExistingKeysByPatternHelper(ptr + 2,
+                                                        keyPathCopy,
+                                                        existing,
+                                                        session);
+                        OpenRegistryEntry(session, keyPath);
+                    }
+                    else
+                        ListInsert(existing, (void *) strdup(keyPathCopy));
+                }
+                free(subKey);
+            }
+        }
+    }
+    free(patternStartCopy);
+}
+
+unsigned short PatternEval(char *str, char *pattern, unsigned short carrot)
+{
+    unsigned short res = 0;
+    const char *error;
+    int erroroffset, rc, i;
+    pcre *re;
+    int ovector[100];
+    char *tmp;
+    if (carrot)
+    {
+        if (*pattern == '^') pattern++;
+        tmp = (char *) malloc (strlen(pattern) + 2);
+        sprintf(tmp, "^%s", pattern);
+    }
+    else
+        tmp = pattern;
+
+    if(re = pcre_compile(tmp, PCRE_CASELESS, &error, &erroroffset, 0))
+    {
+        if ((rc = pcre_exec(re, 0, str, strlen(str), 0, 0, ovector, sizeof(ovector))) >= 0)
+            res = 1;
+        pcre_free(re);
+    }
+    else
+        printf("pcre_compile failed (offset %d), %s\n",erroroffset,error);
+
+    if (carrot)
+        free(tmp);
+
+    return res;
+}
+

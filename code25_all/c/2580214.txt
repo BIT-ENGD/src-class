@@ -1,0 +1,97 @@
+Number of trials: 100
+Range: 0.021732s to 0.085596s
+Average Time: 0.058094s
+Standard Deviation: 0.006944s
+Extreme Outliers (2 SDs away from mean): 7
+Average Time, excluding extreme outliers: 0.059273s
+
+#include <stdio.h>
+#include <stdlib.h> 
+#include <math.h>
+
+#include <sched.h>
+#include <sys/time.h>
+
+#define NUM_POINTS 5000000
+#define REPS 100
+
+unsigned long long getTimestamp() {
+  unsigned long long usecCount;
+  struct timeval timeVal;
+  gettimeofday(&timeVal, 0);
+  usecCount = timeVal.tv_sec * (unsigned long long) 1000000;
+  usecCount += timeVal.tv_usec;
+  return (usecCount);
+}
+
+double convertTimestampToSecs(unsigned long long timestamp) {
+  return (timestamp / (double) 1000000);
+}
+
+int main(int argc, char* argv[]) {
+  unsigned long long start, stop;
+  double times[REPS];
+  double sum = 0;
+  double scale, avg, newavg, median;
+  double stddev = 0;
+  double maxval = -1.0, minval = 1000000.0;
+  int i, j, freq, count;
+  int outliers = 0;
+  struct sched_param sparam;
+
+  sched_getparam(getpid(), &sparam);
+  sparam.sched_priority = sched_get_priority_max(SCHED_FIFO);
+  sched_setscheduler(getpid(), SCHED_FIFO, &sparam);
+
+  volatile float* data;
+  volatile float* results;
+
+  data = calloc(NUM_POINTS, sizeof(float)); 
+  results = calloc(NUM_POINTS, sizeof(float)); 
+
+  for (i = 0; i < REPS; ++i) {
+    start = getTimestamp();
+    for (j = 0; j < NUM_POINTS; ++j) {
+      results[j] = data[j];
+    }
+    stop = getTimestamp();
+    times[i] = convertTimestampToSecs(stop-start);
+  }
+
+  free(data);
+  free(results);
+
+  for (i = 0; i < REPS; i++) {
+    sum += times[i];
+
+    if (times[i] > maxval)
+      maxval = times[i];
+
+    if (times[i] < minval)
+      minval = times[i];
+  }
+  avg = sum/REPS;
+
+  for (i = 0; i < REPS; i++)
+    stddev += (times[i] - avg)*(times[i] - avg);
+  stddev /= REPS;
+  stddev = sqrt(stddev);
+
+  for (i = 0; i < REPS; i++) {
+    if (times[i] > avg + 2*stddev || times[i] < avg - 2*stddev) {
+      sum -= times[i];
+      outliers++;
+    }
+  }
+  newavg = sum/(REPS-outliers);
+
+  printf("Number of trials: %d\n", REPS);
+  printf("Range: %fs to %fs\n", minval, maxval);
+  printf("Average Time: %fs\n", avg);
+  printf("Standard Deviation: %fs\n", stddev);
+  printf("Extreme Outliers (2 SDs away from mean): %d\n", outliers);
+  printf("Average Time, excluding extreme outliers: %fs\n", newavg);
+
+  return 0;
+}
+

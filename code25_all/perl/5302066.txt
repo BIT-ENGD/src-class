@@ -1,0 +1,82 @@
+my $log_packages = undef;
+
+sub _get_logging_modifications {
+    # Hash that is keyed by a package name
+    # and the value is the level at which
+    # to log that package
+    return %{$log_packages} if defined $log_packages;
+    $log_packages = {};
+
+    my $log_info = $ENV{PROJECT_LOG_INFO} || '';
+
+    for my $log_specification (split(/,/, $log_info)) {
+        # Skip to the next log specification unless we have
+        # a well formed log spec. i.e., Package::Name/LOGLEVEL
+        next unless $log_specification =~ m!([^/]+)/([A-Z]+)!i;
+
+        my $package   = $1;
+        my $log_level = $2;
+
+        $log_packages->{$package} = $log_level;
+    }
+
+    return %{$log_packages};
+}
+
+BEGIN {
+    my $layout = Log::Log4perl::Layout::PatternLayout->new(
+        '[%d] +%X{user_name}+ ||%X{request_uri}||%n  ' .
+        '%C:%L - %P - %p - %n  ' .
+        '%m%n'
+    );
+
+    my $web_data_path = $ENV{PROJECT_DATA_DIR}
+        || File::Temp::tempdir( CLEANUP => 1 );
+
+    my $logfile = "${web_data_path}/app.log";
+    my $log = Log::Log4perl->get_logger('');
+
+    my $app = Log::Log4perl::Appender->new(
+        "Log::Dispatch::File",
+        name     => 'APP',
+        filename => $logfile,
+    );
+
+    $app->layout($layout);
+    $log->add_appender($app);
+    $log->level($WARN);
+
+    my %levels = (
+        FATAL => $FATAL,
+        ERROR => $ERROR,
+        WARN  => $WARN,
+        INFO  => $INFO,
+        DEBUG => $DEBUG,
+    );
+
+    my %mods = _get_logging_modifications();
+
+    for my $cat (keys %mods) {
+        my $level = uc($mods{$cat});
+        next unless exists($levels{$level});
+        my $other_log = Log::Log4perl->get_logger($cat);
+        $other_log->level($levels{$level});
+    }
+
+    # NEW BLAIRHIPPO CODE STARTS HERE
+    my $dbi_log = Log::Log4perl->get_logger('Project::NewLoggerThing');
+    my $dbi_layout = Log::Log4perl::Layout::PatternLayout->new('%m%n');
+    my $dbi_logfile = "/opt/home/blairhippo/test.log"; # FIXME: Make this configurable
+    my $dbi_app = Log::Log4perl::Appender->new(
+        "Log::Dispatch::File",
+        name     => 'APP',
+        filename => $dbi_logfile,
+    );
+
+    $dbi_app->layout($dbi_layout);
+    $dbi_log->add_appender($dbi_app);
+    $dbi_log->level($DEBUG); # FIXME:  Make this configurable   
+}
+
+1;
+

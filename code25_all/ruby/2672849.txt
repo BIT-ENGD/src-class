@@ -1,0 +1,40 @@
+require 'net/http'
+require 'uri'
+
+def ping
+    @sites = NewsSource.all
+
+    @sites.each do |site|
+        if site.uri and !site.uri.empty?
+            uri = URI.parse(site.uri)
+            response = nil
+            path = uri.path.blank? ? '/' : uri.path
+            path = uri.query.blank? ? path : "#{path}?#{uri.query}"
+
+            begin
+                Net::HTTP.start(uri.host, uri.port) {|http|
+                http.open_timeout = 30
+                http.read_timeout = 30
+                response = http.head(path)
+                }
+
+                if response.code.eql?('200') or response.code.eql?('301') or response.code.eql?('302')
+                site.up = true
+                else
+                site.up = false
+                end
+
+                site.up_check_msg = response.message
+                site.up_check_code = response.code
+            rescue Errno::EBADF
+            rescue Timeout::Error
+                site.up = false
+                site.up_check_msg = 'timeout'
+                site.up_check_code = '408'
+            end
+            site.up_check_time = 0.seconds.ago
+            site.save
+        end
+    end
+end
+

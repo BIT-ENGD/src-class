@@ -1,0 +1,82 @@
+    2015/05/29 07:41:32 [error] 112#0: *1 lua entry thread aborted: runtime error: /opt/hello.lua:11: bad argument #1 to 'getNewSessionID' (string expected, got nil)
+stack traceback:
+coroutine 0:
+    [C]: in function 'getNewSessionID'
+
+location / {
+    default_type   'text/html';
+    content_by_lua_file  /opt/hello.lua;
+}
+
+  package.path = package.path ..';/opt/?.lua'
+JSON = (loadfile "/opt/JSON.lua")()
+local proxyFunctions = require("proxyCode")
+coherenceNGIXLocation = "/coherence"
+
+local coherenceCookie = proxyFunctions.getExistingSessionID()
+
+-- To Create a coherance Session if not present
+if (not coherenceCookie  or coherenceCookie == '') then
+--  ngx.log(ngx.INFO,"No Coherence Session Exists, Creating New")
+  local uidCookieValueEncoded = proxyFunctions.base64Encode(str,proxyFunctions.getNewSessionID())  
+  local sessCreateResponse = proxyFunctions.coherencePut('{"sessionToken":"'..uidCookieValueEncoded..'"}')
+  local parsedJSON= JSON:decode(sessCreateResponse.body)
+
+  ngx.log(ngx.INFO, "Coherence Session Create")
+  ngx.log(ngx.INFO, "\n\n\n=============Coherence Res==============\n\n\n"..sessCreateResponse.body.."\n\n\n=============Coherence Res==============\n\n\n")
+end
+
+local client_cookie = ngx.req.get_headers()["cookie"]
+
+
+-- To Create a coherance Session if not present 
+ngx.log(ngx.DEBUG, "\n\n\n=============REQ==============\n\n\n"..proxyFunctions.deepPrint(ngx.req.get_headers()).."\n\n\n=============REQ==============\n\n\n")
+
+-- Set the cookie for the legacy request
+ngx.req.set_header('cookie', client_cookie)
+ngx.log(ngx.INFO, "\n\n\n=============REQ URI==============\n\n\n"..ngx.var.request_uri.."\n\n\n=============REQ URI==============\n\n\n")
+
+local legacy_res = ngx.location.capture("/app"..ngx.var.request_uri, { share_all_vars = true })
+
+ngx.log(ngx.DEBUG, "\n\n\n=============APP Res==============\n\n\n"..proxyFunctions.deepPrint(legacy_res.header).."\n\n\n=============APP Res==============\n\n\n")
+
+if (legacy_res.status == 302) then
+   ngx.redirect(legacy_res.header.Location )
+else
+  ngx.log(ngx.INFO, "Passing the Page/Layout to Maken")
+  local dev_res_encoded = legacy_res.body
+  dev_res_encoded = ngx.escape_uri(dev_res_encoded)
+  -- ngx.req.set_header('Cookie', ngx.req.get_headers()["cookie"])
+  -- ngx.req.set_header("Content-Type", "text/html") -- application/x-www-form-urlencoded -- 'page='..dev_res_encoded
+  ngx.req.set_header('cookie', client_cookie) -- maken/render
+  -- legacy_res.header('Content-Length', legacy_res.header['Content-Length']);
+
+  local maken_res = ngx.location.capture("/maken/", {method = ngx.HTTP_POST, body = legacy_res.body, share_all_vars = true} )
+
+  ngx.header['Set-Cookie'] = legacy_res.header["Set-Cookie"]
+  ngx.log(ngx.INFO, "Sending Back Maken Response to Client/Browser with Cookies from lagacy")
+  ngx.say(maken_res.body)
+end
+
+function _M.getNewSessionID()  
+           -- strip the sessionID  length 11 cookie name before putting into the session
+  -- return string.sub(ngx.var.uid_set,11)
+ return _M.removeCookieSessionPrefixname(ngx.var.uid_set,11)
+ end
+
+ function _M.removeCookieSessionPrefixname(cookieName)
+  return string.sub(cookieName,11)
+ end
+
+  function _M.getIncomingAuthToken()
+    local cookie = ngx.req.get_headers()["Cookie"] 
+
+    if (cookie ~=nil) then
+      local str =  string.match(cookie,"AuthToken=(.*)$")
+       if (str ~= nil) then 
+          return string.sub(str,11)
+      end 
+    end
+    return nil
+  end
+

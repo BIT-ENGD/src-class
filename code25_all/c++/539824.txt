@@ -1,0 +1,97 @@
+// thread-safe queue
+// inspired by http://msmvps.com/blogs/vandooren/archive/2007/01/05/creating-a-thread-safe-producer-consumer-queue-in-c-without-using-locks.aspx
+// only works with one producer and one consumer
+#include <pthread.h>
+#include <exception>
+
+template<class T>
+class tsqueue
+{
+    private:
+        volatile int m_ReadIndex, m_WriteIndex;
+        volatile T *m_Data;
+        volatile bool m_Done;
+        const int m_Size;
+        pthread_mutex_t m_ReadMutex, m_WriteMutex;
+        pthread_cond_t m_ReadCond, m_WriteCond;
+    public:
+        tsqueue(const int &size);
+        ~tsqueue();
+        void push(const T &elem);
+        T pop();
+        void terminate();
+        bool isDone() const;
+};
+
+template <class T>
+tsqueue<T>::tsqueue(const int &size) : m_ReadIndex(0), m_WriteIndex(0), m_Size(size), m_Done(false) {
+    m_Data = new T[size];
+    pthread_mutex_init(&m_ReadMutex, NULL);
+    pthread_mutex_init(&m_WriteMutex, NULL);
+    pthread_cond_init(&m_WriteCond, NULL);
+    pthread_cond_init(&m_WriteCond, NULL);
+}
+
+template <class T>
+tsqueue<T>::~tsqueue() {
+    delete[] m_Data;
+    pthread_mutex_destroy(&m_ReadMutex);
+    pthread_mutex_destroy(&m_WriteMutex);
+    pthread_cond_destroy(&m_ReadCond);
+    pthread_cond_destroy(&m_WriteCond);
+}
+
+
+template <class T>
+void tsqueue<T>::push(const T &elem) {
+    int next = (m_WriteIndex + 1) % m_Size;
+    if(next == m_ReadIndex) {
+        pthread_mutex_lock(&m_WriteMutex);
+        pthread_cond_wait(&m_WriteCond, &m_WriteMutex);
+        pthread_mutex_unlock(&m_WriteMutex);
+    }
+    m_Data[m_WriteIndex] = elem;
+    m_WriteIndex = next;
+    pthread_cond_signal(&m_ReadCond);
+}
+
+template <class T>
+T tsqueue<T>::pop() {
+    if(m_ReadIndex == m_WriteIndex) {
+        pthread_mutex_lock(&m_ReadMutex);
+        pthread_cond_wait(&m_ReadCond, &m_ReadMutex);
+        pthread_mutex_unlock(&m_ReadMutex);
+        if(m_Done && m_ReadIndex == m_WriteIndex) throw "queue empty and terminated";
+    }
+    int next = (m_ReadIndex +1) % m_Size;
+    T elem = m_Data[m_ReadIndex];
+    m_ReadIndex = next;
+    pthread_cond_signal(&m_WriteCond);
+    return elem;
+}
+
+template <class T>
+void tsqueue<T>::terminate() {
+    m_Done = true;
+    pthread_cond_signal(&m_ReadCond);
+}
+
+template <class T>
+bool tsqueue<T>::isDone() const {
+    return (m_Done && m_ReadIndex == m_WriteIndex);
+}
+
+// thread 1
+while(cin.get(c)) {
+    queue1.push(c);
+}
+queue1.terminate();
+
+
+// thread 2
+while(!queue1.isDone()) {
+    try{ c = queue1.pop(); }
+    catch(char const* str){break;}
+    cout.put(c);
+}
+

@@ -1,0 +1,120 @@
+ghci> P.parseTest (string "asdf" >> spaces >> string "ok") "asdf  wrong"
+parse error at (line 1, column 7):
+unexpected "w"
+expecting space or "ok"
+
+
+ghci> P.parseTest (choice [string "ok", string "nop"]) "wrong"
+parse error at (line 1, column 1):
+unexpected "w"
+expecting "ok" or "nop"
+
+ghci> Parser.parseTest ((tok $ Ide "asdf") >> (tok $ Ide "ok")) "asdf  "
+parse error at "test" (line 1, column 1):
+unexpected end of input
+
+ghci> Parser.parseTest (choice [tok $ Ide "ok", tok $ Ide "nop"]) "asdf  "
+parse error at (line 1, column 1):
+unexpected (Ide "asdf","test" (line 1, column 1))
+
+choice
+module Lexer
+    ( Token(..)
+    , TokenPos(..)
+    , tokenize
+    ) where
+
+import Text.ParserCombinators.Parsec hiding (token, tokens)
+import Control.Applicative ((<*), (*>), (<$>), (<*>))
+
+data Token = Ide String
+           | Number String
+           | Bool String
+           | LBrack
+           | RBrack
+           | LBrace
+           | RBrace
+           | Keyword String
+    deriving (Show, Eq)
+
+type TokenPos = (Token, SourcePos)
+
+ide :: Parser TokenPos
+ide = do
+    pos <- getPosition
+    fc  <- oneOf firstChar
+    r   <- optionMaybe (many $ oneOf rest)
+    spaces
+    return $ flip (,) pos $ case r of
+                 Nothing -> Ide [fc]
+                 Just s  -> Ide $ [fc] ++ s
+  where firstChar = ['A'..'Z'] ++ ['a'..'z'] ++ "_"
+        rest      = firstChar ++ ['0'..'9']
+
+parsePos p = (,) <$> p <*> getPosition
+
+lbrack = parsePos $ char '[' >> return LBrack
+rbrack = parsePos $ char ']' >> return RBrack
+lbrace = parsePos $ char '{' >> return LBrace
+rbrace = parsePos $ char '}' >> return RBrace
+
+
+token = choice
+    [ ide
+    , lbrack
+    , rbrack
+    , lbrace
+    , rbrace
+    ]
+
+tokens = spaces *> many (token <* spaces)
+
+tokenize :: SourceName -> String -> Either ParseError [TokenPos]
+tokenize = runParser tokens ()
+
+module Parser where
+
+import Text.Parsec as P
+import Control.Monad.Identity
+import Lexer
+
+parseTest  :: Show a => Parsec [TokenPos] () a -> String -> IO ()
+parseTest p s =
+    case tokenize "test" s of
+        Left e -> putStrLn $ show e
+        Right ts' -> P.parseTest p ts'
+
+tok :: Token -> ParsecT [TokenPos] () Identity Token
+tok t = token show snd test
+  where test (t', _) = case t == t' of
+                           False -> Nothing
+                           True  -> Just t
+
+{-# LANGUAGE FlexibleContexts #-}
+module Parser where
+
+import Text.Parsec as P
+import Control.Monad.Identity
+import Lexer
+
+parseTest  :: Show a => Parsec [TokenPos] () a -> String -> IO ()
+parseTest p s =
+    case tokenize "test" s of
+        Left e    -> putStrLn $ show e
+        Right ts' -> P.parseTest p ts'
+
+
+type Parser a = Parsec [TokenPos] () a
+
+advance :: SourcePos -> t -> [TokenPos] -> SourcePos
+advance _ _ ((_, pos) : _) = pos
+advance pos _ [] = pos
+
+satisfy :: (TokenPos -> Bool) -> Parser Token
+satisfy f = tokenPrim show
+                      advance
+                      (\c -> if f c then Just (fst c) else Nothing)
+
+tok :: Token -> ParsecT [TokenPos] () Identity Token
+tok t = (Parser.satisfy $ (== t) . fst) <?> show t
+

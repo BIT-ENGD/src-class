@@ -1,0 +1,37 @@
+function MHZ19:measure(callback)
+-- timeout and restore UART
+tmr.alarm(self.timer, self.timeout*1000, 0,
+function()
+    uart.alt(0)
+    uart.setup(0, 115200, 8, uart.PARITY_NONE, uart.STOPBITS_1, 1)
+    uart.on('data')
+    print("Timed out. Restored UART.")
+    callback(nil)
+end)
+
+uart.on('data', 9,
+    function(data)
+        -- unregister uart.on callback
+        uart.on('data')
+        tmr.stop(self.timer)
+        uart.alt(0)
+        uart.setup(0, 115200, 8, uart.PARITY_NONE, uart.STOPBITS_1, 1)
+        -- First two bytes are control bytes 0xFF && 0x86
+        local a,b = string.byte(data,1,2)
+        if (a==tonumber('FF',16)) and (b==tonumber('86',16)) then
+            local high,low = string.byte(data,3,4)
+            local co2value = high * 256 + low
+            callback(co2value)
+        else
+            callback(nil)
+        end
+    end)
+
+    uart.alt(self.altUart)
+    uart.setup(0, 9600, 8, uart.PARITY_NONE, uart.STOPBITS_1, 0)
+
+    -- Send request sequence to get value (refer to datasheet)
+    -- send: FF 01 86 00 00 00 00 00 79
+    -- receive: FF 86 02 E8 42 04 2B 1C 03
+    uart.write(0, 0xff, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79)
+

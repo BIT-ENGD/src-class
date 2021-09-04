@@ -1,0 +1,91 @@
+sub run_regression_tests {
+    for(my $i = 0; $i < @servers; $i++){
+        my $inner = $users[$i];
+        foreach(@$inner){
+            my $user = $_;
+            my $server = $servers[$i];
+
+            my $outFile;
+            open($outFile, ">" . $outputDir . $user . "@" . $server . ".log.txt");
+            print $outFile "Opening connection to $user at $server on " . localtime() . "\n\n";
+            close($outFile);
+
+            my $pid = $pm->start and next;
+
+                print "Connecting to $user@" . "$server...\n";
+
+                my $hasWentToDownloadYet = 0;
+                my $ssh = Net::SSH::Perl->new($server, %sshParams);
+                $ssh->login($user, $password);              
+
+                $ssh->register_handler("stdout", sub {
+                    my($channel, $buffer) = @_;             
+                    my $outFile;
+                    open($outFile, ">>", $outputDir . $user . "@" . $server . ".log.txt");                  
+                    print $outFile $buffer->bytes;              
+                    close($outFile);                
+
+                    my @lines = split("\n", $buffer->bytes);
+                    foreach(@lines){
+                        if($_ =~ m/REGRESSION TEST IS COMPLETE/){
+                            $ssh->_disconnect();
+
+                            if(!$hasWentToDownloadYet){
+                                $hasWentToDownloadYet = 1;
+                                print "Caught exit signal.\n";
+                                print("Regression tests for ${user}\@${server} finised.\n");
+                                download_regression_results($user, $server);
+                                $pm->finish;
+                            }
+                        }
+                    }
+
+                });
+                $ssh->register_handler("stderr", sub {
+                    my($channel, $buffer) = @_;             
+                    my $outFile;
+                    open($outFile, ">>", $outputDir . $user . "@" . $server . ".log.txt");
+
+                    print $outFile $buffer->bytes;              
+
+                    close($outFile);                
+                });
+                if($debug){
+                    $ssh->cmd('tail -fn 40 /GDS/gds/gdstest/t-gds-master/bin/comp.reg');
+                }else{
+                    my ($stdout, $stderr, $exit) = $ssh->cmd('. ./.profile && cleanall && my.comp.reg');
+                    if(!$exit){
+                        print "SSH connection failed for ${user}\@${server} finised.\n";
+                    }
+                }
+                #$ssh->cmd('. ./.profile');
+
+                if(!$hasWentToDownloadYet){
+                    $hasWentToDownloadYet = 1;
+                    print("Regression tests for ${user}\@${server} finised.\n");
+                    download_regression_results($user, $server);
+                }
+
+            $pm->finish;        
+        }
+    }
+    sleep(1);
+    print "\n\n\nAll tests started. Tests typically take 1 hour to complete.\n";
+    print "If they take significantly less time, there could be an error.\n";
+    print "\n\nNo output will be printed until all commands have executed and finished.\n";
+    print "If you wish to watch the progress tail -f one of the logs this script produces.\n Example:\n\t" . 'tail -f ./gds1@tdgds10.log.txt' . "\n";
+    $pm->wait_all_children;
+    print "\n\nAll Tests are Finished. \n";
+}
+
+my %sshParams = (
+    protocol => '2',
+    port => '22',
+    options => [
+        "TCPKeepAlive yes",
+        "ConenctTimeout 10",
+        "BatchMode yes"
+    ]
+);
+
+$ssh->cmd

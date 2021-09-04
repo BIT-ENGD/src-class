@@ -1,0 +1,298 @@
+usingStack
+usingStack
+usingStack
+/**
+ *
+ */
+import java.text.SimpleDateFormat
+import java.util.Date
+
+/**
+ * {start, end} represent a duration of time.
+ * @author Rosicky
+ *
+ */
+trait TimeInterval {
+    val df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    def getStart: Option[Date];
+    def getEnd: Option[Date];
+    /**
+     * minus = {x:Date|this.contains(x) && !that.contain(x)}
+     */
+    def -(that: TimeInterval): TimeInterval;
+    /**
+     * plus =  {x:Date|this.contains(x) && that.contain(x)}
+     */
+    def +(that: TimeInterval): TimeInterval;
+    /**
+     * this exist x
+     */
+    def contains(x: Date): Boolean;
+    /**
+     * that forAll this.contains(_)
+     */
+    def contains(that: TimeInterval): Boolean;
+    /**
+     * that exist that.contains(_)
+     */
+    def cross(that: TimeInterval): Boolean;
+}
+/**
+ * zero
+ */
+case class TimeIntervalZero() extends TimeInterval {
+    override def toString = "TimeIntervalZero"
+    def getStart: Option[Date] = None
+    def getEnd: Option[Date] = None
+    def -(that: TimeInterval): TimeInterval = this
+    def +(that: TimeInterval): TimeInterval = that match {
+        case TimeIntervalUnit(s, e) => new TimeIntervalUnit(s, e)
+        case TimeIntervalList(l) => new TimeIntervalList(l)
+        case TimeIntervalZero() => this
+    }
+    def contains(x: Date): Boolean = false
+    def contains(that: TimeInterval): Boolean = false
+    def cross(that: TimeInterval): Boolean = false
+}
+
+/**
+ * index given timeunit list by time dimension
+ * @author rosicky
+ *
+ */
+private class SortedIndexTimeInterval() {
+    import scala.collection.mutable.Map
+    private val indexedTimeIntervals: Map[Date, TimeIntervalUnit] = Map()
+    private def put(unit: TimeIntervalUnit) {
+        indexedTimeIntervals.put(unit.start, unit)
+        indexedTimeIntervals.put(unit.end, unit)
+    }
+    private def sortedIndex: List[Date] = indexedTimeIntervals.keySet.toList.sortWith(_ before _)
+    /**
+     * looping units by the order of time demension
+     * @param matchStart when start founded, execute sth
+     * @param matchEnd when end founded, execute sth
+     */
+    def loopIt(matchStart: ((Date, TimeIntervalUnit) => Unit), matchEnd: ((Date, TimeIntervalUnit) => Unit)) {
+        val sI = sortedIndex
+        for (d: Date <- sI) {
+            val interval: TimeIntervalUnit = indexedTimeIntervals(d)
+            d match {
+                case interval.start => matchStart(d, interval)
+                case interval.end => matchEnd(d, interval)
+            }
+        }
+    }
+    /**
+     * put units in list to index
+     * @param list
+     */
+    def addList(list: TimeIntervalList) {
+        for (unit <- list.l) {
+            put(unit)
+        }
+    }
+}
+/**
+ * unit
+ */
+case class TimeIntervalUnit(start: Date, end: Date) extends TimeInterval {
+    start.before(end) || start.after(end) //constaint
+    override def toString = df.format(start) + "-" + df.format(end)
+    def before(that: TimeIntervalUnit) = end.before(that.start) && end.before(that.end)
+    def after(that: TimeIntervalUnit) = start.after(that.end) && start.after(that.start)
+    def getStart = Some(start);
+    def getEnd = Some(end);
+    def -(that: TimeInterval): TimeInterval = {
+        if (!cross(that)) {
+            new TimeIntervalUnit(start, end);
+        } else if (that.contains(this)) {
+            new TimeIntervalZero();
+        } else {
+            that match {
+                case TimeIntervalZero() => new TimeIntervalUnit(start, end)
+                case TimeIntervalUnit(s, e) => minusUnit(s, e)
+                case TimeIntervalList(l) => minusList(l)
+            }
+        }
+    }
+
+    private def minusList(l: List[TimeIntervalUnit]): TimeInterval = {
+        import scala.collection.mutable.Map
+        //maping start,end with intervalUnits & this
+        val sortedL = l.sortWith(_ before _)
+        val thisCopy: TimeInterval = new TimeIntervalList(l)
+        val what: Map[Date, TimeIntervalUnit] = Map()
+        what.put(start, this)
+        what.put(end, this)
+        for (u <- sortedL) {
+            if (u.cross(thisCopy)) {
+                if (u.start.after(start)) what.put(u.start, u)
+                if (u.end.before(end)) what.put(u.end, u)
+            }
+        }
+        //sorted all date point
+        val sortedDates = what.keySet.toList.sortWith(_ before _).filterNot(_ == end) //not effective
+        var u_start: Date = sortedDates.head
+        var expectend = true
+        var l1: List[TimeIntervalUnit] = List();
+        //split minused intervals
+        for (d: Date <- sortedDates.tail) { //? does it really has a tail?
+            val interval: TimeIntervalUnit = what(d)
+            d match {
+                case interval.start => l1 = new TimeIntervalUnit(u_start, d) :: l1; expectend = false
+                case interval.end => u_start = d; expectend = true
+            }
+        }
+        if (expectend) {
+            l1 = new TimeIntervalUnit(u_start, end) :: l1
+        }
+        new TimeIntervalList(l1.sortWith(_ before _))
+    }
+
+    private def minusUnit(s: Date, e: Date): TimeInterval = {
+        minusList(List(TimeIntervalUnit(s, e)))
+    }
+
+    def +(that: TimeInterval): TimeInterval = that match {
+        case TimeIntervalZero() => new TimeIntervalUnit(start, end)
+        case TimeIntervalUnit(s, e) => {
+            def min(a: Date, b: Date) = if (a.before(b)) a else b
+            def max(a: Date, b: Date) = if (a.after(b)) a else b
+            if (this.cross(that)) {
+                new TimeIntervalUnit(min(start, s), max(end, e))
+            } else {
+                if (this.after(new TimeIntervalUnit(s, e))) {
+                    val l: List[TimeIntervalUnit] = List(new TimeIntervalUnit(s, e), new TimeIntervalUnit(start, end))
+                    new TimeIntervalList(l)
+                } else {
+                    val l: List[TimeIntervalUnit] = List(new TimeIntervalUnit(start, end), new TimeIntervalUnit(s, e))
+                    new TimeIntervalList(l)
+                }
+            }
+        }
+        case TimeIntervalList(l) => {
+            var sum: TimeInterval = new TimeIntervalZero()
+            l.foreach(x => { val temp = x + this; sum += temp })
+            sum
+        }
+    }
+    def contains(x: Date) = (x.after(start) || x.equals(start)) && (x.before(end) || x.equals(end))
+    def contains(that: TimeInterval): Boolean = that match {
+        case TimeIntervalZero() => false
+        case TimeIntervalUnit(s, e) => (start.before(s) || start.equals(s)) && (end.after(e) || end.equals(e))
+        case TimeIntervalList(l) => l forall (this.contains(_))
+    }
+    def cross(that: TimeInterval): Boolean = that match {
+        case TimeIntervalZero() => false
+        case TimeIntervalUnit(s, e) => !(s.before(start) && e.before(start)) && !(s.after(end) && e.after(end))
+        case TimeIntervalList(l) => l exists (this.cross(_))
+    }
+
+}
+/**
+ * section
+ */
+case class TimeIntervalList(l: List[TimeIntervalUnit]) extends TimeInterval {
+    //TODO l forall !l.cross(each other) && l instanceof TimeIntervalUnit//constraint
+    override def toString = l.mkString(",")
+    def minElem: TimeIntervalUnit = { var min: TimeIntervalUnit = l.head; l foreach (x => if (x.before(min)) min = x); min }
+    def maxElem: TimeIntervalUnit = { var max: TimeIntervalUnit = l.head; l foreach (x => if (x.after(max)) max = x); max }
+    override def getStart = Some(minElem.start)
+    override def getEnd = Some(maxElem.end)
+    def -(that: TimeInterval) = { var sum: TimeInterval = new TimeIntervalZero(); l foreach (x => sum = sum + (x - that)); sum }
+    def +(that: TimeInterval) = that match {
+        case z: TimeIntervalZero => new TimeIntervalList(l)
+        case t: TimeIntervalUnit => plusList(new TimeIntervalList(List(t)))
+        case tl: TimeIntervalList => plusList(tl)
+    }
+    private def plusList(that: TimeIntervalList): TimeInterval = {
+        val buffer = new SortedIndexTimeInterval()
+        buffer.addList(this)
+        buffer.addList(that)
+        import scala.collection.mutable.ListBuffer
+        var usingStack = new ListBuffer[TimeIntervalUnit]()
+        var startD: Date = new Date()
+        var retList: List[TimeIntervalUnit] = Nil
+        def matchStart(start: Date, unit: TimeIntervalUnit) {
+            if (usingStack.isEmpty) {
+                startD = start
+            }
+            usingStack += unit
+        }
+        def matchEnd(end: Date, unit: TimeIntervalUnit) {
+            if (usingStack.isEmpty) {
+                retList = new TimeIntervalUnit(startD, end) :: retList
+            }
+            usingStack -= unit
+        }
+        buffer.loopIt(matchStart, matchEnd)
+        new TimeIntervalList(retList)
+    }
+    def contains(x: Date) = l exists (_.contains(x))
+    def contains(that: TimeInterval) = l exists (_.contains(that))
+    def cross(that: TimeInterval) = l exists (_.cross(that))
+}
+
+import org.junit._
+import org.scalatest.junit.AssertionsForJUnit
+import Assert._
+import java.text.SimpleDateFormat
+import org.junit.runner.RunWith
+class TestTimeInterval extends AssertionsForJUnit {
+    @Test def test(): Unit = {
+        //zero plus unit
+        val df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        def nU(s1: String, s2: String) = new TimeIntervalUnit(df.parse(s1), df.parse(s2))
+        def nL(l: List[TimeIntervalUnit]) = new TimeIntervalList(l);
+        val zero = new TimeIntervalZero();
+        val october = nU("2011-10-01 00:00:00", "2011-10-31 23:59:59");
+        assertEquals(october, zero + october);
+        //1 unit minus unit 
+        val midOctober = nU("2011-10-10 00:00:00", "2011-10-20 23:59:59");
+        assertEquals(
+            nL(List(
+                nU("2011-10-01 00:00:00", "2011-10-10 00:00:00"),
+                nU("2011-10-20 23:59:59", "2011-10-31 23:59:59"))),
+            october - midOctober);
+        //2 unit minus unit
+        val september = nU("2011-09-01 00:00:00", "2011-09-30 23:59:59");
+        assertEquals(october, october - september);
+        //1 unit minus that
+        val someDayOctober = nL(List(
+            nU("2011-10-03 00:00:00", "2011-10-03 23:59:59"),
+            nU("2011-10-07 00:00:00", "2011-10-07 23:59:59"),
+            nU("2011-10-21 00:00:00", "2011-10-21 23:59:59")))
+        assertEquals(
+            nL(List(
+                nU("2011-10-01 00:00:00", "2011-10-03 00:00:00"),
+                nU("2011-10-03 23:59:59", "2011-10-07 00:00:00"),
+                nU("2011-10-07 23:59:59", "2011-10-21 00:00:00"),
+                nU("2011-10-21 23:59:59", "2011-10-31 23:59:59"))),
+            october - someDayOctober)
+        //1 that minus that
+        val threeFirstFiveInOctober = nL(List(
+          nU("2011-10-01 00:00:00","2011-10-05 23:59:59"),
+          nU("2011-10-10 00:00:00","2011-10-15 23:59:59"),
+          nU("2011-10-20 00:00:00","2011-10-25 23:59:59")
+        ))
+        val threeOtherIntervalInOctober = nL(List(
+          nU("2011-10-03 00:00:00","2011-10-07 23:59:59"),
+          nU("2011-10-11 00:00:00","2011-10-11 23:59:59"),
+          nU("2011-10-13 00:00:00","2011-10-13 23:59:59")
+        ))
+        assertEquals(nL(List(
+            nU("2011-10-01 00:00:00","2011-10-07 23:59:59"),
+            nU("2011-10-10 00:00:00","2011-10-15 23:59:59"),
+            nU("2011-10-20 00:00:00","2011-10-25 23:59:59"))),
+            threeFirstFiveInOctober + threeOtherIntervalInOctober)
+       /* assertEquals(nL(List(
+          nU("2011-10-01 00:00:00","2011-10-03 00:00:00"),
+          nU("2011-10-10 00:00:00","2011-10-11 00:00:00"),
+          nU("2011-10-11 23:59:59","2011-10-13 00:00:00"),
+          nU("2011-10-13 23:59:59","2011-10-15 23:59:59"),
+          nU("2011-10-20 00:00:00","2011-10-25 23:59:59")
+        )),threeFirstFiveInOctober - threeOtherIntervalInOctober)*/
+    }
+}
+

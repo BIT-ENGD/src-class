@@ -1,0 +1,545 @@
+
+
+
+#include <sys/types.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+#include <assert.h>
+#include <time.h>
+#include <sys/wait.h>
+
+
+#define ssec 1
+#define fsec 0
+#define secBuf 5
+#define decbase 10
+#define fgbuf 60
+
+
+volatile sig_atomic_t aborting = 0;
+
+void chld_handler (int sig)
+     {
+       if(sig == SIGINT){
+
+ aborting++;
+
+   }
+
+ }
+
+
+int rand_start(int low, int high){
+  int s;
+  int r = 0;
+  srand(time(NULL));
+
+s = rand();
+
+r = s % high + low;
+
+return r;
+
+}
+
+void Usage(){
+
+printf("Usage :schedule [-s] [-f]   \n");
+  exit(1); 
+
+}
+
+int main(int argc, char *argv[]){
+
+/getopt variablen/
+  int opt;
+  int index;
+
+int sflag = 0;
+  int fflag = 0;
+
+char *svalue;
+  char *fvalue;
+
+int sseconds = ssec;
+  int fseconds = fsec;
+
+char *reactor;
+  char *emergency;
+  char *logfile;
+
+/**/
+  char *endptr;
+  /Pipe and child/
+
+int pipepc1[2];
+  int pipepc2[2];
+
+int child1_fd;
+  int child2_fd;
+
+FILE *log;
+  FILE *pipe_reader;
+
+char *p;
+  char *buf;
+  int waitFc;
+  int status;
+  /prgm/
+  int prg_r;
+  int prg_e;
+
+/termination/
+  int cnt = 0;
+  int start_period;
+  p = malloc(fgbuf * sizeof(char));
+  buf = malloc(fgbuf * sizeof(char));
+
+(void)signal(SIGINT,chld_handler);
+
+if(argc < 4){
+
+Usage();
+
+
+}else if(argc == 4){
+
+reactor = argv[1];
+emergency = argv[2];
+logfile = argv[3];
+
+
+}else if(argc > 4){
+
+/*argumentenbehandlung*/
+
+
+while((opt = getopt(argc,argv,":s:f:")) != -1){
+  printf("sflag %d fflag %d \n",sflag,fflag);
+  printf("opt  %c \n", opt);
+  printf("optind %d \n ",optind);
+  switch(opt){
+
+    case 's':
+  if(sflag == 0){
+    sflag++;
+    svalue = optarg;
+  }else{
+    fprintf(stderr,"Widerholung der option -s\n");
+    Usage();
+  }
+
+  break;
+
+   case 'f':
+
+ if(fflag == 0){
+
+   fflag++;
+   fvalue = optarg;
+ }else {
+   fprintf(stderr,"Widerholung der option -f\n");
+   Usage();
+ }
+ break;
+
+    case ':' :
+
+  fprintf(stderr,"Option -%c brauch ein argument\n",optopt);
+  Usage();
+  break;
+
+  case '?' : 
+fprintf(stderr,"Nicht bekannte option -%c \n",optopt);
+Usage();
+break;
+
+  default :
+assert(0);
+
+  }/*switch*/
+
+
+
+
+}/*while getopt*/
+
+
+for(index = optind; index < argc; index++){
+
+  if((argc - index) == 3){
+
+reactor = argv[index];
+
+  }else if((argc - index) == 2){
+
+emergency = argv[index];
+
+  }else if((argc - index) == 1){
+
+logfile = argv[index];
+
+  }
+
+
+}/*for schleife*/
+
+
+/* */
+if(sflag){
+
+  sseconds = (int)strtol(svalue,&endptr,decbase);
+  printf("%d ssec\n", sseconds);
+}
+
+if(fflag){
+
+  fseconds = (int)strtol(fvalue,&endptr,decbase);
+  printf("%d fsec\n", fseconds);
+
+}
+
+
+}
+
+/pipeing/
+
+if(pipe(pipepc1) == -1){
+
+fprintf(stderr,"Fehler bei der Erzeugung der pipe\n");
+exit(1);
+
+
+}else {printf("Pipe created\n");}
+
+/erzeuge child1/
+  child1_fd = fork();
+
+if(child1_fd < 0){
+
+fprintf(stderr,"Fehler beim asfuehren von fork\n");
+exit(0);
+
+
+}
+
+if(child1_fd == 0){
+    printf("CHILD\n");
+    /close pipe read/
+    if(close(pipepc1[0]) == -1){
+
+  fprintf(stderr,"Konnte nicht das Read-Ende vom pipepc1 schliessen\n");
+  exit(1);
+}
+
+if(close(1) == -1){
+
+  fprintf(stderr,"Konnte nicht das Read-Ende vom pipepc1 schliessen\n");
+  exit(1);
+
+}
+
+
+
+if(dup(pipepc1[1]) !=STDOUT_FILENO){
+
+  fprintf(stderr,"Das setzen des Read-Endes als stdout is Fehlgeschlagen\n");
+  exit(1);
+
+}
+
+if(fseconds == 0){
+
+  start_period = sseconds; 
+
+}else start_period = rand_start(sseconds,(sseconds + fseconds));
+
+for(cnt = 0; cnt < 5; cnt++){
+  sleep(start_period);
+  fflush(stdout);
+  prg_r = execl(reactor,"",NULL);
+
+  //printf("prg_r ist %d  \n", prg_r);
+}
+
+if(close(pipepc1[1]) == -1){
+
+  fprintf(stderr,"Das neue stdout konnte nich geschlossen werden\n");
+  exit(1);
+
+}
+
+
+}else{
+
+printf("**PARENT**\n");
+
+log = fopen(logfile,"w");
+
+/*schliesse pipe read*/
+close(pipepc1[1]);
+
+pipe_reader = fdopen(pipepc1[0],"r");
+
+
+while((buf = fgets(p,fgbuf,pipe_reader)) != NULL){
+
+  printf("from Child : %s \n",buf);
+  fflush(pipe_reader);
+}  
+
+fclose(log);   
+
+waitFc= waitpid(child1_fd,&status,0);
+
+  if(waitFc == -1){
+
+fprintf(stderr,"Das Warten ist fehlgeschlagen\n");
+exit(1);
+
+  }
+
+  printf("child is done\n und waitFc = %d\n und satus %d",waitFc,status);
+  fclose(pipe_reader);
+  close(pipepc1[1]);
+
+
+}
+
+printf("argc = %d \n", argc);
+  exit(0);  
+
+
+ aborting++;
+
+   }
+
+ }
+
+Usage();
+
+reactor = argv[1];
+emergency = argv[2];
+logfile = argv[3];
+
+/*argumentenbehandlung*/
+
+
+while((opt = getopt(argc,argv,":s:f:")) != -1){
+  printf("sflag %d fflag %d \n",sflag,fflag);
+  printf("opt  %c \n", opt);
+  printf("optind %d \n ",optind);
+  switch(opt){
+
+    case 's':
+  if(sflag == 0){
+    sflag++;
+    svalue = optarg;
+  }else{
+    fprintf(stderr,"Widerholung der option -s\n");
+    Usage();
+  }
+
+  break;
+
+   case 'f':
+
+ if(fflag == 0){
+
+   fflag++;
+   fvalue = optarg;
+ }else {
+   fprintf(stderr,"Widerholung der option -f\n");
+   Usage();
+ }
+ break;
+
+    case ':' :
+
+  fprintf(stderr,"Option -%c brauch ein argument\n",optopt);
+  Usage();
+  break;
+
+  case '?' : 
+fprintf(stderr,"Nicht bekannte option -%c \n",optopt);
+Usage();
+break;
+
+  default :
+assert(0);
+
+  }/*switch*/
+
+
+
+
+}/*while getopt*/
+
+
+for(index = optind; index < argc; index++){
+
+  if((argc - index) == 3){
+
+reactor = argv[index];
+
+  }else if((argc - index) == 2){
+
+emergency = argv[index];
+
+  }else if((argc - index) == 1){
+
+logfile = argv[index];
+
+  }
+
+
+}/*for schleife*/
+
+
+/* */
+if(sflag){
+
+  sseconds = (int)strtol(svalue,&endptr,decbase);
+  printf("%d ssec\n", sseconds);
+}
+
+if(fflag){
+
+  fseconds = (int)strtol(fvalue,&endptr,decbase);
+  printf("%d fsec\n", fseconds);
+
+}
+
+fprintf(stderr,"Fehler bei der Erzeugung der pipe\n");
+exit(1);
+
+fprintf(stderr,"Fehler beim asfuehren von fork\n");
+exit(0);
+
+  fprintf(stderr,"Konnte nicht das Read-Ende vom pipepc1 schliessen\n");
+  exit(1);
+}
+
+if(close(1) == -1){
+
+  fprintf(stderr,"Konnte nicht das Read-Ende vom pipepc1 schliessen\n");
+  exit(1);
+
+}
+
+
+
+if(dup(pipepc1[1]) !=STDOUT_FILENO){
+
+  fprintf(stderr,"Das setzen des Read-Endes als stdout is Fehlgeschlagen\n");
+  exit(1);
+
+}
+
+if(fseconds == 0){
+
+  start_period = sseconds; 
+
+}else start_period = rand_start(sseconds,(sseconds + fseconds));
+
+for(cnt = 0; cnt < 5; cnt++){
+  sleep(start_period);
+  fflush(stdout);
+  prg_r = execl(reactor,"",NULL);
+
+  //printf("prg_r ist %d  \n", prg_r);
+}
+
+if(close(pipepc1[1]) == -1){
+
+  fprintf(stderr,"Das neue stdout konnte nich geschlossen werden\n");
+  exit(1);
+
+}
+
+printf("**PARENT**\n");
+
+log = fopen(logfile,"w");
+
+/*schliesse pipe read*/
+close(pipepc1[1]);
+
+pipe_reader = fdopen(pipepc1[0],"r");
+
+
+while((buf = fgets(p,fgbuf,pipe_reader)) != NULL){
+
+  printf("from Child : %s \n",buf);
+  fflush(pipe_reader);
+}  
+
+fclose(log);   
+
+waitFc= waitpid(child1_fd,&status,0);
+
+  if(waitFc == -1){
+
+fprintf(stderr,"Das Warten ist fehlgeschlagen\n");
+exit(1);
+
+  }
+
+  printf("child is done\n und waitFc = %d\n und satus %d",waitFc,status);
+  fclose(pipe_reader);
+  close(pipepc1[1]);
+
+}
+
+
+
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+
+int main(){
+
+srand(time(NULL));
+  int i;
+  int s;
+
+s = rand() % 7;
+/*printf("%d \n",s);*/
+
+if(s != 6){
+
+  printf("OK\n");
+  fflush(stdout);
+
+}else {
+
+  printf("PRESSURE TOO HIGH - IMMEDIATE SHUTDOWN REQUIRED");
+  exit(EXIT_FAILURE);
+
+s = rand() % 7;
+/*printf("%d \n",s);*/
+
+if(s != 6){
+
+  printf("OK\n");
+  fflush(stdout);
+
+}else {
+
+  printf("PRESSURE TOO HIGH - IMMEDIATE SHUTDOWN REQUIRED");
+  exit(EXIT_FAILURE);
+
+
+
+}
+
+}
+
+
+

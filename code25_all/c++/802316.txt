@@ -1,0 +1,184 @@
+#include <cstdio>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <string>
+#include <windows.h>
+#include <detours.h>
+
+#pragma comment( lib, "Ws2_32.lib" )
+#pragma comment( lib, "detours.lib" )
+#pragma comment( lib, "detoured.lib" )
+#pragma comment( lib, "Mswsock.lib" )
+
+std::ofstream Logger;
+
+std::string NowToString() {
+    time_t rawtime;
+    tm *timeinfo = new tm();
+    char buffer[32];
+
+    time( &rawtime );
+    localtime_s( timeinfo, &rawtime );
+
+    strftime( buffer, 32, "%m/%d/%Y %I:%M:%S %p", timeinfo );
+
+    delete timeinfo;
+
+    return std::string( buffer );
+}
+
+std::string TimeToString() {
+    time_t rawtime;
+    tm *timeinfo = new tm();
+    char buffer[32];
+
+    time( &rawtime );
+    localtime_s( timeinfo, &rawtime );
+
+    strftime( buffer, 32, "%I:%M:%S %p", timeinfo );
+
+    delete timeinfo;
+
+    return std::string( buffer );
+}
+
+void LogPacket( const char *buf, int len ) {
+    Logger << "        0  1  2  3  4  5  6  7   8  9  A  B  C  D  E  F\n";
+    Logger << "       -- -- -- -- -- -- -- --  -- -- -- -- -- -- -- --\n";
+    Logger << "0000   ";
+
+    for ( int i = 0; i < len; ++i ) {
+        if ( i != 0 && i % 16 == 0 ) {
+            Logger << "  ";
+
+            int line = ( i / 16 ) - 1;
+
+            for ( int j = 0; j < 16; ++j ) {
+                char c = buf[line * 16 + j];
+
+                if ( c >= 32 && c <= 126 ) {
+                    Logger << c;
+                } else {
+                    Logger << '.';
+                }
+            }
+
+            Logger << "\n" << std::hex << std::setw( 4 ) << std::setfill( '0' ) << i << std::dec << std::setw( 0 ) << "   ";
+        } else if ( i % 16 == 8 ) {
+            Logger << ' ';
+        }
+
+        Logger << std::hex << std::setw( 2 ) << std::setfill( '0' ) << ( int( buf[i] ) & 0xFF ) << ' ';
+        Logger << std::dec << std::setw( 0 );
+
+        if ( i == len - 1 ) {
+            int remaining = 16 - ( len % 16 );
+            int fill = ( remaining * 3 ) + 2;
+
+            if ( remaining >= 8 ) {
+                ++fill;
+            }
+
+            for ( int j = 0; j < fill; ++j ) {
+                Logger << ' ';
+            }
+
+            int line = ( i - ( ( len % 16 ) - 1 ) ) / 16 ;
+
+            for ( int k = 0; k < ( len % 16 ); ++k ) {
+                char c = buf[line * 16 + k];
+
+                if ( c >= 32 && c <= 126 ) {
+                    Logger << c;
+                } else {
+                    Logger << '.';
+                }
+            }
+        }
+    }
+
+    Logger << "\n\n";
+}
+
+int ( WINAPI *Real_Send )( SOCKET s, const char *buf, int len, int flags ) = send;
+int ( WINAPI *Real_Recv )( SOCKET s, char *buf, int len, int flags ) = recv;
+int ( WINAPI *Real_RecvFrom )( SOCKET s, char *buf, int len, int flags, sockaddr *from, int *fromlen ) = recvfrom;
+int ( WINAPI *Real_WSARecvEx )( SOCKET s, char *buf, int len, int *flags ) = WSARecvEx;
+
+int WINAPI Mine_Send( SOCKET s, const char* buf, int len, int flags );
+int WINAPI Mine_Recv( SOCKET s, char *buf, int len, int flags );
+int WINAPI Mine_RecvFrom( SOCKET s, char *buf, int len, int flags, sockaddr *from, int *fromlen );
+int WINAPI Mine_WSARecvEx( SOCKET s, char *buf, int len, int *flags );
+
+int WINAPI Mine_Send( SOCKET s, const char *buf, int len, int flags ) {
+    Logger << TimeToString() << ": Client -> Server (Length: " << len << " bytes)\n\n";
+    LogPacket( buf, len );
+    Logger << std::endl;
+
+    return Real_Send( s, buf, len, flags );
+}
+
+int WINAPI Mine_Recv( SOCKET s, char *buf, int len, int flags ) {
+    Logger << TimeToString() << ": Server -> Client (Length: " << len << " bytes)\n\n";
+    LogPacket( buf, len );
+    Logger << std::endl;
+
+    return Real_Recv( s, buf, len, flags );
+}
+
+int WINAPI Mine_RecvFrom( SOCKET s, char *buf, int len, int flags, sockaddr *from, int *fromlen ) {
+    Logger << TimeToString() << ": Server -> Client (Length: " << len << " bytes)*\n\n";
+    LogPacket( buf, len );
+    Logger << std::endl;
+
+    return Real_RecvFrom( s, buf, len, flags, from, fromlen );
+}
+
+int WINAPI Mine_WSARecvEx( SOCKET s, char *buf, int len, int *flags ) {
+    Logger << TimeToString() << ": Server -> Client (Length: " << len << " bytes)**\n\n";
+    LogPacket( buf, len );
+    Logger << std::endl;
+
+    return Real_WSARecvEx( s, buf, len, flags );
+}
+
+BOOL WINAPI DllMain( HINSTANCE, DWORD dwReason, LPVOID ) {
+    switch ( dwReason ) {
+        case DLL_PROCESS_ATTACH:    
+            Logger.open( "C:\\Packets.txt", std::ios::out | std::ios::app | std::ios::ate );
+
+            if ( Logger.tellp() > 0 ) {
+                Logger << "\n\n\n";
+            }
+
+            Logger << "##\n## Logging Started (" << NowToString() << ")\n##\n\n\n";
+
+            DetourTransactionBegin();
+            DetourUpdateThread( GetCurrentThread() );
+            DetourAttach( &(PVOID &)Real_Send, Mine_Send );
+            DetourAttach( &(PVOID &)Real_Recv, Mine_Recv );
+            DetourAttach( &(PVOID &)Real_RecvFrom, Mine_RecvFrom );
+            DetourAttach( &(PVOID &)Real_WSARecvEx, Mine_WSARecvEx );
+            DetourTransactionCommit();
+
+            break;
+
+        case DLL_PROCESS_DETACH:
+            Logger << "##\n## Logging Stopped (" << NowToString() << ")\n##";
+            Logger.close();
+
+            DetourTransactionBegin();
+            DetourUpdateThread( GetCurrentThread() );
+            DetourDetach( &(PVOID &)Real_Send, Mine_Send );
+            DetourDetach( &(PVOID &)Real_Recv, Mine_Recv );
+            DetourDetach( &(PVOID &)Real_RecvFrom, Mine_RecvFrom );
+            DetourDetach( &(PVOID &)Real_WSARecvEx, Mine_WSARecvEx );
+            DetourTransactionCommit();
+
+            break;
+    }
+
+    return TRUE;
+}
+

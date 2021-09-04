@@ -1,0 +1,137 @@
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE OverloadedStrings          #-}
+
+module Models where
+
+import Prelude hiding ((.), id)
+import Control.Category ((.))
+import Control.Monad.Reader (asks)
+import Data.ByteString (ByteString)
+import Data.SafeCopy (base, deriveSafeCopy)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import Data.Acid (Update, Query, makeAcidic)
+import Control.Monad.Reader (ask)
+import Control.Applicative ((<$>))
+import Data.Data (Data)
+
+data Book = Book { isbn :: String }
+     deriving (Eq, Ord, Read, Data, Show, Typeable)
+
+$(deriveSafeCopy 0 'base ''Book)
+
+-- Retrieve the book's isbn
+queryIsbn :: Query Book String
+queryIsbn = isbn <$> ask
+
+$(makeAcidic ''Book ['queryIsbn])
+
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
+module Application where
+
+import           Control.Monad.Trans.Class (lift)
+import           Data.Text.Encoding (decodeUtf8)
+import           Text.XmlHtml (Node(TextNode),Node (Element), 
+                 getAttribute, setAttribute, nodeText)
+import           Data.ByteString (ByteString)
+import           Data.Maybe
+import           Snap.Core
+import           Snap.Snaplet
+import           Snap.Snaplet.Heist (Heist, HasHeist(heistLens), heistInit,
+                        addSplices, liftHeist, render)
+import           Snap.Util.FileServe
+import           Text.Templating.Heist (HeistT, Template, getParamNode)
+import           Data.Lens.Template
+
+import Models
+import Data.Acid.Advanced (query')
+import Data.Acid (AcidState, openLocalState, closeAcidState, IsAcidic, query)
+import Data.Text (pack)
+import Control.Monad.IO.Class (liftIO, MonadIO)
+import Snap (snapletValue)
+import Data.Lens.Common (getL, (^$), (^.), Lens) 
+import Control.Monad.Reader (ask, asks)
+import Control.Applicative ((<$>))
+import Data.Typeable (typeOf)
+
+
+import Prelude hiding ((.), id)
+import Control.Category ((.), id)
+
+------------------------------------------------------------------------------
+type AppHandler = Handler App App
+
+--------------
+-- Acid
+---------------
+-- Used for holding data for the snapplet
+data Acid st = Acid { _state ::  AcidState st }
+
+-- Initializer function for the snapplet
+seedBook =  Book "9213-23123-2311"
+
+acidInit ::  SnapletInit b (Acid Book)
+acidInit = makeSnaplet "storage" "Snaplet providing storage functionality" Nothing initializer
+
+--The 'm' is the type variable of the MonadSnaplet type class. 'b' is the base state, and 'v' is the state of the current "view" snaplet (or simply, current state).
+initializer :: Initializer b v (Acid Book)
+initializer = do
+      st <- liftIO (openLocalState seedBook)
+
+      --onUnload (closeAcidState st)
+      return $ Acid st
+
+-----------------------
+-- Snap Global State
+--------------------
+
+data App = App
+    { _heist :: Snaplet (Heist App),
+      _acid  :: Snaplet (Acid Book)
+    }
+
+makeLens ''App
+----------------------------------------------------------------------------------
+
+instance HasHeist App where
+    heistLens = subSnaplet heist
+
+-----------------------------------------------
+-- | Initialize app
+-----------------------------------------------
+appInit :: SnapletInit App App
+appInit = makeSnaplet "app" "Website" Nothing $ do
+    h <- nestSnaplet "" heist $ heistInit "templates"
+    a <- nestSnaplet "isbn"  acid (acidInit)
+    addRoutes routes --see below
+    addSplices [ ("menuEntry", liftHeist menuEntrySplice) ]
+    return $ App h a
+
+
+------------------------------------------------
+-- | The application's routes.
+------------------------------------------------
+routes :: [(ByteString, Handler App App ())]
+routes = [ ("/books",    handleBooks)
+         , ("/contact",  render "contact")
+         , ("/isbn",     liftIO doQuery >>= writeBS )
+         , ("",          serveDirectory "static")
+         ]
+
+-- Is this Function signature possible? Or must it run inside Snap or other monad?
+doQuery :: IO ByteString
+doQuery = do    -- ???????????
+        --somehow retrieve acid store from snaplet
+        --run queryIsbn on it
+        --return isbn string
+        return "BLAH"
+
+
+handleBooks :: Handler App App ()
+handleBooks = render "books"
+

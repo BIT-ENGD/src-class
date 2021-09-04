@@ -1,0 +1,97 @@
+{-# LANGUAGE ExistentialQuantification #-}
+module Computation where
+
+-- model the steps of a computation
+data Computation a = forall b. Step b (b -> Computation a) | Done a
+
+instance Monad Computation where
+   (Step b g) >>= f = Step b $ (>>=f) . g
+   (Done b) >>= f = Step b f
+   return = Done
+
+runComputation :: Computation a -> a
+runComputation (Step b g) = runComputation (g b)
+runComputation (Done a) = a
+
+isDone :: Computation a -> Bool
+isDone (Done _) = True
+isDone _ = False
+
+-- an order for a set of computations
+data Schedule a = a :> Computation (Schedule a) | Last
+
+toList :: Schedule a -> [a]
+toList Last = []
+toList (a :> c) = a : (toList . runComputation) c
+
+-- given a set of computations, find a schedule to generate all their results
+type Strategy a = [Computation a] -> Computation (Schedule a)
+
+-- schedule all the completed computations, and step the rest, 
+-- passing the remaining to the given function
+scheduleOrStep :: (Queue (Computation a) -> Computation (Schedule a)) -> Strategy a
+scheduleOrStep s cs = scheduleOrStep' id cs
+  where scheduleOrStep' q ((Done a):cs) = Done $ a :> scheduleOrStep' q cs
+        scheduleOrStep' q ((Step b g):cs) = scheduleOrStep' (q . (g b:)) cs
+        scheduleOrStep' q [] = s q
+
+-- schedule all completed compuations, step all the rest once, and repeat
+-- (may never complete for infinite lists)
+-- checking each row of 
+-- [ [ c0s0, c1s0, c2s0, ... ]
+-- , [ c0s1, c1s1, c2s1, ... ]
+-- , [ c0s2, c1s2, c2s2, ... ]
+-- ...
+-- ]
+-- (where cNsM is computation N stepped M times)
+fair :: Strategy a
+fair [] = Done Last
+fair cs = scheduleOrStep (fair . ($[])) cs
+
+-- schedule more steps for earlier computations rather than later computations
+-- (works on infinite lists)
+-- checking the sw-ne diagonals of 
+-- [ [ c0s0, c1s0, c2s0, ... ]
+-- , [ c0s1, c1s1, c2s1, ... ]
+-- , [ c0s2, c1s2, c2s2, ... ]
+-- ...
+-- ]
+-- (where cNsM is computation N stepped M times)
+diag :: Enqueue (Computation a)-> Strategy a
+diag _ [] = Done Last
+diag enq cs = diag' cs id
+  where diag' (c:cs) q = scheduleOrStep (diag' cs) (enq c q $ [])
+        diag' [] q = fair (q [])
+
+-- diagonal downwards : 
+-- [ c0s0, 
+--   c1s0, c0s1, 
+--   c2s0, c1s1, c0s2, 
+--   ... 
+--   cNs0, c{N-1}s1, ..., c1s{N-1}, c0sN,
+--   ...
+--  ]
+diagd :: Strategy a
+diagd = diag prepend
+
+-- diagonal upwards : 
+-- [ c0s0, 
+--   c0s1, c1s0, 
+--   c0s2, c1s1, c2s0, 
+--   ... 
+--   c0sN, c1s{N-1}, ..., c{s1N-1}, cNs0,
+--   ...
+--  ]
+diagu :: Strategy a
+diagu = diag append 
+
+-- a queue type
+type Queue a = [a] -> [a]
+type Enqueue a = a -> Queue a -> Queue a
+
+append :: Enqueue a
+append x q = q . (x:)
+
+prepend :: Enqueue a
+prepend x q = (x:) . q
+

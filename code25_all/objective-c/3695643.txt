@@ -1,0 +1,337 @@
+- (Planet *) initWithName: (NSString *)name;
++ (Planet *) planetWithNameAndMoons:(NSString *)name moons:(id)firstObj, ... NS_REQUIRES_NIL_TERMINATION;
++ (Planet *) planetWithName:(NSString *)name;
++ (Planet *) planetWithResultSet:(FMResultSet *)resultSet;
+
+- (id)init {
+    self = [super init];
+    self.Id = 0;
+    self.SupportsLife = NO;
+    self.Moons =  [NSMutableArray array];   
+    return self;
+}
+
+- (Planet *)newPlanet
+{
+    int i = 0;
+    Planet *planet = nil;
+    NSMutableDictionary *criteria = [NSMutableDictionary new];
+
+    do {
+        i += 1;
+        [criteria setValue: [NSString stringWithFormat:@"Planet %d", i] forKey: @"Name"];
+        planet = [[PlanetRepo SharedRepo] Find: criteria];
+    } while (planet != nil);    // if a planet is found with that name, keep looking...
+
+    planet = [Planet planetWithName: (NSString *)[criteria valueForKey:@"Name"]];
+    [planet retain];
+
+    [criteria release];
+    criteria = nil;
+
+    return planet;
+}
+
+#import <Foundation/Foundation.h>
+#import "Planet.h"
+
+@interface PlanetRepo : NSObject { 
+    FMDatabase * _repoSource;
+}
+
++ (PlanetRepo *) SharedRepo;
+
+- (Planet *)Find:(NSDictionary *)criteria;
+- (NSMutableArray *)GetAll;
+- (Planet *)GetById:(id ) Id;
+- (BOOL) Save:(Planet *) planet;
+- (BOOL) Delete: (Planet *) planet;
+
+- (BOOL) Open:(NSString *)repoSource;
+- (void) Close;
+
+@end
+
+@interface PlanetRepo (Private)
+- (NSError *) CreateDatabaseIfNeeded:(NSString *)databasePath;
+@end
+
+#import "FMDatabase.h"
+#import "PlanetRepo.h"
+#import "Planet.h"
+
+@implementation PlanetRepo
+
++ (PlanetRepo *)SharedRepo 
+{   
+    static PlanetRepo *_sharedRepo;
+    @synchronized(self) 
+    {
+        if (!_sharedRepo) 
+            _sharedRepo = [[super alloc] init]; 
+    }
+    return _sharedRepo;
+}
+
++ (id) alloc { 
+    return [self SharedRepo]; 
+}
+
+- (BOOL) Open: (NSString *)repoSource 
+{   
+    NSArray *paths = NSSearchPathForDirectoriesInDomains( NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    NSString *databasePath = [documentsDirectory stringByAppendingPathComponent: repoSource];
+    NSError *error = [self CreateDatabaseIfNeeded: databasePath];
+
+    BOOL result = (error == nil);
+    if(result) 
+    {
+        _repoSource = (FMDatabase *)[FMDatabase databaseWithPath:databasePath];
+        [_repoSource retain];
+        result = [_repoSource open];
+        if (result) 
+            NSLog(@"Planet Repo open successful!");
+        else 
+        {
+            NSLog(@"Could not open Planet Repo.");
+            [self Close];
+        }
+    }       
+    else 
+        NSLog(@"Could not copy db.", [error localizedDescription]);
+    return result;
+}
+
+- (void) Close 
+{
+    [_repoSource release];
+    _repoSource = nil;
+}
+
+- (void) dealloc 
+{
+    [self Close];
+    [super dealloc];
+}
+
+- (Planet *)Find:(NSDictionary *)criteria
+{
+    if (criteria == nil) return nil;
+
+    const NSUInteger criteriaCount = [criteria count];
+    if (criteriaCount == 0) return nil;
+
+    NSMutableString *temp = [NSMutableString stringWithString: @"SELECT Id, Name, SupportsLife FROM planet WHERE"];
+    NSMutableArray *values = [[NSMutableArray alloc] initWithCapacity:criteriaCount];
+    int i = 0;
+    for (id key in criteria) 
+    {
+        [values addObject: [criteria objectForKey:key]];
+        NSLog(@"key: %@, value: %@", key, [values objectAtIndex:i] );
+
+        [temp appendString: [NSString stringWithFormat:@" %@=?", key ] ];
+        if ( i < (criteriaCount - 1) ) 
+            [temp appendString: @","];
+        i++;
+    }
+
+    NSString *sql = [NSString stringWithString:temp];
+    NSLog(@"sql: [%@]", sql);
+    FMResultSet *resultSet = [_repoSource executeQuery:sql withArgumentsInArray: values ];
+
+    Planet *planet = nil;
+    if ( [resultSet hasAnotherRow] )
+        planet = [Planet planetWithResultSet: resultSet];
+
+    [values release];
+    [resultSet close];
+
+    return planet;
+}
+
+-(NSMutableArray *)GetAll
+{
+    NSMutableArray* resultsArray = [[NSMutableArray new] autorelease];
+    FMResultSet *resultSet = [_repoSource executeQuery:@"SELECT Id, Name, SupportsLife FROM planet ORDER BY Name ASC"];
+    while ([resultSet next]) 
+        [resultsArray addObject:  [Planet planetWithResultSet:resultSet] ];
+    [resultSet close];
+
+    return resultsArray;
+}
+
+- (Planet *) GetById:(id) Id
+{
+    if( ![_repoSource open]) return NULL;
+
+    Planet *planet = NULL;
+    FMResultSet *resultSet = [_repoSource executeQuery:@"SELECT Id, Name, SupportsLife FROM planet WHERE Id=?" withArgumentsInArray:Id];
+    if ([resultSet next])
+        planet = [Planet planetWithResultSet:resultSet];
+    [resultSet close];
+
+    return planet;
+}
+
+- (BOOL) Save:(Planet *) planet
+{
+    if( ![_repoSource open]) return NO;
+
+    [_repoSource beginTransaction];
+    BOOL result = NO;
+    if (planet.Id == 0) 
+    {
+        result = [_repoSource executeUpdate: @"INSERT INTO \"planet\" (Name,SupportsLife) values (?,?);", planet.Name, planet.SupportsLife];
+        planet.Id = [_repoSource lastInsertRowId];
+    }
+    else 
+        result = [_repoSource executeUpdate: @"UPDATE \"planet\" SET Name=?, SupportsLife=? WHERE Id=?", 
+                  planet.Name, 
+                  [NSNumber numberWithBool:planet.SupportsLife], 
+                  [NSNumber numberWithInt:planet.Id]];
+
+
+    if (result == YES)
+        [_repoSource commit];
+    else {
+        [_repoSource rollback];
+        NSLog( @"%@", [_repoSource lastErrorMessage] );
+    }
+    return result;  
+}
+
+- (BOOL) Delete: (Planet *) planet
+{
+    if( ![_repoSource open]) return NO;
+
+    [_repoSource beginTransaction];
+    BOOL result = [_repoSource executeUpdate: @"DELETE FROM \"planet\" WHERE Id=?", [NSNumber numberWithInt:planet.Id]];
+
+    if (result == YES)
+        [_repoSource commit];
+    else {
+        [_repoSource rollback];
+        NSLog( @"%@", [_repoSource lastErrorMessage] );
+    }
+    return result;  
+}
+
+- (NSError *) CreateDatabaseIfNeeded:(NSString *)databasePath 
+{   
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    BOOL doesDBExist = [fileManager fileExistsAtPath: databasePath];
+
+    if (doesDBExist == NO )
+    {
+        NSString* dbFileName = [databasePath lastPathComponent];
+
+        //the database does not exist, so we will copy it to the users document directory...
+        NSString *sourceDbPath = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:dbFileName];
+
+        NSError *error;
+        if (![fileManager copyItemAtPath:sourceDbPath toPath:databasePath error:&error]) 
+        {
+            NSLog(@"Could not copy db.", [error localizedDescription]);
+            return [error autorelease];
+        }
+    }
+    return nil;
+}
+
+@end
+
+Leaked Object |  Address  |   Size   | Responsible Library | Responsible Frame
+--------------+-----------+----------+---------------------+-------------------
+   Planet     | 0x7136380 | 32 Bytes | NavTest             | +[Planet newWithName:]
+   Planet     | 0x712da20 | 32 Bytes | NavTest             | -[Planet init]
+   Planet     | 0x5917a20 | 32 Bytes | Foundation          | -[NSPlaceholderString
+
+#import <Foundation/Foundation.h>
+#import "FMDatabase.h"
+
+@class Planet;
+
+@interface Planet : NSObject { }
+
+@property (nonatomic, assign) int Id;
+@property (nonatomic, copy) NSString *Name;
+@property (nonatomic, retain) NSMutableArray *Moons;
+@property (nonatomic, assign) BOOL SupportsLife;
+
+- (Planet *)initWithName: (NSString *)name;
+
++ (Planet *) newWithNameAndMoons:(NSString *)name moons:(id)firstObj, ... NS_REQUIRES_NIL_TERMINATION;
++ (Planet *) newWithName:(NSString *)name;
++ (Planet *) readPlanetFrom:(FMResultSet *)resultSet;
+
+@end
+
+#import "Planet.h"
+#import "FMDatabase.h"
+
+@implementation Planet
+
+@synthesize Id;
+@synthesize Name; 
+@synthesize Moons; 
+@synthesize SupportsLife; 
+
+- (NSString *) description {
+ return [NSString stringWithFormat:@"ID: %d\nName: %@", Id ,Name];
+}
+
+- (void) dealloc {
+ [Moons release];
+ [Name release];
+
+ Moons = nil;
+ Name = nil;
+ [super dealloc];
+}
+
+- (id)initWithName:(NSString *)aName {
+ self = [self init];
+ if (self) self.Name = aName;
+ return self;
+}
+
+- (id)init {
+ self = [super init];
+ self.Id = 0;
+ self.SupportsLife = NO;
+ NSMutableArray *tmp = [NSMutableArray new]; 
+ self.Moons = tmp;
+ [tmp release];
+ tmp = nil;
+ return self;
+}
+
++ (Planet *) newWithName:(NSString *)name {
+ return [[self alloc] initWithName: name];
+}
+
++ (Planet *)newWithNameAndMoons:(NSString *)name moons:(id)firstObj, ...   {
+ Planet *planet = [self newWithName: name];
+
+ va_list args;
+    va_start(args, firstObj);
+    for (id arg = firstObj; arg != nil; arg = va_arg(args, id))
+ {
+        [planet.Moons addObject: arg];
+  [arg release];
+ }
+    va_end(args);
+ return planet;
+}
+
++ (Planet *) readPlanetFrom:(FMResultSet *)resultSet
+{
+ Planet *planet = [[self alloc] init]; 
+ planet.Id = [resultSet intForColumn:@"Id"];
+ planet.Name = [resultSet stringForColumn:@"Name"];
+ planet.SupportsLife = [resultSet boolForColumn: @"SupportsLife"];
+ return [planet autorelease];
+}
+@end
+

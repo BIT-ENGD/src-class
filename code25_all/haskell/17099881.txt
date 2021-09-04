@@ -1,0 +1,35 @@
+import Control.Lens
+import Control.Monad.STM
+import Control.Monad.IO.Class
+import Control.Monad.State.Lazy
+import Control.Concurrent.STM.TChan
+
+data Broadcast = Broadcast Int
+
+data ImmutableState = ImmutableState
+    { _broadcastChan :: TChan Broadcast
+    , _encryption    :: Int
+    }
+
+makeLenses ''ImmutableState
+
+helper :: MonadIO m => StateT ImmutableState m a
+helper = do
+    broadcastChan <~ (liftIO . atomically $ dupTChan $ use broadcastChan)
+    {- ^
+        Test.hs:
+            Couldn't match expected type `Broadcast'
+                        with actual type `TChan Broadcast'
+            Expected type: StateT ImmutableState m (TChan Broadcast)
+              Actual type: StateT ImmutableState m (TChan (TChan Broadcast))
+            In the second argument of `(<~)', namely
+              `(liftIO . atomically $ dupTChan $ use broadcastChan)'
+            In a stmt of a 'do' block:
+              broadcastChan
+              <~ (liftIO . atomically $ dupTChan $ use broadcastChan)
+    -}
+
+forkImmState :: MonadIO m => ImmutableState -> m ImmutableState
+forkImmState s = evalStateT helper s
+
+(TChan (TChan Broadcast))

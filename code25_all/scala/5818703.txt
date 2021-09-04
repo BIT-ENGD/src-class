@@ -1,0 +1,69 @@
+object TestActor {
+  val dispatcher = Dispatchers.newExecutorBasedEventDrivenWorkStealingDispatcher("pool")
+                   .setCorePoolSize(100)
+                   .setMaxPoolSize(100)
+                   .build
+}
+
+class TestActor(val name: Integer) extends Actor {
+    self.lifeCycle = Permanent
+    self.dispatcher = TestActor.dispatcher
+    def receive = {
+       case num: Integer => {  println("Actor: " + name + " Received: " + num)
+                               Thread.sleep(10000)
+                            }
+    }
+}
+
+trait CyclicLoadBalancing extends LoadBalancer { this: Actor =>
+    val testActors: List[ActorRef]
+    val seq = new CyclicIterator[ActorRef](testActors)
+}
+
+trait TestActorManager extends Actor {
+     self.lifeCycle = Permanent
+     self.faultHandler = OneForOneStrategy(List(classOf[Exception]), 5, 5000)
+     val testActors: List[ActorRef]
+     override def preStart = testActors foreach { self.startLink(_) }
+     override def postStop = self.shutdownLinkedActors()
+}
+
+val supervisor = actorOf(new TestActorManager with CyclicLoadBalancing {
+val testActors = (1 until 100 toList) map (i => actorOf(new TestActor(i)))   
+}).start
+
+println("Number of Actors: " +  Actor.registry.actorsFor(classOf[TestActor]).length)
+
+val testActor = Actor.registry.actorsFor(classOf[TestActor]).head
+
+(1 until 20 toList) foreach { testActor ! _ }
+
+Actor: 4 Received: 16
+Actor: 3 Received: 17
+Actor: 1 Received: 19
+Actor: 59 Received: 1
+Actor: 2 Received: 18
+
+// 10 secs. are passing..
+
+Actor: 4 Received: 15
+Actor: 3 Received: 14
+Actor: 1 Received: 13
+Actor: 59 Received: 2
+Actor: 2 Received: 12
+
+// 10 secs. are passing..
+
+Actor: 4 Received: 11
+Actor: 3 Received: 10
+Actor: 59 Received: 3
+Actor: 2 Received: 8
+Actor: 1 Received: 9
+
+// 10 secs. are passing..
+
+Actor: 4 Received: 7
+Actor: 3 Received: 6
+Actor: 59 Received: 4
+Actor: 2 Received: 5
+

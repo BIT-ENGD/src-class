@@ -1,0 +1,147 @@
+{-# LANGUAGE BangPatterns #-}
+
+import System.Random (randoms, mkStdGen)
+import Control.Parallel.Strategies
+import Control.DeepSeq (NFData)
+import Data.List
+
+data Point = Point !Double !Double
+
+fmod :: Double -> Double -> Double
+fmod a b | a < 0     = b - fmod (abs a) b 
+         | otherwise = if a < b then a 
+                        else let q = a / b 
+                             in b * (q - fromIntegral (floor q :: Int))
+
+standardMap :: Double -> Point -> Point
+standardMap k (Point q p) = 
+   Point (fmod (q + p) (2 * pi)) (fmod (p + k * sin(q)) (2 * pi))
+
+iterate' gen !p = p : (iterate' gen $ gen p)
+
+iterateN :: (Point -> Point) -> [Int] -> Point -> [Point]
+iterateN _ [] p = [p]
+iterateN gen (dn:dns) p = 
+   p : (iterateN gen dns $ (head . drop dn) $ iterate' gen p) 
+
+ensemble :: [Point]
+ensemble = zipWith Point qs ps
+   where qs = randoms (mkStdGen 42)
+         ps = randoms (mkStdGen 21)
+
+main = let dns = take 100 $ repeat 10000
+           ens = take 1000 ensemble
+           obs = \(Point p q) -> p^2 - q^2
+           work = map obs . (iterateN (standardMap 7.0) dns)
+           ps = parMap rdeepseq work ens
+       in putStrLn $ show (foldl' (+) 0 $ map (foldl' (+) 0) ps)
+
+Debian 3.2.46-1 x86_64}
+GHC 7.4.1
+$ ghc -O3 --make stmap.hs -threaded
+
+$ time ./stmap +RTS -N1
+  real    1m9.791s
+  user    1m9.448s
+  sys     0m0.208s
+
+$ time ./stmap +RTS -N2
+  real    0m36.981s
+  user    1m13.113s
+  sys     0m0.656s
+
+$ time ./stmap +RTS -N4
+  real    0m23.110s
+  user    1m31.310s
+  sys     0m0.792s
+
+$ time ./stmap +RTS -N8
+  real    0m20.537s
+  user    2m21.921s
+  sys     0m21.017s
+
+$ ./stmap +RTS -N8 -sstderr 1>/dev/null
+112,032,905,392 bytes allocated in the heap
+  59,112,296 bytes copied during GC
+     971,520 bytes maximum residency (35 sample(s))
+      96,416 bytes maximum slop
+           8 MB total memory in use (1 MB lost due to fragmentation)
+
+                                Tot time (elapsed)  Avg pause  Max pause
+Gen  0     27032 colls, 27031 par    6.49s    0.81s     0.0000s    0.0015s
+Gen  1        35 colls,    35 par    0.39s    0.05s     0.0014s    0.0028s
+
+Parallel GC work balance: 4.05 (6799831 / 1680927, ideal 8)
+
+                     MUT time (elapsed)       GC time  (elapsed)
+Task  0 (worker) :   14.81s    ( 14.84s)       0.96s    (  0.97s)
+Task  1 (worker) :    0.00s    ( 15.81s)       0.00s    (  0.00s)
+Task  2 (bound)  :    0.03s    ( 15.80s)       0.01s    (  0.01s)
+Task  3 (worker) :   14.72s    ( 14.82s)       0.98s    (  0.99s)
+Task  4 (worker) :   14.70s    ( 14.84s)       0.96s    (  0.97s)
+Task  5 (worker) :   14.69s    ( 14.82s)       0.98s    (  0.99s)
+Task  6 (worker) :   14.69s    ( 14.82s)       0.98s    (  0.99s)
+Task  7 (worker) :   14.72s    ( 14.81s)       0.99s    (  1.00s)
+Task  8 (worker) :   14.76s    ( 14.83s)       0.97s    (  0.98s)
+Task  9 (worker) :   14.76s    ( 14.81s)       1.00s    (  1.00s)
+
+SPARKS: 1000 (1000 converted, 0 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+INIT    time    0.00s  (  0.00s elapsed)
+MUT     time  118.87s  ( 14.95s elapsed)
+GC      time    6.87s  (  0.86s elapsed)
+EXIT    time    0.00s  (  0.00s elapsed)
+Total   time  125.74s  ( 15.81s elapsed)
+
+Alloc rate    942,488,358 bytes per MUT second
+
+Productivity  94.5% of total user, 751.8% of total elapsed
+
+gc_alloc_block_sync: 1130880
+whitehole_spin: 0
+gen[0].sync: 0
+gen[1].sync: 175
+
+$ ./stmap +RTS -N8 -sstderr
+60364.38698300099
+ 112,033,885,088 bytes allocated in the heap
+  4,626,963,592 bytes copied during GC
+   2,101,264 bytes maximum residency (1846 sample(s))
+     652,528 bytes maximum slop
+          13 MB total memory in use (0 MB lost due to fragmentation)
+
+                                   Tot time (elapsed)  Avg pause  Max pause
+Gen  0     25497 colls, 25496 par   29.42s    3.70s     0.0001s    0.0022s
+Gen  1      1846 colls,  1846 par   17.97s    2.26s     0.0012s    0.0071s
+
+Parallel GC work balance: 2.00 (577773617 / 288947149, ideal 8)
+
+                    MUT time (elapsed)       GC time  (elapsed)
+Task  0 (worker) :   14.86s    ( 15.03s)       6.07s    (  6.10s)
+Task  1 (worker) :    0.00s    ( 21.13s)       0.00s    (  0.00s)
+Task  2 (bound)  :    0.03s    ( 21.11s)       0.02s    (  0.02s)
+Task  3 (worker) :   14.92s    ( 14.99s)       6.06s    (  6.14s)
+Task  4 (worker) :   14.88s    ( 15.02s)       6.07s    (  6.11s)
+Task  5 (worker) :   14.91s    ( 15.02s)       6.09s    (  6.12s)
+Task  6 (worker) :   14.92s    ( 15.04s)       6.07s    (  6.10s)
+Task  7 (worker) :   14.86s    ( 15.03s)       6.03s    (  6.11s)
+Task  8 (worker) :   14.86s    ( 15.03s)       6.07s    (  6.10s)
+Task  9 (worker) :   14.92s    ( 15.00s)       6.11s    (  6.13s)
+
+SPARKS: 1000 (1000 converted, 0 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+INIT    time    0.00s  (  0.00s elapsed)
+MUT     time  120.36s  ( 15.18s elapsed)
+GC      time   47.39s  (  5.96s elapsed)
+EXIT    time    0.00s  (  0.00s elapsed)
+Total   time  167.75s  ( 21.13s elapsed)
+
+Alloc rate    930,821,901 bytes per MUT second
+
+Productivity  71.7% of total user, 569.5% of total elapsed
+
+gc_alloc_block_sync: 1253157 
+whitehole_spin: 21
+gen[0].sync: 4
+gen[1].sync: 19789
+

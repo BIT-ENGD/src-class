@@ -1,0 +1,63 @@
+git commit -v
+
+{
+module Main where
+}
+
+%wrapper "monad"
+
+$commitChars = [$printable\t]
+@diffStart = diff\ \-\-git\ $commitChars*
+
+gitCommit :-
+
+ {
+^@diffStart$                   {makeAlexAction DiffDeclaration `andBegin` diff}
+^\# $commitChars*$             {makeAlexAction Comment}
+$commitChars*$                 {makeAlexAction MessageLine}
+}
+
+ {
+^@diffStart$                   {makeAlexAction DiffDeclaration}
+^\- $commitChars*$             {makeAlexAction DiffRemove}
+^\+ $commitChars*$             {makeAlexAction DiffAdd}
+^$commitChars*$                {makeAlexAction DiffContext}
+}
+
+.                                     ;
+[\n\r]                                ;
+
+{
+data GitCommitToken = Digest String
+                    | MessageLine String
+                    | Comment String
+                    | DiffDeclaration String
+                    | DiffAdd String
+                    | DiffRemove String
+                    | DiffContext String
+                    | CommitEOF
+                  deriving (Show, Eq)
+
+makeAlexAction ::Monad m => (String -> GitCommitToken) ->AlexInput ->Int ->m GitCommitToken
+makeAlexAction cons = \ (_,_,inp) len ->return $cons (take len inp)
+
+alexEOF = return CommitEOF
+
+alexMonadScanTokens ::Alex [GitCommitToken]
+alexMonadScanTokens = do                                                                                 
+  inp  alexEOF >>= \eof ->return [eof]
+    AlexError inp' ->alexError $ "lexical error: " ++ show inp'
+    AlexSkip  inp' len ->do
+        alexSetInput inp'
+        alexMonadScanTokens
+    AlexToken inp' len action ->do
+        alexSetInput inp'
+        token <- action inp len
+        tokens <-alexMonadScanTokens
+        return $ token : tokens
+
+main = do
+     s <- getContents
+     mapM_ print $ either (\_ -> []) id (runAlex s alexMonadScanTokens)
+}
+

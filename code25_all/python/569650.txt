@@ -1,0 +1,84 @@
+#NOTE: this is example code for my idea, you do not have
+#      to read this to answer the question(s).
+
+import threading
+from PyQt4 import QtCore, QtGui
+import re
+import copy
+
+class ProcessingThread(threading.Thread, QtCore.QObject):
+
+    __pyqtSignals__ = ( "progressUpdated(str)",
+                        "resultsReady(str)")
+
+    def __init__(self, docs):
+        self.docs = docs
+        self.progress = 0   #int between 0 and 100
+        self.results = []
+        threading.Thread.__init__(self)
+
+    def getResults(self):
+        return copy.deepcopy(self.results)
+
+    def run(self):
+        num_docs = len(self.docs) - 1
+        for i, doc in enumerate(self.docs):
+            processed_doc = self.processDoc(doc)
+            self.results.append(processed_doc)
+            new_progress = int((float(i)/num_docs)*100)
+
+            #emit signal only if progress has changed
+            if self.progress != new_progress:
+                self.emit(QtCore.SIGNAL("progressUpdated(str)"), self.getName())
+            self.progress = new_progress
+            if self.progress == 100:
+                self.emit(QtCore.SIGNAL("resultsReady(str)"), self.getName())
+
+    def processDoc(self, doc):
+        ''' this is tivial for shortness sake '''
+        return re.findall('<a [^>]*>.*?</a>', doc)
+
+
+class GuiApp(QtGui.QMainWindow):
+
+    def __init__(self):
+        self.processing_threads = {}  #{'thread_name': Thread(processing_thread)}
+        self.progress_object = {}     #{'thread_name': int(thread_progress)}
+        self.results_object = {}      #{'thread_name': []}
+        self.selected_thread = ''     #'thread_name'
+
+    def processDocs(self, docs):
+        #create new thread
+        p_thread = ProcessingThread(docs)
+        thread_name = "example_thread_name"
+        p_thread.setName(thread_name)
+        p_thread.start()
+
+        #add thread to dict of threads
+        self.processing_threads[thread_name] = p_thread
+
+        #init progress_object for this thread
+        self.progress_object[thread_name] = p_thread.progress  
+
+        #connect thread signals to GuiApp functions
+        QtCore.QObject.connect(p_thread, QtCore.SIGNAL('progressUpdated(str)'), self.updateProgressObject(thread_name))
+        QtCore.QObject.connect(p_thread, QtCore.SIGNAL('resultsReady(str)'), self.updateResultsObject(thread_name))
+
+    def updateProgressObject(self, thread_name):
+        #update progress_object for all threads
+        self.progress_object[thread_name] = self.processing_threads[thread_name].progress
+
+        #update progress bar for selected thread
+        if self.selected_thread == thread_name:
+            self.setProgressBar(self.progress_object[self.selected_thread])
+
+    def updateResultsObject(self, thread_name):
+        #update results_object for thread with results
+        self.results_object[thread_name] = self.processing_threads[thread_name].getResults()
+
+        #update results widget for selected thread
+        try:
+            self.setResultsWidget(self.results_object[thread_name])
+        except KeyError:
+            self.setResultsWidget(None)
+

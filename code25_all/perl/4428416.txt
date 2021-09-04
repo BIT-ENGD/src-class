@@ -1,0 +1,230 @@
+MyApp::Type::Field
+value
+Person
+MyApp::Type::Field
+size
+required
+MyApp::Person
+around
+MyApp::Person
+around
+MyApp::Type::Field
+size
+required
+around
+MyApp::Type::Field
+coerce 'MyApp::Type::Field'
+    => from 'Str'
+        => via { MyApp::Type::Field->new( value => $_ ) };
+
+has 'value'    => ( is => 'rw' );
+has 'size'     => ( is => 'ro', isa => 'Int',  writer => '_set_size',     predicate => 'has_size' );
+has 'required' => ( is => 'ro', isa => 'Bool', writer => '_set_required', predicate => 'has_required' );
+
+MyApp::Person
+has name => ( is => 'rw', isa => 'MyApp::Type::Field', lazy => 1, builder => '_build_name', coerce  => 1 );       
+
+sub _build_name {
+    print "Building name\n";
+    return MyApp::Type::Field->new( size => 255, required => 1 );
+}
+
+MyApp::Test
+print "Create new person with coercion\n";
+my $person = MyApp::Person->new();
+print "Set name\n";
+$person->name( 'Joe Bloggs' );
+print "Name set\n";
+printf ( "Name: %s [%d][%d]\n\n", $person->name->value, $person->name->size, $person->name->required );
+
+print "Create new person without coercion\n";
+$person = MyApp::Person->new();
+print "Set name\n";
+$person->name->value( 'Joe Bloggs' );
+print "Name set\n";
+printf ( "Name: %s [%d][%d]\n\n", $person->name->value, $person->name->size, $person->name->required );
+
+Create new person with coercion
+Set name
+Name set
+Name: Joe Bloggs [0][0]
+
+Create new person without coercion
+Set name
+Building name
+Name set
+Name: Joe Bloggs [255][2]
+
+around
+MyApp::Person
+size
+required
+around 'name' => sub {
+    my $orig = shift;
+    my $self = shift;
+
+    print "Around name\n";
+
+    unless ( $self->$orig->has_size ) {
+        print "Setting size\n";
+        $self->$orig->_set_size( 255 );
+    };
+
+    unless ( $self->$orig->has_required ) {
+        print "Setting required\n";
+        $self->$orig->_set_required( 1 );
+    };
+
+    $self->$orig( @_ );
+};
+
+sub _build_name {
+    print "Building name\n";
+    return MyApp::Type::Field->new();
+}
+
+MyApp::Test
+size
+required
+Create new person with coercion
+Set name
+Around name
+Building name
+Setting size
+Setting required
+Name set
+Around name
+Setting size
+Setting required
+Around name
+Around name
+Name: Joe Bloggs [255][3]
+
+Create new person without coercion
+Set name
+Around name
+Building name
+Name set
+Around name
+Around name
+Around name
+Name: Joe Bloggs [255][4]
+
+MyApp::Person
+Str
+MyApp::Type::Field
+handles
+$person->get_first_name
+$person->first_name->value
+package MyApp::Type::Field;
+
+use Moose;
+
+has 'value'     => (
+    is          => 'rw',
+);
+
+has 'size'      => (
+    is          => 'ro',
+    isa         => 'Int',
+    writer      => '_set_size',
+);
+
+has 'required'  => (
+    is          => 'ro',
+    isa         => 'Bool',
+    writer      => '_set_required',
+);
+
+__PACKAGE__->meta->make_immutable;
+1;
+
+package MyApp::Person;
+use Moose;
+use Moose::Util::TypeConstraints;
+use namespace::autoclean;
+
+{
+    my $attrs = {
+        title      => { size =>  5, required => 0 },
+        first_name => { size => 45, required => 1 },
+        last_name  => { size => 45, required => 1 },
+    };
+
+    foreach my $attr ( keys %{$attrs} ) {
+
+        my $subtype = 'MyApp::Person::' . ucfirst $attr;
+
+        subtype $subtype => as 'MyApp::Type::Field';
+
+        coerce $subtype
+           => from 'Str'
+               => via { MyApp::Type::Field->new(
+                   value    => $_,
+                   size     => $attrs->{$attr}{'size'},
+                   required => $attrs->{$attr}{'required'},
+               ) };
+
+        has $attr   => (
+            is      => 'rw',
+            isa     => $subtype,
+            coerce  => 1,
+            writer  => "set_$attr",
+            handles => { "get_$attr" => 'value' },
+            default => sub {
+                MyApp::Type::Field->new(
+                    size     => $attrs->{$attr}{'size'},
+                    required => $attrs->{$attr}{'required'},
+                )
+            },
+        );
+    }
+}
+
+__PACKAGE__->meta->make_immutable;
+1;
+
+package MyApp::Test;
+
+sub print_person {
+    my $person = shift;
+
+    printf "Title:      %s [%d][%d]\n" .
+           "First name: %s [%d][%d]\n" .
+           "Last name:  %s [%d][%d]\n",
+           $person->title->value || '[undef]',
+           $person->title->size,
+           $person->title->required,
+           $person->get_first_name || '[undef]',
+           $person->first_name->size,
+           $person->first_name->required,
+           $person->get_last_name || '[undef]',
+           $person->last_name->size,
+           $person->last_name->required;
+}
+
+my $person;
+
+$person = MyApp::Person->new(
+    title      => 'Mr',
+    first_name => 'Joe',
+    last_name  => 'Bloggs',
+);
+
+print_person( $person );
+
+$person = MyApp::Person->new();
+$person->set_first_name( 'Joe' );
+$person->set_last_name( 'Bloggs' );
+
+print_person( $person );
+
+1;
+
+Title:      Mr [5][0]
+First name: Joe [45][6]
+Last name:  Bloggs [45][7]
+Title:      [undef] [5][0]
+First name: Joe [45][8]
+Last name:  Bloggs [45][9]
+

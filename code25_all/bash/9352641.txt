@@ -1,0 +1,54 @@
+#!/bin/bash
+
+PROGNAME=$(basename $(readlink -f $0))
+LOG="$PROGNAME.log"
+PIPE_LOG="$PROGNAME-$$-log"
+PIPE_ECHO="$PROGNAME-$$-echo"
+
+# program output to log file and optionally echo to screen (if $1 is "-e")
+log () {
+  if [ "$1" = '-e' ]; then 
+    shift
+    $@ > $PIPE_ECHO 2>&1 
+  else 
+    $@ > $PIPE_LOG 2>&1 
+  fi
+}
+
+# create named pipes if not exist
+if [[ ! -p $PIPE_LOG ]]; then 
+  mkfifo -m 600 $PIPE_LOG
+fi
+if [[ ! -p $PIPE_ECHO ]]; then 
+  mkfifo -m 600 $PIPE_ECHO
+fi
+
+# cat pipe data to log file
+while read data; do
+  echo -e "$PROGNAME: $data" >> $LOG 
+done < $PIPE_LOG &
+
+# cat pipe data to log file & echo output to screen
+while read data; do
+  echo -e "$PROGNAME: $data"
+  log echo $data   # this doesn't work
+  echo -e $data > $PIPE_LOG 2>&1   # and neither does this
+  echo -e "$PROGNAME: $data" >> $LOG   # so I have to do this
+done < $PIPE_ECHO &
+
+# clean up temp files & pipes
+clean_up () {
+  # remove named pipes
+  rm -f $PIPE_LOG
+  rm -f $PIPE_ECHO
+}
+#execute "clean_up" on exit
+trap "clean_up" EXIT 
+
+log echo "Log File Only"
+log -e echo "Echo & Log File"
+
+$data
+$PIPE_ECHO
+$PIPE_LOG
+$PIPE_LOG

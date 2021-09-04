@@ -1,0 +1,42 @@
+Internal task engine error: nothing running.  This usually indicates a cycle in tasks.
+
+  /*
+    In order to solve the cycle generated during the dist task in play 2.1
+  */
+  val distHack = TaskKey[File]("dist-hack", "Hack to publish dist")
+
+  val myDistSettings = Seq[Setting[_]] (
+      publish <<= (publish) dependsOn play.Project.dist,
+      publishLocal <<= (publishLocal) dependsOn play.Project.dist,
+      artifact in distHack ~= { (art: Artifact) =>
+        art.copy(`type` = "zip", extension = "zip")
+      },
+      distHack <<= (distDirectory, version) map { (d, v) =>
+        val packageName = "%s-%s" format(appName, v)
+        println(packageName)
+        val zip = d / (packageName + ".zip")
+        zip
+      }
+    ) ++ Seq(addArtifact(artifact in distHack, distHack).settings: _*)
+
+    lazy val main = play.Project(appName, appVersion, appDependencies)
+        ...
+    .settings(addArtifact(Artifact(appName, "zip","zip"), dist).settings : _*)
+            ...
+    .settings(
+        // disable publishing the main jar produced by `package`
+        publishArtifact in (Compile, packageBin) := false,
+
+        // disable publishing the main API jar
+        publishArtifact in (Compile, packageDoc) := true,
+
+        // disable publishing the main sources jar
+        publishArtifact in (Compile, packageSrc) := false,
+        publishArtifact in Test := false,
+        crossPaths := false, 
+        publishTo := Some("Artifactory Realm" at "somewhere"),
+        credentials += Credentials(".credentials"),
+        scalacOptions ++= Seq("-feature")
+    )
+    .settings(myDistSettings: _*)
+

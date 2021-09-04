@@ -1,0 +1,114 @@
+func createBackgroundVideo(CompletionHandler: (path: String)->Void) {
+
+    var maybeError: NSError?
+    let fileMgr = NSFileManager.defaultManager()
+    let docDirectory = NSHomeDirectory().stringByAppendingPathComponent("Documents")
+    let videoOutputPath = docDirectory.stringByAppendingPathComponent(BgVideoName)
+
+    if (!fileMgr.removeItemAtPath(videoOutputPath, error: &maybeError)) {
+        NSLog("Umable to delete file: %@", maybeError!.localizedDescription)
+    }
+
+    println(videoOutputPath)
+
+    let videoWriter = AVAssetWriter(
+        URL: NSURL(fileURLWithPath: videoOutputPath),
+        fileType: AVFileTypeQuickTimeMovie,
+        error: &maybeError
+    )
+
+    var videoSettings = [
+        AVVideoCodecKey: AVVideoCodecH264,
+        AVVideoWidthKey: NSNumber(float: Float(videoWidth)),
+        AVVideoHeightKey: NSNumber(float: Float(videoHeight))
+    ]
+
+    var avAssetInput = AVAssetWriterInput(mediaType: AVMediaTypeVideo, outputSettings: videoSettings)
+    avAssetInput.expectsMediaDataInRealTime = true
+
+    var adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: avAssetInput, sourcePixelBufferAttributes: nil)
+
+    videoWriter.addInput(avAssetInput)
+    videoWriter.startWriting()
+    videoWriter.startSessionAtSourceTime(kCMTimeZero)
+
+    var frameCount: Int64 = 0;
+    var buffer: CVPixelBufferRef
+
+    //buffer = PixelBuffer.pixelBufferFromCGImage2(self.bgImage.CGImage, andSize: CGSizeMake(videoWidth, videoHeight)).takeUnretainedValue()
+
+    for i in 1...2 {
+        buffer = PixelBuffer.pixelBufferFromCGImage2(self.bgImage.CGImage, andSize: CGSizeMake(videoWidth, videoHeight)).takeUnretainedValue()
+        var appendOk = false
+        var retries: Int = 0
+
+        while (!appendOk && retries < 30) {
+            if (adaptor.assetWriterInput.readyForMoreMediaData) {
+                let frameTime = CMTimeMake(frameCount, 1);
+                appendOk = adaptor.appendPixelBuffer(buffer, withPresentationTime: frameTime)
+                if (!appendOk) {
+                    println("some erorr occurred", videoWriter.error)
+                } else {
+                    println("pixel written")
+                }
+            } else {
+                println("adaptor is not ready....")
+                NSThread.sleepForTimeInterval(0.1)
+            }
+            retries++
+        }
+
+        if (!appendOk) {
+            println("Error appending image....")
+        }
+
+        frameCount++
+    }
+
+    avAssetInput.markAsFinished()
+    videoWriter.finishWritingWithCompletionHandler({() -> Void in
+        println("finished writing...")
+        CompletionHandler(path: videoOutputPath)
+    })
+}
+
++ (CVPixelBufferRef) pixelBufferFromCGImage2: (CGImageRef) image andSize:(CGSize) size {
+
+    NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:
+                             [NSNumber numberWithBool:YES], kCVPixelBufferCGImageCompatibilityKey,
+                             [NSNumber numberWithBool:YES], kCVPixelBufferCGBitmapContextCompatibilityKey,
+                             nil];
+    CVPixelBufferRef pxbuffer = NULL;
+
+    CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault,
+                                          size.width,
+                                          size.height,
+                                          kCVPixelFormatType_32ARGB,
+                                          (__bridge CFDictionaryRef) options,
+                                          &pxbuffer);
+    if (status != kCVReturnSuccess){
+        NSLog(@"Failed to create pixel buffer");
+    }
+
+    CVPixelBufferLockBaseAddress(pxbuffer, 0);
+    void *pxdata = CVPixelBufferGetBaseAddress(pxbuffer);
+
+    CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pxdata, size.width,
+                                                 size.height, 8, 4*size.width, rgbColorSpace,
+                                                 kCGImageAlphaPremultipliedFirst);
+
+    float offsetY = size.height / 2 - CGImageGetHeight(image) / 2;
+    float offsetX = size.width / 2 - CGImageGetWidth(image) / 2;
+
+    CGContextConcatCTM(context, CGAffineTransformMakeRotation(0));
+    CGContextDrawImage(context, CGRectMake(offsetX, offsetY, CGImageGetWidth(image),
+                                           CGImageGetHeight(image)), image);
+    CGColorSpaceRelease(rgbColorSpace);
+    CGContextRelease(context);
+
+    CVPixelBufferUnlockBaseAddress(pxbuffer, 0);
+
+    return pxbuffer;
+}
+

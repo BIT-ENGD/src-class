@@ -1,0 +1,145 @@
+
+{-# LANGUAGE CPP,MagicHash , BangPatterns ,GeneralizedNewtypeDeriving #-}
+module Main(main,d,e,s,t,D(..),E(..),S(..),T(..))
+where       
+import GHC.Base  
+import Data.List
+import Data.Word
+import Control.DeepSeq
+import Criterion.Main
+
+data    D = A | B | C  deriving(Eq,Ord,Show,Enum,Bounded)
+newtype E = E Word8    deriving(Eq,Ord,Show,Enum)
+
+data    S = S                !D deriving (Eq,Ord,Show) 
+data    T = T {-# UNPACK #-} !E deriving (Eq,Ord,Show)
+
+-- I assume the following definitions are all correct --- otherwise
+-- the whole benchmark may be useless
+instance NFData D where
+  rnf !x         = ()
+instance NFData E where
+  rnf (E !x)     = ()
+instance NFData S where
+  rnf (S !x)     = ()
+instance NFData T where
+  rnf (T (E !x)) = ()  
+
+instance Enum S where
+  toEnum         = S . toEnum
+  fromEnum (S x) = fromEnum x 
+instance Enum T where
+  toEnum         = T . toEnum
+  fromEnum (T x) = fromEnum x 
+
+instance Bounded E where
+  minBound = E 0
+  maxBound = E 2
+instance Bounded S where
+  minBound = S minBound
+  maxBound = S maxBound
+instance Bounded T where
+  minBound = T minBound
+  maxBound = T maxBound
+
+succ' :: (Eq a,Enum a,Bounded a) => a -> a
+succ' x | x == maxBound = minBound
+          | otherwise        = succ x
+
+-- Those numbers below are for easy browsing of the assembly code
+d :: D -> Int#
+d x = case x of
+  A -> 1234#
+  B -> 5678#
+  C -> 9412#
+
+e :: E -> Int#
+e x = case x of     
+  E 0 -> 1357#
+  E 1 -> 2468#
+  E _ -> 9914#
+
+s :: S -> Int#
+s x = case x of     
+  S A -> 9876#
+  S B -> 5432#
+  S C -> 1097#
+
+t :: T -> Int#
+t x = case x of     
+  T (E 0) -> 9630#
+  T (E 1) -> 8529#
+  T (E _) -> 7418#
+
+
+benchmark :: IO ()
+benchmark = defaultMain [ bench "d" $ whnf d' A
+                        , bench "e" $ whnf e' (E 0)
+                        , bench "s" $ whnf s' (S A) 
+                        , bench "t" $ whnf t' (T (E 0))
+                        ]
+  where
+    d' x = I# (d x)
+    e' x = I# (e x)
+    s' x = I# (s x)
+    t' x = I# (t x)    
+
+heapTest :: (NFData a,Show a,Eq a,Enum a,Bounded a) => a -> IO ()
+heapTest x = print $ head $ force $ reverse $ take 100000 $ iterate (force . succ') x
+
+main :: IO ()
+main =    
+#if   defined TEST_D
+     heapTest (A :: D)
+#elif defined TEST_E                
+     heapTest (E 0 :: E)
+#elif defined TEST_S
+     heapTest (S A :: S)
+#elif defined TEST_T                
+     heapTest (T (E 0) :: T)
+#else
+     benchmark
+#endif
+
+-- A minor rant: 
+-- For reliable statistics, I hope Criterion will run the code in *random order*,
+-- at least for comparing functions with the same type. Elapsed times on my system are just too
+-- noisy to conclude anything.
+
+
+GHC=/usr/bin/ghc
+# If you dont't like the ATT syntax in the output assembly, use this: -fllvm -optlc --x86-asm-syntax=intel
+GHC_DEBUG_FLAGS= -keep-s-file -keep-llvm-file  # -optlc --x86-asm-syntax=intel
+GHCFLAGS=-O2 -funbox-strict-fields -rtsopts -fllvm -fwarn-missing-signatures
+GHC_MAKE=$(GHC) --make $(GHCFLAGS)
+GHC_PROF_MAKE=$(GHC)  -prof  -auto-all -caf-all --make $(GHCFLAGS)
+
+all : benchmark enumtest_all
+
+enumtest_d : EnumTest.hs
+    $(GHC_MAKE) -o $@ $^ -DTEST_D
+
+enumtest_e : EnumTest.hs
+    $(GHC_MAKE) -o $@ $^ -DTEST_E
+
+enumtest_s : EnumTest.hs
+    $(GHC_MAKE) -o $@ $^ -DTEST_S
+
+enumtest_t : EnumTest.hs
+    $(GHC_MAKE) -o $@ $^ -DTEST_T
+
+enumtest_all : enumtest_d enumtest_e enumtest_s enumtest_t
+    for x in $^; do ./$$x +RTS -sstderr ;done
+
+benchmark : EnumTest
+    time ./$^
+
+% : %.hs
+    $(GHC_MAKE) -o $@ $^
+
+%.core : %.hs
+    $(GHC)  -S  $(GHCFLAGS)   $(GHC_DEBUG_FLAGS) -ddump-simpl -dsuppress-all -dsuppress-coercions -ddump-stranal $^ > $@
+
+clean :
+    rm *.hi *.o *.core *.s enumtest_? ; true
+

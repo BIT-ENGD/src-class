@@ -1,0 +1,53 @@
+sub AUTOLOAD {
+    our $AUTOLOAD;
+
+    (my $method = $AUTOLOAD) =~ s/.*:://s; # remove package name
+    if ($method eq 'tcpdump' && $tcpdump) {
+        eval q(
+        sub tcpdump {
+            my $msg = shift;
+            warn gf_time()." Thread ".threads->tid().": $msg\n";
+        }
+        );
+    } elsif ($method eq 'loginfo' && $debug) {
+        eval q(
+        sub loginfo {
+            my $msg = shift;
+            $msg =~ s/$CRLF/\n/g;
+            print gf_time()." Thread ".threads->tid().": $msg\n";
+        }
+        );
+    } elsif ($method eq 'build_get') {
+        if ($pipelining) {
+            eval q(
+            sub build_get {
+                my $url = shift;
+                my $base = shift;
+                $url = "http://".$url unless $url =~ /^http/;
+                return "GET $url HTTP/1.1${CRLF}Host: $base$CRLF$CRLF";
+            }    
+            );
+        } else {
+            eval q( 
+            sub build_get {
+                my $url = shift;
+                my $base = shift;
+                $url = "http://".$url unless $url =~ /^http/;
+                return "GET $url HTTP/1.1${CRLF}Host: $base${CRLF}Connection: close$CRLF$CRLF";
+            }    
+            );
+        }    
+    } elsif ($method eq 'grow') {
+        eval q{ require Convert::Scalar qw(grow); };
+        if ($@) {
+            eval q( sub grow {} );
+        }
+        goto &$method;
+    } else {
+        eval "sub $method {}";
+        return;
+    }
+    die $@ if $@;
+    goto &$method;
+}
+

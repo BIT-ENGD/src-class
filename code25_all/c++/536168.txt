@@ -1,0 +1,596 @@
+#include "glengine.h"
+
+
+
+int WINAPI WinMain(
+    HINSTANCE hInstance,
+    HINSTANCE hPrevInstance,
+    LPSTR lpCmdLine,
+    int nCmdShow
+)
+{
+//Create a glengine instance
+ultragl::glengine *gle = new ultragl::glengine();
+
+if(gle->init())
+    gle->run();
+
+else
+    std::cout << "glengine initializiation failed!" << std::endl;
+
+//If we can't initialize, or the lesson has quit we delete the instance
+delete gle;
+
+return 0;
+};
+
+//we need to include window first because GLee needs to be included before GL.h
+#include "window.h"
+#include <math.h>           // Math Library Header File
+#include <vector>
+#include <stdio.h>
+
+using namespace std;
+
+namespace ultragl
+{
+    class glengine
+    {
+        protected:
+                window m_Window; ///< The window for this lesson
+                unsigned int m_Keys[SDLK_LAST]; ///< Stores keys that are pressed
+                float piover180;
+
+                virtual void draw();
+                virtual void resize(int x, int y);
+                virtual bool processEvents();
+                void controls();
+
+        private:
+            /*
+             * We need a structure to store our vertices in, otherwise we
+             * just had a huge bunch of floats in the end
+             */
+            struct Vertex
+            {
+                float x, y, z;
+
+                Vertex(){}
+
+                Vertex(float x, float y, float z)
+                {
+                    this->x = x;
+                    this->y = y;
+                    this->z = z;
+                }
+            };
+
+            struct particle
+            {
+                public :
+                double angle;
+                double speed;
+                Vertex v;
+                int r;
+                int g;
+                int b;
+                int a;
+
+                particle(double angle, double speed, Vertex v, int r, int g, int b, int a)
+                {
+                    this->angle = angle;
+                    this->speed = speed;
+                    this->v = v;
+                    this->r = r;
+                    this->g = g;
+                    this->b = b;
+                    this->a = a;
+                }
+
+                particle()
+                {
+
+                }
+
+            };
+
+            particle p[500];
+            float particlesize;
+
+
+        public:
+            glengine();
+            ~glengine();
+
+            virtual void run();
+            virtual bool init();
+            void glengine::test2(int num);
+            void glengine::update();
+    };
+};
+
+#include <string>
+#include <iostream>
+
+#include "GLee/GLee.h"
+
+#include <SDL/SDL.h>
+#include <SDL/SDL_opengl.h>
+#include <GL/glu.h>
+
+using namespace std;
+
+namespace ultragl
+{
+    class window
+    {
+        private:
+            int w_height;
+            int w_width;
+            int w_bpp;
+            bool w_fullscreen;
+            string w_title;
+
+        public:
+            window();
+            ~window();
+
+            bool createWindow(int width, int height, int bpp, bool fullscreen, const string& title);
+            void setSize(int width, int height);
+            int getHeight();
+            int getWidth();
+    };
+};
+
+#include "glengine.h"
+
+namespace ultragl{
+
+    glengine::glengine()
+    {
+        piover180 = 0.0174532925f;
+    }
+
+    glengine::~glengine()
+    {
+
+    }
+
+    void glengine::resize(int x, int y)
+    {
+        std::cout << "Resizing Window to " << x << "x" << y << std::endl;
+
+        if (y <= 0)
+        {
+            y = 1;
+        }
+
+        glViewport(0,0,x,y);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45.0f,(GLfloat)x/(GLfloat)y,1.0f,100.0f);
+
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+    }
+
+    bool glengine::processEvents()
+    {
+        SDL_Event event;
+
+        while (SDL_PollEvent(&event))//get all events
+        {
+            switch (event.type)
+            {
+                // Quit event
+                case SDL_QUIT:
+                {
+                    // Return false because we are quitting.
+                    return false;
+                }
+
+                case SDL_KEYDOWN:
+                {
+                    SDLKey sym = event.key.keysym.sym;
+
+                    if(sym == SDLK_ESCAPE) //Quit if escape was pressed
+                    {
+                        return false;
+                    }
+
+                    m_Keys[sym] = 1;
+                    break;
+                }
+
+                case SDL_KEYUP:
+                {
+                    SDLKey sym = event.key.keysym.sym;
+                    m_Keys[sym] = 0;
+                    break;
+                }
+
+                case SDL_VIDEORESIZE:
+                {
+                    //the window has been resized so we need to set up our viewport and projection according to the new size
+                    resize(event.resize.w, event.resize.h);
+                    break;
+                }
+                // Default case
+                default:
+                {
+                    break;
+                }
+            }
+        }
+
+        return true;
+    }
+
+
+    bool glengine::init()
+    {
+        srand( time( NULL ) );
+
+        for(int i = 0; i < 500; i++)
+            p[i] = particle(0, 0, Vertex(0.0f, 0.0f, 0.0f), 0, 0, 0, 0);
+
+
+        if (!m_Window.createWindow(640, 480, 32, false, "Paricle Test GL"))
+        {
+            return false;
+        }
+
+        particlesize = 0.01;
+        glShadeModel(GL_SMOOTH);                // Enable Smooth Shading
+        glClearColor(0.0f, 0.0f, 0.0f, 0.5f);   // Black Background
+        glClearDepth(1.0f);                     // Depth Buffer Setup
+        glEnable(GL_DEPTH_TEST);                // Enables Depth Testing
+        glDepthFunc(GL_LEQUAL);                 // The Type Of Depth Testing To Do
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE , GL_ONE_MINUS_SRC_ALPHA);
+
+        return true;
+    }
+
+    void glengine::test2(int num)
+    {
+        glPushMatrix();
+            glTranslatef(p[num].v.x, p[num].v.y, p[num].v.z);
+            glBegin(GL_QUADS);
+                glColor4i(p[num].r, p[num].g, p[num].b, p[num].a);                // Green for x axis
+                    glVertex3f(-particlesize, -particlesize,  particlesize);
+                    glVertex3f( particlesize, -particlesize,  particlesize);
+                    glVertex3f( particlesize,  particlesize,  particlesize);
+                    glVertex3f(-particlesize,  particlesize,  particlesize);
+            glEnd();
+
+        glPopMatrix();
+    }
+
+    void glengine::draw()
+    {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear Screen And Depth Buffer
+        glLoadIdentity();                   // Reset The Current Modelview Matrix
+
+        gluLookAt(0, 5, 20, 0, 0, 0, 0, 0, 0);
+        for(int i = 0; i < 500; i++)
+            test2(i);
+    }
+
+    void glengine::update()
+    {
+        for(int i = 0; i < 500; i++)
+        {
+            if(p[i].a <= 0)
+                p[i] = particle(5 + rand() % 360, (rand() % 10) * 0.1, Vertex(0.0f, 0.0f, 0.0f), 0, 255, 255, 255);
+
+            else
+                p[i].a -= 1;
+
+            p[i].v.x += (sin(p[i].angle * (3.14159265/180)) * p[i].speed);
+            p[i].v.y -= (cos(p[i].angle * (3.14159265/180)) * p[i].speed);
+        }
+    }
+
+    void glengine::run()
+    {
+        while(processEvents())
+        {
+            update();
+            draw();
+            SDL_GL_SwapBuffers();
+        }
+    }
+};
+
+#include "window.h"
+
+namespace ultragl
+{
+    window::window(): w_width(0), w_height(0), w_bpp(0), w_fullscreen(false)
+    {
+
+    }
+
+    window::~window()
+    {
+        SDL_Quit();
+    }
+
+    bool window::createWindow(int width, int height, int bpp, bool fullscreen, const string& title)
+    {
+        if( SDL_Init( SDL_INIT_VIDEO ) != 0 )
+            return false;
+
+        w_height = height;
+        w_width = width;
+        w_title = title;
+        w_fullscreen = fullscreen;
+        w_bpp = bpp;
+
+        //Set lowest possiable values.
+        SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 5);
+        SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 5);
+        SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 5);
+        SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 5);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+
+        //Set title.
+        SDL_WM_SetCaption(title.c_str(), title.c_str());
+
+        // Flags tell SDL about the type of window we are creating.
+        int flags = SDL_OPENGL;
+
+        if(fullscreen == true)
+            flags |= SDL_FULLSCREEN;
+
+        // Create window
+        SDL_Surface * screen = SDL_SetVideoMode( width, height, bpp, flags );
+
+        if(screen == 0)
+            return false;
+
+        //SDL doesn't trigger off a ResizeEvent at startup, but as we need this for OpenGL, we do this ourself
+        SDL_Event resizeEvent;
+        resizeEvent.type = SDL_VIDEORESIZE;
+        resizeEvent.resize.w = width;
+        resizeEvent.resize.h = height;
+
+        SDL_PushEvent(&resizeEvent);
+
+        return true;
+    }
+
+    void window::setSize(int width, int height)
+    {
+        w_height = height;
+        w_width = width;
+    }
+
+    int window::getHeight()
+    {
+        return w_height;
+    }
+
+    int window::getWidth()
+    {
+        return w_width;
+    }
+};
+
+#include "glengine.h"
+#include "SOIL/SOIL.h"
+#include "SOIL/stb_image_aug.h"
+#include "SOIL/image_helper.h"
+#include "SOIL/image_DXT.h"
+
+namespace ultragl{
+
+    glengine::glengine()
+    {
+        piover180 = 0.0174532925f;
+    }
+
+    glengine::~glengine()
+    {
+
+    }
+
+    void glengine::resize(int x, int y)
+    {
+        std::cout << "Resizing Window to " << x << "x" << y << std::endl;
+
+        if (y <= 0)
+        {
+            y = 1;
+        }
+
+        glViewport(0,0,x,y);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45.0f,(GLfloat)x/(GLfloat)y,1.0f,1000.0f);
+
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+    }
+
+    bool glengine::processEvents()
+    {
+        SDL_Event event;
+
+        while (SDL_PollEvent(&event))//get all events
+        {
+            switch (event.type)
+            {
+                // Quit event
+                case SDL_QUIT:
+                {
+                    // Return false because we are quitting.
+                    return false;
+                }
+
+                case SDL_KEYDOWN:
+                {
+                    SDLKey sym = event.key.keysym.sym;
+
+                    if(sym == SDLK_ESCAPE) //Quit if escape was pressed
+                    {
+                        return false;
+                    }
+
+                    m_Keys[sym] = 1;
+                    break;
+                }
+
+                case SDL_KEYUP:
+                {
+                    SDLKey sym = event.key.keysym.sym;
+                    m_Keys[sym] = 0;
+                    break;
+                }
+
+                case SDL_VIDEORESIZE:
+                {
+                    //the window has been resized so we need to set up our viewport and projection according to the new size
+                    resize(event.resize.w, event.resize.h);
+                    break;
+                }
+                // Default case
+                default:
+                {
+                    break;
+                }
+            }
+        }
+
+        return true;
+    }
+
+
+    bool glengine::init()
+    {
+        srand( time( NULL ) );
+
+        for(int i = 0; i < 500; i++)
+            p[i] = particle(0, 0, Vertex(0.0f, 0.0f, 0.0f), 0, 0, 0, 0);
+
+
+        if (!m_Window.createWindow(640, 480, 32, false, "Paricle Test GL"))
+        {
+            return false;
+        }
+
+        particlesize = 10.01;
+        glShadeModel(GL_SMOOTH);                // Enable Smooth Shading
+        glClearColor(0.0f, 0.0f, 0.0f, 0.5f);   // Black Background
+        glClearDepth(1.0f);                     // Depth Buffer Setup
+        glEnable(GL_DEPTH_TEST);                // Enables Depth Testing
+        glDepthFunc(GL_LEQUAL);                 // The Type Of Depth Testing To Do
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE , GL_ONE_MINUS_SRC_ALPHA);
+
+        return true;
+    }
+
+    void glengine::test2(int num)
+    {
+        //glPushMatrix();
+            //glTranslatef(p[num].v.x, p[num].v.y, p[num].v.z);
+                glColor4i(255, 255, 255, 255);
+
+        glBegin(GL_QUADS);
+            glNormal3f( 0.0f, 0.0f, 1.0f);
+            glVertex3f(-particlesize, -particlesize,  particlesize);
+            glVertex3f( particlesize, -particlesize,  particlesize);
+            glVertex3f( particlesize,  particlesize,  particlesize);
+            glVertex3f(-particlesize,  particlesize,  particlesize);
+        glEnd();
+
+        // Back Face
+        glBegin(GL_QUADS);
+            glNormal3f( 0.0f, 0.0f,-1.0f);
+            glVertex3f(-particlesize, -particlesize, -particlesize);
+            glVertex3f(-particlesize,  particlesize, -particlesize);
+            glVertex3f( particlesize,  particlesize, -particlesize);
+            glVertex3f( particlesize, -particlesize, -particlesize);
+        glEnd();
+
+        // Top Face
+        glBegin(GL_QUADS);
+            glNormal3f( 0.0f, 1.0f, 0.0f);
+            glVertex3f(-particlesize,  particlesize, -particlesize);
+            glVertex3f(-particlesize,  particlesize,  particlesize);
+            glVertex3f( particlesize,  particlesize,  particlesize);
+            glVertex3f( particlesize,  particlesize, -particlesize);
+        glEnd();
+
+        // Bottom Face
+        glBegin(GL_QUADS);
+            glNormal3f( 0.0f,-1.0f, 0.0f);
+            glVertex3f(-particlesize, -particlesize, -particlesize);
+            glVertex3f( particlesize, -particlesize, -particlesize);
+            glVertex3f( particlesize, -particlesize,  particlesize);
+            glVertex3f(-particlesize, -particlesize,  particlesize);
+        glEnd();
+
+            // Right face
+        glBegin(GL_QUADS);
+            glNormal3f( 1.0f, 0.0f, 0.0f);
+            glVertex3f( particlesize, -particlesize, -particlesize);
+            glVertex3f( particlesize,  particlesize, -particlesize);
+            glVertex3f( particlesize,  particlesize,  particlesize);
+            glVertex3f( particlesize, -particlesize,  particlesize);
+        glEnd();
+
+            // Left Face
+        glBegin(GL_QUADS);
+            glNormal3f(-1.0f, 0.0f, 0.0f);
+            glVertex3f(-particlesize, -particlesize, -particlesize);
+            glVertex3f(-particlesize, -particlesize,  particlesize);
+            glVertex3f(-particlesize,  particlesize,  particlesize);
+            glVertex3f(-particlesize,  particlesize, -particlesize);
+        glEnd();
+
+
+        //glPopMatrix();
+    }
+
+    void glengine::draw()
+    {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear Screen And Depth Buffer
+        glLoadIdentity();                   // Reset The Current Modelview Matrix
+
+        gluLookAt(0, 5, 20, 0, 0, 0, 0, 1, 0);
+        for(int i = 0; i < 500; i++)
+            test2(i);
+    }
+
+    void glengine::update()
+    {
+        for(int i = 0; i < 500; i++)
+        {
+            if(p[i].a <= 0)
+                p[i] = particle(5 + rand() % 360, (rand() % 10) * 0.1, Vertex(0.0f, 0.0f, -5.0f), 0, 255, 255, 255);
+
+            else
+                p[i].a -= 1;
+
+            p[i].v.x += (sin(p[i].angle * (3.14159265/180)) * p[i].speed);
+            p[i].v.y -= (cos(p[i].angle * (3.14159265/180)) * p[i].speed);
+        }
+    }
+
+    void glengine::run()
+    {
+        while(processEvents())
+        {
+            update();
+            draw();
+            SDL_GL_SwapBuffers();
+        }
+    }
+};
+

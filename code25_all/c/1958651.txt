@@ -1,0 +1,84 @@
+ls -hal | sort | grep p | wc
+
+#include <sys/types.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+
+#define READ_END 0
+#define WRITE_END 1
+#define CMDS_NO 5
+
+int main (int argc, char **argv) 
+{
+    pid_t pid;
+    int new_fds[2];
+    int old_fds[2];
+
+    char *array[CMDS_NO];
+    char *param[CMDS_NO];
+
+    array[0]="ls";
+    array[1]="sort";
+    array[2]="grep";
+    array[3]="grep";
+    array[4]="wc";
+
+    param[0]="-hal";
+    param[1]=NULL;
+    param[2]="p";
+    param[3]="out";
+    param[4]=NULL;
+
+
+    for (int i=0; i<CMDS_NO; i++) {
+
+        if (i<CMDS_NO) //if there is a next command 
+           pipe(new_fds);
+
+        pid=fork();
+
+        if (pid==0) { //if child
+            if (i!=0) { //if there is ap revoius commmand
+                dup2(old_fds[0], 0);
+                close(old_fds[0]);
+                close(old_fds[1]);
+            }
+
+            if (i!=(CMDS_NO-1)) { //TROUBLED LINE i<CMDS_NO does not work,  
+                                  //if there is a next command
+                close(new_fds[0]);
+                dup2(new_fds[1],1);
+                close(new_fds[1]);
+            }
+            execlp(array[i], array[i], param[i], NULL);
+
+            } else {
+                if (i!=0) { //if there is a previous command
+                    close(old_fds[0]);
+                    close(old_fds[1]);
+                }
+
+                if (i<CMDS_NO) { //if there is a next command
+                    old_fds[0] = new_fds[0];
+                    old_fds[1] = new_fds[1];
+                }
+            }
+     }
+     if (CMDS_NO>1) {
+        close(old_fds[0]);
+        close(old_fds[1]);
+     }     
+
+     while (1) { //wait for child processes to end
+         wait(NULL);
+         if(errno== ECHILD) {
+             printf("all children ended\n"); 
+             break;
+         }
+     }
+
+return 0;
+}
+

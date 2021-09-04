@@ -1,0 +1,117 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <wait.h>
+#include <readline/readline.h>
+
+#define NUMPIPES 2
+
+int main(int argc, char *argv[]) {
+    char *bBuffer, *sPtr, *aPtr = NULL, *pipeComms[NUMPIPES], *cmdArgs[10];
+    int fdPipe[2], pCount, aCount, i, status, lPids[NUMPIPES];
+    pid_t pid;
+
+    pipe(fdPipe);
+
+    while(1) {
+        bBuffer = readline("Shell> ");
+
+        if(!strcasecmp(bBuffer, "exit")) {
+            return 0;
+        }
+
+        sPtr = bBuffer;
+        pCount = -1;
+
+        do {
+            aPtr = strsep(&sPtr, "|");
+            pipeComms[++pCount] = aPtr;
+        } while(aPtr);
+
+        for(i = 0; i < pCount; i++) {
+            aCount = -1;
+
+            do {
+                aPtr = strsep(&pipeComms[i], " ");
+                cmdArgs[++aCount] = aPtr;
+            } while(aPtr);
+
+            cmdArgs[aCount] = 0;
+
+            if(strlen(cmdArgs[0]) > 0) {
+                pid = fork();
+
+                if(pid == 0) {
+                    if(i == 0) {
+                        close(fdPipe[0]);
+
+                        dup2(fdPipe[1], STDOUT_FILENO);
+
+                        close(fdPipe[1]);
+                    } else if(i == 1) {
+                        close(fdPipe[1]);
+
+                        dup2(fdPipe[0], STDIN_FILENO);
+
+                        close(fdPipe[0]);
+                    }
+
+                    execvp(cmdArgs[0], cmdArgs);
+                    exit(1);
+                } else {
+                    lPids[i] = pid;
+
+                    /*waitpid(pid, &status, 0);
+
+                    if(WIFEXITED(status)) {
+                        printf("[%d] TERMINATED (Status: %d)\n",
+                            pid, WEXITSTATUS(status));
+                    }*/
+                }
+            }
+        }
+
+        for(i = 0; i < pCount; i++) {
+            waitpid(lPids[i], &status, 0);
+
+            if(WIFEXITED(status)) {
+                printf("[%d] TERMINATED (Status: %d)\n",
+                    lPids[i], WEXITSTATUS(status));
+            }
+        }
+    }
+
+    return 0;
+}
+
+nazgulled ~/Projects/SO/G08 $ ls -l
+total 8
+-rwxr-xr-x 1 nazgulled nazgulled  7181 2009-05-27 17:44 a.out
+-rwxr-xr-x 1 nazgulled nazgulled   754 2009-05-27 01:42 data.h
+-rwxr-xr-x 1 nazgulled nazgulled  1305 2009-05-27 17:50 main.c
+-rwxr-xr-x 1 nazgulled nazgulled   320 2009-05-27 01:42 makefile
+-rwxr-xr-x 1 nazgulled nazgulled 14408 2009-05-27 17:21 prog
+-rwxr-xr-x 1 nazgulled nazgulled  9276 2009-05-27 17:21 prog.c
+-rwxr-xr-x 1 nazgulled nazgulled 10496 2009-05-27 17:21 prog.o
+-rwxr-xr-x 1 nazgulled nazgulled    16 2009-05-27 17:19 test
+nazgulled ~/Projects/SO/G08 $ ./a.out 
+Shell> ls -l|grep prog
+[4804] TERMINATED (Status: 0)
+-rwxr-xr-x 1 nazgulled nazgulled 14408 2009-05-27 17:21 prog
+-rwxr-xr-x 1 nazgulled nazgulled  9276 2009-05-27 17:21 prog.c
+-rwxr-xr-x 1 nazgulled nazgulled 10496 2009-05-27 17:21 prog.o
+
+nazgulled ~/Projects/SO/G08 $ ./a.out 
+Shell> echo q|sudo fdisk /dev/sda
+[4838] TERMINATED (Status: 0)
+
+The number of cylinders for this disk is set to 1305.
+There is nothing wrong with that, but this is larger than 1024,
+and could in certain setups cause problems with:
+1) software that runs at boot time (e.g., old versions of LILO)
+2) booting and partitioning software from other OSs
+   (e.g., DOS FDISK, OS/2 FDISK)
+
+Command (m for help): 
+[4839] TERMINATED (Status: 0)
+

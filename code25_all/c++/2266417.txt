@@ -1,0 +1,126 @@
+IPlugIn = interface
+  function GetName: WideString; stdcall;
+end;
+
+procedure TForm1.Button5Click(Sender: TObject);
+var
+  hLib: Cardinal; 
+  MLoadPlugIn: TLoadPlugIn;
+  PlugIn: IPlugIn;
+begin
+  hLib := LoadLibrary('PluginB.dll');
+  try
+    if not(hLib = 0) then
+    begin
+      @MLoadPlugIn := GetProcAddress(hLib, 'LoadPlugIn');
+      if not(@MLoadPlugIn = nil) then
+      begin
+        if MLoadPlugIn(PlugIn) then
+          try
+            ShowMessage(PlugIn.GetName); // here i get the access-violation using the vc++ plugin
+          finally                        // i get the return value but the instance is not created
+            PlugIn := nil;
+          end;
+      end
+      else
+        raise Exception.Create('');
+    end;
+  finally
+    FreeLibrary(hLib);
+  end;
+end;
+
+  TMyPlugin = class(TInterfacedObject, IPlugIn)
+  public
+    function GetName: WideString; stdcall;
+  end;
+
+function TMyPlugin.GetName;
+begin
+  result := 'TMyPlugin';
+end;
+
+function LoadPlugIn(var PlugIn: IPlugIn): Boolean; stdcall;
+begin
+  try
+    PlugIn := TMyPlugin.Create;
+    result := True;
+  except
+    result := False;
+  end;
+end;
+
+exports
+  LoadPlugIn;
+
+__interface //__declspec(uuid("E44BB34F-D13F-42D7-9479-4C79AF5C0D1B"))
+IPlugIn : public IUnknown
+{
+ void _stdcall GetName(BSTR* result);
+};
+
+class TMyPlugIn : public IPlugIn
+{
+public:
+ // Constructor
+ TMyPlugIn() : m_cRef(1) {}
+ // Destructor
+ ~TMyPlugIn() {}
+
+ // Needed to implement IUnknown used by COM to acces your component
+ HRESULT _stdcall QueryInterface(const IID& iid, void** ppv);
+    ULONG _stdcall AddRef();
+ ULONG _stdcall Release();
+
+ void _stdcall GetName(BSTR* result);
+private:
+ long m_cRef ;
+};
+
+HRESULT _stdcall TMyPlugIn::QueryInterface(const IID& iid, void** ppv)
+{    
+ if (iid == IID_IUnknown)
+ {
+  *ppv = static_cast<IPlugIn*>(this) ; 
+ }
+ else if (iid == IID_IPlugIn)
+ {
+  *ppv = static_cast<IPlugIn*>(this) ;
+ }
+ else
+ {
+  *ppv = NULL ;
+  return E_NOINTERFACE ;
+ }
+ reinterpret_cast<IUnknown*>(*ppv)->AddRef() ;
+ return S_OK ;
+}
+
+ULONG _stdcall TMyPlugIn::AddRef()
+{
+ return InterlockedIncrement(&m_cRef) ;
+}
+
+ULONG _stdcall TMyPlugIn::Release() 
+{
+ if (InterlockedDecrement(&m_cRef) == 0)
+ {
+  delete this ;
+  return 0 ;
+ }
+ return m_cRef ;
+}
+
+void _stdcall TMyPlugIn::GetName(BSTR* result)
+{
+ string s1 = "PluginName";
+ *result = A2WBSTR(s1.c_str());
+}
+
+extern "C" bool __declspec(dllexport) __stdcall LoadPlugIn(IPlugIn* PlugIn);
+bool __declspec(dllexport) __stdcall LoadPlugIn(IPlugIn* PlugIn)
+{
+ PlugIn = new TMyPlugIn;
+ return TRUE; 
+}
+

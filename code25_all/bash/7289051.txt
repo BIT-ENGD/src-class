@@ -1,0 +1,215 @@
+AutoIT
+#include <array.au3>
+#include <Date.au3>
+#include <File.au3>
+#include <GuiConstants.au3>
+#include <GuiButton.au3>
+#Include <GuiListBox.au3>
+#include <EditConstants.au3>
+#include <ListBoxConstants.au3>
+#include <WindowsConstants.au3>
+#Include <GuiListBox.au3>
+#Include <GuiMonthCal.au3>
+
+
+Global $FolderName = "\\ph-svr-web1\ftpsites"
+Global $rootFolder
+Global $now = _Date_Time_SystemTimeToDateStr(_Date_Time_GetSystemTime(), 1) 
+Global $badSubs = 0, $olderThan = 90
+Global $dirsToDeleteListBox, $topIndex, $TotalFoldersFound = 0
+Global $ScanFoldersButton, $RemoveFoldersButton, $TotalFoldersFoundLabel, $TotalFoldersFoundNumber
+Global $Calendar, $OlderThanNumberDays
+
+Main()
+
+Func Main()
+    $MainWindow = GuiCreate("Remove Older Files From FTP Site", 900)
+    GUISetFont(12)
+
+    $dirsToDeleteListBox = GUICtrlCreateList("", 40, 35, 550, 300, BitOr($WS_BORDER, $WS_VSCROLL, $LBS_NOTIFY, $LBS_DISABLENOSCROLL, $WS_HSCROLL, $LBS_EXTENDEDSEL))
+
+    $ScanFoldersButton = GuiCtrlCreateButton("Scan FTP Site", 40, 330)
+    $RemoveFoldersButton = GUICtrlCreateButton("Delete Selected Folders", 180, 330)
+    _GUiCtrlButton_Enable($RemoveFoldersButton, False)
+
+    $TotalFoldersFoundLabel = GUICtrlCreateLabel("Total Folders Found = ", 400, 335)
+    $TotalFoldersFoundNumber = GUICtrlCreateLabel($TotalFoldersFound, 560, 335, 100)
+
+    $Calendar = GUICtrlCreateMonthCal($MainWindow, 620, 35, 250, 220);, $MCS_NOTODAY)
+    $OlderThanDateLabel = GUICtrlCreateLabel("Searching for files dated prior to:", 630, 270)
+    GUISetFont(12, 600)
+    $OlderThanDateValue = GUICtrlCreateLabel(SetCalendarDate($olderThan), 650, 300)
+    $OlderThanNumberDays = GUICtrlCreateLabel("(" & $olderThan & " days)", 750, 300, 100)
+    GUISetFont(12, 400)
+
+    GUISetState()
+    GUICtrlSetResizing ($MainWindow, 513 )
+
+    While 1
+        $GUIAction = GuiGetMsg()
+        Switch $GUIAction
+            Case $GUI_EVENT_CLOSE
+                ExitLoop ; closes the GUI
+            Case $ScanFoldersButton
+                _GUICtrlButton_Enable($ScanFoldersButton, False)
+                _GUiCtrlButton_Enable($RemoveFoldersButton, False)
+                _GUICtrlListBox_ResetContent($dirsToDeleteListBox)
+                $TotalFoldersFound = 0
+                ScanFolder($FolderName)
+                _GUICtrlButton_Enable($ScanFoldersButton, True)
+                if $TotalFoldersFound > 0 then
+                    _GUiCtrlButton_Enable($RemoveFoldersButton, True)
+                    _GUICtrlListBox_SetTopIndex($dirsToDeleteListBox, 0)
+                endif
+            Case $RemoveFoldersButton
+                _GUICtrlButton_Enable($ScanFoldersButton, False)
+                _GUiCtrlButton_Enable($RemoveFoldersButton, False)
+                RemoveFolders()
+                _GUICtrlButton_Enable($ScanFoldersButton, True)
+                _GUiCtrlButton_Enable($RemoveFoldersButton, True)
+            Case $Calendar
+                GUICtrlSetData($OlderThanDateValue, SetCalendarDate(_DateDiff('D', GUICtrlRead($Calendar), $now)))
+        endswitch
+    wend
+EndFunc
+
+Func SetCalendarDate($Days)
+    $newDate = _DateAdd('D', -($Days), $now)
+    GUICtrlSetData($Calendar, $newDate)
+    $olderThan = $Days
+    GUICtrlSetData($OlderThanNumberDays, "(" & $olderThan & " days)")
+    Return $newDate
+EndFunc
+
+Func RemoveFolders()
+    $Dirs = _GUICtrlListBox_GetSelItemsText($dirsToDeleteListBox)
+    Switch $Dirs[0]
+        Case 0
+            MsgBox(276,"No folders selected","Please select folders to delete")
+        Case Else
+            ProgressOn("Deleting FTP Folders...", "Removing")
+            $totalDirs = UBound($Dirs) - 1
+            for $iI = 1 to $totalDirs
+                DirRemove($Dirs[$iI], 1)
+                ProgressSet((100 / $totalDirs), $Dirs[$iI])
+                $removeFromList = _GUICtrlListBox_FindString($dirsToDeleteListBox, $Dirs[$iI])
+                if $removeFromList > 0 then 
+                    _GUICtrlListBox_BeginUpdate($dirsToDeleteListBox)
+                    _GUICtrlListBox_DeleteString($dirsToDeleteListBox, $removeFromList)
+                    _GUICtrlListBox_EndUpdate($dirsToDeleteListBox)
+                    $TotalFoldersFound -= 1
+                    GUICtrlSetData($TotalFoldersFoundNumber, $TotalFoldersFound)
+                endif
+            next
+            ProgressOff()
+            MsgBox(64, "Folders Deleted", "The selected folders have been deleted")
+    EndSwitch
+EndFunc
+
+Func ScanFolder($SourceFolder)
+    Local $Search
+    Local $File
+    Local $FileAttributes
+    Local $FullFilePath
+    Local $FileDate
+
+    $Search = FileFindFirstFile($SourceFolder & "\*.*")
+
+    While 1
+        If $Search = -1 Then
+            ExitLoop
+        EndIf
+
+        $File = FileFindNextFile($Search)
+        If @error Then ExitLoop
+
+        $FullFilePath = $SourceFolder & ("\" & $File)
+        $FileAttributes = FileGetAttrib($FullFilePath)
+        $FileDate = _ArrayToString(FileGetTime($FullFilePath), "/", 0, 2)
+        $validRoot = ExtractRoot($FullFilePath)
+
+
+        If StringInStr($FileAttributes,"D") Then
+            if $validRoot >= 6 then
+            select
+                case _DateDiff('D', $FileDate, $now) <= $olderThan
+                    $badSubs += 1
+                    continuecase
+                case StringCompare($rootFolder, $FullFilePath) = 0
+                    if $badSubs = 0 then
+                        _GUICtrlListBox_BeginUpdate($dirsToDeleteListBox)
+                        $topIndex = _GUICtrlListBox_AddString($dirsToDeleteListBox, $rootFolder)
+                        _GUICtrlListBox_SetTopIndex($dirsToDeleteListBox, $topIndex)
+                        _GUICtrlListBox_EndUpdate($dirsToDeleteListBox)
+                        $TotalFoldersFound += 1
+                    else
+                        $removeFromList = _GUICtrlListBox_FindString($dirsToDeleteListBox, $rootFolder)
+                        if $removeFromList >= 0 then 
+                            _GUICtrlListBox_BeginUpdate($dirsToDeleteListBox)
+                            _GUICtrlListBox_DeleteString($dirsToDeleteListBox, $removeFromList)
+                            _GUICtrlListBox_SetTopIndex($dirsToDeleteListBox, $topIndex)
+                            _GUICtrlListBox_EndUpdate($dirsToDeleteListBox)
+                            $TotalFoldersFound -= 1
+                        endif
+                        $badSubs = 0
+                    endif
+            endselect
+            GUICtrlSetData($TotalFoldersFoundNumber, $TotalFoldersFound)
+            endif
+            ScanFolder($FullFilePath)
+        EndIf
+    Wend
+
+    FileClose($Search)
+EndFunc
+
+Func ExtractRoot($FileName)
+    $dirArray = StringSplit($FileName, "\")
+    if $dirArray[0] >= 6 then
+        $rootFolder = _ArrayToString($dirArray, "\", 1, 6)
+    endif
+    return $dirArray[0]
+EndFunc
+
+#! /bin/bash
+
+if [ -z "$1" ];
+then
+    echo "You must enter a path after the script name"
+    exit
+fi
+
+# Usage: "ThisProgram /path/to/root/of/files"
+
+dirs=( $(find "${1}" -maxdepth 1 -type d -print | sed 's:^./::'))
+echo "$1"
+
+for dir in "${dirs[@]}"; do
+
+if [ $dir != $1 ]; then
+    echo "$dir"
+# First, get a list of all subdirs, in depth-first order
+find "${dir:-.}" -depth -type d -print0 |
+while read -r -d '' i
+do
+
+  # For each subdir, test to see if it matches two conditions. If either
+  # condition fails, this subdir is not a candidate for deletion.
+#  echo "Trying $i"
+
+  #  First: is it at the lowest level, i.e. does it have any surviving children?
+  [ "$(find "$i" -type d -print | wc -l)" -gt 1 ] && continue
+#  echo "$i has no subdirs"
+
+  # Second: does it have any recent files?
+  [ "$(find "$i" -type f -mtime -90 | wc -l)" -gt 0 ] && continue
+#  echo "$i has no new files"
+
+  # If we got here, then this candidate has no subdirs and no recent files. Nuke it.
+#  echo rm -rf "$i"
+  echo "$i"
+#  rm -rf "$i"
+done
+
+fi
+

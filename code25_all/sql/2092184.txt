@@ -1,0 +1,57 @@
+use tempdb;
+go
+IF  EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[expensive]') AND type in (N'FN', N'IF', N'TF', N'FS', N'FT'))
+DROP FUNCTION [dbo].[expensive]
+
+go
+-- used to model expensive user defined function.
+-- expecting to take about 1 second to execute
+create function dbo.expensive(@i int)
+returns int with schemabinding
+as
+begin
+ declare @N bigint
+ declare @ret bigint
+ set @N = 16; -- will generate a set of 2^N
+ declare @tab table(num int);
+
+ with multiplicity as
+ (
+  select 1 as num
+  union all
+  select m.num + 1 as num from multiplicity m
+  where m.num < @N
+  union all
+  select m.num + 1 as num from multiplicity m
+  where m.num < @N
+ )
+ select @ret = count(num) + @i from multiplicity;
+ return @ret;
+end
+
+go
+
+declare @tab table(x int);
+
+with manyItems as
+(
+ select 1 as iterator
+ union all
+ select iterator + 1 from manyItems
+ where iterator < 5
+)
+insert into @tab select 1 from manyItems;
+
+select CURRENT_TIMESTAMP;
+-- expected to take about 1 second
+select dbo.expensive(1)
+
+select CURRENT_TIMESTAMP;
+
+-- i want to make this one execute in 1 second too
+select x, dbo.expensive(x) as y from @tab;
+
+select CURRENT_TIMESTAMP;
+
+SELECT OBJECTPROPERTY(OBJECT_ID('dbo.expensive'), 'IsDeterministic');
+

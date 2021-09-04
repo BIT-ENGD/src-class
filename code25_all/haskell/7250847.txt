@@ -1,0 +1,110 @@
+fixwith [(+)] [1]
+
+1..
+fix
+class OperatorN α β | β -> α where
+    wrap_op :: β -> (Int, [α] -> α)
+
+instance OperatorN α (() -> α) where
+    wrap_op f = (0, \[] -> f ())
+
+instance OperatorN α (α -> α) where
+    wrap_op f = (1, \[x] -> f x)
+
+instance OperatorN α ((α, α) -> α) where
+    wrap_op f = (2, \[x, y] -> f (x, y))
+
+instance OperatorN α ((α, α, α) -> α) where
+    wrap_op f = (3, \[x, y, z] -> f (x, y, z))
+
+instance OperatorN α ((α, α, α, α) -> α) where
+    wrap_op f = (4, \[x, y, z, w] -> f (x, y, z, w))
+
+type WrappedOp α = (Int, [α] -> α)
+fixwith_next :: Eq α => [WrappedOp α] -> [α] -> [α]
+fixwith_next ops s = List.nub (foldl (++) s (map g ops)) where
+    g (0, f) = [f []]
+    g (arity, f) = do
+        x <- s
+        let fx = \xs -> f (x:xs)
+        g (arity - 1, fx)
+fixwith ops s
+    | next <- fixwith_next ops s
+    , next /= s
+    = fixwith ops next
+fixwith _ s = s
+
+> fixwith [wrap_op $ uncurry (*)] [-1 :: Int]
+[-1,1]
+> fixwith [wrap_op $ uncurry (*)] [1 :: Int]
+[1]
+> fixwith [wrap_op $ max 3, wrap_op $ \() -> 0] [1 :: Int]
+[1,3,0]
+
+import qualified Control.RMonad as RMonad
+
+class OperatorN α β | β -> α where
+    wrap_op :: β -> (Int, [α] -> α)
+
+instance OperatorN α (() -> α) where
+    wrap_op f = (0, \[] -> f ())
+
+instance OperatorN α (α -> α) where
+    wrap_op f = (1, \[x] -> f x)
+
+instance OperatorN α ((α, α) -> α) where
+    wrap_op f = (2, \[x, y] -> f (x, y))
+
+instance OperatorN α ((α, α, α) -> α) where
+    wrap_op f = (3, \[x, y, z] -> f (x, y, z))
+
+instance OperatorN α ((α, α, α, α) -> α) where
+    wrap_op f = (4, \[x, y, z, w] -> f (x, y, z, w))
+
+type WrappedOp α = (Int, [α] -> α)
+
+fixwith_next :: Ord α => [WrappedOp α] -> Set α -> Set α
+fixwith_next ops s = Set.unions $ s : map g ops where
+    g (0, f) = RMonad.return $ f []
+    g (arity, f) = s RMonad.>>= \x ->
+        g (arity - 1, \xs -> f (x:xs))
+fixwith' ops s
+    | next <- fixwith_next ops s
+    , next /= s
+    = fixwith' ops next
+fixwith' _ s = s
+fixwith ops s = Set.toList $ fixwith' ops (Set.fromList s)
+
+RMonad
+notin :: Ord α => Set α -> Set α -> Set α
+notin = flip Set.difference
+
+class Ord α => OperatorN α β | β -> α where
+    next_values :: β -> Set α -> Set α
+
+instance Ord α => OperatorN α (α -> α) where
+    next_values f s = notin s $ s RMonad.>>= \x -> RMonad.return (f x)
+
+instance Ord α => OperatorN α (α -> α -> α) where
+    next_values f s = s RMonad.>>= \x -> next_values (f x) s
+
+instance Ord α => OperatorN α (α -> α -> α -> α) where
+    next_values f s = s RMonad.>>= \x -> next_values (f x) s
+
+instance Ord α => OperatorN α (α -> α -> α -> α -> α) where
+    next_values f s = s RMonad.>>= \x -> next_values (f x) s
+
+-- bind lambdas with next_values
+fixwith_next :: Ord α => [Set α -> Set α] -> Set α -> Set α
+fixwith_next nv_bnd s = Set.unions $ map (\f -> f s) nv_bnd -- bound next values
+
+fixwith' :: Ord α => [Set α -> Set α] -> Set α -> [α]
+fixwith' ops s@(fixwith_next ops -> next)
+    | Set.size next == 0 = []
+    | otherwise = (Set.toList next) ++ fixwith' ops (Set.union s next)
+fixwith ops s = (Set.toList s) ++ fixwith' ops s
+fixwith_lst ops = fixwith ops . Set.fromList
+
+> take 3 $ fixwith [next_values (+2)] (Set.fromList [1])
+[1,3,5]
+

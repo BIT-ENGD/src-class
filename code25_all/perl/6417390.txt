@@ -1,0 +1,39 @@
+ftp://localhost:8888/
+#!/usr/bin/perl
+use strict;
+use Socket; 
+use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
+use IO::Poll;
+
+local *S;
+socket      (S, PF_INET   , SOCK_STREAM , getprotobyname('tcp')) || die "socket: $!\n";
+setsockopt (S, SOL_SOCKET, SO_REUSEADDR, 1) || die "setsockopt: $!\n";
+bind        (S, sockaddr_in(8888, INADDR_ANY)) || die "bind: $!\n";
+listen      (S, 10) || die "listen: $!\n";
+fcntl(S, F_SETFL, fcntl(S, F_GETFL, 0) | O_NONBLOCK) || die "fcntl: $!\n";
+
+my $poll=IO::Poll->new;
+$poll->mask(*S => POLLIN|POLLOUT);
+
+
+while( 1 ) {
+    $poll->poll();
+    for my $reader ( $poll->handles(POLLIN ) ) {
+        my $remote = accept (my $connection, $reader);
+        my $bytes= sysread $connection,my $header,1024;
+
+        if (defined $bytes) {
+            if ($bytes == 0 || (index $header,"\r\n\r\n") < 0) {
+                close $remote;
+                next;
+            } 
+        } else {
+            close $connection;
+            next;
+        }
+
+        syswrite $connection,"HTTP/1.1 200 OK\r\n\r\n".$header;
+        close $connection;
+     }
+}
+

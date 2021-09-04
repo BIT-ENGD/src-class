@@ -1,0 +1,48 @@
+runTimer :: NominalDiffTime -> UTCTime -> IO UTCTime
+
+type Log = [Entry]           
+data Entry = Entry {
+      _etype :: EntryType    
+    , _etime :: UTCTime      
+} deriving Show
+
+data EntryType = Start | End | Pause | Quit deriving Show
+
+type Program = WriterT Log IO
+
+loop :: Maybe ThreadId -> Program ()
+loop timerId = do
+  liftIO $ putStr ">"
+  x <- liftIO $ getChar      
+  now <- liftIO $ getCurrentTime
+  case x of
+    'q' -> do
+            liftIO $ putStrLn "\n Quitting..."
+            tell [Entry Quit now]
+            -- Kill the timer thread if there is one.
+            maybe (return ()) (liftIO . killThread) timerId
+            liftIO $ putStrLn "\n Quit."
+    's' -> case timerId of
+             Just _ -> do
+                 liftIO $ putStrLn "Timer already started!"
+                 loop timerId
+             Nothing -> do
+                 -- Start a timer in a new thread.
+                 tell [Entry Start now]
+                 timerId' <- liftIO $ forkFinally (runTimer 5 now) eHandler
+                 -- Call the main loop with the timer thread id.
+                 loop (Just timerId')
+    _   -> do
+            liftIO $ putChar x
+            loop timerId                       
+
+eHandler :: (Show a, Exception e) => Either e a -> IO ()
+eHandler (Left x) = throw x  
+eHandler (Right x) = do
+  putStrLn $ show x
+
+eHandler' :: (Exception t) => Either t UTCTime -> WriterT Log IO ()
+eHandler' (Left x) = throw x
+eHandler' (Right t) = do
+  tell [Entry End t]
+

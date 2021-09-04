@@ -1,0 +1,116 @@
+- (void)syncKVO:(id)sender {
+    NSManagedObjectContext *moc = [self managedObjectContext];
+    [syncButton setTitle:@"Syncing..."];
+    NSString *dateText = (@"Last Sync : %d", [NSDate date]);
+    [syncDate setStringValue:dateText];
+    NSEntityDescription *entityDescription = [NSEntityDescription
+                                                                                  entityForName:@"projects" inManagedObjectContext:moc];
+    NSFetchRequest *request = [[[NSFetchRequest alloc] init] autorelease];
+    [request setEntity:entityDescription];
+
+    NSError *error = nil;
+    NSArray *array = [moc executeFetchRequest:request error:&error];
+    if (array == nil)
+    {
+        NSAlert *anAlert = [NSAlert alertWithError:error];
+        [anAlert runModal];
+    }
+    NSArray *namesArray = [array valueForKey:@"name"];
+    NSPredicate *predicate = [CalCalendarStore taskPredicateWithCalendars:[[CalCalendarStore defaultCalendarStore] calendars]];
+    NSArray *tasksNo = [[CalCalendarStore defaultCalendarStore] tasksWithPredicate:predicate];
+    NSArray *tasks = [tasksNo valueForKey:@"title"];
+    NSMutableArray *namesNewArray = [NSMutableArray arrayWithArray:namesArray];
+    [namesNewArray removeObjectsInArray:tasks];
+    NSLog(@"%d", [namesNewArray count]);        
+    NSInteger *popIndex = [calenderPopup indexOfSelectedItem];
+
+    //Load the array
+    CalCalendarStore *store = [CalCalendarStore defaultCalendarStore];
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+    NSString *supportDirectory = [paths objectAtIndex:0];
+    NSString *fileName = [supportDirectory stringByAppendingPathComponent:@"oldtasks.plist"];
+
+    NSMutableArray *oldTasks = [[NSMutableArray alloc] initWithContentsOfFile:fileName];
+    [oldTasks removeObjectsInArray:namesArray];
+    NSLog(@"%d",[oldTasks count]);
+    //Use the content
+    NSPredicate* taskPredicate = [CalCalendarStore taskPredicateWithCalendars:[[CalCalendarStore defaultCalendarStore] calendars]];
+    NSArray* allTasks = [[CalCalendarStore defaultCalendarStore] tasksWithPredicate:taskPredicate];
+
+    // Get the calendar
+    CalCalendar *calendar = [[store calendars] objectAtIndex:popIndex];
+    // Note: you can change which calendar you're adding to by changing the index or by
+    // using CalCalendarStore's -calendarWithUID: method        
+
+    // Loop, adding tasks
+    for(NSString *title in namesNewArray) {
+        // Create task
+        CalTask *task = [CalTask task];
+        task.title = title;
+        task.calendar = calendar;
+
+        // Save task
+        if(![[CalCalendarStore defaultCalendarStore] saveTask:task error:&error]) {
+                NSLog(@"Error");
+                // Diagnostic error handling
+                NSAlert *anAlert = [NSAlert alertWithError:error];
+                [anAlert runModal];
+        }
+    } 
+
+    NSMutableArray *tasksNewArray = [NSMutableArray arrayWithArray:tasks];
+    [tasksNewArray removeObjectsInArray:namesArray];
+    NSLog(@"%d", [tasksNewArray count]);        
+    for(NSString *title in tasksNewArray) {
+        NSManagedObjectContext *moc = [self managedObjectContext];
+        JGManagedObject *theParent = 
+        [NSEntityDescription insertNewObjectForEntityForName:@"projects"
+                                      inManagedObjectContext:moc];
+        [theParent setValue:nil forKey:@"parent"];
+        // This is where you add the title from the string array
+        [theParent setValue:title forKey:@"name"]; 
+        [theParent setValue:[NSNumber numberWithInt:0] forKey:@"position"];
+
+    }
+
+    for(CalTask* task in allTasks)
+        if([oldTasks containsObject:task.title]) {
+                [store removeTask:task error:nil];
+        }
+
+    // Create a predicate for an array of names.
+    NSPredicate *mocPredicate = [NSPredicate predicateWithFormat:@"name IN %@", oldTasks];
+    [request setPredicate:mocPredicate];
+
+    NSSortDescriptor *sortDescriptor = [[NSSortDescriptor alloc] initWithKey:@"name" ascending:YES];
+    [request setSortDescriptors:[NSArray arrayWithObject:sortDescriptor]];
+
+    // Execute the fetch request put the results into array
+    NSArray *resultArray = [moc executeFetchRequest:request error:&error];
+    if (resultArray == nil)
+    {
+        // Diagnostic error handling
+        NSAlert *anAlert = [NSAlert alertWithError:error];
+        [anAlert runModal];
+    }
+
+    // Enumerate through the array deleting each object.
+    // WARNING, this will delete everything in the array, so you may want to put more checks in before doing this.
+    for (JGManagedObject *objectToDelete in resultArray ) {
+        // Delete the object.
+        [moc deleteObject:objectToDelete];
+    }
+    //Save the array
+    [namesArray writeToFile:fileName atomically:YES];
+    [syncButton setTitle:@"Sync Now"];
+    NSLog(@"Sync Completed");
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if ([keyPath isEqualToString:@"name"]) {
+        [self performSelector:@selector(syncKVO:)];
+    }
+}
+
+observeValueForKeyPath:ofObject:change:context:
+syncKVO

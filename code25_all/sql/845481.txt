@@ -1,0 +1,70 @@
+creator_id
+updater_id
+creator_id
+class Session < ActiveRecord::SessionStore::Session
+  attr_accessor :skip_setters
+
+  before_save :set_ip
+  before_save :set_user
+
+    def set_user
+      return true if self.skip_setters
+      # First user on this session
+      self.creator_id ||= self.data[:user_id] 
+      # Last user on this session
+      self.updater_id = self.data[:user_id] if self.data[:user_id] 
+      if self.creator_id and self.updater_id and 
+       self.creator_id != self.updater_id
+        logger.error "MULTI LOGIN: User #{self.creator.login} and \
+          #{self.updater.login} from #{self.ip}"
+
+        # Save a copy for later inspection
+        backup = Session.new {|dup_session| 
+          dup_session.attributes = self.attributes
+          # overwrite the session_id so we don't conflict with the 
+          # current one & it can't be used to log in
+          dup_session.session_id = ActiveSupport::SecureRandom.hex(16)
+          dup_session.skip_setters = true
+        }
+        backup.save
+
+        # Set this session to be single user again.
+        # Updater is what the user looks for;
+        # creator is the one that's there to trigger this.
+        self.creator_id = self.updater_id
+      end
+    end
+
+  # etc... e.g. log IP
+end
+
+:through =>
+:multi_sessions
+class User < ActiveRecord::Base
+ has_many :sessions, :foreign_key => 'updater_id'
+
+ # This association is only unidirectional; it won't catch the reverse case
+ # (i.e. someone logged in first as this user and then as the other)
+ has_many :multi_sessions, :foreign_key => 'updater_id', 
+  :conditions => 'sessions.updater_id != sessions.creator_id',
+  :class_name => 'Session'
+ has_many :multi_users, :through => :multi_sessions,
+  :source => 'creator', :class_name => 'User'
+
+ ...
+
+ # This does catch both, but is pretty ugly :(
+ def multis
+  # Version 1
+  User.find_by_sql "SELECT DISTINCT users.* FROM users \
+    INNER JOIN sessions \
+      ON (sessions.updater_id = #{self.id} XOR sessions.creator_id = {self.id}) AND \
+         (sessions.updater_id = users.id XOR sessions.creator_id = users.id) \
+    WHERE users.id !=  #{self.id}"
+  # Version 2
+  User.find(sessions.find(:all, :conditions => 'creator_id != updater_id', 
+    :select => 'DISTINCT creator_id, updater_id').map{|x|
+      [x.creator_id, x.updater_id]}.flatten.uniq - [self.id])
+ end
+end
+

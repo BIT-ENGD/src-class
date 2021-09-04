@@ -1,0 +1,231 @@
+select()
+recv()
+send()
+while
+recv()
+while(1)
+   recv() // obviously pseudocode
+
+select()
+select()
+select()
+recv()
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+
+#define SERVER_PORT 10000
+#define MAX_CONNECTION  20
+#define MAX_MSG     50
+
+
+struct client
+{
+    char c_name[MAX_MSG];
+    char g_name[MAX_MSG];
+
+int csock;
+int host;   // 0 = not host of a multicast group    
+
+struct sockaddr_in client_address;
+
+struct client * next_host;
+struct client * next_client;    
+};
+
+struct fd_info
+{
+char c_name[MAX_MSG];
+
+int socks_inuse[MAX_CONNECTION];
+int sock_fd, max_fd;
+int exit;
+
+struct client * c_sys;
+struct sockaddr_in c_address[MAX_CONNECTION];
+
+struct sockaddr_in server_address;
+struct sockaddr_in client_address;
+
+fd_set read_set;
+};
+
+struct message
+{
+char c_name[MAX_MSG];
+char g_name[MAX_MSG];
+char _command[3][MAX_MSG];
+char _payload[MAX_MSG];
+
+struct sockaddr_in client_address;
+struct client peer;
+};
+
+int main(int argc, char * argv[])
+{
+char * host;
+char * temp;
+
+int i, sockfd;
+int msg_len, rv, ready;
+int connection, management, socketread;
+int sockfds[MAX_CONNECTION];
+
+
+// for three threads that handle new connections, user inputs and select() for sockets
+pthread_t connection_handler, manager, socket_reader;
+
+struct sockaddr_in server_address, client_address;
+struct hostent * hserver, cserver;
+struct timeval timeout;
+struct message msg;
+struct fd_info info;
+info.exit = 0;  // exit information: if exit = 1, threads quit
+info.c_sys = NULL;
+
+// looking up from the host database
+if (argc == 3)
+{
+    host = argv[1];         // server address
+    strncpy(info.c_name, argv[2], strlen(argv[2]));     // client name
+}
+else
+{
+    printf("plz read the manual, kthxbai\n");
+    exit(1);
+}
+
+printf("host is %s and hp is %p\n", host, hserver);
+hserver = gethostbyname(host);
+if (hserver)
+{
+    printf("host found: %s\n", hserver->h_name );
+}
+else
+{
+    printf("host not found\n");
+    exit(1);
+}
+// setting up address and port structure information on serverside
+bzero((char * ) &server_address, sizeof(server_address)); // copy zeroes into string
+server_address.sin_family = AF_INET;
+memcpy(&server_address.sin_addr, hserver->h_addr, hserver->h_length);
+server_address.sin_port = htons(SERVER_PORT);
+
+bzero((char * ) &client_address, sizeof(client_address)); // copy zeroes into string
+client_address.sin_family = AF_INET;
+client_address.sin_addr.s_addr = htonl(INADDR_ANY);
+client_address.sin_port = htons(SERVER_PORT);
+
+// opening up socket
+sockfd = socket(AF_INET, SOCK_STREAM, 0);
+if (sockfd < 0)
+    exit(1);
+else
+{
+    printf("socket is opened: %i \n", sockfd);
+    info.sock_fd = sockfd;
+}
+
+// sets up time out option for the bound socket 
+timeout.tv_sec = 1;     // seconds
+timeout.tv_usec = 0; // micro seconds ( 0.5 seconds)
+setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(struct timeval));
+
+// binding socket to a port
+rv = bind(sockfd, (struct sockaddr *) &client_address, sizeof(client_address));
+if (rv < 0)
+{
+    printf("MAIN: ERROR bind() %i: %s\n", errno, strerror(errno));
+    exit(1);
+}
+else
+    printf("socket is bound\n");
+
+printf("MAIN: %li \n", client_address.sin_addr.s_addr);
+
+
+// connecting
+rv = connect(sockfd, (struct sockaddr *) &server_address, sizeof(server_address));
+info.server_address = server_address;
+info.client_address = client_address;
+info.sock_fd = sockfd;
+info.max_fd = sockfd;
+printf("rv = %i\n", rv);
+if (rv < 0)
+{
+    printf("MAIN: ERROR connect() %i:  %s\n", errno, strerror(errno));
+    exit(1);
+}
+else
+    printf("connected\n");
+
+fd_set readset;
+FD_ZERO(&readset);
+FD_ZERO(&info.read_set);
+FD_SET(info.sock_fd, &info.read_set);
+
+while(1)
+{
+    readset = info.read_set;
+    printf("MAIN: %i \n", readset);
+    ready = select((info.max_fd)+1, &readset, NULL, NULL, &timeout);
+
+    if(ready == -1)
+    {
+        sleep(2);
+        printf("TEST: MAIN: ready = -1. %s \n", strerror(errno));
+    }
+    else if (ready == 0)
+    {
+        sleep(2);
+        printf("TEST: MAIN: ready = 0. %s \n", strerror(errno));
+    }
+    else if (ready > 0)
+    {
+        printf("TEST: MAIN: ready = %i. %s at socket %i \n", ready, strerror(errno), i);
+        for(i = 0; i < ((info.max_fd)+1); i++)
+        {
+            if(FD_ISSET(i, &readset))
+            {
+                rv = recv(sockfd, &msg, 500, 0);
+                if(rv < 0)
+                    continue;
+                else if(rv > 0)
+                    printf("MAIN: TEST: %s %s \n", msg._command[0], msg._payload);
+                else if (rv == 0)
+                {
+                    sleep(3);
+                    printf("MAIN: TEST: SOCKET CLOSEDDDDDD \n");
+                }
+
+                FD_CLR(i, &readset);
+            }
+        }
+
+    }
+    info.read_set = readset;        
+
+}
+
+// close connection
+close(sockfd);
+printf("socket closed. BYE! \n");
+return(0);
+
+}
+

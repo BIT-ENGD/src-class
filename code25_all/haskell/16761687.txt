@@ -1,0 +1,88 @@
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, OverlappingInstances #-}
+import Control.Monad
+import Control.Monad.Trans.Maybe
+import Control.Monad.Writer
+import Data.Map (Map, alter, empty, unionWith)
+
+------------------------------------------------
+
+main = do
+  let numberList = [1..6]
+  let result = filter ((\z -> case z of Just _ -> True; Nothing -> False) . numFilter) numberList
+  (putStrLn . show) result
+
+{-
+ [2,3,4]
+-}
+
+--- Maybe
+bigOne :: Int -> Maybe Int
+bigOne n | n > 1     = Just n
+         | otherwise = Nothing
+
+lessFive :: Int -> Maybe Int
+lessFive n | n < 5     = Just n
+           | otherwise = Nothing
+
+numFilter :: Int -> Maybe Int
+numFilter num = bigOne num
+            >>= lessFive
+
+-------------------------------
+type FunctionName = String
+type Count = Int
+type CountMap = Map FunctionName Count
+
+instance Monoid CountMap where
+  mempty = empty :: CountMap
+  -- default mappend on maps overwrites values with same key,
+  -- this increments them
+  mappend x y = unionWith (+) x y
+
+{-
+  Helper monad to track the filter hits.
+-}
+type CountWriter = Writer CountMap
+
+incrementCount :: String -> CountMap
+incrementCount key = alter addOne key empty
+
+addOne :: Maybe Int -> Maybe Int
+addOne Nothing = Just 1
+addOne (Just n) = Just (n + 1)
+
+bigOneMW :: Int -> MaybeT CountWriter Int
+bigOneMW n | n > 1     = MaybeT $ return (Just n)
+           | otherwise = do
+                          tell (incrementCount "bigOne")
+                          MaybeT $ return Nothing
+
+lessFiveMW :: Int -> MaybeT CountWriter Int
+lessFiveMW n | n < 5     = MaybeT $ return (Just n)
+             | otherwise = do
+                           tell (incrementCount "lessFive")
+                           MaybeT $ return Nothing
+
+chainMWBool :: Int -> MaybeT CountWriter Bool
+chainMWBool n = do
+             a <- bigOneMW n
+             b <- lessFiveMW a
+             return True
+
+chainerMW :: [Int] -> MaybeT CountWriter [Int]
+chainerMW ns = do
+               result <- filterM chainMWBool ns
+               return result
+{-
+> runWriter (runMaybeT (chainerMW [1..3]))
+(Nothing,fromList [("bigOne",1)])
+> runWriter (runMaybeT (chainerMW [2..5]))
+(Nothing,fromList [("lessFive",1)])
+> runWriter (runMaybeT (chainerMW [2..4]))
+(Just [2,3,4],fromList [])
+-}
+
+[Int] -> CountWriter [Int]
+[1..6]
+([2,3,4], fromList[("bigOne", 1), ("lessFive", 2)])
+

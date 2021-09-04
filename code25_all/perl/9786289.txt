@@ -1,0 +1,72 @@
+./check_snmp_hdd xxxx username xxxx# xxxx# 70 80 /var
+
+!/usr/bin/perl
+
+sub print_usage 
+{
+        print "check_snmp_hdd HOST SNMP_USER SNMP_PASS PRIVACY_PASSPHRASE WARNLEVEL CRITICALLEVEL DISK\n";
+}
+
+$PROGNAME = "check_snmp_hdd";
+if  ( @ARGV[0] eq "" || @ARGV[1] eq "" || @ARGV[2] eq "" || @ARGV[3] eq "" || @ARGV[4] eq "" || @ARGV[5] eq "" || @ARGV[6] eq "")
+{
+    print_usage();
+    exit 0;
+}
+$HOST=@ARGV[0];
+$SNMP_USER=@ARGV[1];
+$SNMP_PASS=@ARGV[2];
+$PASSPHRASE=@ARGV[3];
+$WARNLEVEL=@ARGV[4];
+$CRITICALLEVEL=@ARGV[5];
+$LW=@ARGV[6];
+
+$resultat = `snmpwalk -v 3 -a SHA -A $SNMP_PASS -l AuthPriv -u $SNMP_USER -x AES -X $PASSPHRASE $HOST UCD-SNMP-MIB::dskPath | grep $LW`;
+$fullsize1=0;
+$usedsize1=0;
+$freespace=0;
+if ( $resultat ) {
+                $resstring= $resultat;
+                if ($resultat = ~/UCD-SNMP-MIB::dskPath./) {
+                        $tsid = substr($resstring,22,1);                
+                                $resultat3 =`snmpget -v 3 -a SHA -A $SNMP_PASS -l AuthPriv -u $SNMP_USER -x AES -X $PASSPHRASE $HOST UCD-SNMP-MIB::dskTotal.$tsid`;
+                                $resstring3 = $resultat3;
+                                if ($resultat3 = ~/UCD-SNMP-MIB::dskTotal.$tsid/) {
+                                        @ta=split(/INTEGER/,$resstring3);                               
+                                        chomp($ta[1]);
+                                        $fullsize = substr($ta[1],1);
+                                }
+                                $resultat4 =`snmpget -v 3 -a SHA -A $SNMP_PASS -l AuthPriv -u $SNMP_USER -x AES -X $PASSPHRASE $HOST UCD-SNMP-MIB::dskAvail.$tsid`;
+                                $resstring4 = $resultat4;
+                                if ($resultat4 = ~/UCD-SNMP-MIB::dskAvail.$tsid/) {
+                                        @tb=split(/INTEGER/,$resstring4);                               
+                                        chomp($tb[1]);
+                                        $freespace = substr($tb[1],1); 
+                                }
+                                $usedsize = $fullsize - $freespace;
+                                if ($usedsize > 0 && $fullsize > 0) {
+                                        $percfilled = $usedsize / $fullsize * 100;
+                                        $freespace = $freespace / 1024 / 1024;
+                                        $percfilled1=substr($percfilled,0,4);
+                                        $freespace1=substr($freespace,0,4);
+                                        if ($percfilled > $CRITICALLEVEL) {
+                                                print "Critical:   $LW - USED: $percfilled1 % FREE: $freespace1 GB\n";
+                                                exit 2;
+                                        }
+                                        if ($percfilled > $WARNLEVEL) {
+                                                print "Warning:   $LW - USED: $percfilled1 % FREE: $freespace1 GB\n";
+                                                exit 1;
+                                        }
+                                        print "OK:   $LW - USED: $percfilled1 % FREE: $freespace1 GB\n";
+                                        exit 0;
+                                }
+                }
+        print "Critical  : Response unknown\n";
+        exit 2;
+}
+else
+{
+        print "Critical  : no response\n";
+        exit 2;
+}
+

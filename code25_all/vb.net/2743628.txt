@@ -1,0 +1,74 @@
+Public Class SimpleWebService : Inherits ServiceBase
+    'Set the values for the different event log types.
+    Public Const EVENT_ERROR As Integer = 1
+    Public Const EVENT_WARNING As Integer = 2
+    Public Const EVENT_INFORMATION As Integer = 4
+    Public listenerThread As Thread
+    Dim HTTPListner As HttpListener
+    Dim blnKeepAlive As Boolean = True
+
+    Shared Sub Main()
+        Dim ServicesToRun As ServiceBase()
+        ServicesToRun = New ServiceBase() {New SimpleWebService()}
+        ServiceBase.Run(ServicesToRun)
+    End Sub
+
+    Protected Overrides Sub OnStart(ByVal args As String())
+        If Not HttpListener.IsSupported Then
+            CreateEventLogEntry("Windows XP SP2, Server 2003, or higher is required to " & "use the HttpListener class.")
+            Me.Stop()
+        End If
+        Try
+            listenerThread = New Thread(AddressOf ListenForConnections)
+            listenerThread.Start()
+        Catch ex As Exception
+            CreateEventLogEntry(ex.Message)
+        End Try
+    End Sub
+
+    Protected Overrides Sub OnStop()
+        blnKeepAlive = False
+    End Sub
+
+    Private Sub CreateEventLogEntry(ByRef strEventContent As String)
+        Dim sSource As String
+        Dim sLog As String
+        sSource = "Service1"
+        sLog = "Application"
+        If Not EventLog.SourceExists(sSource) Then
+            EventLog.CreateEventSource(sSource, sLog)
+        End If
+        Dim ELog As New EventLog(sLog, ".", sSource)
+        ELog.WriteEntry(strEventContent)
+    End Sub
+
+    Public Sub ListenForConnections()
+        HTTPListner = New HttpListener
+        HTTPListner.Prefixes.Add("http://*:1986/")
+        HTTPListner.Start()
+        Do While blnKeepAlive
+            Dim ctx As HttpListenerContext = HTTPListner.GetContext()
+            Dim HandlerThread As Thread = New Thread(AddressOf ProcessRequest)
+            HandlerThread.Start(ctx)
+            HandlerThread = Nothing
+        Loop
+        HTTPListner.Stop()
+    End Sub
+
+    Private Sub ProcessRequest(ByVal ctx As HttpListenerContext)
+        Dim sb As StringBuilder = New StringBuilder
+        sb.Append("<html><body><h1>Test My Service</h1>")
+        sb.Append("</body></html>")
+        Dim buffer() As Byte = Encoding.UTF8.GetBytes(sb.ToString)
+        ctx.Response.ContentLength64 = buffer.Length
+        ctx.Response.OutputStream.Write(buffer, 0, buffer.Length)
+        ctx.Response.OutputStream.Close()
+        ctx.Response.Close()
+        sb = Nothing
+        buffer = Nothing
+        ctx = Nothing
+        'This line seems to keep the mem leak down
+        'System.GC.Collect()
+    End Sub
+End Class
+

@@ -1,0 +1,85 @@
+using System;
+using System.Web;
+using System.Web.SessionState;
+using System.Diagnostics;
+
+namespace MyCompany.Campaigns
+{
+
+    public class CampaignRewriteModule : IHttpModule
+    {
+        public void Init(HttpApplication application)
+        {
+            application.PostAcquireRequestState += new EventHandler(Application_PostAcquireRequestState);
+            application.PostMapRequestHandler += new EventHandler(Application_PostMapRequestHandler);
+        }
+
+        void Application_PostMapRequestHandler(object source, EventArgs e)
+        {
+            HttpApplication app = (HttpApplication)source;
+
+            if (app.Context.Handler is IReadOnlySessionState || app.Context.Handler is IRequiresSessionState)
+            {
+                return;
+            }
+
+            app.Context.Handler = new MyHttpHandler(app.Context.Handler);
+        }
+
+        void Application_PostAcquireRequestState(object source, EventArgs e)
+        {
+            HttpApplication app = (HttpApplication)source;
+
+            MyHttpHandler resourceHttpHandler = HttpContext.Current.Handler as MyHttpHandler;
+
+            if (resourceHttpHandler != null)
+            {
+                HttpContext.Current.Handler = resourceHttpHandler.OriginalHandler;
+            }
+
+            Debug.Assert(app.Session != null);
+
+
+            string path = HttpUtils.Path();
+
+            if (!CampaignCodeMethods.IsValidCampaignCode(path)) return;
+
+            string domain = HttpUtils.Domain();
+
+            CampaignCode code = CampaignManager.RegisterCode(path, domain.Equals(Config.Instance.Domain.ToLower()) ? null : domain);
+
+            if (code != null)
+            {
+               //app.Context.RewritePath(code.CampaignCodePath.Path, false);
+               app.Context.Response.Redirect(code.CampaignCodePath.Path, true);
+            }
+
+
+        }
+
+        public void Dispose() { }
+
+        public class MyHttpHandler : IHttpHandler, IRequiresSessionState
+        {
+            internal readonly IHttpHandler OriginalHandler;
+
+            public MyHttpHandler(IHttpHandler originalHandler)
+            {
+                OriginalHandler = originalHandler;
+            }
+
+            public void ProcessRequest(HttpContext context)
+            {
+                throw new InvalidOperationException("MyHttpHandler cannot process requests.");
+            }
+
+            public bool IsReusable
+            {
+                get { return false; }
+            }
+        }
+
+    }
+
+}
+

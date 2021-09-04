@@ -1,0 +1,65 @@
+deWall::[SimplexPointer] -> SetSimplexFace -> Box -> StateT DeWallSets IO ([Simplex], [Edge])
+deWall p afl box = do
+   ...
+   ...
+   get >>= recursion box1 box2 p1 p2 sigma edges
+   ...
+   ...
+
+recursion::Box -> Box -> [SimplexPointer] -> [SimplexPointer] -> [Simplex] -> [Edge] -> DeWallSets -> StateT DeWallSets IO ([Simplex], [Edge])    
+recursion box1 box2 p1 p2 sigma edges deWallSet
+        | null afl1 && null afl2 = return (sigma, edges)
+        | (null) afl1 = do
+            (s, e) <- deWall p2 afl2 box2
+            return (s ++ sigma, e ++ edges)
+        | (null) afl2 = do
+            (s,e) <- deWall p1 afl1 box1
+            return (s ++ sigma, e ++ edges)
+        | otherwise   = do
+            x <- get
+            liftIO $ do
+                (s1, e1) <- evalStateT (deWall p1 afl1 box1) x
+                (s2, e2) <- evalStateT (deWall p2 afl2 box2) x
+                return (s1 ++ s2 ++ sigma, e1 ++ e2 ++ edges)
+
+        where   afl1 = aflBox1 deWallSet
+                afl2 = aflBox2 deWallSet
+
+            liftIO $ do
+                let 
+                    s1 = evalStateT (deWall p1 afl1 box1) x
+                    s2 = evalStateT (deWall p2 afl2 box2) x
+                    concatThread var (a1, b1) = takeMVar var >>= \(a2, b2) -> putMVar var (a1 ++ a2, b1 ++ b2)
+                mv <- newMVar ([],[])
+                forkIO (s1 >>= concatThread mv)
+                forkIO (s2 >>= concatThread mv)
+                takeMVar mv >>= \(s, e) -> return (s ++ sigma, e ++ edges)
+
+        liftIO $ do
+            let
+                s1 = evalStateT (deWall p1 afl1 box1) x
+                s2 = evalStateT (deWall p2 afl2 box2) x
+                conc = liftM2 (\(a1, b1) (a2, b2) -> (a1 ++ a2, b1 ++ b2))
+            (stotal, etotal) = s1 `par` (s2 `pseq` (s1 `conc` s2))
+            return (stotal ++ sigma, etotal ++ edges)
+
+'par'
+'pseq'
+SPARKS: 1160 (69 converted, 1069 pruned)
+recursion::Box -> Box -> [SimplexPointer] -> [SimplexPointer] -> [Simplex] -> [Edge] -> DeWallSets -> State DeWallSets ([Simplex], [Edge])  
+recursion p1 p2 sigma deWallSet
+     | null afl1 && null afl2 = return sigma
+     | (null) afl1 = do
+         s <- deWall p2 afl2 box2
+         return (s ++ sigma)
+     | (null) afl2 = do
+         s <- deWall p1 afl1 box1
+         return (s ++ sigma)
+     | otherwise   = do
+                     x <- get
+                     let s1 = evalState (deWall p1 afl1 box1) x
+                     let s2 = evalState (deWall p2 afl2 box2) x
+                     return $ s1 `par` (s2 `pseq` (s1 ++ s2 ++ sigma))
+     where   afl1 = aflBox1 deWallSet
+             afl2 = aflBox2 deWallSet
+

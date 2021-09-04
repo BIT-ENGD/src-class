@@ -1,0 +1,60 @@
+write(1)
+wall(1)
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <utempter.h>
+
+#define BUF_LENGTH 1024
+
+int
+main (void)
+{
+    FILE *lf;
+    int masterfd, slavefd;
+    char *slave_name = NULL;
+    char buf[BUF_LENGTH];
+    size_t nbytes = sizeof(buf);
+    ssize_t bytes_read;
+    int exit_code = EXIT_SUCESS;
+
+    if ((masterfd = posix_openpt (O_RDWR | O_NOCTTY)) == -1 
+            || grantpt (masterfd) == -1
+            || unlockpt (masterfd) == -1
+            || (slave_name = ptsname (masterfd)) == NULL)
+        exit (EXIT_FAILURE);
+
+    if (!(lf = fopen("term.log","w")))
+        exit (EXIT_FAILURE);
+
+    addToUtmp (slave_name, NULL, masterfd);
+
+    for (;;)
+    {
+        bytes_read = read(masterfd, buf, nbytes);
+        if (bytes_read <= 0)
+            break
+        fwrite (buf, 1, bytes_read, lf);
+    }
+
+    if (bytes_read < 0)
+    {
+        fprintf (stderr, "error reading from master pty: %s\n", strerror (errno));
+        exit_code = EXIT_FAILURE;
+    }
+
+    fclose (lf);
+    if (slavefd >= 0)
+        close (slavefd);
+    if (masterfd >= 0)
+    {
+        removeLineFromUtmp (slave_name, masterfd);
+        close (masterfd);
+    }
+    exit (exit_code);
+}
+

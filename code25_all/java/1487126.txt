@@ -1,0 +1,68 @@
+private void send(String string) {
+  Map<String, Object> map = new HashMap<String, Object>();
+  map.put("intArray", new int[] {1});
+
+  ByteArrayOutputStream baos = new ByteArrayOutputStream();
+  XMLEncoder xmlEncoder = new XMLEncoder(baos);
+  xmlEncoder.writeObject(map);
+  xmlEncoder.close();
+  Map<String, Object> encodedMap = new HashMap<String, Object>();
+  try {
+    String encoded = baos.toString("UTF-8");
+    encodedMap.put("xmlpayload", encoded);
+  } catch (Exception e) {
+   throw new RuntimeException("could not use UTF-8", e);
+  } 
+  bayreuxClient.publish("/prototype/a", encodedMap, String.valueOf(System.currentTimeMillis()));
+}
+
+listener = new MessageListener() {
+  @Override
+  public void deliver(Client fromClient, Client toClient, Message msg) {
+    if (!_connected) {
+      _connected = true;
+      synchronized (this) {
+      this.notify();
+    }
+  }
+  Object data = msg.getData();
+  if (data instanceof Map) {
+    Map map = (Map) data;
+    Object rawPayload = map.get("xmlpayload");
+    if (rawPayload instanceof String) {
+      System.out.println("xmlpayload = " + rawPayload);
+      ByteArrayInputStream bais;
+      try {
+        String xmlPayload = ((String) rawPayload).replaceAll("&gt;",">").replaceAll("&lt;", "<").replaceAll("&amp;","&");
+        bais = new ByteArrayInputStream(xmlPayload.getBytes("UTF-8"));
+        XMLDecoder xmlDecoder = new XMLDecoder(bais);
+        Object o = xmlDecoder.readObject();
+        xmlDecoder.close();
+        System.out.println(">> decoded payload=" + o + ", class=" + o.getClass());
+      } catch (UnsupportedEncodingException e) {
+        throw new RuntimeException("no UTF-8", e);
+      }
+     }
+   }
+  }
+ };
+ address = new Address("localhost", 8080);
+ bayreuxClient = new BayeuxClient(httpClient, address, "/cometd/cometd");
+ bayreuxClient.addListener(listener);
+
+xmlpayload = &lt;?xml version="1.0" encoding="UTF-8"?&gt; 
+&lt;java version="1.6.0_16" class="java.beans.XMLDecoder"&gt; 
+ &lt;object class="java.util.HashMap"&gt; 
+  &lt;void method="put"&gt; 
+   &lt;string&gt;intArray&lt;/string&gt; 
+   &lt;array class="int" length="1"&gt; 
+    &lt;void index="0"&gt; 
+     &lt;int&gt;1&lt;/int&gt; 
+    &lt;/void&gt; 
+   &lt;/array&gt; 
+  &lt;/void&gt; 
+ &lt;/object&gt; 
+&lt;/java&gt; 
+
+>> decoded payload={intArray=[I@2f1e75}, class=class java.util.HashMap
+

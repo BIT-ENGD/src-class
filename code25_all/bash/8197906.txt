@@ -1,0 +1,60 @@
+hostname
+#!/bin/bash
+#Backup Docs 
+
+for FOLDER in $@
+do
+
+# Location of folder to be backed up
+FOLDERLOCATION="/home/sean"
+# Mount point of the backup device
+DEVICE="/cygdrive/f"
+# Hostname of the machine being backed up
+HOSTNAME=`hostname`
+      # NOTE: when I originally posted this question, the above line read:
+      # HOSTNAME=`txtmsgbreakup`
+      # which doesn't make any sense.  I failed at changing the hard-coded solution back 
+      # to the original command that produces the string "txtmsgbreakup" (my system's name)
+
+BACKUPFOLDER="$FOLDERLOCATION/$FOLDER/"
+BACKUPDEST="$DEVICE/backups/$HOSTNAME/$FOLDER/"
+
+# Check to see if device is mounted
+if [ -d $DEVICE ]
+then
+    # Create directory if necessary
+    if [ ! -d $BACKUPDEST ]; then
+        mkdir -p $BACKUPDEST
+    fi
+
+    # Capture before time for logging
+    before=$(date +%s)
+
+    # First, tar up the old into file named after day of week
+    DOW=`date +%w`
+    FILENAME="$DEVICE/backups/$HOSTNAME/$FOLDER.$(( ($DOW+6)%7 )).tar.gz"
+    if [ -e $FILENAME ]; then
+        rm $FILENAME
+    fi
+    tar -czPf $FILENAME $BACKUPDEST
+
+    # Now perform the backup
+    rsync -a --del --ignore-errors $BACKUPFOLDER $BACKUPDEST
+    after=$(date +%s)
+
+    # Calculate how long the backup took
+    elapsed_seconds=$(($after-$before))
+    es=$((elapsed_seconds % 60))
+    em=$(( (elapsed_seconds / 60) % 60 ))
+    eh=$((elapsed_seconds / 3600 ))
+
+    # Write it all to the system log
+    echo "$(date) - $BACKUPFOLDER backed up.  Elapsed time:  $(printf '%02d:%02d:%02d' $eh $em $es)" >> /var/log/backup
+
+else
+    #External is not mounted if this branch is executed, log this.  
+    echo "$(date) - $BACKUPFOLDER not backed up:  Backup device not mounted." >> /var/log/backup
+fi
+
+done
+

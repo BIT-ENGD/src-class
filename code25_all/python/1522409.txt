@@ -1,0 +1,258 @@
+# This is a class that schedules tasks. It will call it's ring() function
+# when the timer starts, and call it's running() function when within the
+# time limit, and call it's over() function when the time is up.
+
+# This class uses SYSTEM time.
+
+import time, threading
+import settings
+
+from object import Object
+
+class Timer(Object, threading.Thread):
+    # INIT -------------------------------------------------------------
+    # Init vars
+    #
+    # If autotick is True (default) the timer will run in a seperate
+    # process. Other wise it will need to be updated automatically by
+    # calling tick()
+    def __init__(self, autotick=False):
+        # Call inherited __init__ first.
+        threading.Thread.__init__(self)
+        Object.__init__(self)
+
+        # Now our vars
+        self.startTimeString = "" # The time when the timer starts as a string
+        self.endTimeString = "" # The time when the timer stops as a string
+        self.timeFormat = "" # The string to use as the format for the string       
+        self.set = False # The timer starts deactivated
+        self.process = autotick # Wether or not to run in a seperate process.
+        self.rung = False # Has the timer rang yet?
+
+
+    # ACTIVATE --------------------------------------------------------------
+    # Sets the timer
+    def activate(self, startTime, endTime, format):
+        # Set the timer.
+        self.startTimeString = startTime
+        self.endTimeString = endTime
+        self.timeFormat = format
+
+        # Conver the strings to time using format
+        try:
+            self.startTime = time.strptime(startTime, self.timeFormat)
+            self.endTime = time.strptime(endTime, self.timeFormat)
+        except ValueError:
+            # Error
+            print ("Error: Cannot convert time according to format")
+            return False
+
+        # Try and convert the time to seconds
+        try:
+            self.startTimeSecs = time.mktime(self.startTime)
+            self.endTimeSecs = time.mktime(self.endTime)
+        except OverflowError, ValueError:
+            # Error
+            print ("Error: Cannot convert time to seconds")
+            return False
+
+        # The timer is now set
+        self.set = True
+
+        # If self.process is true, we need to start calling tick in a
+        # seperate process.
+        if self.process:
+            self.deamon = True # We don't want python to hang if a timer
+                                # is still running at exit.
+            self.start()
+
+    # RING -------------------------------------------------------------
+    # This function is called when the timer starts.
+    def ring(self):
+        pass
+
+    # RUNNING ----------------------------------------------------------
+    # Called when the the time is whithin the time limits.
+    def running(self):
+        pass
+
+    # OVER -------------------------------------------------------------
+    # Called when the time is up
+    def over(self):
+        pass
+
+    # TICK -------------------------------------------------------------
+    # Call this every loop (or in a seperate process)
+    def tick(self): 
+        print time.time(), self.startTimeSecs, self.endTimeSecs, time.strftime("%A %H:%M", time.localtime(self.startTimeSecs))
+
+        # Check the time
+        if time.mktime(time.localtime()) > self.startTimeSecs and time.mktime(time.localtime()) < self.endTimeSecs and not self.rung:
+            # The time has come =)
+            # Call ring()
+            self.ring()
+
+            # Now set self.rung to True
+            self.rung = True
+
+        # If the time is up..
+        elif time.mktime(time.localtime()) > self.endTimeSecs and self.rung:
+            self.over()
+
+            # Unset the timer
+            self.set = False
+            self.rung = False
+
+        # If we are inbetween the starttime and endtime.
+        elif time.mktime(time.localtime()) > self.startTimeSecs and time.mktime(time.localtime()) < self.endTimeSecs and self.rung:
+            self.running()
+
+        # If any of those aren't true, then the timer hasn't started yet
+        else:
+            # Check if the endTime has already passed
+            if time.mktime(time.localtime()) > self.endTimeSecs:
+
+                # The time has already passed.
+                self.set = False
+
+
+    # THREADING STUFF --------------------------------------------------
+    # This is run by Threads start() method.
+    def run(self):
+        while self.set == True:
+            # Tick
+            self.tick()
+
+            # Sleep for a bit to save CPU
+            time.sleep(settings.TIMER_SLEEP)
+
+# LOAD -------------------------------------------------------------
+# Loads schedule from a file (schedule_settings.py).
+def load(self):
+    # Add blocks
+    for block in schedule_settings.BLOCKS:
+        # Calculate the day
+        start_day = str(getDate(block[1].split()[0]))
+        end_day = str(getDate(block[2].split()[0]))
+
+        self.scheduler.add(start_day + " " + block[1].split()[1], end_day + " " + block[2].split()[1], "%j %H:%M", block[0])
+
+    for block in self.scheduler.blocks:
+        block.timer.tick()
+
+    print len(self.scheduler.blocks)
+
+    # Start the scheduler (if it isn't already)
+    if not self.scheduler.running:
+        self.scheduler.start()
+
+# ADD --------------------------------------------------------------
+# Add a scheduled time
+# 
+# block should be a Block instance, describing what to do at this time.
+def add(self, startTime, endTime, format, block):
+    # Add this block
+    newBlock = block
+
+    # Start a timer for this block
+    newBlock.timer = Timer()
+
+    # Figure out the time
+    year = time.strftime("%Y")
+
+    # Add the block timer
+    newBlock.timer.activate(year + " " + startTime, year + " " + endTime, "%Y " + format)
+
+    # Add this block to the list
+    self.blocks.append(newBlock)
+
+    return
+
+# -*- coding: utf-8 -*-
+# This file contains settings for a week's schedule
+from block import Block
+from series import Series
+
+# MAIN BLOCK (All old episodes)
+mainBlock = Block()
+mainBlock.picker = 'random'
+mainBlock.name = "Main Block"
+mainBlock.auto(".")
+mainBlock.old_episodes = True
+
+# ONE PIECE
+onepieceBlock = Block()
+onepieceBlock.picker = 'latest'
+onepieceBlock.name = "One Piece"
+onepieceBlock.series = [
+        Series(auto="One Piece"),
+]
+
+# NEWISH STUFF
+newishBlock = Block()
+newishBlock.picker = 'random'
+newishBlock.auto(".")
+newishBlock.name = "NewishBlock"
+newishBlock.exclude_series = [
+        #Series(auto="One Piece"),
+        #Series(auto="Nyan Koi!"),
+]
+
+# NEW STUFF
+newBlock = Block()
+newBlock.picker = 'latest'
+newBlock.name = "New Stuff"
+newBlock.series = [
+        Series(auto="Nyan Koi!"),
+]
+
+# ACTIVE BLOCKS
+BLOCKS = (
+        # MONDAY
+        (mainBlock, "Monday 08:00", "Monday 22:20"),
+        (onepieceBlock, "Monday 22:20", "Monday 22:30"),
+        (newishBlock, "Monday 22:30", "Monday 23:00"),
+
+        # TUESDAY
+        (mainBlock, "Tuesday 08:00", "Tuesday 18:00"),
+        (newBlock, "Tuesday 18:00", "Tuesday 18:30"),
+        (newishBlock, "Tuesday 18:30", "Tuesday 22:00"),
+
+        # WEDNESDAY
+        (mainBlock, "Wednesday 08:00", "Wednesday 18:00"),
+        (newBlock, "Wednesday 18:00", "Wednesday 18:30"),
+        (newishBlock, "Wednesday 18:30", "Wednesday 22:00"),
+
+        # THURSDAY
+        (mainBlock, "Thursday 08:00", "Thursday 18:00"),
+        (newBlock, "Thursday 18:00", "Thursday 18:30"),
+        (newishBlock, "Thursday 18:30", "Thursday 22:00"),
+
+        # FRIDAY
+        (mainBlock, "Friday 08:00", "Friday 18:00"),
+        (newBlock, "Friday 18:00", "Friday 18:30"),
+
+        # WEEKEND
+        (newishBlock, "Saturday 08:00", "Saturday 23:00"),
+
+        (newishBlock, "Sunday 08:00", "Sunday 23:00"),
+
+)
+
+1254810368.0 1255071600.0 1255107600.0 Friday 08:00
+1254810368.0 1254777600.0 1254778200.0 Monday 22:20
+1254810368.0 1255244400.0 1255298400.0 Sunday 08:00
+1254810368.0 1255071600.0 1255107600.0 Friday 08:00
+1254810368.0 1255107600.0 1255109400.0 Friday 18:00
+1254810368.0 1255244400.0 1255298400.0 Sunday 08:00
+1254810368.0 1255071600.0 1255107600.0 Friday 08:00
+1254810368.0 1255107600.0 1255109400.0 Friday 18:00
+1254810368.0 1255244400.0 1255298400.0 Sunday 08:00
+1254810368.0 1255071600.0 1255107600.0 Friday 08:00
+1254810368.0 1255107600.0 1255109400.0 Friday 18:00
+1254810368.0 1255244400.0 1255298400.0 Sunday 08:00
+1254810368.0 1255071600.0 1255107600.0 Friday 08:00
+1254810368.0 1255107600.0 1255109400.0 Friday 18:00
+1254810368.0 1255244400.0 1255298400.0 Sunday 08:00
+1254810368.0 1255244400.0 1255298400.0 Sunday 08:00
+

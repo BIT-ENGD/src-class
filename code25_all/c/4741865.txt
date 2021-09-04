@@ -1,0 +1,128 @@
+int nCites
+int xCoord[]
+int yCoord[]
+Coordinates
+MPI_Bcast
+MPI_Reduce
+root
+typedef struct Coordinates_t {
+    int* x;
+    int* y;
+    int n;
+} Coordinates;
+
+typedef struct PathAndLength_t {
+    int* path;
+    int pathSize;
+    int length;
+} PathAndLength;
+
+void comparePaths(void* a, void* b, int* len, MPI_Datatype* dataType) {
+    ...
+}
+
+int tsp_main(int nCites, int xCoord[], int yCoord[], int P[]){
+    int numOfProcs, rank;
+    if (MPI_Comm_size(MPI_COMM_WORLD, &numOfProcs))
+        throw "Error: MPI_Comm_size failed";
+    if (MPI_Comm_rank(MPI_COMM_WORLD, &rank))
+        throw "Error: MPI_Comm_rank failed";
+
+    Coordinates crds;
+    crds.x = xCoord;
+    crds.y = yCoord;
+    crds.n = nCites;
+
+    MPI_Datatype data;
+    createInDataType(&crds, &data);
+
+    if (MPI_Bcast(&crds, 1, data, 0, MPI_COMM_WORLD))
+        throw "Error: MPI_Comm_size failed";
+
+        ...
+
+    PathAndLength* pal = (PathAndLength*)malloc(sizeof(PathAndLength));
+    pal->path = (int*)malloc(sizeof(int)*crds.n);
+
+    pal->length = min_length;
+    for (int i = 0; i < crds.n; ++i) {
+        (pal->path)[i] = min_path[i];
+    }
+    pal->pathSize = crds.n;
+    MPI_Datatype outDatatype;
+    MPI_Op op;
+
+    createOutDataType(pal, &outDatatype);
+
+    MPI_Op_create(&comparePaths, 1, &op);
+
+    PathAndLength* result = (PathAndLength*)malloc(sizeof(PathAndLength));
+    result->path = (int*)malloc(sizeof(int)*crds.n);
+    MPI_Reduce(pal, result, crds.n, outDatatype, op, 0, MPI_COMM_WORLD);
+
+    ...
+
+    return result->length;
+}
+
+createOutDataType
+createInDataType
+void createInDataType(Coordinates* indata, MPI_Datatype* message_type_ptr) {
+    // Build a derived datatype
+    int block_lengths[3];
+    MPI_Aint displacements[3];
+    MPI_Aint addresses[4];
+    MPI_Datatype typelist[3];
+
+    // First specify the types
+    typelist[0] = typelist[1] = typelist[2] = MPI_INT;
+
+    // Specify the number of elements of each type
+    block_lengths[0] = block_lengths[1] = indata->n;
+    block_lengths[2] = 1;
+
+    // Calculate the displacements of the members relative to indata
+    MPI_Address(indata, &addresses[0]);
+    MPI_Address(indata->x, &addresses[1]);
+    MPI_Address(indata->y, &addresses[2]);
+    MPI_Address(&indata->n, &addresses[3]);
+    displacements[0] = addresses[1] - addresses[0];
+    displacements[1] = addresses[2] - addresses[0];
+    displacements[2] = addresses[3] - addresses[0];
+
+    // Create the derived type
+    MPI_Type_struct(3, block_lengths, displacements, typelist, message_type_ptr);
+
+    // Commit it so that it can be used
+    MPI_Type_commit(message_type_ptr);
+}
+
+void createOutDataType(PathAndLength* outdata, MPI_Datatype* message_type_ptr) {
+    // Build a derived datatype
+    int block_lengths[2];
+    MPI_Aint displacements[2];
+    MPI_Aint addresses[3];
+    MPI_Datatype typelist[2];
+
+    // First specify the types
+    typelist[0] = MPI_INT;
+    typelist[1] = MPI_INT;
+
+    // Specify the number of elements of each type
+    block_lengths[0] = outdata->pathSize;
+    block_lengths[1] = 1;
+
+    // Calculate the displacements of the members relative to outdata
+    MPI_Address(outdata, &addresses[0]);
+    MPI_Address(outdata->path, &addresses[1]);
+    MPI_Address(&outdata->length, &addresses[2]);
+    displacements[0] = addresses[1] - addresses[0];
+    displacements[1] = addresses[2] - addresses[0];
+
+    // Create the derived type
+    MPI_Type_struct(2, block_lengths, displacements, typelist, message_type_ptr);
+
+    // Commit it so that it can be used
+    MPI_Type_commit(message_type_ptr);
+}
+

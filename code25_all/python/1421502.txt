@@ -1,0 +1,53 @@
+' wiget_id and scanner_id provided by automation object
+' ExecFunction() takes care of calling a CPython function
+retval = ExecFunction("WidgetScanned", widget_id, scanner_id);
+' if the python function raises an Exception, ErrorOccured will be true
+' in this case, any errors should cause the production line to stop.
+if (retval.ErrorOccured) then
+    ProductionLine.Running = False;
+    InformationBoard.DisplayText = "ERROR: " + retval.Exception.Message;
+    InformationBoard.SoundAlarm = True
+end if;
+
+WidgetScanned
+# pywip/functions.py
+from pywip.database import session
+from pywip.model import Widget, WidgetHistoryItem
+from pywip import validation, StatusMessage
+from datetime import datetime
+
+def WidgetScanned(widget_id, scanner_id):
+    widget = session.query(Widget).get(widget_id)
+    validation.validate_widget_passed_scanner(widget, scanner) # raises exception on error
+
+    widget.history.append(WidgetHistoryItem(timestamp=datetime.now(), action=u"SCANNED", scanner_id=scanner_id))
+    widget.last_scanner = scanner_id
+    widget.last_update = datetime.now()
+
+    return StatusMessage("OK")
+
+# ... there are a dozen similar functions
+
+# pywip/iasfunctions.py
+from pywip import functions
+
+def ias_session_handling(func):
+    def _ias_session_handling(*args, **kwargs):
+        try:
+            retval = func(*args, **kwargs)
+            session.commit()
+            return retval
+        except:
+            session.rollback()
+            raise
+    return _ias_session_handling
+
+# ... actually I populate this module with decorated versions of all the functions in pywip.functions dynamically
+WidgetScanned = ias_session_handling(functions.WidgetScanned)
+
+session.remove()
+# pywip/database.py
+from sqlalchemy.orm import scoped_session, sessionmaker
+
+session = scoped_session(sessionmaker())
+

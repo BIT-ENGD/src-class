@@ -1,0 +1,193 @@
+struct exec_env {
+
+    cl_program* cpPrograms;
+    cl_context cxGPUContext;
+
+    int cpProgramCount;
+    int cpKernelCount;
+    int nvidia_platform_index;
+    int num_cl_mem_buffs_used;
+    int total;
+
+    cl_platform_id cpPlatform;
+    cl_uint ciDeviceCount;
+    cl_int ciErrNum;
+    cl_command_queue commandQueue;
+
+    cl_kernel* cpKernels;
+    cl_device_id *cdDevices;
+    cl_mem* cmMem;
+};
+
+int HandleClient(int sock) {
+
+struct exec_env my_env;
+
+int err, cl_err;
+int rec_buff [sizeof(int)];
+
+log("[LOG]: In HandleClient. \n");
+
+my_env.total = 0;
+
+//in anticipation of some cl_mem buffers, we pre-emtively init some. Later, we should have these
+//grow/shrink dynamically.
+my_env.num_cl_mem_buffs_used = 0;
+if ((my_env.cmMem = (cl_mem*)malloc(MAX_CL_BUFFS * sizeof(cl_mem))) == NULL)
+    {
+        log("[ERROR]:Failed to allocate memory for cl_mem structures\n");
+        //let the client know
+        replyHeader(sock, MALLOC_FAIL, UNKNOWN, 0, 0);
+        return EXIT_FAILURE;
+    }
+
+my_env.cpPlatform = NULL;
+my_env.ciDeviceCount = 0;
+my_env.cdDevices = NULL;
+my_env.commandQueue = NULL;
+my_env.cxGPUContext = NULL;
+
+while(1){
+
+    log("[LOG]: Awaiting next packet header... \n");
+
+
+    //read the first 4 bytes of the header 1st, which signify the function id. We later switch on this value
+    //so we can read the rest of the header which is function dependent.
+    if((err = receiveAll(sock,(char*) &rec_buff, sizeof(int))) != EXIT_SUCCESS){
+        return err;
+    }
+
+    log("[LOG]: Got function id %d \n", rec_buff[0]);
+    log("[LOG]: Total Function count: %d \n", my_env.total);
+    my_env.total++;
+
+    //now we switch based on the function_id
+    switch (rec_buff[0]) {
+    case CREATE_BUFFER:;
+            {
+                //first define a client packet to hold the header
+                struct clCreateBuffer_client_packet my_client_packet_hdr;
+                int client_hdr_size_bytes = CLI_PKT_HDR_SIZE + CRE_BUFF_CLI_PKT_HDR_EXTRA_SIZE;
+
+                //buffer for the rest of the header (except the size_t)
+                int header_rec_buff [(client_hdr_size_bytes - sizeof(my_client_packet_hdr.buff_size))];
+                //size_t header_rec_buff_size_t [sizeof(my_client_packet_hdr.buff_size)];
+                size_t header_rec_buff_size_t [1];
+
+                //set the first field
+                my_client_packet_hdr.std_header.function_id = rec_buff[0];
+
+                //read the rest of the header
+                if((err = receiveAll(sock,(char*) &header_rec_buff, (client_hdr_size_bytes - sizeof(my_client_packet_hdr.std_header.function_id) - sizeof(my_client_packet_hdr.buff_size)))) != EXIT_SUCCESS){
+                    //signal the client that something went wrong. Note we let the client know it was a socket read error at the server end.
+                    err = replyHeader(sock, err, CREATE_BUFFER, 0, 0);
+                    cleanUpAllOpenCL(&my_env);
+                    return err;
+                }
+
+                //read the rest of the header (size_t)
+                if((err = receiveAll(sock, (char*)&header_rec_buff_size_t, sizeof(my_client_packet_hdr.buff_size))) != EXIT_SUCCESS){
+                    //signal the client that something went wrong. Note we let the client know it was a socket read error at the server end.
+                    err = replyHeader(sock, err, CREATE_BUFFER, 0, 0);
+                    cleanUpAllOpenCL(&my_env);
+                    return err;
+                }
+
+                log("[LOG]: Got the rest of the header, packet size is %d \n", header_rec_buff[0]);
+                log("[LOG]: Got the rest of the header, flags are %d \n", header_rec_buff[1]);
+                log("[LOG]: Buff size is %d \n", header_rec_buff_size_t[0]);
+
+                //set the remaining fields
+                my_client_packet_hdr.std_header.packet_size = header_rec_buff[0];
+                my_client_packet_hdr.flags = header_rec_buff[1];
+                my_client_packet_hdr.buff_size = header_rec_buff_size_t[0];
+
+                //get the payload (if one exists)
+                int payload_size = (my_client_packet_hdr.std_header.packet_size - client_hdr_size_bytes);
+                log("[LOG]: payload_size is %d \n", payload_size);
+                char* payload = NULL;
+
+                if(payload_size != 0){
+
+                    if ((payload = malloc(my_client_packet_hdr.buff_size)) == NULL){
+                            log("[ERROR]:Failed to allocate memory for payload!\n");
+                            replyHeader(sock, MALLOC_FAIL, UNKNOWN, 0, 0);
+                            cleanUpAllOpenCL(&my_env);
+                            return EXIT_FAILURE;
+                    }
+
+                    if((err = receiveAllSizet(sock, payload, my_client_packet_hdr.buff_size)) != EXIT_SUCCESS){
+                        //signal the client that something went wrong. Note we let the client know it was a socket read error at the server end.
+                        err = replyHeader(sock, err, CREATE_BUFFER, 0, 0);
+                        free(payload);
+                        cleanUpAllOpenCL(&my_env);
+                        return err;
+                    }
+
+                }
+
+                //make the opencl call
+                log("[LOG]: ***num_cl_mem_buffs_used before***: %d \n", my_env.num_cl_mem_buffs_used);
+                cl_err = h_clCreateBuffer(&my_env, my_client_packet_hdr.flags, my_client_packet_hdr.buff_size, payload, &my_env.cmMem);
+                my_env.num_cl_mem_buffs_used = (my_env.num_cl_mem_buffs_used+1);
+                log("[LOG]: ***num_cl_mem_buffs_used after***: %d \n", my_env.num_cl_mem_buffs_used);
+
+                 //send back the reply with the error code to the client
+                log("[LOG]: Sending back reply header \n");
+
+                if((err = replyHeader(sock, cl_err, CREATE_BUFFER, 0, (my_env.num_cl_mem_buffs_used -1))) != EXIT_SUCCESS){
+                   //send the header failed, so we exit
+                   log("[ERROR]: Failed to send reply header to client, %d \n", err);
+                   log("[LOG]: OpenCL function result was %d \n", cl_err);
+                   if(payload != NULL) free(payload);
+                   cleanUpAllOpenCL(&my_env);
+                   return err;
+                }
+
+                //now exit if failed
+                if(cl_err != CL_SUCCESS){
+                    log("[ERROR]: Error executing OpenCL function clCreateBuffer %d \n", cl_err);
+                    if(payload != NULL) free(payload);
+                    cleanUpAllOpenCL(&my_env);
+                    return EXIT_FAILURE;
+                }
+
+            }
+            break;
+
+int h_clCreateBuffer(struct exec_env* my_env, int flags, size_t size, void* buff, cl_mem* all_mems){
+
+/*
+ * TODO:
+ * Sort out the flags.
+ * How do we store cl_mem objects persistantly? In the my_env struct? Can we have a pointer int the my_env
+ * struct that points to a mallocd area of mem. Each malloc entry is a pointer to a cl_mem object. Then we
+ * can update the malloced area, growing it as we have more and more cl_mem objects.
+ */
+
+//check that we have enough pointers to cl_mem. TODO, dynamically expand if not
+if(my_env->num_cl_mem_buffs_used == MAX_CL_BUFFS){
+    return CL_MEM_OUT_OF_RANGE;
+}
+
+int ciErrNum;
+cl_mem_flags flag;
+if(flags == CL_MEM_READ_WRITE_ONLY){
+    flag = CL_MEM_READ_WRITE;
+}
+
+if(flags == CL_MEM_READ_WRITE_OR_CL_MEM_COPY_HOST_PTR){
+    flag = CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR;
+}
+
+log("[LOG]: Got flags. Calling clCreateBuffer\n");
+log("[LOG]: ***num_cl_mem_buffs_used before in function***: %d \n", my_env->num_cl_mem_buffs_used);
+all_mems[my_env->num_cl_mem_buffs_used] = clCreateBuffer(my_env->cxGPUContext, flag , size, buff, &ciErrNum);
+log("[LOG]: ***num_cl_mem_buffs_used after in function***: %d \n", my_env->num_cl_mem_buffs_used);
+
+log("[LOG]: Finished clCreateBuffer with id: %d \n", my_env->num_cl_mem_buffs_used);
+//log("[LOG]: Finished clCreateBuffer with id: %d \n", buff_counter);
+return ciErrNum;
+}
+

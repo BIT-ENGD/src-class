@@ -1,0 +1,125 @@
+spb_word
+spb_obj_word
+spb_word4obj
+create sequence spb_word_seq;
+
+create table spb_word (
+  id bigint not null primary key default nextval('spb_word_seq'),
+  word varchar(410) not null unique
+);
+
+create sequence spb_obj_word_seq;
+
+create table spb_obj_word (
+  id int not null primary key default nextval('spb_obj_word_seq'),
+  doc_id int not null,
+  idx int not null,
+  word_id bigint not null references spb_word (id),
+  constraint spb_ak_obj_word unique (doc_id, word_id, idx)
+);
+
+create sequence spb_word4obj_seq;
+
+create table spb_word4obj (
+  id int not null primary key default nextval('spb_word4obj_seq'),
+  doc_id int not null,
+  idx int not null,
+  word varchar(410) not null,
+  word_id bigint null references spb_word (id),
+  constraint spb_ak_word4obj unique (doc_id, word_id, idx),
+  constraint spb_ak_word4obj2 unique (doc_id, word, idx)
+);
+
+create sequence spb_wordnum_seq;
+
+create or replace function spb_getWord() returns text as $$
+declare
+  rn int;
+  letters varchar(255) :=   'ąćęłńóśźżjklmnopqrstuvwxyz';
+                          --'abcdefghijklmnopqrstuvwxyz';
+  llen int := length(letters);
+  res text := '';
+  wordnum int;
+begin
+  select nextval('spb_wordnum_seq') into wordnum;
+
+  rn := 3 * (wordnum + llen * llen * llen);
+  rn := (rn + llen) / (rn % llen + 1);
+  rn := rn % (rn / 2 + 10);
+
+  loop
+    res := res || substring(letters, rn % llen, 1);
+    rn := floor(rn / llen);
+    exit when rn = 0;
+  end loop;
+
+  --raise notice 'word for wordnum=% is %', wordnum, res;
+
+  return res;
+end;
+$$ language plpgsql;
+
+
+
+create or replace function spb_runme() returns void as $$
+begin
+  perform setval('spb_wordnum_seq', 1, false);
+  truncate table spb_word4obj, spb_word, spb_obj_word;
+
+  for j in 0 .. 50000-1 loop
+
+    if j % 100 = 0 then raise notice 'j = %', j; end if;
+
+    delete from spb_word4obj where doc_id = j;
+
+    for i in 0 .. 20 - 1 loop
+      insert into spb_word4obj (word, idx, doc_id) values (spb_getWord(), i, j);         
+    end loop;
+
+    update spb_word4obj set word_id = w.id from spb_word w 
+    where w.word = spb_word4obj.word and doc_id = j;
+
+    insert into spb_word (word) 
+    select distinct word from spb_word4obj 
+    where word_id is null and doc_id = j;
+
+    update spb_word4obj set word_id = w.id 
+    from spb_word w 
+    where w.word = spb_word4obj.word and 
+    word_id is null and doc_id = j;
+
+    insert into spb_obj_word (word_id, idx, doc_id) 
+    select word_id, idx, doc_id from spb_word4obj where doc_id = j;
+  end loop;
+end;
+$$ language plpgsql;
+
+select spb_runme()
+NOTICE:  j = 8200
+ERROR:  duplicate key value violates unique constraint "spb_word_word_key"
+CONTEXT:  SQL statement "insert into spb_word (word) select distinct word from spb_word4obj where word_id is null and doc_id =  $1 "
+PL/pgSQL function "spb_runme" line 18 at SQL statement
+
+NOTICE:  j = 500
+ERROR:  null value in column "word_id" violates not-null constraint
+CONTEXT:  SQL statement "insert into spb_obj_word (word_id, idx, doc_id) select word_id, idx, doc_id from spb_word4obj where doc_id =  $1 "
+PL/pgSQL function "spb_runme" line 27 at SQL statement
+
+j
+ąćęłńóśźż
+letters varchar(255) :=   'ąćęłńóśźżjklmnopqrstuvwxyz';
+letters varchar(255) :=   'abcdefghijklmnopqrstuvwxyz';
+delete
+spb_getWord()
+spb_getWord()
+spb_word4obj
+word_id
+spb_word
+spb_word4obj
+word_id
+spb_word
+duplicate key value violates unique constraint
+spb_word
+spb_obj_word
+spb_word
+spb_getWord

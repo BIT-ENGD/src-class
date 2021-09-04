@@ -1,0 +1,274 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Text;
+using System.Windows.Forms;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.IO;
+using.System.Threading;
+
+namespace WindowsApplication1
+{
+public partial class lanmessenger : Form
+{
+
+    Socket client;
+    Socket newSock, server, hostSock, remote;
+
+
+    byte[] receiveBuffer = new byte[1024];
+    byte[] sendBuffer = new byte[1024];
+
+    String dataEntered;
+
+    StringBuilder textbox1, receivedData, sb;
+
+    IPEndPoint serverIP, clientIP;
+
+    [DllImport("user32.dll")]
+    static extern bool HideCaret(IntPtr hWnd);
+
+    Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+    IPAddress localaddress = IPAddress.Parse("127.0.0.1");
+
+
+    public void Receive()
+    {
+        if (remote.Connected)
+            remote.BeginReceive(receiveBuffer, 0, receiveBuffer.Length, System.Net.Sockets.SocketFlags.None, new AsyncCallback(OnReceivingData), remote);
+        else
+            return;
+    }
+
+
+    void OnReceivingData(IAsyncResult ar)
+    {
+
+        remote = (Socket)ar.AsyncState;
+
+        int recv = remote.EndReceive(ar);
+
+        receivedData = new StringBuilder(Encoding.ASCII.GetString(receiveBuffer, 0, recv));
+        //MessageBox.Show(receivedData.ToString(), "received", MessageBoxButtons.OK);
+
+        sb = new StringBuilder(this.textBox1.Text);
+        sb.AppendLine(receivedData.ToString());
+
+        if (textBox1.InvokeRequired)
+        {
+            this.Invoke((MethodInvoker)delegate { this.textBox1.Text = sb.ToString(); });
+
+        }
+        //Receive();     
+
+
+        return;
+    }
+
+
+
+    private void Accepted(IAsyncResult ar)
+    {
+        server = (Socket)ar.AsyncState;
+        client = server.EndAccept(ar);
+        /*if (client.Connected)
+            MessageBox.Show("client connected");*/
+
+        try
+        {
+            client.BeginReceive(receiveBuffer, 0, receiveBuffer.Length, System.Net.Sockets.SocketFlags.None, new AsyncCallback(OnReceivingData), client);
+        }
+        catch (ArgumentException)
+        {
+            MessageBox.Show("arguments incorrect in begin-receive call", "Error", MessageBoxButtons.OK);
+        }
+        catch (SocketException)
+        {
+            MessageBox.Show("error in accessing socket while receiving", "Error", MessageBoxButtons.OK);
+        }
+        catch (ObjectDisposedException)
+        {
+            MessageBox.Show("socket closed while receiving", "Error", MessageBoxButtons.OK);
+        }
+        catch (Exception)
+        {
+            MessageBox.Show("error while receiving", "Error", MessageBoxButtons.OK);
+        }
+
+    }
+
+    public void FirstEndPoint()
+    {
+        newSock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        clientIP = new IPEndPoint(localaddress, 5555);
+
+        newSock.Bind(clientIP);
+        newSock.Listen(100);
+
+        try
+        {
+            newSock.BeginAccept(new AsyncCallback(Accepted), newSock);
+        }
+        catch (ArgumentException)
+        {
+            MessageBox.Show("Error in arguments while using begin-accept", "Error", MessageBoxButtons.OK);
+        }
+        catch (ObjectDisposedException)
+        {
+            MessageBox.Show("socket closed while using begin-accept", "Error", MessageBoxButtons.OK);
+        }
+        catch (SocketException)
+        {
+            MessageBox.Show("Error accessing socket while using begin-accept", "Error", MessageBoxButtons.OK);
+        }
+        catch (InvalidOperationException)
+        {
+            MessageBox.Show("Invalid operation while using begin-accept", "Error", MessageBoxButtons.OK);
+        }
+        catch (Exception)
+        {
+            MessageBox.Show("Exception occurred while using begin-accept", "Error", MessageBoxButtons.OK);
+        }
+    }
+
+    public void CreateThread()
+    {
+        Thread FirstThread = new Thread(new ThreadStart(FirstEndPoint));
+        FirstThread.Start();
+    }
+
+    public lanmessenger()
+    {
+        InitializeComponent();
+        CreateThread();   
+
+    }
+
+    void OnSendingData(IAsyncResult ar)
+    {
+        Socket socket = (Socket)ar.AsyncState;
+        int AmtOfData = socket.EndSend(ar);
+        //MessageBox.Show(AmtOfData.ToString());
+
+        return;
+    }
+
+    public void SendingData(Socket sock, String data)
+    {
+        textbox1.AppendLine(this.textBox2.Text);
+
+        if (textBox1.InvokeRequired)
+        {
+            this.Invoke((MethodInvoker)delegate { this.textBox1.Text = textbox1.ToString(); });
+        }
+
+
+        if (textBox2.InvokeRequired)
+        {
+            this.Invoke((MethodInvoker)delegate { this.textBox2.Text = "\0"; });
+        }
+
+
+        sendBuffer = Encoding.ASCII.GetBytes(data);
+
+
+        try
+        {
+            sock.BeginSend(sendBuffer, 0, sendBuffer.Length, SocketFlags.None, new AsyncCallback(OnSendingData), sock);
+        }
+        catch (ArgumentException)
+        {
+            MessageBox.Show("arguments incorrect in begin-send call", "Error", MessageBoxButtons.OK);
+        }
+        catch (SocketException ex)
+        {
+            String str1 = "error in accessing socket while sending" + ex.ErrorCode.ToString();
+            MessageBox.Show(str1, "Error", MessageBoxButtons.OK);
+        }
+        catch (ObjectDisposedException)
+        {
+            MessageBox.Show("socket closed while sending", "Error", MessageBoxButtons.OK);
+        }
+        catch (Exception)
+        {
+            MessageBox.Show("error while sending", "Error", MessageBoxButtons.OK);
+        }
+    }
+
+    private void OnClientConnect(IAsyncResult ar)
+    {
+        Socket sock = (Socket)ar.AsyncState;
+
+        try
+        {
+            sock.EndConnect(ar);
+            if (sock.Connected)
+                MessageBox.Show("connected");
+
+        }
+        catch (SocketException ex)
+        {
+            MessageBox.Show("Error in accessing socket while using end-connect" + ex.ErrorCode.ToString(), "Error", MessageBoxButtons.OK);
+            return;
+
+        }
+
+        if ((sock.Connected) && (dataEntered != ""))
+        {
+            SendingData(sock, dataEntered);
+        }
+
+    }
+
+
+
+    private void button1_Click(object sender, EventArgs e)
+    {
+
+        HideCaret(this.textBox1.Handle);
+
+        textbox1 = new StringBuilder(this.textBox1.Text);
+        dataEntered = this.textBox2.Text;
+        hostSock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        serverIP = new IPEndPoint(localaddress, 5555);
+
+
+        try
+        {
+            hostSock.BeginConnect(serverIP, new AsyncCallback(OnClientConnect), hostSock);
+        }
+        catch (ArgumentException)
+        {
+            MessageBox.Show("Error in arguments while using begin-connect", "Error", MessageBoxButtons.OK);
+            return;
+        }
+        catch (SocketException)
+        {
+            MessageBox.Show("Error in accessing socket while using begin-connect", "Error", MessageBoxButtons.OK);
+            return;
+        }
+        catch (ObjectDisposedException)
+        {
+            MessageBox.Show("socket closed while using begin-connect", "Error", MessageBoxButtons.OK);
+            return;
+        }
+        catch (InvalidOperationException)
+        {
+            MessageBox.Show("Invalid operation while using begin-connect", "Error", MessageBoxButtons.OK);
+            return;
+        }
+
+        catch (Exception)
+        {
+            MessageBox.Show("Exception while using begin-connect", "Error", MessageBoxButtons.OK);
+            return;
+        }
+
+    }
+
+}
+

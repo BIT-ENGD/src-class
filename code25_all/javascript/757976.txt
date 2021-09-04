@@ -1,0 +1,205 @@
+//Initializes the handlers and reports
+function loadUI() {
+    loadReports();
+    $("#userSelect").change(updateRunButton);
+    $("#runReport").click(runReport);
+    updateRunButton();
+    return;
+    $("#userSelect").change(loadUserGames);
+    var user = $("#userSelect").val();
+    if(user) {
+        getUserGames(user);
+    }
+}
+
+//Creates reports and adds them to the select
+function loadReports() {
+    var reportSelect = $("#reportSelect");
+    var report = new SpareReport();
+    engine.reports[report.name] = report;
+    reportSelect.append($("<option/>").text(report.name));
+
+    reportSelect.change(updateRunButton);
+}
+
+//The class that represents the 1 report we can run right now.
+function SpareReport() {
+    this.name = "Spare Percentages";
+    this.activate = function() {
+
+    };
+
+    this.canRun = function() {
+        return true;
+    };
+
+    //Collects the data for the report.  Initializes/resets the class variables,
+    //and initiates calls to retrieve all user practices, leagues, and tournaments.
+    this.run = function() {
+        var rC = $("#rC");
+        var user = engine.currentUser();
+        rC.html("<img src='/img/loading.gif' alt='Loading...'/> <span id='reportProgress'>Loading games...</span>");
+        this.pendingOperations = 3;
+        this.games = [];
+        $("#runReport").enabled = false;
+        $.ajaxSetup({"error":(function(report) {
+            return function(event, XMLHttpRequest, ajaxOptions, thrownError) {
+                report.ajaxError(event, XMLHttpRequest, ajaxOptions, thrownError);
+            };
+        })(this)});
+
+        $.getJSON("/api/leagues", {"user":user}, (function(report) {
+            return function(leagues) {
+                report.addSeriesGroup(leagues);
+            };
+        })(this));
+        $.getJSON("/api/tournaments", {"user":user}, (function(report) {
+            return function(tournaments) {
+                report.addSeriesGroup(tournaments);
+            };
+        })(this));
+        $.getJSON("/api/practices", {"user":user}, (function(report) {
+            return function(practices) {
+                report.addSerieses(practices);
+            };
+        })(this));
+    };
+
+    // Retrieves the serieses (group of IDs) for a series group, such as a league or
+    // tournament.
+    this.addSeriesGroup = function(seriesGroups) {
+        var report = this;
+        if(seriesGroups) {
+            $.each(seriesGroups, function(index, seriesGroup) {
+                report.pendingOperations += 1;
+                $.getJSON("/api/seriesgroup", {"group":seriesGroup.key}, (function(report) {
+                    return function(serieses) {
+                        report.addSerieses(serieses);
+                    };
+                })(report));
+            });
+        }
+        this.pendingOperations -= 1;
+        this.tryFinishReport();
+    };
+
+    // Retrieves the actual serieses for a series group.  Takes a set of
+    // series IDs and retrieves each series.
+    this.addSerieses = function(serieses) {
+        var report = this;
+        if(serieses) {
+            $.each(serieses, function(index, series) {
+                report.pendingOperations += 1;
+                $.getJSON("/api/series", {"series":series.key}, (function(report) {
+                    return function(series) {
+                        report.addSeries(series);
+                    };
+                })(report));
+            });
+        }
+        this.pendingOperations -= 1;
+        this.tryFinishReport();
+    };
+
+    // Adds the games for the series to the list of games
+    this.addSeries = function(series) {
+        var report = this;
+        if(series && series.games) {
+            $.each(series.games, function(index, game) {
+                report.games.push(game);
+            });
+        }
+        this.pendingOperations -= 1;
+        this.tryFinishReport();
+    };
+
+    // Checks to see if all pending requests have completed - if so, runs the
+    // report.
+    this.tryFinishReport = function() {
+        if(this.pendingOperations > 0) {
+            return;
+        }
+        var progress = $("#reportProgress");
+        progress.text("Performing calculations...");
+        setTimeout((function(report) {
+            return function() {
+                report.finishReport();
+            };
+        })(this), 1);
+    }
+
+    // Performs report calculations and displays them to the user.
+    this.finishReport = function() {
+        var rC = $("#rC");
+
+        //snip a page of calculations/table generation
+        rC.html(html);
+
+        $("#rC table").addClass("tablesorter").attr("cellspacing", "1").tablesorter({"sortList":[[3,1]]});
+    };
+
+    // Handles errors (by ignoring them)
+    this.ajaxError = function(event, XMLHttpRequest, ajaxOptions, thrownError) {
+        this.pendingOperations -= 1;
+    };
+
+    return true;
+}
+
+// A class to track the state of the various controls.  The "series set" stuff
+// is for future functionality.
+function ReportingEngine() {
+    this.seriesSet = [];
+    this.reports = {};
+    this.getSeriesSet = function() {
+        return this.seriesSet;
+    };
+    this.clearSeriesSet = function() {
+        this.seriesSet = [];
+    };
+    this.addGame = function(series) {
+        this.seriesSet.push(series);
+    };
+    this.currentUser = function() {
+        return $("#userSelect").val();
+    };
+    this.currentReport = function() {
+        reportName = $("#reportSelect").val();
+        if(reportName) {
+            return this.reports[reportName];
+        }
+        return null;
+    };
+}
+
+// Sets the enablement of the run button based on the selections to the inputs
+function updateRunButton() {
+    var report = engine.currentReport();
+    var user = engine.currentUser();
+    setRunButtonEnablement(report != null && user != null);
+}
+
+function setRunButtonEnablement(enabled) {
+    if(enabled) {
+        $("#runReport").removeAttr("disabled");
+    } else {
+        $("#runReport").attr("disabled", "disabled");
+    }
+
+}
+
+var engine = new ReportingEngine();
+
+$(document).ready( function() {
+    loadUI();
+});
+
+function runReport() {
+    var report = engine.currentReport();
+    if(report == null) {
+        updateRunButton();
+        return;
+    }
+    report.run();
+}
+

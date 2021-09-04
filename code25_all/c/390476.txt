@@ -1,0 +1,71 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <sys/wait.h>
+
+struct dummy_struct {
+    long mtype;
+    char message[255];
+};
+
+int msg_queue_id;
+void recv_thread(int id);
+
+int main(int argc, char **argv)
+{
+    int i;
+    key_t key;
+    struct dummy_struct dummy = { 3, "hello" };
+
+    //create a unique key
+    if (key = ftok("/mnt/mydocuments/code/sys_v_fork_test/main.c", 'a') == -1)
+    {
+        printf("ftok didn't work\n");
+        exit(1);
+    }
+
+    //create the unix sys 5 message queue
+    if ((msg_queue_id = msgget(key, 0644 | IPC_CREAT)) == -1)
+    {
+        printf("msgget failed\n");
+        exit(1);
+    }
+    else
+        printf("my message queue id: %i\n", msg_queue_id);
+
+    //fork off multiple recievers
+    for (i = 1; i < 4; i++) // <- NOTE: 1 -> 4
+    {
+        if (fork() == 0)
+            recv_thread(i);
+    }
+
+    printf("sleeping\n");
+    sleep(5);
+
+    //wait a little then send a message
+
+    printf("sending message\n");
+    if (msgsnd(msg_queue_id, &dummy, sizeof(struct dummy_struct), 0) == -1)
+    {
+        printf("msgsnd failed\n");
+    }
+    printf("main thread exiting");
+    _exit(0);
+}
+
+void recv_thread(int id)
+{
+    struct dummy_struct dummy;
+
+    printf("recv_thread with id: %i\n", id);
+
+    if (msgrcv(msg_queue_id, &dummy, sizeof(struct dummy_struct), id, 0) == -1)
+        printf("error in msgrcv\n");
+    else
+        printf("thread %i got %s back\n", id, dummy.message);
+}
+

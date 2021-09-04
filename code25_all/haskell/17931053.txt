@@ -1,0 +1,32 @@
+ngram :: Monad m => Int -> Conduit t m [t]
+trigrams = ngram 3
+countFreq :: (Ord t, Monad m) => Consumer [t] m (Map [t] Int)
+
+tokens --- trigrams --- countFreq
+
+           .--- unigrams --- countFreq
+           |--- bigrams  --- countFreq
+tokens ----|--- trigrams --- countFreq
+           '--- ...      --- countFreq
+
+spawnMultiple orders = do
+    chan <- atomically newBroadcastTMChan
+
+    results <- forM orders $ \_ -> newEmptyMVar
+    threads <- forM (zip results orders) $
+                        forkIO . uncurry (sink chan)
+
+    forkIO . runResourceT $ sourceFile "test.txt"
+                         $$ javascriptTokenizer
+                         =$ sinkTMChan chan
+
+    forM results readMVar
+
+    where
+        sink chan result n = do
+            chan' <- atomically $ dupTMChan chan
+            freqs <- runResourceT $ sourceTMChan chan'
+                                 $$ ngram n
+                                 =$ frequencies
+            putMVar result freqs
+

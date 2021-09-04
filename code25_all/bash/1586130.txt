@@ -1,0 +1,65 @@
+cat "$TMPDIR/freeinfo.txt" >> "$TMPDIR/Installinfo.txt" 2>/dev/null
+echo >$TMPDIR/endtag.txt
+echo "%%%%OXBACKUP_${DATE}_HEADER_ENDTAG" >> "$TMPDIR/endtag.txt"
+
+BACKUPINFO="$BACKUPINFO endtag.txt"
+
+
+cat 2>/dev/null << EOF > "$TMPDIR/Installinfo.sh"
+BACKUPHOSTNAME="$hostname"
+BACKUPDOMAINNAME="$domainname"
+BACKUPBASEDN="$ldap_base"
+BACKUPTIMEZONE="$(cat /etc/timezone)"
+BACKUPLANG="$(echo $locale_default)"
+BACKUPSAMBADOM="$windows_domain"
+BACKUPSAMBAINSTALLED="$SAMBAINSTALLED"
+BACKUPOXINTEGRATIONVERSION="$INTEGRATIONVERSION"
+BACKUPSECLEVEL="$(univention-config-registry get version/security-patchlevel)"
+BACKUPVERSION=2
+SECRETFILES="$SECRETFILES"
+OTHERFILES="$OTHERFILES"
+OXCONFIG="$OXCONFIG"
+CRONTABS="$CRONTABS"
+CERTFILES="$CERTFILES"
+EOF
+
+pstatus=()
+
+#
+# the actual backup to stdout
+#
+    sync ; sync ; sync
+
+RETVAL=$(
+(tar cO $BACKUPINFO 2>/dev/null
+tar cO $SECRETFILES 2>/dev/null
+tar cO $OTHERFILES 2>/dev/null
+tar cO $OXCONFIG 2>/dev/null
+tar cO $CRONTABS 2>/dev/null
+tar cO $CERTFILES 2>/dev/null
+[ -f $EXTRAFILES ] && tar --no-recursion -T $EXTRAFILES -cO 2>/dev/null
+tar --no-recursion --null -T dirlist_mailandfilestore -cO 2>/dev/null
+tar --null -T filelist_mailandfilestore -cO 2>/dev/null
+tar --no-recursion --null -T dirlist_shares -cO 2>/dev/null
+tar --null -T filelist_shares -cO 2>/dev/null
+) |
+
+#help us out with smbclient, perl, scp until we get a working curl
+
+case "$BACKUPPROTOCOL" in
+##stripped protocol specific stuff ... (*) is the way to go!
+
+        (*)     dd 2>>${LOGFILE}_${DATE} > ${BACKUPPATH:-$DEFAULTBACKUPPATH}/backup_$DATE && echo "201"
+
+                chmod 640 "${BACKUPPATH}/backup_$DATE" >/dev/null 2>&1
+                chown root:www-data "${BACKUPPATH}/backup_$DATE" >/dev/null 2>&1
+
+                if [[ x"$BACKUPPATH" != x && "$BACKUPPATH" != "$DEFAULTBACKUPPATH" ]] ; then
+                        # temporary permissions fix
+                        ln -sf "${BACKUPPATH}/backup_$DATE" "$DEFAULTBACKUPPATH/"
+                fi
+        ;;
+
+esac
+)
+

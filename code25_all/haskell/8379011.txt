@@ -1,0 +1,103 @@
+f <||> g
+f <||> g
+f
+g
+computation
+printme
+computation = do
+    lift (print "start -- always")
+    (lift (print "first choice") <||> lift (print "second choice"))
+    lift (print "intermediate -- always")
+    (lift (print "third choice") <||> lift (print "fourth choice"))
+    lift (print "end -- always")
+
+printme x = do
+    putStrLn "=== start computation"
+    xv <- x
+    putStrLn "---\n"
+    return xv
+
+test = runIndep printme computation
+
+=== start computation
+"start -- always"
+"first choice"
+"intermediate -- always"
+"third choice"
+"end -- always"
+---
+
+=== start computation
+"start -- always"
+"first choice"
+"intermediate -- always"
+"fourth choice"
+"end -- always"
+---
+
+=== start computation
+"start -- always"
+"second choice"
+"intermediate -- always"
+"third choice"
+"end -- always"
+---
+
+=== start computation
+"start -- always"
+"second choice"
+"intermediate -- always"
+"fourth choice"
+"end -- always"
+---
+
+msplit
+import Control.Monad.Trans.Class
+
+data IndepModelT  α = IndepModelT {
+    unIndepModelT :: [Bool] ->  (α, [Bool]) }
+
+instance Monad  => Monad (IndepModelT ) where
+    return x = IndepModelT $ \choices -> return (x, [])
+    (IndepModelT x) >>= f = IndepModelT $ \choices -> do
+        (xv, branches) <- x choices
+        let choices' = drop (length branches) choices
+        (fxv, branches') <- unIndepModelT (f xv) choices'
+        return (fxv, branches ++ branches')
+
+instance MonadTrans IndepModelT where
+    lift x = IndepModelT $ \c -> liftWithChoice [] x
+liftWithChoice cs mx = mx >>= \xv -> return (xv, cs)
+
+(<||>)
+  :: Monad  => IndepModelT  α -> IndepModelT  α -> IndepModelT  α
+(IndepModelT f) <||> (IndepModelT g) = IndepModelT go where
+    go (False:cs) = do
+        (fv, branches) <- f cs
+        return (fv, False : branches)
+    go (True:cs) = do
+        (fv, branches) <- g cs
+        return (fv, True : branches)
+
+run_inner next_choices k comp@(IndepModelT comp_inner) = do
+    (xv, branches) <- k $ comp_inner next_choices
+    case (get_next_choices branches) of
+        Nothing -> return ()
+        Just choices -> run_inner (choices ++ repeat False) k comp
+    where
+        get_next_choices [] = Nothing
+        get_next_choices [True] = Nothing
+        get_next_choices [False] = Just [True]
+        get_next_choices (c:cs)
+            | Just cs' <- get_next_choices cs = Just $ c:cs'
+            | c Prelude.== False = Just [True]
+            | otherwise = Nothing
+
+runIndep :: Monad  =>
+    ( (α, [Bool]) ->  (β, [Bool]))
+    -> IndepModelT  α
+    ->  ()
+runIndep = run_inner (repeat False)
+
+runIndepFirst (IndepModelT comp) = comp (repeat False)
+

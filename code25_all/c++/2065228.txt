@@ -1,0 +1,81 @@
+typedef CBitmap * (CDC::* SelectObjectBitmap)(CBitmap*);
+SelectObjectBitmap pmf = (SelectObjectBitmap)&CDC::SelectObject;
+
+SelecdtObjectBitmap pmf = &CDC::SelectObject(CBitmap*);
+
+// get our client rect
+CRect rcClient;
+GetClientRect(rcClient);
+
+// get the real DC we're drawing on
+PAINTSTRUCT ps;
+CDC * pDrawContext = BeginPaint(&ps);
+
+// create a drawing buffer
+CBitmap canvas;
+canvas.CreateCompatibleBitmap(pDrawContext, rcClient.Width(), rcClient.Height());
+
+CDC memdc;
+memdc.CreateCompatibleDC(pDrawContext);
+
+//*** HERE'S THE LINE THAT REALLY USES THE TYPEDEF WHICH i WISH TO ELIMINATE ***//
+ScopeGuard guard_canvas = MakeObjGuard(memdc, (SelectObjectBitmap)&CDC::SelectObject, memdc.SelectObject(&canvas));
+
+// copy the image to screen
+pDrawContext->BitBlt(rcClient.left, rcClient.top, rcClient.Width(), rcClient.Height(), &memdc, rcClient.left, rcClient.top, SRCCOPY);
+
+// display updated
+EndPaint(&ps);
+
+template <class GDIObj>
+ObjScopeGuardImpl1<CDC, GDIObj*(CDC::*)(GDIObj*), GDIObj*> MakeSelectObjectGuard(CDC & dc, GDIObj * pGDIObj)
+{
+    return ObjScopeGuardImpl1<CDC, GDIObj*(CDC::*)(GDIObj*), GDIObj*>::MakeObjGuard(dc, (GDIObj*(CDC::*)(GDIObj*))&CDC::SelectObject, dc.SelectObject(pGDIObj));
+}
+
+ScopeGuard guard_canvas = MakeSelectObjectGuard(memdc, &canvas);
+
+//////////////////////////////////////////////////////////////////////////
+//
+// AutoSelectGDIObject
+//  selects a given HGDIOBJ into a given HDC,
+//  and automatically reverses the operation at scope exit
+//
+// AKA:
+//  "Tired of tripping over the same stupid code year after year"
+//
+// Example 1:
+//  CFont f;
+//  f.CreateIndirect(&lf);
+//  AutoSelectGDIObject select_font(*pDC, f);
+//
+// Example 2:
+//  HFONT hf = ::CreateFontIndirect(&lf);
+//  AutoSelectGDIObject select_font(hdc, hf);
+//
+// NOTE:
+//  Do NOT use this with an HREGION.  Those don't need to be swapped with what's in the DC.
+//////////////////////////////////////////////////////////////////////////
+
+class AutoSelectGDIObject
+{
+public:
+    AutoSelectGDIObject(HDC hdc, HGDIOBJ gdiobj) 
+        : m_hdc(hdc)
+        , m_gdiobj(gdiobj)
+        , m_oldobj(::SelectObject(m_hdc, gdiobj))
+    {
+        ASSERT(m_oldobj != m_gdiobj);
+    }
+
+    ~AutoSelectGDIObject()
+    {
+        VERIFY(m_gdiobj == ::SelectObject(m_hdc, m_oldobj));
+    }
+
+private:
+    const HDC       m_hdc;
+    const HGDIOBJ   m_gdiobj;
+    const HGDIOBJ   m_oldobj;
+};
+

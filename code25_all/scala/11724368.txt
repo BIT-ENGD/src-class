@@ -1,0 +1,73 @@
+val loginForm = Form(
+tuple(
+  "email" -> text,
+  "password" -> text
+) verifying ("Invalid email or password", result => result match {
+  case (email, password)  => (User.authenticate(email, password).map{_.id}.getOrElse(0) != 0)
+})
+
+val loginForm = Form(
+  tuple(
+  "email" -> text,
+  "password" -> text
+) verifying ("Invalid email or password", result => result match {
+  case (email, password) => User.authenticate(email, password).isDefined
+})
+
+case class User(id: Int, email: String, name: String, password: String)
+
+object User {
+
+  // -- Parsers
+
+  /**
+   * Parse a User from a ResultSet
+   */
+  val userParser = {
+            get[Option[Int]]("uid")~        
+            get[Option[String]]("email")~
+            get[Option[String]]("fname")~
+            get[Option[String]]("pbkval") map {
+            case (uid~email~name~pbkval) => validate(uid,email, name, pbkval)
+            }
+  }
+
+  /**
+   * Retrieve a User from email.
+   */
+  def findByEmail(email: String): Option[User] = {
+    DB.withConnection { implicit connection =>
+      SQL("select * from get_pbkval({email})").on(
+                'email -> email         
+            ).as(userParser.singleOpt)
+    }
+  }
+
+
+  /**
+   * Authenticated user session start.
+   */
+  def authenticate(email: String, password: String): Option[User] = {
+    DB.withConnection { implicit connection =>
+      SQL(
+            """
+                        select * from get_pbkval({email})
+            """
+            ).on(
+                'email -> email
+            ).as(userParser.singleOpt)
+
+        }
+    }
+
+  /**
+   * Validate entry and create user object.
+   */
+    def validate(uid: Option[Int], email: Option[String], fname: Option[String], pbkval: Option[String]): User = {
+                val uidInt : Int = uid.getOrElse(0)
+                val emailString: String = email.getOrElse(null)
+                val fnameString: String = fname.getOrElse(null)
+                val pbkvalString: String = pbkval.getOrElse(null)
+                User(uidInt, emailString, fnameString, pbkvalString)
+    }
+

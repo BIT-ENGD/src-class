@@ -1,0 +1,163 @@
+import akka.actor.Actor
+import akka.actor.Actor._
+import akka.actor.ActorRef
+import akka.actor.MaximumNumberOfRestartsWithinTimeRangeReached
+import akka.dispatch.Dispatchers
+import akka.routing.CyclicIterator
+import akka.routing.LoadBalancer
+import akka.config.Supervision._
+
+
+object TestActor {
+  val dispatcher = Dispatchers.newExecutorBasedEventDrivenWorkStealingDispatcher("pool")
+                   .setCorePoolSize(100)
+                   .setMaxPoolSize(100)
+                   .build
+}
+
+class TestActor(val name: Integer) extends Actor {
+    self.lifeCycle = Permanent
+    self.dispatcher = TestActor.dispatcher
+    def receive = {
+       case num: Integer => {  
+         if( num % 2 == 0 )
+           throw new Exception("This is a simulated failure")
+         println("Actor: " + name + " Received: " + num)
+         //Thread.sleep(100)
+       }
+    }
+
+  override def postStop(){
+    println("TestActor post Stop ")
+  }
+
+  //callback method for restart handling 
+  override def preRestart(reason: Throwable){
+    println("TestActor "+ name + " restaring after shutdown because of " + reason)
+  }
+
+  //callback method for restart handling 
+  override def postRestart(reason: Throwable){
+    println("Restaring TestActor "+name+"after shutdown because of " + reason)
+  }  
+}
+
+trait CyclicLoadBalancing extends LoadBalancer { this: Actor =>
+    val testActors: List[ActorRef]
+    val seq = new CyclicIterator[ActorRef](testActors)
+}
+
+trait TestActorManager extends Actor {
+     self.lifeCycle = Permanent
+     self.faultHandler = OneForOneStrategy(List(classOf[Exception]), 1000, 5000)
+     val testActors: List[ActorRef]
+     override def preStart = testActors foreach { self.startLink(_) }
+     override def postStop = { System.out.println("postStop") }
+}
+
+
+  object FaultTest {
+    def main(args : Array[String]) : Unit = {
+      println("starting FaultTest.main()")
+      val numOfActors = 5
+      val supervisor = actorOf(
+        new TestActorManager with CyclicLoadBalancing {
+             val testActors = (0 until numOfActors toList) map (i => actorOf(new TestActor(i)));
+        }
+      )
+
+      supervisor.start();
+
+      println("Number of Actors: " +  Actor.registry.actorsFor(classOf[TestActor]).length)
+
+      val testActor = Actor.registry.actorsFor(classOf[TestActor]).head
+
+      (1 until 200 toList) foreach { testActor ! _ }
+
+    }
+  }
+
+[info] Running FaultTest 
+starting FaultTest.main()
+Loading config [akka.conf] from the application classpath.
+Number of Actors: 5
+Actor: 2 Received: 1
+Actor: 2 Received: 9
+Actor: 1 Received: 3
+Actor: 3 Received: 7
+[info] == run ==
+[success] Successful.
+[info] 
+[info] Total time: 13 s, completed Aug 16, 2011 11:00:23 AM
+
+import akka.actor.Actor
+import akka.actor.Actor._
+import akka.actor.ActorRef
+import akka.actor.ActorRegistry
+import akka.config.Supervision._
+
+class SingleActor(val name: Integer) extends Actor {
+    self.lifeCycle = Permanent
+    self.faultHandler = OneForOneStrategy(List(classOf[Exception]), 30, 1000)
+    def receive = {
+       case num: Integer => {  
+         if( num % 2 == 0 )
+            throw new Exception("This is a simulated failure, where does this get logged?")
+         println("Actor: " + name + " Received: " + num)
+       }
+    }
+
+  override def postStop(){
+    println("TestActor post Stop ")
+  }
+
+  override def preRestart(reason: Throwable){
+    println("TestActor "+ name + " restaring after shutdown because of " + reason)
+  }
+
+  override def postRestart(reason: Throwable){
+    println("Restaring TestActor "+name+"after shutdown because of " + reason)
+  }  
+}
+
+object TestSingleActor{
+
+    def main(args : Array[String]) : Unit = {
+      println("starting TestSingleActor.main()")
+
+      val testActor = Actor.actorOf( new SingleActor(1) ).start()
+
+      println("number of actors: " + registry.actors.size)
+      printAllActorsInfo
+
+      (1 until 20 toList) foreach { testActor ! _ }
+
+      for( i <- 1 until 120 ){
+        Thread.sleep(500)
+        printAllActorsInfo
+      }
+    }
+
+  def printAllActorsInfo() ={
+    registry.actors.foreach( (a) =>
+       println("Actor hash: %d has mailbox %d isRunning: %b isShutdown: %b isBeingRestarted: %b "
+               .format(a.hashCode(),a.mailboxSize,a.isRunning,a.isShutdown,a.isBeingRestarted)))
+  }
+}
+
+[info] Running TestSingleActor 
+starting TestSingleActor.main()
+Loading config [akka.conf] from the application classpath.
+number of actors: 1
+Actor hash: -1537745664 has mailbox 0 isRunning: true isShutdown: false isBeingRestarted: false 
+Actor: 1 Received: 1
+Actor hash: -1537745664 has mailbox 17 isRunning: true isShutdown: false isBeingRestarted: false 
+
+... 117 more of these lines repeted ...
+
+Actor hash: -1537745664 has mailbox 17 isRunning: true isShutdown: false isBeingRestarted: false 
+[info] == run ==
+[success] Successful.
+[info] 
+[info] Total time: 70 s, completed Aug 17, 2011 2:24:49 PM
+

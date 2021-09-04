@@ -1,0 +1,37 @@
+sleep
+# the directory of this script
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# launch mongodb.
+$DIR/../../db/mongod --fork --logpath ./logs/mongodb.log --logappend --dbpath ./testdb/ --quiet 
+
+# takes a bit of time for the database to get set up, 
+# and since we make it a daemon process we cant run the tests immediately
+sleep 1
+
+# avoid EADDRINUSE errors because existing node servers are up.
+killall node &> /dev/null
+
+# start up our node server using a test database.
+forever start $DIR/../main.js --dbname=testdb --logpath=test/logs/testlog.log
+
+# takes a bit of time for node to get set up, 
+# and since we make it a daemon process we cant run the tests immediately
+sleep 1
+
+# run any database setup code (inject data for testing)
+$DIR/../../db/mongo 127.0.0.1:27017/testdb $DIR/setup.js --quiet
+
+# actually run the tests
+node $DIR/tests.js
+
+# kill the servers (this could be a little less heavy handed...)
+killall node &> /dev/null
+killall forever &> /dev/null
+
+# finally tear down the database (drop anything we've added to the test db)
+$DIR/../../db/mongo 127.0.0.1:27017/testdb $DIR/teardown.js --quiet
+
+# and then shut mogodb down
+kill -2 `ps ax | grep mongod | grep -v grep | awk '{print $1}'`
+

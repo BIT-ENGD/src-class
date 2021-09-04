@@ -1,0 +1,72 @@
+function batch_init {
+    here=$(dirname $0)
+    . ${here}/../etc/batch.conf
+    scriptName=$1
+    batch_exec_uid=$$
+    fifoFile="${tmp_dir}${scriptName}.${batch_exec_uid}.fifo"
+    curTime="$(date +%H%M%S)"
+    logFileName="$(basename ${scriptName}).${curTime}.${batch_exec_uid}.log"
+}
+
+function batch_log {
+    level="info"
+    OPTIND=1
+
+    read content
+
+    while getopts :x:y: OPTION
+    do
+      case $OPTION in
+       x) flag_x=1
+          content=$OPTARG
+          ;;
+       y) flag_y=1
+          level=$OPTARG
+          ;;
+      esac
+    done
+
+    if [ ! -d $log_dir ]
+    then
+        echo "log_dir is missing, maybe conf file is not called"
+        exit 2
+    fi
+
+    date=$(date +%Y-%m-%d)
+    final_dir="${log_dir}/${date}"
+    if [ ! -d $final_dir ]
+    then
+        mkdir $final_dir
+    fi
+    if [ -z $logFileName ]
+    then
+        echo "logFileName is missing, maybe batch_init was not called"
+        exit 2
+    fi
+    fullPath=${final_dir}/${logFileName}
+    echo "[${level}][$(date +%H:%M:%S)]: ${content}" >> $fullPath
+}
+
+function batch_end {
+    exec 1<&6 6<&-
+    rm $fifoFile
+    if [ ${1:-error} == error ]
+    then
+        return 2
+    else
+        return 0
+    fi
+}
+
+#start capture
+batch_init $1
+exec > $fifoFile | batch_log
+
+#!/bin/bash
+. /home/batch/lib/core.sh $0
+echo "foo bar"
+echo "blah"
+
+batch_end
+exit $?
+

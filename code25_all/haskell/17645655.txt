@@ -1,0 +1,67 @@
+IORef
+StateT
+ReaderT IORef
+ReaderT IORef
+{-# LANGUAGE GeneralizedNewtypeDeriving, ScopedTypeVariables #-}
+import Control.Monad.State (MonadState, execStateT, modify, StateT)
+import Control.Applicative (Applicative)
+import Control.Monad (void)
+import Control.Monad.IO.Class ( MonadIO, liftIO )
+import Data.IORef
+import Control.Exception.Base
+import Control.Monad.Reader (MonadReader, runReaderT, ask, ReaderT)
+
+type StateRef = IORef Int
+newtype ReadIORef a = ReadIORef { unStIORef :: ReaderT StateRef IO a } deriving (Functor, Applicative, Monad, MonadIO, MonadReader StateRef)
+newtype St a        = StM       { unSt      :: StateT Int IO a } deriving (Functor, Applicative, Monad, MonadIO, MonadState Int)
+
+eval :: St a -> Int -> IO Int
+eval = execStateT . unSt
+
+evalIORef :: ReadIORef a -> StateRef -> IO a
+evalIORef = runReaderT . unStIORef
+
+add1 :: St ()
+add1 = modify (+ 1)
+
+add1Error :: St ()
+add1Error = do
+  modify (+ 1)
+  error "state modified"
+
+add1IORef :: ReadIORef Int
+add1IORef = do
+  ioref <- ask
+  liftIO $ do
+    modifyIORef' ioref (+ 1)
+    readIORef ioref
+
+add1IORefError :: ReadIORef Int
+add1IORefError = do
+  ioref <- ask
+  liftIO $ do
+    modifyIORef' ioref (+ 1)
+    void $ error "IORef modified"
+    readIORef ioref
+
+ignore :: IO a -> IO a
+ignore action = catch action (\(_::SomeException) -> return $ error "ignoring exception")
+
+main :: IO ()
+main = do
+  st <- newIORef 1
+  resIO <- evalIORef add1IORef st >> evalIORef add1IORef st
+  print resIO -- 3
+
+  resSt <- eval add1 1 >>= eval add1
+  print resSt -- 3
+
+  stFinal <- newIORef 1
+  void $ ignore $ finally (evalIORef add1IORefError stFinal) (evalIORef add1IORef stFinal)
+  print =<< readIORef st -- 3
+
+  -- how can the final handler function use the last state of the original?
+  void $ ignore $ finally (eval add1Error 1) (eval add1 1)
+  print "?"
+
+ReaderT IORef

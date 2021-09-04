@@ -1,0 +1,44 @@
+local limit_request_times = 3
+local expire_time = 100
+
+local user_ip = ngx.var.remote_addr
+
+-- ngx.say("user_ip: ", user_ip)
+
+local redis = require "resty.redis"
+local red = redis:new()
+red:set_timeout(1000)
+local ok, err = red:connect("127.0.0.1", 6379)
+if not ok then
+    ngx.say("failed to connect: ", err)
+    return
+end
+
+
+local res, err = red:get(user_ip)
+if res == ngx.null then
+    ngx.say("no request record, add this user_ip to redis")
+    ok, err = red:set(user_ip, 1)
+    if not ok then
+        -- ngx.say("add user_ip failed")
+        ngx.exit(ngx.HTTP_FORBIDDEN)
+        return
+    else
+        red:expire(user_ip, expire_time)
+    end
+else
+    if tonumber(res) == limit_request_times then
+        -- ngx.say("request reach max limit times")
+        ngx.exit(403)
+        return
+    else
+        ok, err = red:incr(user_ip)
+        if not ok then
+            ngx.say("failed to increment request times")
+            return
+        else
+            ngx.say("increment request times: ", res + 1)
+        end
+    end 
+end
+

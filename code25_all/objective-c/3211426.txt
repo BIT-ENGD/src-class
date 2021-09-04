@@ -1,0 +1,64 @@
+NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+GCPdfSource *pdfSource = [GCPdfSource sharedInstance];
+for (int i = pageRange.location; i <= pageRange.length; i++) {
+
+    UIView *thumbPdfView = [scrollView viewWithTag:i+1];
+    if (thumbPdfView == nil) {
+
+        CGPDFPageRef pdfPage = [pdfSource pageAt:i + 1];
+        float xPosition = THUMB_H_PADDING + THUMB_H_PADDING * i + THUMB_WIDTH * i;
+
+        CGRect frame = CGRectMake(xPosition, THUMB_H_PADDING,  THUMB_WIDTH, THUMB_HEIGHT);
+        thumbPdfView = [[UIView alloc] initWithFrame:frame];
+        thumbPdfView.opaque = YES;
+        thumbPdfView.backgroundColor = [UIColor whiteColor];
+        [thumbPdfView setTag:i+1];
+
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = CGBitmapContextCreate(NULL, 
+                                        frame.size.width, 
+                                        frame.size.height, 
+                                        8,                      /* bits per component*/
+                                        frame.size.width * 4,   /* bytes per row */
+                                        colorSpace, 
+                                        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+        CGColorSpaceRelease(colorSpace);
+        CGContextClipToRect(context, CGRectMake(0, 0, frame.size.width,frame.size.height));
+
+
+        CGRect pdfPageRect = CGPDFPageGetBoxRect(pdfPage, kCGPDFMediaBox);
+        CGRect contextRect = CGContextGetClipBoundingBox(context);
+        CGAffineTransform transform = aspectFit(pdfPageRect, contextRect);
+
+        CGContextConcatCTM(context, transform);
+        CGContextDrawPDFPage(context, pdfPage);
+
+
+        CGImageRef image = CGBitmapContextCreateImage(context);
+        CGContextRelease(context);
+        UIImage *uiImage = [[UIImage alloc]initWithCGImage:image];
+        CGImageRelease(image);
+
+        UIImageView *imageVIew = [[UIImageView alloc]initWithImage:uiImage];
+        [uiImage release];
+
+        [thumbPdfView addSubview:imageVIew];
+        [imageVIew release];
+
+        [scrollView addSubview:thumbPdfView];
+        [thumbPdfView release];
+
+    }
+}
+
+[pool release];//release
+
+CGAffineTransform aspectFit(CGRect innerRect, CGRect outerRect) {
+CGFloat scaleFactor = MIN(outerRect.size.width/innerRect.size.width, outerRect.size.height/innerRect.size.height);
+CGAffineTransform scale = CGAffineTransformMakeScale(scaleFactor, scaleFactor);
+CGRect scaledInnerRect = CGRectApplyAffineTransform(innerRect, scale);
+CGAffineTransform translation = 
+CGAffineTransformMakeTranslation((outerRect.size.width - scaledInnerRect.size.width) / 2 - scaledInnerRect.origin.x, 
+                                 (outerRect.size.height - scaledInnerRect.size.height) / 2 - scaledInnerRect.origin.y);
+return CGAffineTransformConcat(scale, translation);
+

@@ -1,0 +1,281 @@
+Imports System
+Imports System.Text
+Imports System.Collections
+Imports System.DirectoryServices
+Imports System.DirectoryServices.AccountManagement
+Imports System.Reflection 'Needed by the Password Expiration Class Only -Vince
+
+Namespace FormsAuth
+    Public Class LdapAuthentication
+
+    Dim _path As String
+    Dim _filterAttribute As String
+    'Code added for the password expiration added by Vince
+    Private _domain As DirectoryEntry
+    Private _passwordAge As TimeSpan = TimeSpan.MinValue
+    Const UF_DONT_EXPIRE_PASSWD As Integer = &H10000
+
+    'Function added by Vince
+    Public Sub New()
+
+        Dim root As New DirectoryEntry("LDAP://rootDSE")
+
+        root.AuthenticationType = AuthenticationTypes.Secure
+        _domain = New DirectoryEntry("LDAP://" & root.Properties("defaultNamingContext")(0).ToString())
+        _domain.AuthenticationType = AuthenticationTypes.Secure
+    End Sub
+
+    'Function added by Vince
+    Public ReadOnly Property PasswordAge() As TimeSpan
+        Get
+            If _passwordAge = TimeSpan.MinValue Then
+
+                Dim ldate As Long = LongFromLargeInteger(_domain.Properties("maxPwdAge")(0))
+
+                _passwordAge = TimeSpan.FromTicks(ldate)
+            End If
+
+            Return _passwordAge
+        End Get
+    End Property
+
+    Public Sub New(ByVal path As String)
+        _path = path
+    End Sub
+
+    'Function added by Vince 
+    Public Function DoesUserHaveToChangePassword(ByVal userName As String) As Boolean
+
+        Dim ctx As PrincipalContext = New PrincipalContext(System.DirectoryServices.AccountManagement.ContextType.Domain)
+        Dim up = UserPrincipal.FindByIdentity(ctx, userName)
+        Return (Not up.LastPasswordSet.HasValue)
+        'returns true if last password set has no value.
+
+    End Function
+
+    Public Function IsAuthenticated(ByVal domain As String, ByVal username As String, ByVal pwd As String) As Boolean
+
+        Dim domainAndUsername As String = domain & "\" & username
+        Dim entry As DirectoryEntry = New DirectoryEntry(_path, domainAndUsername, pwd)
+
+        Try
+            'Bind to the native AdsObject to force authentication.   
+            Dim obj As Object = entry.NativeObject
+            Dim search As DirectorySearcher = New DirectorySearcher(entry)
+
+            search.Filter = "(SAMAccountName=" & username & ")"
+            search.PropertiesToLoad.Add("cn")
+            Dim result As SearchResult = search.FindOne()
+
+            If (result Is Nothing) Then
+                Return False
+            End If
+
+            'Update the new path to the user in the directory.
+            _path = result.Path
+            _filterAttribute = CType(result.Properties("cn")(0), String)
+
+        Catch ex As Exception
+            Throw New Exception("Error authenticating user. " & ex.Message)
+        End Try
+
+        Return True
+    End Function
+
+    Public Function GetGroups() As String
+        Dim search As DirectorySearcher = New DirectorySearcher(_path)
+        search.Filter = "(cn=" & _filterAttribute & ")"
+        search.PropertiesToLoad.Add("memberOf")
+        Dim groupNames As StringBuilder = New StringBuilder()
+
+        Try
+            Dim result As SearchResult = search.FindOne()
+            Dim propertyCount As Integer = result.Properties("memberOf").Count
+
+            Dim dn As String
+            Dim equalsIndex, commaIndex
+
+            Dim propertyCounter As Integer
+
+            For propertyCounter = 0 To propertyCount - 1
+                dn = CType(result.Properties("memberOf")(propertyCounter), String)
+
+                equalsIndex = dn.IndexOf("=", 1)
+                commaIndex = dn.IndexOf(",", 1)
+                If (equalsIndex = -1) Then
+                    Return Nothing
+                End If
+
+                groupNames.Append(dn.Substring((equalsIndex + 1), (commaIndex - equalsIndex) - 1))
+                groupNames.Append("|")
+            Next
+
+        Catch ex As Exception
+            Throw New Exception("Error obtaining group names. " & ex.Message)
+        End Try
+
+        Return groupNames.ToString()
+    End Function
+
+    'Function added by Vince 
+    Public Function WhenExpires(ByVal username As String) As TimeSpan
+
+        Dim ds As New DirectorySearcher(_domain)
+
+        ds.Filter = [String].Format("(&(objectClass=user)(objectCategory=person)(sAMAccountName={0}))", username)
+
+        Dim sr As SearchResult = FindOne(ds)
+        Dim user As DirectoryEntry = sr.GetDirectoryEntry()
+        Dim flags As Integer = CInt(user.Properties("userAccountControl").Value)
+
+        If Convert.ToBoolean(flags And UF_DONT_EXPIRE_PASSWD) Then
+            'password never expires
+            Return TimeSpan.MaxValue
+        End If
+
+        'get when they last set their password
+        Dim pwdLastSet As DateTime = DateTime.FromFileTime(LongFromLargeInteger(user.Properties("pwdLastSet").Value))
+
+        ' return pwdLastSet.Add(PasswordAge).Subtract(DateTime.Now);
+        If pwdLastSet.Subtract(PasswordAge).CompareTo(DateTime.Now) > 0 Then
+
+            Return pwdLastSet.Subtract(PasswordAge).Subtract(DateTime.Now)
+        Else
+            Return TimeSpan.MinValue
+            'already expired
+        End If
+    End Function
+
+    'Function added by Vince 
+    Private Function LongFromLargeInteger(ByVal largeInteger As Object) As Long
+
+        Dim type As System.Type = largeInteger.[GetType]()
+        Dim highPart As Integer = CInt(type.InvokeMember("HighPart", BindingFlags.GetProperty, Nothing, largeInteger, Nothing))
+        Dim lowPart As Integer = CInt(type.InvokeMember("LowPart", BindingFlags.GetProperty, Nothing, largeInteger, Nothing))
+
+        Return CLng(highPart) << 32 Or CUInt(lowPart)
+    End Function
+
+    'Function added by Vince 
+    Private Function FindOne(ByVal searcher As DirectorySearcher) As SearchResult
+
+        Dim sr As SearchResult = Nothing
+        Dim src As SearchResultCollection = searcher.FindAll()
+
+        If src.Count > 0 Then
+            sr = src(0)
+        End If
+
+        src.Dispose()
+
+        Return sr
+    End Function
+
+End Class
+End Namespace
+
+sub Login_Click(sender as object,e as EventArgs)
+        Dim adPath As String = "LDAP://DC=xxx,DC=com" 'Path to your LDAP directory server
+        Dim adAuth As LdapAuthentication = New LdapAuthentication(adPath)
+
+    Try
+        If (True = adAuth.DoesUserHaveToChangePassword(txtUsername.Text)) Then
+            Response.Redirect("passchange.htm")
+
+
+        ElseIf (True = adAuth.IsAuthenticated(txtDomain.Text, txtUsername.Text, txtPassword.Text)) Then
+            Dim groups As String = adAuth.GetGroups()
+
+            'Create the ticket, and add the groups.
+            Dim isCookiePersistent As Boolean = chkPersist.Checked
+            Dim authTicket As FormsAuthenticationTicket = New FormsAuthenticationTicket(1, _
+                 txtUsername.Text, DateTime.Now, DateTime.Now.AddMinutes(60), isCookiePersistent, groups)
+
+            'Encrypt the ticket.
+            Dim encryptedTicket As String = FormsAuthentication.Encrypt(authTicket)
+
+            'Create a cookie, and then add the encrypted ticket to the cookie as data.
+            Dim authCookie As HttpCookie = New HttpCookie(FormsAuthentication.FormsCookieName, encryptedTicket)
+
+            If (isCookiePersistent = True) Then
+                authCookie.Expires = authTicket.Expiration
+            End If
+            'Add the cookie to the outgoing cookies collection.
+            Response.Cookies.Add(authCookie)
+
+'Retrieve the password life
+Dim t As TimeSpan = adAuth.WhenExpires(txtUsername.Text)
+
+            'You can redirect now.
+            If (passAge.Days = 90)  Then
+               errorLabel.Text = "Your password will expire in " & DateTime.Now.Subtract(t)
+   'errorLabel.Text = "This is"
+               'System.Threading.Thread.Sleep(5000)
+               Response.Redirect("http://somepage.aspx")
+
+            Else
+
+              Response.Redirect(FormsAuthentication.GetRedirectUrl(txtUsername.Text, False))
+
+            End If
+
+            Else
+                errorLabel.Text = "Authentication did not succeed. Check user name and password."
+            End If
+
+    Catch ex As Exception
+        errorLabel.Text = "Error authenticating. " & ex.Message
+    End Try
+End Sub
+
+Dim t As TimeSpan = adAuth.WhenExpires(txtUsername.Text)
+Public Function PassAboutToExpire(ByVal userName As String) As Integer
+        Dim passwordAge As TimeSpan
+        Dim currentDate As DateTime
+        Dim ctx As PrincipalContext = New PrincipalContext(System.DirectoryServices.AccountManagement.ContextType.Domain)
+        Dim up = UserPrincipal.FindByIdentity(ctx, userName)
+        'Return (Not up.LastPasswordSet.HasValue)
+        'returns true if last password set has no value.
+        Dim pwdLastSet As DateTime = DateTime.FromFileTime(LongFromLargeInteger(up.LastPasswordSet))
+
+        currentDate = Now
+        passwordAge = currentDate.Subtract(pwdLastSet)
+
+        If passwordAge.Days > 75 Then
+            'If pwdLastSet.Subtract(passwordAge).CompareTo(DateTime.Now) > 0 Then
+
+            'Dim value As TimeSpan = pwdLastSet.Subtract(passwordAge).Subtract(DateTime.Now)
+
+            'If (value.Days > 75) Then
+
+            Return passwordAge.Days
+
+            'End If
+
+        Else
+            Return False
+            'already expired
+        End If
+    End Function
+
+    Private Function LongFromLargeInteger(ByVal largeInteger As Object) As Long
+
+        Dim type As System.Type = largeInteger.[GetType]()
+        Dim highPart As Integer = CInt(type.InvokeMember("HighPart", BindingFlags.GetProperty, Nothing, largeInteger, Nothing))
+        Dim lowPart As Integer = CInt(type.InvokeMember("LowPart", BindingFlags.GetProperty, Nothing, largeInteger, Nothing))
+
+        Return CLng(highPart) << 32 Or CUInt(lowPart)
+    End Function
+
+sub Login_Click(sender as object,e as EventArgs)
+    Dim adPath As String = "LDAP://DC=xzone,DC=com" 'Path to your LDAP directory server
+    Dim adAuth As LdapAuthentication = New LdapAuthentication(adPath)
+
+
+    Try
+        If (True = adAuth.DoesUserHaveToChangePassword(txtUsername.Text)) Then
+            Response.Redirect("http://mypass.nsu.edu")
+
+        ElseIf (adAuth.PassAboutToExpire(txtUsername.Text) > 0) Then
+            Response.Redirect("http://www.yahoo.com")
+

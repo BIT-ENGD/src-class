@@ -1,0 +1,183 @@
+private Type GetNewObjectType(string field, ModuleBuilder module, DatabaseAccess da)
+
+//Query the database.
+System.Data.DataSet ds = da.QueryDB(query);
+
+EnumBuilder eb = module.DefineEnum(field, TypeAttributes.Public, typeof(int));
+
+for(int i = 0; i < ds.Tables[0].Rows.Count; i++)
+{
+    if(ds.Tables[0].Rows[i][1] != DBNull.Value)
+    {
+        string text = Convert.ToString(ds.Tables[0].Rows[i][1]);
+
+        eb.DefineLiteral(text, i);
+    }
+}
+
+return eb.CreateType();
+
+// create a dynamic assembly and module
+AssemblyName assemblyName = new AssemblyName();
+assemblyName.Name = "tmpAssembly";
+AssemblyBuilder assemblyBuilder = System.Threading.Thread.GetDomain().DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
+ModuleBuilder module = assemblyBuilder.DefineDynamicModule("tmpModule");
+
+// create a new type builder
+TypeBuilder typeBuilder = module.DefineType("BindableRowCellCollection", TypeAttributes.Public | TypeAttributes.Class);
+
+// Loop over the attributes that will be used as the properties names in out new type
+for(int i = 0; i < pFeature.Fields.FieldCount; i++)
+{
+    string propertyName = pFeature.Fields.get_Field(i).Name;
+    object val = pFeature.get_Value(i);
+
+    Type type = GetNewObjectType(propertyName, module, da);
+
+    // Generate a private field
+    FieldBuilder field = typeBuilder.DefineField("_" + propertyName, type, FieldAttributes.Private);
+
+    // Generate a public property
+    PropertyBuilder property =
+        typeBuilder.DefineProperty(propertyName,
+        PropertyAttributes.None,
+        type,
+        new Type[0]);
+
+    //Create the custom attribute to set the description.
+    Type[] ctorParams = new Type[] { typeof(string) };
+    ConstructorInfo classCtorInfo =
+        typeof(DescriptionAttribute).GetConstructor(ctorParams);
+
+    CustomAttributeBuilder myCABuilder = new CustomAttributeBuilder(
+        classCtorInfo,
+        new object[] { "This is the long description of this property." });
+
+    property.SetCustomAttribute(myCABuilder);
+
+    //Set the default value.
+    ctorParams = new Type[] { type };
+    classCtorInfo = typeof(DefaultValueAttribute).GetConstructor(ctorParams);
+
+    if(type.IsEnum)
+    {
+        //val contains the text version of the enum. Parse it to the enumeration value.
+        object o = Enum.Parse(type, val.ToString(), true);
+        myCABuilder = new CustomAttributeBuilder(
+            classCtorInfo,
+            new object[] { o });
+    }
+    else
+    {
+        myCABuilder = new CustomAttributeBuilder(
+            classCtorInfo,
+            new object[] { val });
+    }
+
+    property.SetCustomAttribute(myCABuilder);
+
+    // The property set and property get methods require a special set of attributes:
+    MethodAttributes GetSetAttr =
+        MethodAttributes.Public |
+        MethodAttributes.HideBySig;
+
+    // Define the "get" accessor method for current private field.
+    MethodBuilder currGetPropMthdBldr =
+        typeBuilder.DefineMethod("get_value",
+        GetSetAttr,
+        type,
+        Type.EmptyTypes);
+
+    // Intermediate Language stuff...
+    ILGenerator currGetIL = currGetPropMthdBldr.GetILGenerator();
+    currGetIL.Emit(OpCodes.Ldarg_0);
+    currGetIL.Emit(OpCodes.Ldfld, field);
+    currGetIL.Emit(OpCodes.Ret);
+
+    // Define the "set" accessor method for current private field.
+    MethodBuilder currSetPropMthdBldr =
+        typeBuilder.DefineMethod("set_value",
+        GetSetAttr,
+        null,
+        new Type[] { type });
+
+    // Again some Intermediate Language stuff...
+    ILGenerator currSetIL = currSetPropMthdBldr.GetILGenerator();
+    currSetIL.Emit(OpCodes.Ldarg_0);
+    currSetIL.Emit(OpCodes.Ldarg_1);
+    currSetIL.Emit(OpCodes.Stfld, field);
+    currSetIL.Emit(OpCodes.Ret);
+
+    // Last, we must map the two methods created above to our PropertyBuilder to
+    // their corresponding behaviors, "get" and "set" respectively.
+    property.SetGetMethod(currGetPropMthdBldr);
+    property.SetSetMethod(currSetPropMthdBldr);
+}
+
+// Generate our type
+Type generatedType = typeBuilder.CreateType();
+
+// Now we have our type. Let's create an instance from it:
+object generatedObject = Activator.CreateInstance(generatedType);
+
+// Loop over all the generated properties, and assign the default values
+PropertyInfo[] properties = generatedType.GetProperties();
+PropertyDescriptorCollection props = TypeDescriptor.GetProperties(generatedType);
+
+for(int i = 0; i < properties.Length; i++)
+{
+    string field = properties[i].Name;
+
+    DefaultValueAttribute dva = (DefaultValueAttribute)props[field].Attributes[typeof(DefaultValueAttribute)];
+
+    object o = dva.Value;
+
+    Type pType = properties[i].PropertyType;
+
+    if(pType.IsEnum)
+    {
+        o = Enum.Parse(pType, o.ToString(), true);
+    }
+    else
+    {
+        o = Convert.ChangeType(o, pType);
+    }
+
+    properties[i].SetValue(generatedObject, o, null);
+}
+
+return generatedObject;
+
+    if(type.IsEnum)
+    {
+        object o = Enum.Parse(type, val.ToString(), true);
+        myCABuilder = new CustomAttributeBuilder(
+            classCtorInfo,
+            new object[] { o });
+    }
+
+    if(type.IsEnum)
+    {
+        myCABuilder = new CustomAttributeBuilder(
+            classCtorInfo,
+            new object[] { 0 });
+    }
+
+public bool ShouldSerializepropertyName()
+{
+     return (field != val);
+}
+
+IL_0000:  ldc.i4.s   0
+IL_0002:  stloc.0
+IL_0003:  ldloc.0
+IL_0004:  ldarg.0
+IL_0005:  ldfld      int32 TestNamespace.TestClass::field
+IL_000a:  ceq
+IL_000c:  ldc.i4.0
+IL_000d:  ceq
+IL_000f:  stloc.1
+IL_0010:  br.s       IL_0012
+IL_0012:  ldloc.1
+IL_0013:  ret
+

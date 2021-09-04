@@ -1,0 +1,90 @@
+p1, p2, ..., p9
+p9 = p1
+y2 | p2 p3 p4
+y1 | p1    p5
+y0 | p8 p7 p6
+-------------
+   | x0 x1 x2
+
+x1 = (x0 + x2) / 2
+y1 = (y0 + y2) / 2
+
+p1 = (x0, y1), p2 = (x0, y2)
+1
+p1,p3,p5,p7
+sqrt(0.5)
+p2,p4,p6,p8
+(x,y)
+w
+Vertex4 (w*x) (w*y) 0 w
+Vertex4 x y 0 w
+Lines.hs
+import System.Exit ( exitWith, ExitCode(ExitSuccess) )
+import Graphics.UI.GLUT
+import Foreign.Marshal.Array
+import Graphics.Rendering.OpenGL.GLU.NURBS
+
+myInit :: IO ()
+myInit = do
+   clearColor $= Color4 0 0 0 0
+
+display :: DisplayCallback
+display = do
+  clear [ ColorBuffer, DepthBuffer ]
+  color (Color3 1.0 1.0 1.0 :: Color3 GLfloat)
+
+  withNURBSObj () $ \nurbsObj -> do
+    nurbsBeginEndCurve nurbsObj $
+      withArrayLen knots $ \nKnots knots ->
+        withArray controls $ \controls -> do
+          nurbsCurve nurbsObj (fromIntegral nKnots) knots stride controls order
+
+  flush
+
+  where
+    order = 3
+    stride = 4 -- number of floats in Vertex
+    controls = zipWith mkControl points weights
+    mkControl (x, y) w = Vertex4 (x*w) (y*w) 0 w
+    -- mkControl (x, y) w = Vertex4 x y 0 w
+    knots = [0, 0, 0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1, 1, 1]
+    weights = let a = sqrt 0.5 in [1, a, 1, a, 1, a, 1, a, 1]
+    points = [
+      (x0, y1), (x0, y2), (x1, y2),
+      (x2, y2), (x2, y1), (x2, y0),
+      (x1, y0), (x0, y0), (x0, y1)
+      ]
+
+    y1 = (y0 + y2) / 2
+    x1 = (x0 + x2) / 2
+    (x0, x2) = (50, 450)
+    (y0, y2) = (x0, x2)
+
+reshape :: ReshapeCallback
+reshape size@(Size w h) = do
+   viewport $= (Position 0 0, size)
+   matrixMode $= Projection
+   loadIdentity
+   ortho2D 0 (fromIntegral w) 0 (fromIntegral h)
+   -- the following line is not in the original example, but it's good style...
+   matrixMode $= Modelview 0
+
+keyboard :: KeyboardMouseCallback
+keyboard (Char '\27') Down _ _ = exitWith ExitSuccess
+keyboard _ _ _ _ = return ()
+
+--  Request double buffer display mode.
+--  Register mouse input callback functions
+main :: IO ()
+main = do
+   (progName, _args) <- getArgsAndInitialize
+   initialDisplayMode $= [ SingleBuffered, RGBMode ]
+   initialWindowSize $= Size 500 500
+   initialWindowPosition $= Position 100 100
+   createWindow "Test"
+   myInit
+   displayCallback $= display
+   reshapeCallback $= Just reshape
+   keyboardMouseCallback $= Just keyboard
+   mainLoop
+

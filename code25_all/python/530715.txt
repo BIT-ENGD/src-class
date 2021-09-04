@@ -1,0 +1,88 @@
+class ListingImagesForm(forms.Form):   
+#the following should be indented
+def clear_dictionaries(self):
+    self.statuses = {}
+    self.thumbnail_urls = {}
+    self.image_urls = {}
+
+statuses = {}
+thumbnail_urls = {}
+image_urls = {}
+
+valid_images = SortedDict() #from the django framework
+photo_0 = forms.ImageField(required=False, label='First photo')
+photo_1 = forms.ImageField(required=False, label='Second photo')
+
+def clean_photo_0(self):
+    return self._clean_photo("photo_0")
+
+def clean_photo_1(self):
+    return self._clean_photo("photo_1")
+
+
+def _clean_photo(self, dataName):
+    data = self.cleaned_data[dataName]
+    if data != None:
+        if data.size > max_photo_size:
+            raise forms.ValidationError("The maximum image size allowed is 500KB")
+        elif data.size == 0:
+            raise forms.ValidationError("The image given is empty.")
+        else:
+            self.valid_images[dataName] = data
+            self.statuses[dataName] = True
+            list_of_image_locs = thumbs.save_image_and_thumbs(data.name, data)
+            self.image_urls[dataName] = list_of_image_locs[0]
+            self.thumbnail_urls[dataName] = list_of_image_locs[1]
+    return data
+
+@login_required
+def add(request):
+#the following should be indented
+preview = False
+added = False
+new_listing = None
+owner = None
+
+if request.POST:
+    form = GeneralListingForm(request.POST)
+    image_form = ListingImagesForm(request.POST, request.FILES)
+
+    if image_form.is_valid() and form.is_valid(): 
+        new_listing = form.save(commit=False)
+        new_listing.owner = request.user.get_profile()
+
+        if request.POST.get('preview', False):
+            preview = True
+            owner = new_listing.owner
+
+        elif request.POST.get('submit', False):
+            new_listing.save()
+            for image in image_form.image_urls:
+                url = image_form.image_urls[image]
+                try:
+                    new_image = Image.objects.get(photo=url)
+                    new_image.listings.add(new_listing)
+                    new_image.save()
+                except:
+                    new_image = Image(photo=url)
+                    new_image.save()
+                    new_image.listings.add(new_listing)
+                    new_image.save()
+
+            form = GeneralListingForm()
+            image_form = ListingImagesForm()
+            image_form.clear_dictionaries() 
+            added = True
+
+else:
+    form = GeneralListingForm()
+    image_form = ListingImagesForm()
+    image_form.clear_dictionaries()
+
+return render_to_response('add_listing.html', {'form': form, 'image_form' : image_form, 
+                                                'preview': preview, 'added': added,
+                                                'owner': owner, 'listing': new_listing,
+                                                'currentmaintab': 'listings',
+                                                'currentcategory': 'all'},
+                                                                        context_instance=RequestContext(request))
+

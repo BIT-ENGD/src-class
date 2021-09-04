@@ -1,0 +1,173 @@
+ > Assertion failure in 
+-[UITableView _dequeueReusableViewOfType:withIdentifier:], 
+/SourceCache/UIKit_Sim/UIKit-3232.3/UITableView.m:5978
+    2014-06-18 17:49:51.887 Twitter App[21909:583896] \
+
+***Terminating app due to uncaught exception 'NSInternalInconsistencyException',
+
+ reason: 'invalid nib registered for identifier (CustomTimelineCell) - nib must contain exactly one top level object which must be a UITableViewCell instance'**
+
+TableViewController
+tableView
+heightForRowAtIndexPath
+var tweetsArray:NSArray = NSArray()
+var accountStore:ACAccountStore = ACAccountStore()
+var account:ACAccount = ACAccount()
+var profileImages:NSMutableDictionary = NSMutableDictionary()
+
+let identifier:NSString = "CustomTimelineCell"
+
+//viewWillAppear simply requests authorization and calls the following functions to do the work
+
+func reloadTimeline() {
+
+    requestAuthorization()
+
+    var url: NSURL = NSURL.URLWithString("https://api.twitter.com/1.1/statuses/home_timeline.json")
+
+    var params: NSDictionary = ["trim_user" : "false", "count" : "200"]
+
+    var request: SLRequest = SLRequest(forServiceType: SLServiceTypeTwitter, requestMethod: SLRequestMethod.GET, URL: url, parameters: params)
+
+    request.account = account
+
+    // Execute the Request
+
+    let requestHandler: SLRequestHandler = {responseData, urlResponse, error in
+
+        if responseData {
+            if urlResponse.statusCode >= 200 && urlResponse.statusCode < 300 {
+
+                var error: NSError? = NSError()
+
+                let feedData:NSArray? = NSJSONSerialization.JSONObjectWithData(responseData, options: NSJSONReadingOptions.AllowFragments, error: &error) as? NSArray
+
+                if feedData {
+                    self.updateFeed(feedData!)
+                    //println("Timeline Response: \(self.tweetsArray)")
+                }
+            }
+            else {
+                println("Response Status Code: \(urlResponse.statusCode)")
+            }
+
+        }
+        if error {
+            println(error.localizedDescription)
+        }
+        UIApplication.sharedApplication().networkActivityIndicatorVisible = false
+    }
+
+    request.performRequestWithHandler(requestHandler)
+    UIApplication.sharedApplication().networkActivityIndicatorVisible = true
+
+}
+
+func updateFeed(feedData: NSArray) {
+    tweetsArray = feedData
+    self.tableView.layoutIfNeeded()
+    tableView.reloadData()
+    self.stopRefresh()
+
+}
+
+override func tableView(tableView: UITableView!, cellForRowAtIndexPath indexPath: NSIndexPath!) -> UITableViewCell! {
+
+    var cell : CustomTimelineCell = tableView!.dequeueReusableCellWithIdentifier(identifier, forIndexPath: indexPath!) as CustomTimelineCell
+
+    let currentTweet:NSDictionary = tweetsArray.objectAtIndex(indexPath.row) as NSDictionary
+
+    let currentUser:NSDictionary = currentTweet.objectForKey("user") as NSDictionary
+
+    cell.username.text = currentUser.objectForKey("name") as NSString!
+    cell.tweetText.text = currentTweet.objectForKey("text") as NSString!
+    cell.userImage.image = UIImage(named: "bird_twitter.png")
+
+    // Adds and Configures Gesture Recognizer for Profile Image (uses segue made from unused IB gesture recognizer)
+    if !cell.userImage.gestureRecognizers {
+
+        cell.userImage.userInteractionEnabled = true
+
+        var imageTapRecognizer:UITapGestureRecognizer = UITapGestureRecognizer(target: self, action: "profileImageTap")
+        imageTapRecognizer.numberOfTapsRequired = 1
+        imageTapRecognizer.numberOfTouchesRequired = 1
+        cell.userImage.addGestureRecognizer(imageTapRecognizer)
+
+    }
+
+    // May or may not be necessary, but including constraint resizing restrictions
+    cell.setTranslatesAutoresizingMaskIntoConstraints(true)
+    cell.username.setTranslatesAutoresizingMaskIntoConstraints(false)
+    cell.tweetText.setTranslatesAutoresizingMaskIntoConstraints(false)
+    cell.userImage.setTranslatesAutoresizingMaskIntoConstraints(false)
+
+    let imageDimension:CGSize = CGSize(width: 48, height: 48)
+    cell.sizeThatFits(imageDimension)
+
+    var usernameString = currentUser.objectForKey("name") as NSString!
+
+    if profileImages.objectForKey(usernameString) {
+        cell.userImage.image = profileImages.objectForKey(usernameString) as UIImage!
+    }
+    else {
+
+        // Creates Concurrent Queue for Image Fetching
+        var concurrentQueue:dispatch_queue_t = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+
+        // Asynchronously get URL String and convert to NSURL
+        dispatch_async(concurrentQueue, {
+
+            var imageURLString:NSString = currentUser.objectForKey("profile_image_url") as NSString!
+
+            var imageURL = NSURL(string: imageURLString)
+
+            // Synchronously download image data and save to profileImages array (1 by 1)
+            dispatch_sync(concurrentQueue, {
+                var imageData:NSData = NSData(contentsOfURL: imageURL)
+
+                self.profileImages.setObject((UIImage(data:imageData)), forKey: usernameString)
+                })
+            // In Main Queue, set the profileImage for each cell from newly populated array
+            dispatch_sync(dispatch_get_main_queue(), {
+                cell.userImage.image = self.profileImages.objectForKey(usernameString) as UIImage!
+                })
+            })
+    }
+
+    return cell
+}
+
+dequeueReusableCell
+override func tableView(tableView: UITableView!, heightForRowAtIndexPath indexPath: NSIndexPath!) -> CGFloat {
+
+    var currentTweet:NSDictionary = tweetsArray.objectAtIndex(indexPath.row) as NSDictionary
+
+    var currentUser:NSDictionary = currentTweet.objectForKey("user") as NSDictionary
+    var usernameString = currentUser.objectForKey("name") as NSString!
+    var tweetTextString = currentTweet.objectForKey("text") as NSString!
+
+    var prototypeCell = tableView!.dequeueReusableCellWithIdentifier(identifier) as? CustomTimelineCell
+
+    if let customCell = prototypeCell {
+
+        customCell.username.text = usernameString
+        customCell.tweetText.text = tweetTextString
+        customCell.userImage.image = UIImage(named: "bird_twitter.png")
+
+        var size:CGSize = customCell.systemLayoutSizeFittingSize(UILayoutFittingCompressedSize)
+
+        return size.height+1
+    }
+    else {
+
+        var customCell:CustomTimelineCell = CustomTimelineCell(style: UITableViewCellStyle.Default, reuseIdentifier: "CustomTimelineCell")
+        customCell.username.text = usernameString
+        customCell.tweetText.text = tweetTextString
+        customCell.userImage.image = UIImage(named: "bird_twitter.png")
+
+        var size:CGSize = customCell.systemLayoutSizeFittingSize(UILayoutFittingCompressedSize)
+
+        return size.height+1
+    }
+}
+

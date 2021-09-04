@@ -1,0 +1,181 @@
+// mock Socket
+Mockit.redefineMethods(Socket.class, new Object()
+{
+
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    ByteArrayInputStream input = new ByteArrayInputStream();
+
+    public OutputStream getOutputStream()
+    {
+        return output;
+    }
+
+    public InputStream getInputStream()
+    {
+        return input;
+    }
+
+});
+
+public class Message {
+
+    Client[] to;
+
+    String contents;
+
+    String status;
+
+    StatusListener listener;
+
+    BlockingQueue<Status> statusQ;
+
+    public Message(Client[] to, String contents, StatusListener listener) 
+    {
+        this.to = to;
+        this.contents = contents;
+        this.listener = listener;
+    }
+
+    public void dispatch()
+    {
+        try {
+
+            // open a new thread for each client
+
+            // keep a linked list of socket references so that all threads can be closed
+            List<Socket> sockets = Collections.synchronizedList(new ArrayList<Socket>());
+
+            // initialise the statusQ for threads to report message status
+            statusQ = new ArrayBlockingQueue<Status>(to.length*3); // max 3 status objects per thread
+
+            // dispatch to each client individually and wait for confirmation
+            for (int i=0; i < to.length; i++) {
+
+            System.out.println("Started new thread");
+
+            (new Thread(new MessageDispatcher(to[i], contents, sockets, statusQ))).start();
+
+            }
+
+            // now, monitor queue and empty the queue as it fills up.. (consumer)
+            while (true) {
+                listener.updateStatus(statusQ.take());
+            }
+        }
+
+        catch (Exception e) { e.printStackTrace(); }
+
+    }
+
+    // one MessageDispatcher per client
+    private class MessageDispatcher implements Runnable
+    {
+
+        private Client client;
+        private String contents;
+        private List<Socket> sockets;
+        private BlockingQueue<Status> statusQ;
+
+        public MessageDispatcher(Client client, String contents, List<Socket> sockets, BlockingQueue<Status> statusQ) {
+
+            this.contents = contents;
+
+            this.client = client;
+
+            this.sockets = sockets;
+
+            this.statusQ = statusQ;
+
+        }
+
+        public void run() {
+
+        try {
+
+            // open socket to client
+            Socket sk = new Socket(client.getAddress(), CLIENTPORT);
+
+            // add reference to socket to list
+            synchronized(sockets) {
+                sockets.add(sk);
+            }
+
+            PrintWriter out = new PrintWriter(sk.getOutputStream(), true);
+
+            BufferedReader in = new BufferedReader(new InputStreamReader(sk.getInputStream()));
+
+            // send message
+            out.println(contents);
+
+            // confirm dispatch
+            statusQ.add(new Status(client, "DISPATCHED"));
+
+            // wait for display receipt
+            in.readLine();
+
+            statusQ.add(new Status(client, "DISPLAYED"));
+
+            // wait for read receipt
+            in.readLine();
+
+            statusQ.add(new Status(client, "READ"));
+
+            }
+
+            catch (Exception e) { e.printStackTrace(); }
+        }
+
+    }
+
+}
+
+public class MessageTest extends TestCase {
+
+    Message msg;
+
+    static final String testContents = "hello there";
+
+    public void setUp() {
+
+        // mock Socket
+        Mockit.redefineMethods(Socket.class, new Object()
+        {
+
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ByteArrayInputStream input = new ByteArrayInputStream();
+
+            public OutputStream getOutputStream()
+            {
+                return output;
+            }
+
+            public InputStream getInputStream()
+            {
+                return input;
+            }
+
+
+        });
+
+        // NB
+        // some code removed here for simplicity
+        // which uses JMockit to overrides the Client object and give it a fake hostname and address
+
+        Client[] testClient = { new Client() };
+
+        msg = new Message(testClient, testContents, this);
+
+    }
+
+    public void tearDown() {
+    }
+
+    public void testDispatch() {
+
+        // dispatch to client
+        msg.dispatch();
+
+
+    }   
+}
+

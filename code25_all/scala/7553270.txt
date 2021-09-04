@@ -1,0 +1,49 @@
+class FifoStream[T] extends Closeable {
+
+val queue = new Queue[Option[T]]
+
+lazy val stream = nextStreamElem
+
+private def nextStreamElem: Stream[T] = next() match {
+    case Some(elem) => Stream.cons(elem, nextStreamElem)
+    case None       => Stream.empty
+}
+
+/** Returns next element in the queue (may wait for it to be inserted). */
+private def next() = {
+    queue.synchronized {
+        if (queue.isEmpty) queue.wait()
+        queue.dequeue()
+    }
+}
+
+/** Adds new elements to this stream. */
+def enqueue(elems: T*) {
+    queue.synchronized {
+        queue.enqueue(elems.map{Some(_)}: _*)
+        queue.notify()
+    }
+}
+
+/** Closes this stream. */
+def close() {
+    queue.synchronized {
+        queue.enqueue(None)
+        queue.notify()
+    }
+}
+}
+
+import collection.JavaConversions._
+import java.util.concurrent.{LinkedBlockingQueue, BlockingQueue}
+
+class FIFOStream[A]( private val queue: BlockingQueue[Option[A]] = new LinkedBlockingQueue[Option[A]]() ) {
+  lazy val toStream: Stream[A] = queue2stream
+  private def queue2stream: Stream[A] = queue take match {
+    case Some(a) => Stream cons ( a, queue2stream )
+    case None    => Stream empty
+  }
+  def close() = queue add None
+  def enqueue( as: A* ) = queue addAll as.map( Some(_) )
+}
+

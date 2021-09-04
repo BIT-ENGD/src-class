@@ -1,0 +1,63 @@
+Private Sub ReceiveMsg()
+    Dim nTotalBytes As Integer
+    Dim nNumBytes As Integer
+    Dim nMsgType As Short
+    Dim nMsgLen As Short
+    Dim ind As Integer
+
+    Try
+        nNumBytes = -1
+        While (nNumBytes <> 0)
+
+            nTotalBytes = 0
+            RecvBuffer.Initialize()
+
+            nNumBytes = ClientSocket.Receive(RecvBuffer, nTotalBytes, 4, SocketFlags.None)
+            If nNumBytes > 3 Then
+                SyncLock ClientSocket
+                    AppendText("")
+                    AppendText("Message Received " & Str(nNumBytes) & " Bytes")
+                    nTotalBytes = nTotalBytes + nNumBytes
+                    nMsgType = BitConverter.ToInt16(RecvBuffer, 0)
+                    nMsgLen = BitConverter.ToInt16(RecvBuffer, 2)
+                    If nMsgLen > 8191 Then
+                        AppendText(" Error - Message length invalid: " & Str(nMsgLen))
+                        nMsgLen = 250
+                    End If
+
+                    While (nTotalBytes < nMsgLen And nNumBytes > 0)
+                        nNumBytes = ClientSocket.Receive(RecvBuffer, nTotalBytes, (nMsgLen - nTotalBytes), _
+                                                        SocketFlags.None)
+                        AppendText("Message Received " & Str(nNumBytes) & " Bytes")
+                        nTotalBytes = nTotalBytes + nNumBytes
+                    End While
+                End SyncLock
+
+                AppendText("Total Bytes Received = " & Str(nTotalBytes))
+                AppendText("MsgLen from Message = " & Str(nMsgLen))
+                Select Case nMsgType
+                    Case 1
+                        AppendText(" Liftpos = " & System.Text.Encoding.ASCII.GetString(RecvBuffer, 4, 1))
+
+                        For ind = 0 To NUM_LOCATIONS - 1
+                            Number(ind) = System.Text.Encoding.ASCII.GetString(RecvBuffer, 5 + (ind * 12), 12)
+                        Next
+
+                        RefreshScreen()
+
+                    Case Else
+                        AppendText(" Unrecognized message type: " & Str(nMsgType))
+
+                End Select
+
+            End If
+        End While
+
+
+    Catch ex As Exception
+        ' Tell the main thread to invoke DisconnectedUI
+        Dim cb As New SimpleCallback(AddressOf DisconnectedUI)
+        Me.Invoke(cb)
+        Return
+    End Try
+

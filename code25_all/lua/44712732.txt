@@ -1,0 +1,142 @@
+-- http://steamcommunity.com/profiles/76561197968345269
+-- http://steamcommunity.com/sharedfiles/filedetails/?id=726800282
+-- v20161009b
+
+math.randomseed(os.time()+tonumber(self.getGUID(),16)+self.getPosition().x*10+self.getPosition().y*10+self.getPosition().z*10)
+
+function onLoad(save_state)
+    if self.getDescription()=='' then
+        setDefaultState()
+    end
+end
+
+function onSave()
+    return self.getDescription()
+end
+
+function onDropped(player_color)
+    if self.getDescription()=='' then
+        setDefaultState()
+    end
+end
+
+function setDefaultState()
+
+    self.setDescription(JSON.encode({
+        sort='asc',
+        step=0.3
+    }))
+
+end
+
+function sortByVal(t, asc)
+    local keys = {}
+    for key in pairs(t) do
+        table.insert(keys, key)
+    end
+    if asc then
+        table.sort(keys, function(a, b) return t[a] < t[b] end)
+    else
+        table.sort(keys, function(a, b) return t[a] < t[b] end)
+    end
+    return keys
+end
+
+
+function hasGuid(t, g)
+    for k,v in ipairs(t) do
+        if v.guid==g then
+            return true
+        end
+    end
+    return false
+end
+
+customFace={"4","6","8","10","12","20"}
+
+function onCollisionEnter(collision_info)
+    if collision_info.collision_object.getGUID()==nil then
+        return
+    end
+
+    --print('===========')
+    local data = JSON.decode(self.getDescription())
+    if data==nil then
+        setDefaultState()
+        data = JSON.decode(self.getDescription())
+        printToAll('Warning - invalid description. Restored defaut configuration.', {0.8,0.5,0})
+    end
+
+    if data.step<0.3 then
+        setDefaultState()
+        data = JSON.decode(self.getDescription())
+        printToAll('Warning - "step" can\'t be lower than 1. Restored defaut configuration.', {0.8,0.5,0})
+    end
+
+    diceGuids={}
+    sortedKeys={}
+    for k,v in ipairs(getAllObjects()) do
+        if v.tag=='Dice' then
+            objType=tostring(v)
+            faces=string.match(objType,"Die_(%d+).*")
+            if faces==nil then
+                faces=customFace[v.getCustomObject().type+1]
+            end
+            r=math.random(faces)
+            diceGuids[v.getGUID()]=r
+            --print(v.getGUID(),' ; ',faces,' ; ',r)
+            table.insert(sortedKeys,v.getGUID())
+        end
+    end
+
+
+    local objs = self.getObjects()
+    local position = self.getPosition()
+    local rotation = self.getRotation()
+
+    if data.sort=='asc' then
+        sortedKeys = sortByVal(diceGuids, true)
+    elseif data.sort=='desc' then
+        sortedKeys = sortByVal(diceGuids, false)
+    elseif  data.sort!='no' then
+        printToAll('Warning - "sort" field needs to be "asc", "desc" or "no". Using "no" as default.', {0.8,0.5,0})
+    end
+
+    n=1
+initialDice=1
+currentDice=1
+zOffset=0
+xOffset=data.step
+    for _, key in ipairs(sortedKeys) do
+        --print(key,' ; ',diceGuids[key],' ; ',hasGuid(objs,key))
+        if hasGuid(objs,key) then
+            local params = {}
+            params.guid=key
+            currentDice=diceGuids[key]
+            print('--')
+            print('X: ' .. xOffset)
+            print('Z: ' .. zOffset)
+            print('--')
+            if currentDice>initialDice then
+                zOffset=zOffset-data.step
+                xOffset=xOffset-data.step
+                initialDice=currentDice
+            end
+            params.position = { position.x+(-1)*math.sin((90+rotation.y)*0.0174532)*(n+0.5)*data.step,
+            position.y+1,
+            position.z+(-1)*math.cos((90+rotation.y)*0.0174532)*(n+0.5)*data.step+zOffset}
+            params.rotation = {rotation.x, rotation.y, rotation.z}
+            params.callback='setRandom'
+            params.params={diceGuids[key]}
+            self.takeObject(params)
+            n=n+1
+        end
+    end
+
+
+end
+
+function setRandom(obj, par)
+    obj.setValue(par[1])
+end
+

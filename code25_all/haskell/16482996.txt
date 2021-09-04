@@ -1,0 +1,197 @@
+reactiveTable
+reactiveListDisplay
+data Series = Series { name :: String
+                     , season :: Int
+                     , episode :: Int
+                     }
+
+
+insertIntoTable :: TableClass t => t -> SeriesChangeHandler -> SeriesRemoveHandler -> Series -> IO ()
+insertIntoTable table changeHandler removeHandler (Series name s e) = do
+   (rows, cols) <- tableGetSize table
+   tableResize table (rows+1) cols
+
+   nameLabel     <- labelNew $ Just name 
+   adjustmentS   <- adjustmentNew (fromIntegral s) 1 1000 1 0 0
+   adjustmentE   <- adjustmentNew (fromIntegral e) 1 1000 1 0 0
+   seasonButton  <- spinButtonNew adjustmentS 1.0 0
+   episodeButton <- spinButtonNew adjustmentE 1.0 0
+   removeButton  <- buttonNewWithLabel "remove"
+   let getSeries = do
+            s <- spinButtonGetValue seasonButton
+            e <- spinButtonGetValue episodeButton
+            return $ Series name (round s) (round e)
+       handleSeries onEvent widget handler = do
+            onEvent widget $ do
+                series <- getSeries
+                handler series
+
+    handleSeries onValueSpinned seasonButton  changeHandler
+    handleSeries onValueSpinned episodeButton changeHandler
+    onPressed removeButton $ do
+        series <- getSeries
+        containerRemove table nameLabel
+        containerRemove table seasonButton 
+        containerRemove table episodeButton 
+        containerRemove table removeButton 
+        removeHandler series
+
+    let tadd widget x = tableAdd table widget x (rows - 1)
+    tadd nameLabel     0
+    tadd seasonButton  1
+    tadd episodeButton 2
+    tadd removeButton  3
+    widgetShowAll table
+
+
+main :: IO ()
+main = do
+
+    initGUI
+
+    window     <- windowNew
+    scroll     <- scrolledWindowNew Nothing Nothing
+    table      <- tableNew 1 5 True
+    addButton  <- buttonNewWithLabel "add series"
+    vbox       <- vBoxNew False 10
+
+    containerAdd window vbox
+    boxPackStart vbox addButton PackNatural 0
+
+    let networkDescription :: forall t. Frameworks t => Moment t ()
+        networkDescription = do
+
+            addEvent <- eventButton addButton
+
+            (changeHandler,fireChange) <- liftIO $ newAddHandler
+            changeEvent <- fromAddHandler changeHandler
+            (removeHandler,fireRemove) <- liftIO $ newAddHandler
+            removeEvent <- fromAddHandler removeHandler
+
+            let insertIntoTable' = insertIntoTable table fireChange fireRemove
+                addSeries e = do
+                     s <- addSeriesDialog
+                     liftIO $ insertIntoTable' s
+
+            liftIO $ mapM_ insertIntoTable' initSeries
+
+            reactimate $ addSeries         <$> addEvent
+            reactimate $ updateSeries conn <$> changeEvent
+            reactimate $ removeSeries conn <$> removeEvent
+
+    network <- compile networkDescription
+    actuate network
+
+    onDestroy window $ do
+        D.disconnect conn
+        mainQuit
+
+    widgetShowAll window
+    mainGUI
+
+reactiveList
+reactiveList :: (Frameworks t)
+    => ListStore a
+    -> Event t (Int,a) -- insert event
+    -> Event t (Int,a) -- change event
+    -> Event t (Int,a) -- remove event
+    -> Moment t (Behavior t [a])
+reactiveList store insertE changeE removeE = do
+
+    (listHandler,fireList) <- liftIO $ newAddHandler
+
+    let onChange f (i,a) = do
+            f i a
+            list <- listStoreToList store
+            fireList list
+
+    reactimate $ onChange (listStoreInsert store)         <$> insertE
+    reactimate $ onChange (listStoreSetValue store)       <$> changeE
+    reactimate $ onChange (const . listStoreRemove store) <$> removeE
+
+    initList <- liftIO $ listStoreToList store
+    fromChanges initList listHandler
+
+
+main :: IO ()
+main = do
+
+    initGUI
+
+    window     <- windowNew
+    addButton  <- buttonNewWithLabel "add series"
+    vbox       <- vBoxNew False 10
+    seriesList <- listStoreNew (initSeries :: [Series])
+    listView   <- treeViewNewWithModel seriesList
+
+    treeViewSetHeadersVisible listView True
+
+    let newCol title newRenderer f = do
+            col <- treeViewColumnNew
+            treeViewColumnSetTitle col title
+            renderer <- newRenderer
+            cellLayoutPackStart col renderer False
+            cellLayoutSetAttributes col renderer seriesList f
+            treeViewAppendColumn listView col
+            return renderer
+
+    newCol "Image"  cellRendererPixbufNew $ \s -> [cellPixbuf :=> newPixbuf s]
+    newCol "Name"   cellRendererTextNew   $ \s -> [cellText   :=  name s]
+    seasonSpin <- newCol "Season" cellRendererSpinNew   $ \s ->
+        [ cellRendererSpinAdjustment :=> adjustmentNew (fromIntegral (season s)) 1 1000 1 0 0
+        , cellText := (show $ season s)
+        , cellTextEditable := True
+        ]
+    episodeSpin <- newCol "Episode" cellRendererSpinNew   $ \s ->
+        [ cellRendererSpinAdjustment :=> adjustmentNew (fromIntegral (episode s)) 1 1000 1 0 0
+        , cellText := (show $ episode s)
+        , cellTextEditable := True
+        ]
+
+    containerAdd window vbox
+    boxPackStart vbox listView PackGrow 0
+    boxPackStart vbox addButton PackNatural 0
+
+    let networkDescription :: forall t. Frameworks t => Moment t ()
+        networkDescription = do
+
+            (addHandler,fireAdd) <- liftIO $ newAddHandler
+            maybeSeriesE <- fromAddHandler addHandler
+            (removeHandler,fireRemove) <- liftIO $ newAddHandler
+            removeE <- fromAddHandler removeHandler
+
+            -- when the add button was pressed,
+            -- open a dialog and return maybe a new series
+            askSeriesE <- eventButton addButton
+            reactimate $ (const $ fireAdd =<< askSeries) <$> askSeriesE
+
+            -- ommit all nothing series
+            let insertE  = filterJust maybeSeriesE
+                insert0E = ((,) 0) <$> insertE
+
+            seasonSpinE  <- eventSpin seasonSpin  seriesList
+            episodeSpinE <- eventSpin episodeSpin seriesList
+            let changeSeason  (i,d,s) = (i,s {season = round d})
+                changeEpisode (i,d,s) = (i,s {episode = round d})
+            let changeE = (changeSeason <$> seasonSpinE) `union` (changeEpisode <$> episodeSpinE)
+
+            listB <- reactiveList seriesList insert0E changeE removeE
+            listE <- (changes listB)
+
+            reactimate $ (putStrLn . unlines . map show) <$> listE
+            reactimate $ insertSeries conn       <$> insertE
+            reactimate $ updateSeries conn . snd <$> changeE
+            reactimate $ removeSeries conn . snd <$> removeE
+
+            return ()
+
+    network <- compile networkDescription
+    actuate network
+
+    onDestroy window $ do
+        D.disconnect conn
+        mainQuit
+
+    widgetShowAll window
+    mainGUI
+

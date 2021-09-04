@@ -1,0 +1,57 @@
+data Person = Person {personName :: ByteString, personAge :: Int}
+
+connect :: IO Connection
+connect = connectSqlite3 "/somepath/db.sqlite3"
+
+savePerson :: Person -> IO ()
+savePerson p = do
+c <- connect
+run c "INSERT INTO persons (name, age) \
+      \VALUES (?, ?)"
+      [toSql (personName p), toSql (personAge p)]
+commit c
+disconnect c
+
+insertPerson :: Handler App App ()
+insertPerson = do
+  par <- getPostParams
+  let p = top par
+  liftIO $ savePerson p
+where
+  top m =
+    Person {personName = head (m ! (B.pack "name"))
+           ,personAge  = read (B.unpack (head (m ! (B.pack "age")))) :: Int
+           }
+
+dbInit :: SnapletInit b Connection
+dbInit = makeSnaplet "DB" "My DB Snaplet" Nothing $ do
+  dbc <- liftIO $ connectSqlite3 "/somepath/db.sqlite3"
+  onUnload $ disconnect dbc
+  return $ dbc
+
+data App = App
+  { _heist :: Snaplet (Heist App),
+    _dbcon :: Snaplet (Connection)
+  }
+
+makeLens ''App
+
+app :: SnapletInit App App
+app = makeSnaplet "app" "My app" Nothing $ do
+  h <- nestSnaplet "heist" heist $ heistInit "templates"
+  d <- nestSnaplet "" dbcon dbInit
+  addRoutes routes
+  return $ App h d
+
+insertPerson :: Handler App App ()
+insertPerson = do
+  par <- getPostParams
+  let person = top par
+  connection <- gets _dbcon
+  liftIO $ savePerson connection person
+where
+  top m =
+    Person {personName = head (m ! (B.pack "name"))
+           ,personAge  = read (B.unpack (head (m ! (B.pack "age")))) :: Int
+           }
+

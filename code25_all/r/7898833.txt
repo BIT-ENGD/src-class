@@ -1,0 +1,84 @@
+library(plyr)
+#draws from posterior, 2 respondents, 2 draws each
+draw <- list(structure(c(-2.403, -2.295, 3.198, 1.378, 0.159, 1.531, 
+1.567, -1.716, -4.244, 0.819, -1.121, -0.622, 1.519, 1.731, -1.779, 
+2.84), .Dim = c(2L, 8L), .Dimnames = list(NULL, c("brand_1", 
+"brand_2", "price_1", "price_2", "price_3", "perf_1", "perf_2", 
+"perf_3"))), structure(c(-4.794, -2.147, -1.912, 0.241, 0.084, 
+0.31, 0.093, -0.249, 0.054, -0.042, 0.248, -0.737, -1.775, 1.803, 
+0.73, -0.505), .Dim = c(2L, 8L), .Dimnames = list(NULL, c("brand_1", 
+"brand_2", "price_1", "price_2", "price_3", "perf_1", "perf_2", 
+"perf_3")))) 
+
+#define attributes for each brand: brand constant, price, performance
+b1 <- c(1, .15, .25)
+b2 <- c(2, .1, .2)
+
+#Create data.frame out of attribute lists. Wil use mdply to go through each 
+interpolateCombos <- data.frame(xout = c(b1,b2), 
+                                atts = rep(c("Brand", "Price", "Performance"), 2),
+                                i = rep(1:2, each = 3),
+                                stringsAsFactors = FALSE)
+
+#Find point along line. Tried approx(), but too slow
+
+findInt <- function(x1,x2,y1,y2,reqx) {
+  range <- x2 - x1
+  diff <- reqx - x1
+  out <- y1 + ((y2 - y1)/range) * diff
+  return(out)
+}
+
+
+calcInterpolate <- function(xout, atts, i){
+  if (atts == "Brand") {
+    breaks <- 1:2
+    cols <- 1:2
+  } else if (atts == "Price"){
+    breaks <- c(-.2, 0, .2)
+    cols <- 3:5
+  } else {
+    breaks <- c(-.25, 0, .25)
+    cols <- 6:8
+  }
+
+  utils <- draw[[i]][, cols]
+
+  if (atts == "Brand" | xout %in% breaks){ #Brand can't be interpolated or if level matches a break
+    out <- data.frame(out = utils[, match(xout, breaks)])
+    } else{ #Must interpolate    
+    mi <- min(which(breaks <= xout))
+    ma <- max(which(breaks >= xout))
+    out <- data.frame(out = findInt(breaks[mi], breaks[ma], utils[, mi], utils[,ma], xout))
+    }
+  out$draw <- 1:nrow(utils)
+  return(out)
+}
+out <- mdply(interpolateCombos, calcInterpolate)
+
+p1 <- c(1,2,1)
+p2 <- c(2,1,2)
+
+
+FUN <- function(x, p1, p2) {
+  bases <- c(0,2,5)
+
+  u1 <- rowSums(x[, bases + p1])
+  u2 <- rowSums(x[, bases + p2])
+  sumExp <- exp(u1) + exp(u2)
+  s1 <- exp(u1) / sumExp
+  s2 <- exp(u2) / sumExp
+  return(cbind(s1,s2))
+}
+lapply(draw, FUN, p1 = p1, p2 = p2)
+
+[[1]]
+                s1        s2
+[1,] 0.00107646039 0.9989235
+[2,] 0.00009391749 0.9999061
+
+[[2]]
+              s1        s2
+[1,] 0.299432858 0.7005671
+[2,] 0.004123175 0.9958768
+

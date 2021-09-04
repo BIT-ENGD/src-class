@@ -1,0 +1,59 @@
+{-# LANGUAGE OverloadedStrings #-}
+import Network.Wai
+import Network.Wai.Handler.Warp (run)
+import Data.Enumerator (Iteratee (..))
+import Data.Either (either)
+import Control.Monad (join)
+import Data.Maybe (fromMaybe)
+import Network.HTTP.Types (statusOK, status404)
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as L
+import Data.ByteString.Char8 (unpack)
+import Data.ByteString.Lazy.Char8 (pack)
+import qualified Data.Text.Lazy as T
+import Data.Text (Text(..))
+import Control.Monad.IO.Class (liftIO, MonadIO)
+import Data.Aeson (encode)
+import qualified Data.Map as Map
+import qualified Database.MongoDB as DB
+
+application dbpipe req = do
+  case unpack $ rawPathInfo req of
+    "/items" -> itemsJSON dbpipe req
+    _ ->  return $ responseLBS status404 [("Content-Type", "text/plain")] "404"
+
+indexPage :: Iteratee B.ByteString IO Response
+indexPage = do
+  page <- liftIO $ processTemplate "templates/index.html" []
+  return $ responseLBS statusOK [("Content-Type", "text/html; charset=utf-8")] page
+
+processTemplate f attrs = do
+  page <- L.readFile f
+  return page
+
+itemsJSON :: DB.Pipe -> Request -> Iteratee B.ByteString IO Response
+itemsJSON dbpipe req = do
+  dbresult <- liftIO $  rundb dbpipe $ DB.find (DB.select [] $ tu "table") >>= DB.rest
+  let docs = either (const []) id dbresult
+--  liftIO $ L.putStrLn $ encode $ show $ map docToMap docs
+  return $ responseLBS statusOK [("Content-Type", "text/plain; charset=utf-8")]
+    (encode $ map docToMap docs)
+
+docToMap doc = Map.fromList $ map (\f -> (T.dropAround (== '"') $ T.pack $ show $ DB.label f, T.dropAround (== '"') $ T.pack $ show $ DB.value f)) doc
+
+
+main =  do
+  pipe <- DB.runIOE $ DB.connect $ DB.host "127.0.0.1"
+  run 3000 $ application pipe
+
+rundb pipe act = DB.access pipe DB.master database act
+
+tu :: B.ByteString -> UString
+tu = DB.u . C8.unpack
+
+curl http://localhost:3000/items
+[{"Марка": "\1058\1080\1087 \1087\1086\1076",
+  "Model": "BD-W LG BP06LU10 Slim \1058\1080\1087 \1087\1086\1076\1082\1083\1102\1095\1077\1085\1080\1103"},
+ ...
+]
+

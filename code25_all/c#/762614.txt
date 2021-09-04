@@ -1,0 +1,48 @@
+public static List<KeyValuePair<string, string>> GetZtxt(FileStream stream)
+{
+    var ret = new List<KeyValuePair<string, string>>();
+    try {
+        stream.Position = 0;
+        var br = new BinaryReader(stream, Encoding.ASCII);
+        var head = br.ReadBytes(8); // The header is the same for all PNGs.
+        if (!head.SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A })) return null; // Not a PNG.
+        while (stream.Position < stream.Length) {
+            int len; // Length of chunk data.
+            if (BitConverter.IsLittleEndian)
+                len = BitConverter.ToInt32(br.ReadBytes(4).Reverse().ToArray(), 0);
+            else
+                len = br.ReadInt32();
+
+            char[] cName = br.ReadChars(4); // The chunk type.
+            if (cName.SequenceEqual(new[] { 'z', 'T', 'X', 't' })) {
+                var sb = new StringBuilder(); // Builds the null-terminated keyword associated with the chunk.
+                char c = br.ReadChar();
+                do {
+                    sb.Append(c);
+                    c = br.ReadChar();
+                }
+                while (c != '\0');
+                byte method = br.ReadByte(); // The compression method.  Should always be 0. (DEFLATE method.)
+                if (method != 0) {
+                    stream.Seek(len - sb.Length + 3, SeekOrigin.Current); // If not 0, skip the rest of the chunk.
+                    continue;
+                }
+                var data = br.ReadBytes(len - sb.Length - 1); // Rest of the chunk data...
+                var ms = new MemoryStream(data, 0, data.Length); // ...in a MemoryStream...
+                var ds = new DeflateStream(ms, CompressionMode.Decompress); // ...read by a DeflateStream...
+                var sr = new StreamReader(ds); // ... and a StreamReader.  Yeesh.
+                var str = sr.ReadToEnd(); // !!! InvalidDataException !!!
+                ret.Add(new KeyValuePair<string, string>(sb.ToString(), str));
+                stream.Seek(4, SeekOrigin.Current); // Skip the CRC check.
+            }
+            else {
+                stream.Seek(len + 4, SeekOrigin.Current); // Skip the rest of the chunk.
+            }
+        }
+    }
+    catch (IOException) { }
+    catch (InvalidDataException) { }
+    catch (ArgumentOutOfRangeException) { }
+    return ret;
+}
+

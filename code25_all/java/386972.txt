@@ -1,0 +1,485 @@
+import java.awt.*;
+import java.awt.geom.*;
+import java.awt.event.*;
+import java.awt.image.*;
+import java.io.*;
+import javax.imageio.*;
+import java.net.*;
+import com.sun.image.codec.jpeg.*;
+import javax.imageio.stream.*;
+
+public class ScreenGrabber extends Thread
+{
+  // capRect and encQuality can be changed by user. After changes init() must be called for the ScreenGrabber to work correctly.
+  public Rectangle capRect;
+//  public float encQuality=0.5f;
+  public float encQuality=1.0f;
+  // time, maxNOPics and cntMovies should only be read.
+  // time is the time in ms between each frame,
+  // maxNOPics is the maximum number of frames that can be recorded into memory.
+  // cntMovies is updated everytime a movie is finished recording.
+  public double time;
+  public int maxNOPics,cntMovies=0;
+  // notFinished is set to false by user to stop recording.
+  // recording is set to false at the exact time when capping is finished.
+  // running is set to false when the ScreenGrabber is ready for another recording.
+  // getMouse can be changed at any time to start/stop recording mouse positions.
+  public boolean notFinished=false,recording=false,running=false;
+  public boolean unRecoverableError=false,error=false,getMouse=true;
+  // files can be changed by user in order to change output files.
+  // changing the extension of the tempfile is currently not possible.
+  public String movFile=Media_Tools.Dir_Data+"test.mov",movPath="",tempFile="temp",extension=".mov";
+  public File screenshotFile=null;
+  //  This is used if the user wants to interrupt the encoding.
+  //  In the EncodeThread constuctor, the DataList is also given to myProgressBar, so that the progressBar can stop the dumper.
+  public EncodingProgressBar myProgressBar;
+  /**   Variables for the run() and init() methods only */
+
+  //    cntPics used to count which frame we're on,
+  //    cntMissed used to count how many we've missed.
+  private int cntPics,cntMissed;
+  //    Used to store the encoded frame used as first and last frame.
+  private byte[] lastFrame;
+  //    Keeps track of the size of the ByteArrayOutputStream used to store frames in memory. oldSize is used to calculate the exact size of each new frame.
+  private int oldSize=0;
+  //    sizes is used to store sizes of all captured frames,
+  //    missedFrames is used to store number of all missedFrames.
+  private int[] sizes,  missedFrames;
+  //    This is where all captured and encoded frames are stored in memory.
+  private ByteArrayOutputStream jpgBytesII;
+  private FileOutputStream fileBytes;
+  private BufferedOutputStream fileBuffer;
+  private DataOutputStream jpg_Bytes;
+  //    Used directly as output file, this file is used to save frames into after recording is finished, in the run() method.
+  private File dumpFile;
+  //    Both these times are used in the run() method to keep capture in sync.
+  //    syncTime can be set needs to be set in the setSyncTime() method.
+  //    This must be done before recording is started.
+  double syncTime;
+  private long currentTime;
+  /**   Variables used by many methods */
+
+  // myRuntime is used to check available memory.
+  private Runtime myRuntime;
+  //    The robot used for screen caputure.
+  private Robot robot;
+  //    The BufferedImage used to store captured frames.
+  private BufferedImage Buffered_Image;
+  private Graphics2D imageGraphics;
+  //    Used to get the fps value for method startDumper.
+  //    Also used to calculate time in method setFps.
+  private int fps;
+  //    The average size of captured and encoded images.
+  //    Used to get an estimate of the number of frames that can be stored in memory.
+  private double avgSize=Double.MAX_VALUE;
+  //    The Encoder and its parameters, used to encode captured images.
+  private JPEGImageEncoder encoder;
+
+  private JPEGEncodeParam param;
+
+  // This is the class where the encoding of the mov-file takes place.
+  private class EncodeThread extends Thread
+  {
+    DataList encArguments;
+
+    EncodeThread(DataList images)
+    {
+      encArguments=images;
+      myProgressBar.myDataList=images;           // This is done so that the encoding can be stopped from the progressbar.
+    }
+
+    public void run()
+    {
+      startDumper(encArguments);
+      running=false;
+      recording=false;
+      try
+      {
+        encArguments.inStream.close();
+        encArguments.inFile.delete();
+      }
+      catch (Exception e) { System.out.println(e); }
+      wakeUp();
+    }
+  }
+
+  //    Constructor for ScreenGrabber.
+  //    Setup the capture Rectangle and the fps to use. Then test encoding to get a good value for avgCapSize set up.
+  //    Then setup outfiles.
+  public ScreenGrabber(Rectangle capSize,int fps)
+  {
+    capRect=capSize;
+    setFps(fps,fps);
+    try
+    {
+      // Start the robot, and perform a
+      // performance test.
+      robot=new Robot();
+      System.out.print("Initializing ...");
+      testEnc();
+      System.out.println(" Done.");
+      // Setup files.
+      File path=new File(movFile);
+      path=path.getAbsoluteFile();
+      movPath=path.getParentFile().toURL().toString();
+    }
+    catch (AWTException awte)
+    {
+      System.err.println("AWTException "+awte);
+      if (Media_Tools.Exit_When_Window_Closed) System.exit(1);
+    }
+    catch (IOException e) { System.err.println("IOException "+e); }
+  }
+
+  public ScreenGrabber() { this((new Rectangle(0,0,100,100)),15); }
+
+  // Init or reinit the encoder.
+  // This needs to be done everytime the amount of memory needed has changed, the sizes of the frames have changed, or just between every recording.
+  public void init() throws IOException
+  {
+    // Clear memory.
+    jpgBytesII=new ByteArrayOutputStream();
+    encoder=null;
+    sizes=null;
+    missedFrames=null;
+    System.gc();
+    // Set up a save file for encoded jpg images. This file is then used directly as output.
+    dumpFile=new File(Media_Tools.Dir_Data+"dumpFile"+cntMovies);
+    dumpFile.deleteOnExit();
+    // Trying to allocate all available memory except 20MB that are saved for performance purposes. If that fails, allocate half of the available memory.
+    myRuntime=Runtime.getRuntime();
+    Double convert=new Double(myRuntime.maxMemory()-myRuntime.totalMemory()+myRuntime.freeMemory()-2097152*10);
+    if (0<convert.intValue()) convert=new Double((myRuntime.maxMemory()-myRuntime.totalMemory()+myRuntime.freeMemory())*0.5d);
+    // Allocate memory for frame storage.
+    fileBytes=new FileOutputStream(dumpFile);
+    fileBuffer=new BufferedOutputStream(fileBytes,((10*1048576<convert.intValue())?5*1048576:convert.intValue()/2));
+    maxNOPics=(int)((15*1048576<convert.intValue())?1048576:convert.intValue()/4);
+    jpg_Bytes=new DataOutputStream(fileBuffer);
+
+    // Set the maximum number of frames that can be stored in memory, based on allocated memory, and average frame size.
+    // Init the encoder to store encoded images directly to memory. This will be changed later, but is an easy way of getting a first frame for the film.
+    Buffered_Image=robot.createScreenCapture(capRect);
+    encoder=JPEGCodec.createJPEGEncoder(jpgBytesII);
+    param=encoder.getDefaultJPEGEncodeParam(Buffered_Image);
+    param.setQuality(encQuality,false);
+    encoder.setJPEGEncodeParam(param);
+
+    // Store an empty image in the first frame of the film. Then keep that jpg image in memory to also be used as the last frame.
+    Buffered_Image=new BufferedImage(Buffered_Image.getWidth(),Buffered_Image.getHeight(),Buffered_Image.getType());
+    encoder.encode(Buffered_Image);
+    lastFrame=jpgBytesII.toByteArray();
+    jpgBytesII=null;
+
+    // Change the encoder to store encoded image in the designated OutputStream
+    Buffered_Image=robot.createScreenCapture(capRect);
+    encoder=JPEGCodec.createJPEGEncoder(jpg_Bytes);
+    param=encoder.getDefaultJPEGEncodeParam(Buffered_Image);
+    param.setQuality(encQuality,false);
+    encoder.setJPEGEncodeParam(param);
+
+    jpg_Bytes.write(lastFrame,0,lastFrame.length);
+    sizes=new int[maxNOPics];          // Allocate int Arrays for storing image sizes, and missed images. Setup remaining variables.
+    missedFrames=new int[maxNOPics];   // Allow as many missed frames.
+    missedFrames[0]=maxNOPics+1;       // This is needed in case no frames are missed. Otherwise, it will be overwritten.
+    sizes[0]=jpg_Bytes.size();         // One frame is already caught, setup size and frame counter.
+    oldSize=sizes[0];
+    cntPics=1;
+    cntMissed=0;
+    unRecoverableError=false;
+    error=false;
+  }
+
+  /**   Set the fps */
+  public void setFps(int fps,int playbackFps)
+  {
+    this.fps=playbackFps;
+    time=1000d/fps;
+  }
+
+  //    Creates and returns the mouse cursor, given the position of the mouse.
+  private Polygon createMouse(Point mousePos)
+  {
+    Polygon polly=new Polygon();
+    polly.addPoint(mousePos.x-capRect.x,mousePos.y-capRect.y);
+    polly.addPoint(mousePos.x-capRect.x+15,mousePos.y-capRect.y+7);
+    polly.addPoint(mousePos.x-capRect.x+9,mousePos.y-capRect.y+9);
+    polly.addPoint(mousePos.x-capRect.x+7,mousePos.y-capRect.y+15);
+    return polly;
+  }
+
+  // Set the syncTime for the run() method
+  // This MUST be done before wakeUp() is called to start the recording.
+  public void setSyncTime(long syncTime) { this.syncTime=syncTime; }
+
+  // Test the Robot cap time per frame. Capture iterations frames in the loop, and calculate and return an average.
+  public double testCapTime() throws IOException
+  {
+    long syncTime;
+    int iterations=30;
+    double avgTime=0;
+    try
+    {
+      for (int cnt=0;cnt<iterations;cnt++)
+      {
+        syncTime=System.currentTimeMillis();
+        Buffered_Image=robot.createScreenCapture(capRect);
+        avgTime=System.currentTimeMillis()-syncTime+avgTime;
+      }
+      avgTime/=iterations;
+      return avgTime;
+    }
+    catch (OutOfMemoryError oe)
+    {
+      System.err.println("Unable to perform cap time test.");
+      System.err.println(oe);
+      return Double.MAX_VALUE;
+    }
+  }
+
+  // Test the average encoder encoding size and time.
+  // Encode iterations frames in the loop, and calculate and return average values of speed and size. avgSize is also set as a class variable,
+  // for simplicity, since other methods in the ScreenGrabber have use for it. For this method to deliver reasonable values,
+  // there should be an 'average' picture in the capture area.
+  public double[] testEnc() throws IOException
+  {
+    // Create a new, local ByteArrayOutputStream to store frames.
+    ByteArrayOutputStream jpgBytes=new ByteArrayOutputStream();
+    int iterations=20;
+    double avgSize=0,avgEncTime=0;
+    long syncTime;
+    try
+    {
+      //    Capture one image in case there is none in memory. image is a class BufferedImage.
+      Buffered_Image=robot.createScreenCapture(capRect);
+      //    Initialize a new JPEGEncoder for local jpg_Bytes
+      encoder=JPEGCodec.createJPEGEncoder(jpgBytes);
+      param=encoder.getDefaultJPEGEncodeParam(Buffered_Image);
+      param.setQuality(encQuality,false);
+      encoder.setJPEGEncodeParam(param);
+      // Encode one image to get a very rough estimate of the average size capRect is set in the constructor.
+      encoder.encode(Buffered_Image);
+      avgSize=jpgBytes.size();
+      // Reserve twice the average size for each frame. This is done for speed. Then make a new JPEGEncoder for this new jpg_Bytes.
+      jpgBytes=new ByteArrayOutputStream((int)avgSize*iterations*2);
+      encoder=JPEGCodec.createJPEGEncoder(jpgBytes);
+      param=encoder.getDefaultJPEGEncodeParam(Buffered_Image);
+      param.setQuality(encQuality,false);
+      encoder.setJPEGEncodeParam(param);
+      for (int cnt=0;cnt<iterations;cnt++)
+      {
+        syncTime=System.currentTimeMillis();
+        encoder.encode(Buffered_Image);
+        avgEncTime=System.currentTimeMillis()-syncTime+avgEncTime;
+      }
+      avgSize=jpgBytes.size()/iterations;
+      avgEncTime/=iterations;
+      // Set class variable avgSize.
+      this.avgSize=avgSize;
+      // Return values.
+      double[] values=new double[2];
+      values[0]=avgSize;
+      values[1]=avgEncTime;
+      return values;
+    }
+    catch (OutOfMemoryError oe)
+    {
+      System.err.println("Unable to perform size and encoding time test.");
+      System.err.println(oe);
+      double[] errors={Double.MAX_VALUE,Double.MAX_VALUE};
+      return errors;
+    }
+  }
+
+  // Take a snapshot of the selected screencap area and save to a new screenshot file. Overwrites any prior screenshot file with the same name.
+  public void snapshot()
+  {
+    Buffered_Image=robot.createScreenCapture(capRect);
+    try { ImageIO.write(Buffered_Image,"png",new File(screenshotFile.getAbsolutePath())); }
+    catch (Exception e) { e.printStackTrace(); }
+//    Out(" screenshotFile.getAbsolutePath() = "+screenshotFile.getAbsolutePath());
+/*
+      FileOutputStream outFile=new FileOutputStream(screenshotFile);
+      JPEGImageEncoder snapEncoder=JPEGCodec.createJPEGEncoder(outFile);
+      snapEncoder.setJPEGEncodeParam(param);
+      snapEncoder.encode(Buffered_Image);
+      outFile.close();
+*/
+  }
+
+  // Starts a new JpegImagesToMovie, and waits for it to finish making a mov file of the jpg images.
+  private void startDumper(DataList images)
+  {
+    // Create a new tempfile filename for each movie.
+    String tempTotal=tempFile.replace("/","\\")+cntMovies+extension;
+    String arguments[]={"-w",Integer.toString(capRect.width),"-h",Integer.toString(capRect.height),"-f",Integer.toString(fps),"-o",movPath+tempTotal};
+    try
+    {
+      // Create a new dumper.
+      JpegImagesToMovieMod dumper=new JpegImagesToMovieMod(arguments);
+      // Point dumper to datasource.
+      dumper.setDataList(images);
+      // Run dumper, and wait for it to finish with waitFor().
+      dumper.setPriority(Thread.NORM_PRIORITY);
+      dumper.finished=false;
+      dumper.start();
+      dumper.waitFor();
+    }
+    catch (Exception e)
+    {
+      // unRecoverableError can be used to check if making the movie succeded. This is used in
+      // stead of returning a value, in case one wants to run the method in a separate thread.
+      unRecoverableError=true;
+      System.err.println(e);
+    }
+    catch (OutOfMemoryError o)
+    {
+      unRecoverableError=true;
+      System.out.println(o);
+    }
+  }
+
+  /** Used to sync video.
+  Users may call this method, and are then woken once when the last frame is captured, and once more when the recording is completely finished.
+  The recording and running flags must be checked in order to safely determine if recording is running upon return from this method.
+  The ScreenGrabber itself calls this method from run(), and then waits here for capture to start.
+   */
+  public synchronized void hold()
+  {
+    try { wait(); }
+    catch (InterruptedException ie) { System.err.println(ie); }
+  }
+
+  /** Called by the user to start capturing images.
+  Also wakes up users waiting for the grabber to finish. This method is called once when the last frame is captured, and once more when all video data are written to the temp file.
+   */
+  public synchronized void wakeUp() { notifyAll(); }
+
+  /** Main working method.
+   *  It captures a frame, and sleeps for the amount of time left until the next frame should be captured. If capturing the frame took longer time than fps would allow, the frame is
+   *  marked as missed, and then copied in the amount of copies required to get back in sync. The method ends with a call to startDumper(), making a temp   mov file, before signalling
+   *  no longer running, and making one last call to wakeUp(). The recording is started when the user sets the notFinished  flag to true, and then calls ScreenGrabber.wakeUp. It is
+   *    stopped when the user sets the notFinished flag to false.
+   */
+  public void run()
+  {
+    // DataList is a class used to reload the images from the file they will be saved in, and then supply them to the JpegImagesToMovieMod class.
+    DataList images;
+    // The polygon to draw the mouse cursor into, and the point to stor mouse position in.
+    Polygon mousePointer;
+    Point mousePos;
+
+//===================
+    MemoryCacheImageOutputStream MemoryCache_OutputStream=null;
+    try { MemoryCache_OutputStream=new MemoryCacheImageOutputStream(new FileOutputStream("C:/Dir_Data/Test",false)); }
+    catch (Exception e) { }
+//===================
+
+    while (true)                                                     // This loop will run until the VM exits, from somewhere else.
+    {
+      try
+      {
+        init();                                                      // Make sure the grabber is inited.
+        images=null;                                                 // Free memory.
+        while (!notFinished) { hold(); }                             // Wait for recording to start.
+        recording=true;
+        running=true;
+        while (notFinished)                                          // Main recording loop. notFinished is set to false by user to stop recording.
+        {
+          Buffered_Image=robot.createScreenCapture(capRect);         // Capture image.
+          if (getMouse)                                              // Add mouse cursor to image.
+          {
+            imageGraphics=Buffered_Image.createGraphics();           // Get graphics to paint in.
+            mousePos=MouseInfo.getPointerInfo().getLocation();       // Get location of mouse.
+            mousePointer=createMouse(mousePos);                      // Get the cursor to draw.
+            imageGraphics.setColor(Color.WHITE);                     // Draw cursor.
+            imageGraphics.fill(mousePointer);
+            imageGraphics.setColor(Color.DARK_GRAY);
+            imageGraphics.draw(mousePointer);
+          }
+          encoder.encode(Buffered_Image);                            // Encode jpg to OutputStream.
+          sizes[cntPics]=jpg_Bytes.size()-oldSize;                   // save size of each jpg in sizes[].
+          oldSize+=sizes[cntPics];
+//=================
+          try { ImageIO.write(Buffered_Image,"png",MemoryCache_OutputStream); }
+          catch (Exception e) { e.printStackTrace(); }
+//=================
+          syncTime+=time;                                            // stay in sync.
+          currentTime=System.currentTimeMillis();
+          while (syncTime<currentTime)
+          {
+            missedFrames[cntMissed++]=cntPics;
+            syncTime+=time;
+          }
+          cntPics++;                                                 // finish up each loop and sleep.
+          Thread.sleep((long)syncTime-currentTime);
+        }
+      }
+      catch (OutOfMemoryError o)
+      {
+        error=true;
+        Runtime myRuntime=Runtime.getRuntime();
+        long mem=myRuntime.maxMemory()-myRuntime.totalMemory()+myRuntime.freeMemory();
+        System.out.println("Interrupted ! Memory to low");
+        System.out.println("Memory : "+mem);
+        System.out.println(o);
+      }
+      catch (Exception e)
+      {
+        error=true;
+        Runtime myRuntime=Runtime.getRuntime();
+        long mem=myRuntime.maxMemory()-myRuntime.totalMemory()+myRuntime.freeMemory();
+        System.out.println("Interrupted ! Possibly max number of frames exceeded, or Memory to low");
+        System.out.println("Max number of pics : "+maxNOPics);
+        System.out.println("Memory : "+mem);
+        System.out.println(e);
+      }
+      finally
+      {
+        try                                                          // We're finished recording video.
+        {
+          cntMovies++;
+          if (((cntPics+cntMissed)*time)<2000)                       // make sure the audiotrack is at least 2s long. an attempt to prevent crashes from Merge class.
+          {
+            int delayCounter=0;
+            while (((cntPics+cntMissed+delayCounter++)*time)<2000) { Thread.sleep((long)time); }
+          }
+          recording=false;                                           // wake up users waiting to sync audio.
+          wakeUp();
+          // make sure the film is at least 2s long. an attempt to prevent crashes from Merge class.
+          while (((cntPics+cntMissed)*time)<2000) { missedFrames[cntMissed++]=cntPics; }
+
+          jpg_Bytes.write(lastFrame,0,lastFrame.length);             // Write the final frame, close file for temporary image data.
+          sizes[cntPics]=lastFrame.length;
+
+          try                                                        // Trying to close the streams attached to the dumpFile, so it can be deleted later.
+          {
+            fileBytes.close();
+            fileBuffer.close();
+            jpg_Bytes.close();
+          }
+          catch (Exception e) { }
+
+          images=new DataList();                                     // Init a new datalist for this movie. The datalist acts as an an input source for the JpegImagesToMovieMod class.
+          images.totalPics=cntPics;
+          images.picSizes=sizes;
+          images.missedFrames=missedFrames;
+
+          EncodeThread encThread=new EncodeThread(images);           // dump jpgs into a movfile, and add audio. do this in a seperate thread.
+          encThread.setPriority(MIN_PRIORITY);
+          if (images.setInFile(dumpFile)) encThread.start();
+        }
+        catch (IOException e) { System.err.println(e); }
+        catch (Exception e) { System.err.println(e); }
+      // Wake up users waiting for video recording to finish.
+//          running = false;
+//          recording = false;
+//          images = null;
+//          wakeUp();
+      }
+    }
+  }
+
+  public static void out(String message) { System.out.print(message); }   
+  public static void Out(String message) { System.out.println(message); }
+}
+

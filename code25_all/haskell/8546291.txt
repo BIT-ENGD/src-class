@@ -1,0 +1,73 @@
+back
+b
+back
+b
+ScopedTypeVariables
+data AuthSnaplet b u =
+  AuthSnaplet
+  { _backend    :: b
+  , _activeUser :: Maybe u
+  }
+-- data-lens-template:Data.Lens.Template.makeLens
+-- data-lens:Data.Lens.Common.Lens
+-- generates: backend :: Lens (AuthSnaplet b u) b
+makeLens ''AuthSnaplet
+
+-- Some encrypted password
+newtype Password =
+  Password
+  { passwordData :: ByteString
+  }
+
+-- data-default:Data.Default.Default
+class Default u => AuthUser u where
+  userLogin :: Lens u Text
+  userPassword :: Lens u Password
+
+class AuthUser u => AuthBackend b u where
+  save :: MonadIO m => b -> u -> m u
+  lookupByLogin :: MonadIO m => b -> Text -> m (Maybe u)
+  destroy :: MonadIO m => b -> u -> m ()
+
+-- snap:Snap.Snaplet.Snaplet
+class AuthBackend b u => HasAuth s b u where
+  authSnaplet :: Lens s (Snaplet (AuthSnaplet b u))
+
+-- snap:Snap.Snaplet.with :: Lens v (Snaplet v') -> m b v' a -> m b v a
+-- data-lens-fd:Data.Lens.access :: MonadState a m => Lens a b -> m b
+loginUser :: HasAuth s b u
+          => Text -> Text -> Handler a s (Either AuthFailure u)
+loginUser uname passwd = with authSnaplet $ do
+  back <- access backend
+  maybeUser <- lookupByLogin back uname -- !!! type of back is ambiguous !!!
+  -- ... For simplicity's sake, let's say the function ends like this:
+  return . Right . fromJust $ maybeUser
+
+src/Snap/Snaplet/Authentication.hs:105:31:
+    Ambiguous type variables `b0', `u0' in the constraint:
+      (HasAuth s b0 u0) arising from a use of `authSnaplet'
+    Probable fix: add a type signature that fixes these type variable(s)
+    In the first argument of `with', namely `authSnaplet'
+    In the expression: with authSnaplet
+    In the expression:
+        with authSnaplet
+      $ do { back <- access backend;
+             maybeUser <- lookupByLogin back uname;
+               ... }
+
+src/Snap/Snaplet/Authentication.hs:107:16:
+    Ambiguous type variable `b0' in the constraint:
+      (AuthBackend b0 u) arising from a use of `lookupByLogin'
+    Probable fix: add a type signature that fixes these type variable(s)
+    In a stmt of a 'do' expression:
+        maybeUser <- lookupByLogin back uname
+    In the second argument of `($)', namely
+      `do { back <- access backend;
+            maybeUser <- lookupByLogin back uname;
+              ... }'
+    In the expression:
+        with authSnaplet
+      $ do { back <- access backend;
+             maybeUser <- lookupByLogin back uname;
+               ... }
+

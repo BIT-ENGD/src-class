@@ -1,0 +1,106 @@
+#ifndef TAO_TUTORIALS_QUOTER_AMI_CLIENT_FACTORYHANDLER_I_H
+#define TAO_TUTORIALS_QUOTER_AMI_CLIENT_FACTORYHANDLER_I_H
+
+#include "QuoterS.h"
+
+class Stock_Factory_Handler_i : public POA_Quoter::AMI_Stock_FactoryHandler
+{
+public:
+Stock_Factory_Handler_i (int *response_count, ::Quoter::Stock_var& result);
+
+    void get_stock (::Quoter::Stock_ptr ami_return_val);
+    void get_stock_excep (::Messaging::ExceptionHolder * excep_holder);
+
+private:
+    int *response_count_;
+    ::Quoter::Stock_var& result_;
+};
+
+#endif /* TAO_TUTORIALS_QUOTER_AMI_CLIENT_HANDLER_I_H */
+
+#include "FactoryHandler_i.h"
+#include "ace/streams.h"
+
+Stock_Factory_Handler_i::
+    Stock_Factory_Handler_i (int *response_count, ::Quoter::Stock_var& result)
+    : response_count_ (response_count), result_ (result)
+{
+}
+
+void
+Stock_Factory_Handler_i::get_stock (::Quoter::Stock_ptr ami_return_val)
+{
+  cout << "storing result" << endl;
+  result_ = ami_return_val;
+  (*this->response_count_)++;
+}
+
+void
+Stock_Factory_Handler_i::get_stock_excep (::Messaging::ExceptionHolder * excep_holder)
+{
+  // We ignore the exception, but this counts as a response, otherwise
+  // the application would not finish.
+  cerr << "Exception raised while getting stock"
+       << endl;
+  (*this->response_count_)++;
+}
+
+// ...
+// Create and activate the handler...
+int response_count = 0;
+Single_Query_Stock_Handler_i handler_i (&response_count);
+Quoter::AMI_Single_Query_StockHandler_var handler =
+  handler_i._this ();
+
+// Create and activate the factory handler...
+Quoter::Stock_var result;
+Stock_Factory_Handler_i factory_handler_i (&response_count, result);
+Quoter::AMI_Stock_FactoryHandler_var factory_handler =
+  factory_handler_i._this();
+
+// Send all the requests, careful with error handling
+int request_count = 0;
+for (int i = 2; i != argc+1; ++i) {
+  try {
+    // Get the stock object
+      cout << "looking up stock symbol " << argv[i] << endl;
+    factory->sendc_get_stock (factory_handler.in (), argv[i]);
+     sleep(3);  // wait for a response
+      cout << "converting result" << endl;
+    Quoter::Single_Query_Stock_var stock =
+      Quoter::Single_Query_Stock::_narrow (result.in ());
+      cout << "checking result" << endl;
+      CORBA::Any any;
+      any <<= stock;
+      CORBA::TypeCode_var tc = any.type();
+      cout << tc->kind() << endl;
+    if (CORBA::is_nil (stock.in ())) {
+      cerr << "Cannot get single query interface for <"
+           << argv[i] << ">" << endl;
+      continue;
+    }
+      cout << "reading result" << endl;
+    stock->sendc_get_price_and_names (handler.in ());
+    request_count++;
+  }
+  catch (Quoter::Invalid_Stock_Symbol &) {
+    cerr << "Invalid stock symbol <"
+         << argv[i] << ">" << endl;
+  }
+}
+
+while (response_count < 2 * request_count   // multiply by 2 because both handlers increment response_count
+       && orb->work_pending ()) {
+  orb->perform_work ();
+}
+// ...
+
+looking up stock symbol MSFT
+converting result
+checking result
+14
+Cannot get single query interface for <MSFT> 
+
+get_stock()
+sendc_get_stock()
+get_stock()

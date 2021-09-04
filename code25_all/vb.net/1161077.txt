@@ -1,0 +1,112 @@
+Public Function sendEmail(Optional ByVal msg As String = "") As Boolean
+    Dim mailSent As Boolean = False
+    Dim mail As Net.Mail.MailMessage = Nothing
+    Dim smtp As Net.Mail.SmtpClient = Nothing
+
+    Try
+        mail = New Net.Mail.MailMessage
+        mail.From = New Net.Mail.MailAddress("myemail@myaddress.com")
+        mail.Priority = Net.Mail.MailPriority.High
+        mail.To.Add("1@1.1")
+        mail.To.Add("2@1.1")
+        mail.To.Add("3@1.1")
+        mail.Subject = "test"
+        mail.Body = msg
+        Dim stream As IO.MemoryStream = createReport(Of IO.MemoryStream)()
+        mail.Attachments.Add(New Net.Mail.Attachment(stream, "Report.html", "text/html"))
+
+        smtp = New Net.Mail.SmtpClient("my.smtp.server")
+        AddHandler smtp.SendCompleted, AddressOf SendCompletedCallback
+        smtp.SendAsync(mail, mail)
+        mailSent = True
+    Catch ex As Exception
+        Debug.Print(ex.Message)
+    End Try
+
+    If mail IsNot Nothing Then
+        mail = Nothing
+    End If
+
+    If smtp IsNot Nothing Then
+        smtp = Nothing
+    End If
+
+    Return mailSent
+End Function
+
+Private Sub SendCompletedCallback(ByVal sender As Object, ByVal e As ComponentModel.AsyncCompletedEventArgs)
+
+    Try
+        Dim i As Integer
+        Dim mail As Net.Mail.MailMessage = CType(e.UserState, Net.Mail.MailMessage)
+        If e.Cancelled Then
+            Throw New Exception("Send mail got cancelled")
+        ElseIf e.Error IsNot Nothing Then
+            Throw e.Error
+        End If
+        For i = (mail.Attachments.Count - 1) To 0 Step -1
+            mail.Attachments(i).Dispose()
+        Next
+        mail.Dispose()
+        RemoveHandler CType(sender, Net.Mail.SmtpClient).SendCompleted, AddressOf SendCompletedCallback
+    Catch ex As Exception
+        Debug.Print(ex.Message)
+    End Try
+End Sub
+
+
+Public Function createReport(Of dataType)() As dataType
+    Dim result As Object = Nothing
+
+    Dim ds As DataSet = Nothing
+    Dim xmlDoc As Xml.XmlDocument = Nothing
+    Dim xslTran As Xml.Xsl.XslCompiledTransform = Nothing
+
+    Try
+        Dim i As Integer
+
+
+        ds = New dsEventLog ''dataset
+        If IO.File.Exists("c:\myxmlfile") Then
+            ds.Tables(0).ReadXml("c:\myxmlfile")
+            For i = ds.Tables(0).Rows.Count - 1 To 0 Step -1
+                If CDate(ds.Tables(0).Rows(i).Item("LocalTime")) < Now.AddDays(-5) Then
+                    ds.Tables(0).Rows.RemoveAt(i)
+                End If
+            Next
+        End If
+
+        xmlDoc = New Xml.XmlDataDocument(ds)
+        xslTran = New Xml.Xsl.XslCompiledTransform
+        xslTran.Load("c:\myxslfile")
+
+        If GetType(dataType) Is GetType(String) Then
+            'doesn't matter
+        ElseIf GetType(dataType) Is GetType(IO.MemoryStream) Then
+            Dim stream = New IO.MemoryStream
+            Dim sw As IO.StreamWriter = New IO.StreamWriter(stream)
+            xslTran.Transform(xmlDoc, Nothing, sw)
+            stream.Position = 0
+
+            result = stream
+
+            sw = Nothing
+            stream = Nothing
+        Else
+            Throw New Exception("Incorrect ""Of dataType"" used!")
+        End If
+    Catch ex As Exception
+        Debug.Print(ex.Message)
+    End Try
+
+    If ds IsNot Nothing Then
+        ds.Dispose()
+    End If
+    ds = Nothing
+
+    xslTran = Nothing
+    xmlDoc = Nothing
+
+    Return CType(result, dataType)
+End Function
+

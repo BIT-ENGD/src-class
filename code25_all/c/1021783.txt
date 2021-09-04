@@ -1,0 +1,213 @@
+/****************************************
+ * Program:                 *
+ *  ALL_TO_ALL_BROADCAST_MESH       *
+ *                      *
+ * Author:                  *
+ *  -------------------         *
+ *  -------------------         *
+ ****************************************/
+
+/*
+ * Program's using MPI_Send, MPI_Recv and cartesian topology functions
+ *
+ * Compile using: mpicc -o all_to_all_bc all_to_all_bc.c
+ */
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+#include "mpi.h"
+
+/* Number of dimensions */
+#define NUMB_DIMS 2
+
+/* Max value for the rand() function */
+#define MAX_NUMB 128
+
+#define TRUE 1
+#define FALSE 0
+
+/* Checks if square root of n can be calculated     *
+ * Returns the square root on success or -1 on failure  */
+int is_sqrt(int n);
+
+int main(int argc, char **argv) {
+
+    int my_rank;            /* Rank of the current process          */
+    int size;           /* Number of processes in the mesh      */
+    int mesh_size;          /* Size of a single mesh row            */
+    int my_numb;            /* Message                  */
+    int *all_numbs;         /* All numbers owned by the current process */
+    int numb_numbs;         /* Number of numbers in the all_numbs array */
+    int left, right, up, down;  /* Neighbourghs of the process as rank numbers  */
+
+    /* Neighbourghs as cartesian coords */
+    int *my_coords, *left_coords, *right_coords, *up_coords, *down_coords;
+
+    /* Allocate memory for cartesian coords */
+    my_coords = (int *)malloc(NUMB_DIMS*sizeof(int));
+    left_coords = (int *)malloc(NUMB_DIMS*sizeof(int));
+    right_coords = (int *)malloc(NUMB_DIMS*sizeof(int));
+    up_coords = (int *)malloc(NUMB_DIMS*sizeof(int));
+    down_coords = (int *)malloc(NUMB_DIMS*sizeof(int));
+
+    MPI_Comm grid_comm; /* Mesh Communicator */
+
+    int *dim_size = (int *)malloc(NUMB_DIMS*sizeof(int));   /* Sizes of mesh dimensions     */
+    int *peroids = (int *)malloc(NUMB_DIMS*sizeof(int));    /* True if the column wraps around  */
+    int reorder;                        /* I have no idea what this does ;) */
+
+    int i,j; /* counters */
+
+    /* MPI initialization */
+    MPI_Init(&argc,&argv);
+    MPI_Comm_size(MPI_COMM_WORLD,&size);
+    MPI_Comm_rank(MPI_COMM_WORLD,&my_rank);
+
+    /* Check if p^2=N */
+    if (mesh_size=is_sqrt(size)<0) {
+        perror("Square root of the number of processes can't be calculated!");
+        MPI_Finalize();
+        return -1;
+    }
+
+    /* Configure parameters for MPI_Cart_Create() */
+    for (i=0;i<NUMB_DIMS;i++) {
+        dim_size[i]=mesh_size;
+        peroids[i]=TRUE;
+    }
+    reorder=FALSE;
+
+    /* create new communicator */
+    if (MPI_Cart_create(MPI_COMM_WORLD,NUMB_DIMS,dim_size,peroids,reorder,&grid_comm)<0) {
+        perror("Unable to create new communicator!");
+        MPI_Finalize();
+        return -1;
+    }
+
+    /* calculate the coords and ranks */
+    MPI_Cart_coords(grid_comm,my_rank,NUMB_DIMS,my_coords);
+
+    /* !!this block is for 2D grid only!! */
+        memcpy(left_coords,my_coords,NUMB_DIMS*sizeof(int));
+        memcpy(right_coords,my_coords,NUMB_DIMS*sizeof(int));
+        memcpy(up_coords,my_coords,NUMB_DIMS*sizeof(int));
+        memcpy(down_coords,my_coords,NUMB_DIMS*sizeof(int));
+
+        left_coords[0]=(left_coords[0]-1)%mesh_size;
+        right_coords[0]=(right_coords[0]+1)%mesh_size;
+        up_coords[1]=(up_coords[1]+1)%mesh_size;
+        down_coords[1]=(down_coords[1]-1)%mesh_size;
+
+        MPI_Cart_rank(grid_comm,left_coords,&left);
+        MPI_Cart_rank(grid_comm,right_coords,&right);
+        MPI_Cart_rank(grid_comm,up_coords,&up);
+        MPI_Cart_rank(grid_comm,down_coords,&down);
+    /* !!this block is for 2D grid only!! */
+
+    /* get a random number for this process */
+    my_numb = rand()%MAX_NUMB;
+
+    all_numbs = (int *)malloc(size*sizeof(int));
+
+    MPI_Status status;
+
+    /****************
+     * BROADCASTING *
+     ****************/
+
+    printf("I'm process (%d,%d),\nMy number is %d\n\n",my_coords[0],my_coords[1],my_numb);
+
+    all_numbs[0]=my_numb;
+    numb_numbs=1;
+
+    /* Communication along rows */
+    for (i=0;i<mesh_size-1;i++) {
+
+        printf("I'm process (%d,%d),\nI'm sending %d to process (%d,%d)\n\n",my_coords[0],my_coords[1],my_numb,right_coords[0],right_coords[1]);
+        MPI_Send(&my_numb,sizeof(int),MPI_INT,right,99,grid_comm);
+
+        printf("I'm process (%d,%d),\nI'm recieving data from process (%d,%d)\n\n",my_coords[0],my_coords[1],left_coords[0],left_coords[1]);
+        MPI_Recv(&my_numb,sizeof(int),MPI_INT,left,99,grid_comm,&status);
+
+        all_numbs[numb_numbs]=my_numb;
+        numb_numbs++;
+
+        printf("My current numbers are:\n");
+        for (j=0;j<numb_numbs;j++)
+            printf("%d, ",all_numbs[j]);
+        printf("\n\n");
+    }
+
+    /* Communication along columns */
+    my_numb=all_numbs[0];
+
+    for (i=0;i<mesh_size-1;i++) {
+
+        printf("I'm process (%d,%d),\nI'm sending %d to process (%d,%d)\n\n",my_coords[0],my_coords[1],my_numb,up_coords[0],up_coords[1]);
+        MPI_Send(&my_numb,sizeof(int),MPI_INT,up,99,grid_comm);
+
+        printf("I'm process (%d,%d),\nI'm recieving data from process (%d,%d)\n\n",my_coords[0],my_coords[1],down_coords[0],down_coords[1]);
+        MPI_Recv(&my_numb,sizeof(int),MPI_INT,down,99,grid_comm,&status);
+
+        all_numbs[numb_numbs]=my_numb;
+        numb_numbs++;
+
+        printf("My current numbers are:\n");
+        for (j=0;j<numb_numbs;j++)
+            printf("%d, ",all_numbs[j]);
+        printf("\n\n");
+    }
+
+    printf("I'm process %d\nBroacasting performed!\nMy numbers are:\n");
+    for (i=0;i<numb_numbs;i++)
+        printf("%d, ",all_numbs[i]);
+    printf("\n\n");
+
+    MPI_Finalize();
+    return 0;
+}
+
+int is_sqrt(int n) {
+
+    double a=n;
+    double b=sqrt(a);
+    double c=b*b;
+
+    int result;
+
+    if (a==c) {
+        result=(int)b;
+        return result;
+    }
+    else
+        return -1;
+}
+
+% mpirun -np 4 all_to_all_bc
+[cli_1]: [cli_3]: aborting job:
+Fatal error in MPI_Cart_coords: Invalid communicator, error stack:
+MPI_Cart_coords(130): MPI_Cart_coords(MPI_COMM_NULL, rank=3, maxdims=2, coords=0x6a9010) failed
+MPI_Cart_coords(74).: Null communicator
+aborting job:
+Fatal error in MPI_Cart_coords: Invalid communicator, error stack:
+MPI_Cart_coords(130): MPI_Cart_coords(MPI_COMM_NULL, rank=1, maxdims=2, coords=0x6a9010) failed
+MPI_Cart_coords(74).: Null communicator
+[cli_0]: aborting job:
+Fatal error in MPI_Cart_coords: Invalid communicator, error stack:
+MPI_Cart_coords(130): MPI_Cart_coords(MPI_COMM_NULL, rank=0, maxdims=2, coords=0x6a9010) failed
+MPI_Cart_coords(74).: Null communicator
+[cli_2]: aborting job:
+Fatal error in MPI_Cart_coords: Invalid communicator, error stack:
+MPI_Cart_coords(130): MPI_Cart_coords(MPI_COMM_NULL, rank=2, maxdims=2, coords=0x6a9010) failed
+MPI_Cart_coords(74).: Null communicator
+rank 3 in job 18  ---host---_58157   caused collective abort of all ranks
+  exit status of rank 3: killed by signal 9 
+rank 2 in job 18  ---host---_58157   caused collective abort of all ranks
+  exit status of rank 2: return code 1 
+rank 1 in job 18  ---host---_58157   caused collective abort of all ranks
+  exit status of rank 1: killed by signal 9 
+rank 0 in job 18  ---host---_58157   caused collective abort of all ranks
+  exit status of rank 0: return code 1 
+

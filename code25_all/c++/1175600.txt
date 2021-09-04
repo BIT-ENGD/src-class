@@ -1,0 +1,60 @@
+void findSetPoweredObjects(unsigned long x, unsigned long y, powerNetInfo * powerNet) {
+  //Look for poweredObjs on this tile and set their powerNet to the given powernet
+  for (int i = 0; i < level->numChunks[CHUNKTYPE_POWEREDDEF]; i++)
+    if (level->poweredObjects[i]->position[0] == x && level->poweredObjects[i]->position[1] == y)
+      level->poweredObjects[i]->powerNet = powerNet, powerNet->objectsInNet++;
+}
+
+void recursiveCheckTile(bool * isWalked, powerNetInfo * powerNet, unsigned long x, unsigned long y, tilemapData * levelMap) {
+  //If out of bounds, return
+  if (x < 0 || y < 0 || x >= level->mapDimensions[0] || y >= level->mapDimensions[1]) return;
+  //If tile already walked, return
+  if (isWalked[x + (y * level->mapDimensions[0])]) return;
+  //If tile is nonconductive, return
+  if (!(level->tiles[levelMap->map[x + (y * level->mapDimensions[0])]]->flags & TILETYPE_CONDUCTIVE)) return;
+
+  //Valid tile to check, see if there's a poweredobj on the tile (link it to the net if it is) and check the adjacent tiles.
+  isWalked[x + (y * level->mapDimensions[0])] = true;
+
+  findSetPoweredObjects(x,y,powerNet);
+
+  recursiveCheckTile(isWalked, powerNet, x - 1, y, levelMap);
+  recursiveCheckTile(isWalked, powerNet, x + 1, y, levelMap);
+  recursiveCheckTile(isWalked, powerNet, x, y - 1, levelMap);
+  recursiveCheckTile(isWalked, powerNet, x, y + 1, levelMap);
+}
+
+bool buildPowerNets(void) {
+  //Build the powernets used by the powered objects
+  //TODO: Rewrite buildPowerNets() & recursiveCheckTile() to avoid stack overflows and make it easier to backtrace powernets in-game
+  bool * isWalked;
+  isWalked = new bool[(level->mapDimensions[0] * level->mapDimensions[1])];
+  unsigned long x, y;
+  tilemapData * levelMap = level->layers[level->activeMap];
+  for (y = 0; y < level->mapDimensions[1]; y++) {
+    for (x = 0; x < level->mapDimensions[0]; x++) {
+      if (isWalked[x + (y * level->mapDimensions[0])]) continue;
+      isWalked[x + (y * level->mapDimensions[0])] = true;
+      if (level->tiles[levelMap->map[x + (y * level->mapDimensions[0])]]->flags & TILETYPE_CONDUCTIVE) {
+        //it's conductive, find out what it's connected to.
+
+        //But first, create a new powernet
+        powerNetInfo * powerNet = new powerNetInfo;
+        powerNet->objectsInNet = 0;
+        powerNet->producerId = -1;
+        powerNet->supplyType = POWER_OFF;
+        powerNet->prevSupplyType = POWER_OFF;
+        powerNet->powerFor = 0;
+
+        //Find adjacent tiles to this one, add them to it's powernet, and then mark them walked.  Then repeat until the net is done.
+        recursiveCheckTile(isWalked, powerNet, x, y, levelMap);
+      }
+    }
+  }
+  delete isWalked;
+  for (int i = 0; i < level->numChunks[CHUNKTYPE_POWEREDDEF]; i++)
+      if (level->poweredObjects[i]->powerNet == NULL) return false;
+  return true;
+}
+
+recursiveCheckTile

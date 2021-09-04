@@ -1,0 +1,65 @@
+class DataBaseEventArgs : EventArgs
+{
+    public string textToDB = "";
+}
+
+class Consumer
+{
+    private Producer mProducer = new Producer();
+    private Queue<DataBaseEventArgs> mDataBaseEventQueue = new Queue<DataBaseEventArgs>();
+    private static EventWaitHandle mDataBaseEventWaitHandle = new EventWaitHandle(false, EventResetMode.ManualReset);
+    private Thread mDataBaseEventDequeueThread = null;
+
+    public Consumer()
+    {
+        mDataBaseEventDequeueThread = new Thread(DataBaseDequeueEvent);
+        mDataBaseEventDequeueThread.Start();
+        mProducer.mDataBaseEventHandler += WhenDataBaseEvent;
+    }
+
+    protected void DataBaseDequeueEvent()
+    {
+        while (true)
+        {
+            DataBaseEventArgs e;
+            lock (((ICollection)mDataBaseEventQueue).SyncRoot)
+            {
+                if (mDataBaseEventQueue.Count > 0)
+                {
+                    e = mDataBaseEventQueue.Dequeue();
+                }
+            }
+            // WriteToDatabase(e.textToDB);
+            if (mDataBaseEventQueue.Count == 0)
+            {
+                mDataBaseEventWaitHandle.WaitOne(1000);
+                mDataBaseEventWaitHandle.Reset();
+            }
+        }
+    }
+
+    internal void WhenDataBaseEvent(object sender, DataBaseEventArgs e)
+    {
+        lock (((ICollection)mDataBaseEventQueue).SyncRoot)
+        {
+            mDataBaseEventQueue.Enqueue(e);
+            mDataBaseEventWaitHandle.Set();
+        }
+    }
+}
+
+class Producer
+{
+    public event EventHandler<DataBaseEventArgs> mDataBaseEventHandler = null;
+
+    public void SendDataBaseEvent()
+    {
+        if (mDataBaseEventHandler != null)
+        {
+            DataBaseEventArgs e = new DataBaseEventArgs();
+            e.textToDB = "This text will be written to DB";
+            mDataBaseEventHandler(this, e);
+        }
+    }
+}
+

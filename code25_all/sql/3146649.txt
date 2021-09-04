@@ -1,0 +1,77 @@
+mysql> desc contact_relationship;
++------------------+-----------+------+-----+-------------------+-----------------------------+
+| Field            | Type      | Null | Key | Default           | Extra                       |
++------------------+-----------+------+-----+-------------------+-----------------------------+
+| relationship_id  | int(11)   | YES  |     | NULL              |                             |
+| contact_id       | int(11)   | YES  | MUL | NULL              |                             |
+| other_contact_id | int(11)   | YES  |     | NULL              |                             |
+| strength         | int(11)   | YES  |     | NULL              |                             |
+| recorded         | timestamp | NO   |     | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
++------------------+-----------+------+-----+-------------------+-----------------------------+
+
+select 
+    mrcr1.contact_id, 
+    mrcr1.other_contact_id, 
+    case when (mrcr1.strength < mrcr2.strength) then 
+        mrcr1.strength 
+    else 
+        mrcr2.strength 
+    end strength 
+from ( 
+    select 
+        cr1.* 
+    from ( 
+        select 
+            contact_id,
+            other_contact_id,
+            max(recorded) as max_recorded 
+        from 
+            contact_relationship 
+        group by 
+            contact_id,
+            other_contact_id 
+    ) as cr2 
+    inner join contact_relationship cr1 on 
+        cr1.contact_id = cr2.contact_id 
+        and cr1.other_contact_id = cr2.other_contact_id 
+        and cr1.recorded = cr2.max_recorded 
+) as mrcr1, 
+( 
+    select 
+        cr3.* 
+    from ( 
+        select 
+            contact_id,
+            other_contact_id,
+            max(recorded) as max_recorded 
+        from 
+            contact_relationship 
+        group by 
+            contact_id,
+            other_contact_id 
+    ) as cr4 
+    inner join contact_relationship cr3 on 
+        cr3.contact_id = cr4.contact_id 
+        and cr3.other_contact_id = cr4.other_contact_id 
+        and cr3.recorded = cr4.max_recorded 
+) as mrcr2 
+where 
+    mrcr1.contact_id = mrcr2.other_contact_id 
+    and mrcr1.other_contact_id = mrcr2.contact_id 
+    and mrcr1.contact_id != mrcr1.other_contact_id 
+    and mrcr2.contact_id != mrcr2.other_contact_id 
+    and mrcr1.contact_id <= mrcr1.other_contact_id; 
+
++----+-------------+----------------------+-------+----------------------------------------------------------------------------------------+------------------------------+---------+-------------------------------------+-------+--------------------------------+
+| id | select_type | table                | type  | possible_keys                                                                          | key                          | key_len | ref                                 | rows  | Extra                          |
++----+-------------+----------------------+-------+----------------------------------------------------------------------------------------+------------------------------+---------+-------------------------------------+-------+--------------------------------+
+|  1 | PRIMARY     | <derived2>           | ALL   | NULL                                                                                   | NULL                         | NULL    | NULL                                | 36029 | Using where                    |
+|  1 | PRIMARY     | <derived4>           | ALL   | NULL                                                                                   | NULL                         | NULL    | NULL                                | 36029 | Using where; Using join buffer |
+|  4 | DERIVED     | <derived5>           | ALL   | NULL                                                                                   | NULL                         | NULL    | NULL                                | 36021 |                                |
+|  4 | DERIVED     | cr3                  | ref   | contact_relationship_index_1,contact_relationship_index_2,contact_relationship_index_3 | contact_relationship_index_2 | 10      | cr4.contact_id,cr4.other_contact_id |     1 | Using where                    |
+|  5 | DERIVED     | contact_relationship | index | NULL                                                                                   | contact_relationship_index_3 | 14      | NULL                                | 37973 | Using index                    |
+|  2 | DERIVED     | <derived3>           | ALL   | NULL                                                                                   | NULL                         | NULL    | NULL                                | 36021 |                                |
+|  2 | DERIVED     | cr1                  | ref   | contact_relationship_index_1,contact_relationship_index_2,contact_relationship_index_3 | contact_relationship_index_2 | 10      | cr2.contact_id,cr2.other_contact_id |     1 | Using where                    |
+|  3 | DERIVED     | contact_relationship | index | NULL                                                                                   | contact_relationship_index_3 | 14      | NULL                                | 37973 | Using index                    |
++----+-------------+----------------------+-------+----------------------------------------------------------------------------------------+------------------------------+---------+-------------------------------------+-------+--------------------------------+
+

@@ -8,29 +8,25 @@ DATASETDIR="data_language_all"
 
 DATASETCLEAR=DATASETDIR.replace("all","clean")
 
-srcdir=Path(DATASETDIR)
 
-SOURCETYPE=[]
-for file in srcdir.iterdir():
-    SOURCETYPE.append(file.stem)
+class OBSCCPrepro(object):
+    def __init__(self) -> None:
+        self.srcdir=Path(DATASETDIR)
 
-
-print(len(SOURCETYPE))
-
-
-if Path(DATASETCLEAR).exists():
-    shutil.rmtree(DATASETCLEAR)
-
-
-Path(DATASETCLEAR).mkdir()
+        self.SOURCETYPE=[]
+        for file in srcdir.iterdir():
+            self.SOURCETYPE.append(file.stem)
+        if Path(DATASETCLEAR).exists():
+            shutil.rmtree(DATASETCLEAR)
+        Path(DATASETCLEAR).mkdir()
 
 
-# strip comment from a source file.
-NORMALCOMMENT=";[^\r\n]*|#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''|\"\"\".*?\"\"\""
-CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
-OCAMLCOMMENT="\(\*.*?\*\)"
+        # strip comment from a source file.
+        self.NORMALCOMMENT=";[^\r\n]*|#[^\r\n]*|//[^\r\n]*|/\*.*?\*/|'''.*?'''|\"\"\".*?\"\"\""
+        self.CSSCOMMENT="//[^\r\n]*|/\*.*?\*/"
+        self.OCAMLCOMMENT="\(\*.*?\*\)"
 
-fnMap={"css": CSSCOMMENT, "normal":NORMALCOMMENT,"OCaml":OCAMLCOMMENT}
+        self.fnMap={"css":self.CSSCOMMENT, "normal":self.NORMALCOMMENT,"OCaml":self.OCAMLCOMMENT}
 
 def StripHTML(strSrcCode):
 

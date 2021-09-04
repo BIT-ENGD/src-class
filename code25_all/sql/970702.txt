@@ -1,0 +1,70 @@
+Msg 213, Level 16, State 1, Procedure spPersonRelationshipAddOpposing, Line 51
+Insert Error: Column name or number of supplied values does not match table definition.
+Adding Guid Column MAY Cause INSERT Statements without column lists to Fail
+USE [Connect]
+GO
+/****** Object:  StoredProcedure [dbo].[spPersonRelationshipAddOpposing]    Script Date: 07/15/2009 08:14:35 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER PROCEDURE [dbo].[spPersonRelationshipAddOpposing]
+@ExistingRelationshipID INT 
+AS
+BEGIN
+--Declare local variables
+DECLARE @PersonID INT  --PersonID of established relarionship
+DECLARE @RelatedID INT  --RelatedID of established relarionship
+DECLARE @Relationship VARCHAR(4)  --Established relarionship
+DECLARE @RelatedSex as VARCHAR(1)  
+DECLARE @OpposingRelationship VARCHAR(4)
+DECLARE @OpposingRelationshipID INT
+--Fill variables from existing relationship
+SELECT @PersonID = PersonID, @RelatedID = RelatedID, @Relationship=PersonRelationshipTypeID
+FROM tblPersonRelationship where PersonRelationshipID = @ExistingRelationshipID
+--Get gender of relative for finding opposing relationship type
+SELECT @RelatedSex = (SELECT Gender FROM tblPerson WHERE PersonID = @PersonID)
+--get opposing relationship types
+IF (@RelatedSex='M')
+    BEGIN
+    SELECT @OpposingRelationship = (SELECT OpposingMaleRelationship 
+                                    From tblAdminPersonRelationshipType 
+                                    WHERE PersonRelationshipTypeID = @Relationship)
+    END
+ELSE IF (@RelatedSex='F')
+    BEGIN
+    SELECT @OpposingRelationship = (SELECT OpposingFemaleRelationship 
+                                    From tblAdminPersonRelationshipType 
+                                    WHERE PersonRelationshipTypeID = @Relationship)
+    END
+--check for existing opposing relationship
+SELECT @OpposingRelationshipID = (SELECT MAX(PersonRelationshipID) FROM tblPersonRelationship WHERE PersonID = @RelatedID AND RelatedID = @PersonID)
+--if an opposing relationship was found
+
+IF (@OpposingRelationship IS NOT NULL)
+    BEGIN
+--if there is a relationship, update it
+    IF ISNUMERIC(@OpposingRelationshipID)=1 
+        BEGIN
+            UPDATE tblPersonRelationship
+            SET PersonRelationshipTypeID = @OpposingRelationship,
+                MarriageDate = (SELECT MarriageDate FROM tblPersonRelationship WHERE PersonRelationshipID = @ExistingRelationshipID),
+                ResidesWithPersonFlag = (SELECT ResidesWithPersonFlag FROM tblPersonRelationship WHERE PersonRelationshipID = @ExistingRelationshipID),
+                UpdateDateTime = (SELECT UpdateDateTime FROM tblPersonRelationship WHERE PersonRelationshipID = @ExistingRelationshipID),
+                UpdateProgram = (SELECT UpdateProgram FROM tblPersonRelationship WHERE PersonRelationshipID = @ExistingRelationshipID),
+                UpdateUserID = (SELECT UpdateUserID FROM tblPersonRelationship WHERE PersonRelationshipID = @ExistingRelationshipID) 
+            WHERE PersonRelationshipID = @OpposingRelationshipID
+        END
+--otherwise add record
+    ELSE IF (@OpposingRelationship IS NOT NULL)
+        BEGIN
+            INSERT INTO tblPersonRelationship 
+                SELECT @RelatedID, @OpposingRelationship, @PersonID,
+                       MarriageDate, NULL, NULL, 
+                       ResidesWithPersonFlag, NULL, UpdateDateTime, UpdateProgram,
+                       UpdateUserID, UpdateDateTime, UpdateProgram, 
+                       UpdateUserID, NULL FROM tblPersonRelationship WHERE PersonRelationshipID = @ExistingRelationshipID
+        END
+    END
+END
+

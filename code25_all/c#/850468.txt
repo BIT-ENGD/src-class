@@ -1,0 +1,147 @@
+  public class BigArray<T> : IEnumerable<T>
+  {
+    private long capacity;
+    private int itemsPerBlock;
+    private int shift;
+    private List<T[]> blocks = new List<T[]>();
+
+    public BigArray(int itemsPerBlock)
+    {
+      shift = (int)Math.Ceiling(Math.Log(itemsPerBlock) / Math.Log(2));
+      this.itemsPerBlock = 1 << shift;
+    }
+
+    public long Capacity
+    {
+      get
+      {
+        return capacity;
+      }
+      set
+      {
+        var requiredBlockCount = (value - 1) / itemsPerBlock + 1;
+        while (blocks.Count > requiredBlockCount)
+        {
+          blocks.RemoveAt(blocks.Count - 1);
+        }
+        while (blocks.Count < requiredBlockCount)
+        {
+          blocks.Add(new T[itemsPerBlock]);
+        }
+        capacity = (long)itemsPerBlock * blocks.Count;
+      }
+    }
+
+    public T this[long index]
+    {
+      get
+      {
+        Debug.Assert(index < capacity);
+        var blockNumber = (int)(index >> shift);
+        var itemNumber = index & (itemsPerBlock - 1);
+        return blocks[blockNumber][itemNumber];
+      }
+      set
+      {
+        Debug.Assert(index < capacity);
+        var blockNumber = (int)(index >> shift);
+        var itemNumber = index & (itemsPerBlock - 1);
+        blocks[blockNumber][itemNumber] = value;
+      }
+    }
+
+    public IEnumerator<T> GetEnumerator()
+    {
+      for (long i = 0; i < capacity; i++)
+      {
+        yield return this[i];
+      }
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+    {
+      return this.GetEnumerator();
+    }
+
+  }
+
+  public static class OrderedOperation
+  {
+    public delegate void WorkerDelegate(int index, float progress);
+
+    public static void Process(WorkerDelegate worker, IEnumerable<int> items, int count, int maxItem, int maxChunkSize)
+    {
+      // create a histogram such that a single bin is never bigger than a chunk
+      int binCount = 1000;
+      int[] bins;
+      double binScale;
+      bool ok;
+      do
+      {
+        ok = true;
+        bins = new int[binCount];
+        binScale = (double)(binCount - 1) / maxItem;
+        int i = 0;
+        foreach (int item in items)
+        {
+          bins[(int)(binScale * item)]++;
+          if (++i == count)
+          {
+            break;
+          }
+        }
+        for (int b = 0; b < binCount; b++)
+        {
+          if (bins[b] > maxChunkSize)
+          {
+            ok = false;
+            binCount *= 2;
+            break;
+          }
+        }
+      } while (!ok);
+
+      var chunkData = new int[maxChunkSize];
+      var chunkIndex = new int[maxChunkSize];
+      var done = new System.Collections.BitArray(count);
+      var processed = 0;
+      var binsCompleted = 0;
+      while (binsCompleted < binCount)
+      {
+        var chunkMax = 0;
+        var sum = 0;
+        do
+        {
+          sum += bins[binsCompleted];
+          binsCompleted++;
+        } while (binsCompleted < binCount - 1 && sum + bins[binsCompleted] <= maxChunkSize);
+        Debug.Assert(sum <= maxChunkSize);
+        chunkMax = (int)Math.Ceiling((double)binsCompleted / binScale);
+        var chunkCount = 0;
+        int i = 0;
+        foreach (int item in items)
+        {
+          if (item < chunkMax && !done[i])
+          {
+            chunkData[chunkCount] = item;
+            chunkIndex[chunkCount] = i;
+            chunkCount++;
+            done[i] = true;
+          }
+          if (++i == count)
+          {
+            break;
+          }
+        }
+        Debug.Assert(sum == chunkCount);
+        Array.Sort(chunkData, chunkIndex, 0, chunkCount);
+        for (i = 0; i < chunkCount; i++)
+        {
+          worker(chunkIndex[i], (float)processed / count);
+          processed++;
+        }
+      }
+      Debug.Assert(processed == count);
+    }
+  }
+

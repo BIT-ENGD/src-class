@@ -1,0 +1,110 @@
+class Gig extends LongKeyedMapper[Gig]{
+  def primaryKeyField = id
+  def getSingleton = Gig
+
+  object id extends MappedLongIndex(this) {
+    override def dbColumnName = "id"
+    override def dbIndexed_? = true
+  }
+
+  object slug extends MappedString(this, 250) {
+    override def dbColumnName = "slug"
+    override def dbNotNull_? = true
+  }
+
+  object status extends MappedEnum(this, GigStatus) {
+    override def dbColumnName = "status"
+    override def dbIndexed_? = true
+    override def targetSQLType(field: String) = Types.TINYINT
+  }
+
+  object title extends MappedString(this, 150) {
+    override def dbColumnName = "title"
+    override def uniqueFieldId = Full("gig_title")
+    override def dbNotNull_? = true
+    override def validations = valMinLen(5, "Please add a proper title.") _ :: valMaxLen(150, "Title can not exceed 150 characters") _ ::  super.validations
+  }
+
+  object description extends MappedText(this) with StringValidators{
+    override def dbColumnName = "description"
+    override def uniqueFieldId = Full("gig_desc")
+    override def dbNotNull_? = true
+
+    protected def valueTypeToBoxString(in: String): Box[String] = {
+      Full(this.is)
+    }
+
+    protected def boxStrToValType(in: Box[String]): String = {
+      in openOr null
+    }
+
+    def maxLen = 200
+    override def validations = valMinLen(30, "Please add a proper description.") _ :: Nil
+  }
+
+  object locked extends MappedBoolean(this) {
+    override def dbColumnName = "locked"
+  }
+
+  object amount extends MappedDouble(this) {
+    override def dbColumnName = "amount"
+    override def uniqueFieldId = Full("gig_amount")
+    override def dbNotNull_? = true
+  }
+
+  object category extends MappedLongForeignKey(this, Category) {
+    override def dbColumnName = "category"
+    override def uniqueFieldId = Full("gig_category")
+    override def dbNotNull_? = true
+
+    override def validations = categoryExists _ :: super.validations
+
+    def categoryExists(id: Long): List[FieldError] = {
+      Category.findByKey(id) match {
+        case Full(cat) => Nil
+        case _ => List(FieldError(this, "Invalid category selected"))
+      }
+    }
+  }
+
+  object createdOn extends MappedDateTime(this) {
+    override def dbColumnName = "created_on"
+  }
+
+  object updatedOn extends MappedDateTime(this) {
+    override def dbColumnName = "updated_on"
+  }
+
+  object createdBy extends MappedLongForeignKey(this, User) {
+    override def dbColumnName = "created_by"
+  }
+
+  object updatedBy extends MappedLongForeignKey(this, User) {
+    override def dbColumnName = "updated_by"
+  }
+
+  def canApply: Boolean = {
+    User.currentUser.map(user => user.provider_? && !user.id.is.equals(createdBy.is)) openOr false
+  }
+
+  def myUrl = "/gigs/"+id.is+"/"+slug.is
+
+  def editUrl = "/gigs/"+id.is+"/edit"
+
+  def unlockUrl = "/payment?id="+this.id.is+"&type=gig&action=unlock"
+
+  def hasAnyBidsByUser(user: User): Boolean = {
+    Bid.get(this, user).size match {
+      case 0 => false
+      case _  => true
+    }
+  }
+
+  def locked_? = this.locked.is
+
+  def bidsCount = Bid.getBidsCount(this)
+
+  def isOwner(user: User): Boolean = user.id.is.equals(this.createdBy.is)
+}
+
+findAllByInsecureSql

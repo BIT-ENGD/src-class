@@ -1,0 +1,77 @@
+    {
+        long mediaId;
+        //all the credentials should be verified by this point.
+        command.CommandText = "SELECT mediaId FROM media " +
+            "WHERE userId=@userId AND title=@title;";
+        command.Parameters.Add("@userId", DbType.Int64).Value = m.userid;
+        command.Parameters.Add("@title", DbType.String).Value = m.title;
+        if (command.ExecuteScalar() != null)
+            throw new System.InvalidOperationException("Title already exisit");
+
+        using (var dbTrans = connection.BeginTransaction())
+        {
+            command.CommandText =
+                "INSERT INTO " +
+                "media ( userid,  catagory,  creation_date,  current_media_date,  current_desc_date,  licence,  title,  desc,  ext) " +
+                "VALUES(@userid, @catagory, @creation_date, @current_media_date, @current_desc_date, @licence, @title, @desc, @ext); " +
+                "SELECT last_insert_rowid() AS RecordID;";
+
+            DateTime currentDate = m.creation_date;
+            command.Parameters.Add("@userid", DbType.Int64).Value = m.userid;
+            command.Parameters.Add("@catagory", DbType.Int64).Value = m.catagory;
+            command.Parameters.Add("@creation_date", DbType.DateTime).Value = m.creation_date;
+            command.Parameters.Add("@current_media_date", DbType.DateTime).Value = currentDate;
+            command.Parameters.Add("@current_desc_date", DbType.DateTime).Value = currentDate;
+            command.Parameters.Add("@licence", DbType.Int64).Value = m.license;
+            command.Parameters.Add("@title", DbType.String).Value = m.title;
+            command.Parameters.Add("@desc", DbType.String).Value = m.desc;
+            command.Parameters.Add("@ext", DbType.Int64).Value = m.ext;
+
+            mediaId = (long)command.ExecuteScalar();
+            //m.collaborateWith
+            insertInspired(inspireLinks.external, inspireLinks.internalPair, mediaId);
+            insertDerived(deriveLinks.external, deriveLinks.internalPair, mediaId);
+            insertMediaTags(m.listTagString, mediaId);
+            //command.CommandText = "END TRANSACTION;";            command.ExecuteNonQuery();
+
+            updateMediaForWatchers(m.userid, mediaId, m.catagory, currentDate);
+            dbTrans.Commit();
+        }
+        return mediaId;
+    }
+
+    void insertMediaTags(List<string> tags, long mediaId)
+    {
+        foreach(string tag in tags)
+        {
+            //assure tag exist
+            long tagId;
+            command.CommandText = "SELECT tagid FROM tag_name WHERE title=@title;";
+            command.Parameters.Add("@title", DbType.String).Value = tag;
+            object o = command.ExecuteScalar();
+            if (o == null)
+            {
+                command.CommandText =
+                    "INSERT INTO tag_name(title) VALUES(@title); " +
+                    "SELECT last_insert_rowid() AS RecordID;";
+                command.Parameters.Add("@title", DbType.String).Value = tag;
+                tagId = (long)command.ExecuteScalar();
+            }
+            else
+                tagId = (long)o;
+
+            command.CommandText =
+                "INSERT INTO media_tags(mediaId, tagid) " +
+                "VALUES(@mediaId, @tagid);";
+            command.Parameters.Add("@mediaId", DbType.Int64).Value = mediaId;
+            command.Parameters.Add("@tagid", DbType.Int64).Value = tagId;
+            command.ExecuteNonQuery();
+
+            command.CommandText =
+                "UPDATE tag_name SET count = count+1 "+
+                "WHERE tagid=@tagid";
+            command.Parameters.Add("@tagid", DbType.Int64).Value = tagId;
+            command.ExecuteNonQuery();
+        }
+    }
+

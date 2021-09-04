@@ -1,0 +1,66 @@
+parent = Table('parent', metadata,
+    Column('parent_id', Integer, primary_key=True),
+    Column('name', Unicode),
+)
+parent_child = Table('parent_child', metadata,
+    Column('parent_id', Integer, primary_key=True),
+    Column('child_id', Integer, primary_key=True),
+    Column('number', Integer),
+    ForeignKeyConstraint(['parent_id'], ['parent.parent_id']),
+    ForeignKeyConstraint(['child_id'], ['child.child_id']),
+)
+child = Table('child', metadata,
+    Column('child_id', Integer, primary_key=True),
+    Column('name', Unicode),
+)
+class Parent(object):
+    pass
+class ParentChild(object):
+    pass
+class Child(object):
+    pass
+
+>>> p = Parent(name=u'A')
+>>> print p.children 
+{}
+>>> p.children[0] = Child(name=u'Child A')
+>>> p.children[10] = Child(name=u'Child B')
+>>> p.children[10] = Child(name=u'Child C')
+
+>>> print p.children 
+{0: [<Child A>], 10: [<Child B>, <Child C>]}
+>>> print p.children[10][0]
+<Child B>
+
+collection_class=attribute_mapped_collection('number') 
+
+def _create_children(number, child):
+    return ParentChild(parent=None, child=child, number=number)
+
+class Parent(object):
+    children = association_proxy('_children', 'child', creator=_create_children)
+
+class MyMappedCollection(MappedCollection):
+    def __init__(self):
+        keyfunc = lambda attr_name: operator.attrgetter('number')
+        MappedCollection.__init__(self, keyfunc=keyfunc)
+
+    @collection.appender
+    @collection.internally_instrumented
+    def set(self, value, _sa_initiator=None):
+        key = self.keyfunc(value)
+        try:
+            self.__getitem__(key).append(value)
+        except KeyError:
+            self.__setitem__(key, [value])
+
+mapper(Parent, parent, properties={
+     '_children': relation(ParentChild, collection_class=MyMappedCollection),
+})
+
+p.children[100] = Child(...)
+
+print p.children
+
+sqlalchemy.orm.exc.UnmappedInstanceError: Class '__builtin__.list' is not mapped
+

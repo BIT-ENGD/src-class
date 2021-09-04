@@ -1,0 +1,55 @@
+module Main (main) where
+
+import           Control.Concurrent
+import           Control.Monad (forever, forM_)
+import           Data.IORef
+import           System.Mem
+import           System.Mem.Weak
+
+dispatchPendingCalls :: IORef [Weak (MVar ())] -> IO ()
+dispatchPendingCalls ref = forever $ do
+    threadDelay 100000
+
+    pending <- atomicModifyIORef ref (\p -> ([], p))
+    forM_ pending (\weak -> do
+        maybeMVar <- deRefWeak weak
+        case maybeMVar of
+            Just mvar -> putMVar mvar ()
+            Nothing -> putStrLn "dispatchPendingCalls: weak mvar is Nothing")
+
+call :: IORef [Weak (MVar ())] -> IO ()
+call ref = do
+    mvar <- newEmptyMVar
+    weak <- mkWeakPtr mvar (Just (putStrLn "call: finalising weak"))
+
+    putStrLn "call: about to insert weak into list"
+    atomicModifyIORef ref (\p -> (weak : p, ()))
+    putStrLn "call: inserted weak into list"
+    performGC
+    takeMVar mvar
+    putStrLn "call: took from mvar"
+
+main :: IO ()
+main = do
+    pendingCalls <- newIORef []
+    _ <- forkIO (dispatchPendingCalls pendingCalls)
+    call pendingCalls
+
+$ ghc --make WeakMvar.hs
+$ ./WeakMvar
+call: about to insert weak into list
+call: inserted weak into list
+call: took from mvar
+$
+
+$ ghc --make -O2 WeakMvar.hs
+$ ./WeakMvar
+call: about to insert weak into list
+call: inserted weak into list
+call: finalizing weak
+dispatchPendingCalls: weak mvar is Nothing
+(never exits)
+
+System.Mem.Weak
+takeMVar mvar
+takeMVar

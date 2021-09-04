@@ -1,0 +1,72 @@
+package nl.trimpe.michiel
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+/**
+ * Abstract class implementing a double buffered cache for a single object.
+ * 
+ * Implementing classes can load the object to be cached by implementing the
+ * {@link #retrieve()} method.
+ * 
+ * @param <T>
+ *            The type of the object to be cached.
+ */
+public abstract class DoublyBufferedCache<T> {
+
+    private static final Log log = LogFactory.getLog(DoublyBufferedCache.class);
+
+    private Long timeToLive;
+
+    private long lastRetrieval;
+
+    private T cachedObject;
+
+    private Object lock = new Object();
+
+    private volatile Boolean isLoading = false;
+
+    public T getCachedObject() {
+        checkForReload();
+        return cachedObject;
+    }
+
+    private void checkForReload() {
+        if (cachedObject == null || isExpired()) {
+            if (!isReloading()) {
+                synchronized (lock) {
+                    // Recheck expiration because another thread might have
+                    // refreshed the cache before we were allowed into the
+                    // synchronized block.
+                    if (isExpired()) {
+                        isLoading = true;
+                        try {
+                            cachedObject = retrieve();
+                            lastRetrieval = System.currentTimeMillis();
+                        } catch (Exception e) {
+                            log.error("Exception occurred retrieving cached object", e);
+                        } finally {
+                            isLoading = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    protected abstract T retrieve() throws Exception;
+
+    private boolean isExpired() {
+        return (timeToLive > 0) ? ((System.currentTimeMillis() - lastRetrieval) > (timeToLive * 1000)) : true;
+    }
+
+    private boolean isReloading() {
+        return cachedObject != null && isLoading;
+    }
+
+    public void setTimeToLive(Long timeToLive) {
+        this.timeToLive = timeToLive;
+    }
+
+}
+

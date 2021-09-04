@@ -1,0 +1,124 @@
+def operationForm(): NodeSeq = {
+    val operationCode = S.param("operation").openOr("")
+    val operationVariant = S.param("operationVariant").openOr("")
+
+    if (operationCode != "" && !operationVariant.isEmpty) {
+      val operation = LighthouseDAOs.operationsRegistry.findByCode(operationCode)
+      val params: List[Parameter] = if (operationVariant == "default") {
+        operation.getParameters.toList
+      } else {
+        operation.getParameters.filter(p => p.getVariant == operationVariant).toList
+      }
+
+      <lift:surround with="closableBox" at="content">
+        <form id="viewOperation" post={"/Deployment/" + S.param("location") + "/" + S.param("deployment")} method="post">
+          {params.map(p => getInputElem(p))}
+            <input type="submit" style="width: 150px;" value="Execute operation"/>
+            <input type="hidden" name="executeOperation" value="true"/>
+        </form>
+      </lift:surround>
+    } else {
+      <span></span>
+    }
+  }
+
+  private def getOperationVariants(operation: Operation): Set[String] = {
+    operation.getParameters.map(_.getVariant).toSet
+  }
+
+  def operationVariants(deployment: Deployment): NodeSeq = {
+    val operationCode = S.param("operation").openOr("")
+
+    if (operationCode != "") {
+      val operation = LighthouseDAOs.operationsRegistry.findByCode(operationCode)
+
+      val variants = getOperationVariants(operation)
+
+      if (variants.size > 1) {
+        <lift:surround with="closableBox" at="content">
+          <table cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <th style="width: 160px;">Operation
+                {operation.getLongName}
+                variants</th>
+            </tr>{variants.map(v => {
+            <tr>
+              <td>
+                <a href={Path.path + "Deployment/" + encode(deployment.getLocation) + "/" + encode(deployment.getDeployedComponent.getCode) + "?operation=" + encode(operation.getCode) + "&operationVariant=" + encode(v)}>
+                  {v}
+                </a>
+              </td>
+            </tr>
+          })}
+          </table>
+        </lift:surround>
+      } else {
+        <span></span>
+      }
+    } else {
+      <span></span>
+    }
+  }
+
+  def getInputElem(param: Parameter): Node = {
+    if (param.getChoice != null) {
+      <div>
+        <label for={param.getName}>
+          {param.getName}
+        </label>
+        <select id={param.getName} name={param.getName}>
+          {param.getChoice.flatMap(c => <option value={c}>
+          {c}
+        </option>)}
+        </select>
+      </div>
+    } else {
+
+      val paramType = param.getType match {
+        case Parameter.PASSWORD => "password"
+        case Parameter.BOOLEAN => "checkbox"
+        case Parameter.CLOB => "file"
+        case _ => "text"
+      }
+
+      <div>
+        <label for={param.getName}>
+          {param.getName}
+          :</label> <input type={paramType} id={param.getName} name={param.getName} stype="width: 300px;">
+        {param.getDefaultValue}
+      </input>
+      </div>
+    }
+  }
+
+  def executeOperation(deployment: Deployment): Elem = {
+    val operationCode = S.param("operation").openOr("")
+    val operationVariant = S.param("operationVariant").openOr("")
+
+    if (S.param("executeOperation").openOr("false") == "true") {
+      val op = LighthouseDAOs.operationsRegistry.findByCode(operationCode)
+      val params = op.getParameters
+
+      LogLH3.info("Executing operation: " + op.getLongName)
+
+      val operationInstallation = new OperationInstallation();
+      operationInstallation.setInstallationLocation(deployment);
+      operationInstallation.setInstalledOperation(op);
+
+      val operationCall = new OperationCall(operationInstallation);
+      if (operationVariant != "" && operationVariant != "default")
+        operationCall.setVariant(operationVariant)
+
+      params.filter(p => p.getVariant == operationVariant).foreach(p => operationCall.addParameterValue(op.createParameterValue(p.getName, S.param(p.getName).openOr(""))))
+
+      try {
+        LighthouseDAOs.operationInstallationRegistry.execute(operationCall)
+        S.notice("Operation " + op.getLongName + " was executed successfully.")
+      } catch {
+        case e: Exception => S.error(e.getMessage)
+      }
+    }
+
+    <span></span>
+  }
+

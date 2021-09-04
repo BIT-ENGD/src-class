@@ -1,0 +1,61 @@
+#include <lua.h>
+#include <assert.h>
+#include <lauxlib.h>
+
+int main(int argc, char* argv[])
+{
+  int i = 0;
+  const int max = 100000;
+  if (argc > 1) {
+    for (i = 0; i < max; i++) {
+      lua_State* L = luaL_newstate();
+      luaL_openlibs(L);
+      luaL_loadfile(L, "test.lua");
+      lua_resume(L, NULL, 0);
+      assert(lua_tointeger(L, 1) == 49995000);
+      lua_close(L);
+    }
+  }
+  else {
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+    luaL_newmetatable(L, "gtm");
+    lua_pushglobaltable(L);
+    lua_setfield(L, -2, "__index");
+    lua_pop(L, 1);
+    for (i = 0; i < max; i++) {
+      lua_State* co = lua_newthread(L);
+      luaL_loadfile(co, "test.lua");
+      lua_newtable(co);
+      luaL_setmetatable(co, "gtm");
+      lua_setupvalue(co, 1, 1);
+      lua_resume(co, NULL, 0);
+      assert(lua_tointeger(co, 1) == 49995000);
+      lua_settop(L, 0);
+      lua_gc(L, LUA_GCCOLLECT, 0);
+    }
+    lua_close(L);
+  }
+  return 0;
+}
+
+local total = 0
+for i=0,10000-1 do
+  total = total + i
+end
+return total
+
+$ gcc -o test test.c -llua -lm -ldl
+
+$ time ./test state
+
+real    0m21.470s
+user    0m20.472s
+sys 0m0.980s
+
+$ time ./test
+
+real    0m14.933s
+user    0m14.036s
+sys 0m0.872s
+

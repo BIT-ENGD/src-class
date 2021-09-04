@@ -1,0 +1,158 @@
+#!/usr/bin/perl -w
+
+use strict;
+use JSON;
+use Net::Telnet;
+use IO::Socket::UNIX qw( SOCK_STREAM SOMAXCONN );
+
+my $socketPath = '/tmp/telnetproxy';
+unlink($socketPath);
+
+my $listener = IO::Socket::UNIX->new(
+    Type   => SOCK_STREAM,
+    Local  => $socketPath,
+    Listen => SOMAXCONN) 
+    or die ("Cannot create server socket: $!\n");
+
+my $clientNum = 0;
+
+our $json = JSON->new->allow_nonref;
+our $conns = {};
+
+print "Server Initiated...\n";
+
+while (1) {
+
+    print " - Inside while loop...\n";
+
+    my $socket = $listener->accept();
+
+    connectToDevice(++ $clientNum, $socket);
+
+}
+
+sub connectToDevice {
+    my $connectionNum = shift;
+    my $socket = shift;
+
+    print " - Inside 'connectToDevice'\n";
+
+    print " - Connection #$connectionNum started...\n";
+
+    my $input;
+    my $connId = 0;
+    my (@argsRaw, $args, @argHold);
+    my $numOfConnections = keys %$conns;
+
+    my $deviceProperties = {
+        ipAddress => undef,
+        username  => undef,
+        password  => undef,
+        method    => 'telnet'
+    };
+
+    print " - waiting for input...\n";
+
+    # Receive input for arguments.
+    chomp( $input = <$socket> );
+
+    print " - input received...\n";
+
+    ## Turn string into a HASHREF
+    $args = from_json($input);
+
+    foreach (keys %$args) {
+        print "\t$connectionNum: $_ => $args->{$_}\n";
+        if (/^host$/i) { #---- Host IP given ($self->{_hostIp{
+            if (verifyIp($args->{$_})) {
+                $deviceProperties->{ipAddress} = $args->{$_};
+            } else {
+
+            }
+        }
+         elsif (/^method$/i) { # Ckt type... very important for how we ts
+            $deviceProperties->{method} = $args->{$_};
+        }
+         elsif (/^(username|user|u)$/i) { # username to log in with
+            $deviceProperties->{username} = $args->{$_};
+        }
+         elsif (/^(password|pass|p)$/i) { # password
+            $deviceProperties->{password} = $args->{$_};
+        }
+    }
+
+    print " - Num of connections: $numOfConnections\n";
+
+    if ($numOfConnections > 0) {
+        ## Look through existing connections
+        ##  1) If we have an available connection, use it
+        ##  2) If not, create a new connection.
+        print " - Checking existing connections...\n";
+        foreach my $connKey ( keys %$conns ) {
+            if ($conns->{$connKey}->{host} eq $deviceProperties->{ipAddress} && $conns->{$connKey}->{locked} == 0 && testConnection($connKey)) {
+                $connId = $connKey;
+                print "\tconnection #$connKey... VALID, using it\n";
+                last;
+            } else {
+                print "\tconnection #$connKey... not valid\n";
+            }
+        }
+    } else {
+        print " - No existing connections, creating a new one ...\n";
+    }
+
+    if ($connId == 0) {
+
+        $connId = $connectionNum;
+
+        $conns->{$connectionNum} = {
+            host   => $deviceProperties->{ipAddress},
+            locked => 1
+        };
+
+        $conns->{$connectionNum}->{conn} = connectToHost($deviceProperties, "blab_$connectionNum");
+        print " - Created a new connection, a suitable existing connection was not found.\n";
+    }
+
+    print " - Waiting for command.. ";
+
+    chomp( my $line = <$socket> );
+
+    print "DONE\n";
+
+    my @out = $conns->{$connId}->{conn}->cmd($line);
+
+    print " - Sent '$line' to device\n";
+
+    my $numOfLines = @out;
+
+    print " - $numOfLines lines retrieved\n";
+
+    $conns->{$connId}->{locked} = 0;
+
+    print " - This run done....\n\n";
+
+    return;
+}
+
+sub testConnection {
+    my $connectionNum = shift;
+
+    print " -- Testing connection $connectionNum:  ";
+
+    my @out = $conns->{$connectionNum}->{conn}->cmd(String => '!', Timeout => 2);
+
+    print "[";
+    print @out;
+    print "]";
+
+    if (@out > 0) {
+        print " ---- Good\n";
+        return 1;
+    } else {
+        delete $conns->{$connectionNum};
+        print " ---- No good\n";
+        return 0;
+    }
+}
+

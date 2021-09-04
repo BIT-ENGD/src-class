@@ -1,0 +1,74 @@
+// Set my flags to 'NO'
+- (void)setUp {
+    requestDidFinish = NO;
+    requestDidFail = NO;
+}
+
+- (void)testCreateList {
+    NSString *testList = @"{\"title\": \"This is a list\"}";
+
+    JKEngine *engine = [[JKEngine alloc] initWithDelegate:self];
+    NSString *requestIdentifier = [engine createList:jsonString];
+
+    [self waitUntilEngineDone:engine];
+    NSString *responseString = responseString_;
+    [engine release];
+
+    GHAssertNotNil(requestIdentifier, nil);
+    GHAssertTrue(requestDidFinish, nil);
+    GHAssertTrue([responseString hasPrefix:@"{\"CreateOrEditListResult\""], nil);
+
+}
+
+// Puts the test into a holding pattern until the http request is done
+- (void)waitUntilEngineDone:(JKEngine *)engine {
+    [engine waitUntilFinishedRunning]; 
+}
+
+// The delegate method called on successful completion
+- (void)requestFinished:(NSString *)requestIdentifier withResponse:(NSString *)response {
+    NSLog(@"request did finish");
+    requestDidFinish = YES;
+    responseIdentifier_ = [requestIdentifier retain];
+    responseString_ = [response retain];
+}
+
+- (NSString *)createList:(NSString *)list {
+    ASIHTTPRequest *request = [[ASIHTTPRequest alloc] initWithURL:[NSURL URLWithString:url]];
+    [request addRequestHeader:@"Content-Type" value:kContentType];
+    [request setRequestMethod:kPOST];
+    request.delegate = self;
+
+    [request appendPostData:[list dataUsingEncoding:NSUTF8StringEncoding]];
+
+    NSString *requestIdentifier = [NSString stringWithNewUUID];
+
+    [operationQueue_ addOperation:request];
+    [operationDictionary_ setObject:request forKey:requestIdentifier];
+
+    return requestIdentifier;
+}
+
+// This is the ASIHTTPRequest delegate method that's called on success
+//   but it sometimes isn't called until AFTER the operationQueue finishes running
+- (void)requestFinished:(ASIHTTPRequest *)request {
+    DLog([request responseString]);
+
+    BOOL canNotifiyDelegate = [self.delegate respondsToSelector:@selector(requestFinished:withResponse:)];
+    if (canNotifiyDelegate) {
+        NSArray *keyArray = [operationDictionary_ allKeysForObject:request];
+        NSString *requestIdentifier = [keyArray objectAtIndex:0];
+        [operationDictionary_ removeObjectForKey:requestIdentifier];
+
+        if ([keyArray count] != 1) {
+            ALog(@"It looks like a request was added to the operation dictionary multiple times. There's a bug somewhere.", nil);
+        }
+
+        [self.delegate requestFinished:requestIdentifier withResponse:[request responseString]];
+    }
+}
+
+- (void)waitUntilFinishedRunning {
+    [operationQueue_ waitUntilAllOperationsAreFinished];
+}
+

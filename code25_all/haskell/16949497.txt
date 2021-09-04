@@ -1,0 +1,55 @@
+main = withSocketsDo $ do
+    forkIO $ acceptor 8080    
+    print "Server running ... " >> getLine >>= print
+
+
+tcpSock :: IO Socket
+tcpSock = socket AF_INET Stream 0
+
+acceptor :: PortNumber -> IO ()
+acceptor port = do
+
+    -- Setup server socket
+    sock <- tcpSock
+    setSocketOption sock ReuseAddr 1
+    bindSocket sock (SockAddrInet port iNADDR_ANY)
+    listen sock 50
+
+    -- Start with zero index
+    loop sock 0
+        where
+        loop sock sockId = do
+            -- Accept socket
+            (nextSock, addr) <- accept sock
+
+            -- Setup the socket for performance
+            (_, handle) <- setupClient nextSock
+
+            -- Run client in own thread
+            forkIO $ do
+                -- Get a stream of bytes
+                stream <- BS.hGetContents handle
+
+                -- Echo the first received char
+                BS.hPut handle $ BS.take 1 stream
+
+                -- Kill the socket
+                SIO.hClose handle
+
+
+            -- Accept next client
+            loop sock (sockId + 1)
+
+
+setupClient :: Socket -> IO (Socket, SIO.Handle)
+setupClient sock = do
+        -- Disable nagle
+        setSocketOption sock NoDelay 1
+
+        -- Disable buffering
+        hdl <- socketToHandle sock SIO.ReadWriteMode
+        SIO.hSetBuffering hdl SIO.NoBuffering
+
+        return (sock, hdl)
+
+http://localhost:8080/

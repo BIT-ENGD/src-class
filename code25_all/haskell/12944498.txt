@@ -1,0 +1,47 @@
+{-# Language GeneralizedNewtypeDeriving #-}
+
+import qualified Data.Map as Map
+import qualified Text.ParserCombinators.Parsec as P
+import Text.Parsec.Token (parens)
+import Text.ParserCombinators.Parsec ((<|>))
+import Control.Applicative ((<$>), (<*>), (*>), (<*))
+
+
+data CTree = CApp CTree CTree | CNode String deriving (Eq, Read)
+instance Show CTree where
+    show c@(CApp x y) = showL c
+        where showL (CApp x' y')= "(" ++ showL x' ++ " " ++ showR y' ++ ")"
+              showL (CNode s) = s
+              showR (CApp x' y') = "(" ++ showL x' ++ " " ++ showR y' ++ ")"
+              showR (CNode s) = s
+
+    show (CNode s) = s
+
+-- | Parser
+parseC :: String -> Maybe CTree
+parseC s = extract$ P.parse expr "combinator_string" s
+           where extract (Right r) = Just r
+                 extract (Left e) = Nothing
+
+
+expr :: P.CharParser () CTree
+expr = P.try (CApp <$> (CApp <$> term <*> term) <*> expr)
+       <|> P.try (CApp <$> term <*> term)
+       <|> term
+
+
+term = P.spaces *> (node <|> P.string "(" *> expr <* P.string ")")
+
+
+node :: P.CharParser () CTree
+node = CNode <$> (P.many1 $ P.noneOf "() ") 
+
+eval (CApp (CNode "I") x) = x
+eval (CApp (CApp (CApp (CNode "S") f) g) x) = 
+    (CApp (CApp f x) (CApp g x))
+eval (CApp (CApp (CApp (CNode "B") f) g) x) = 
+    (CApp f (CApp g x))
+eval (CApp (CApp (CApp (CNode "C") f) g) x) = 
+    (CApp (CApp f x) g)
+eval x = x
+

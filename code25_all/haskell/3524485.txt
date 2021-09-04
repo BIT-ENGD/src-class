@@ -1,0 +1,77 @@
+Expr
+LetRec
+type Var = String
+type Binds = [(Var, Expr)]
+
+data Expr
+  = Var     Var
+  | Lam     Var    Expr
+  | App     Expr   Expr
+  | Con     Int
+  | Sub     Expr   Expr
+  | If      Expr   Expr  Expr
+  | Let     Var    Expr  Expr
+  | LetRec  Binds  Expr
+  deriving (Show, Eq)
+
+data Value
+  = ValInt   Int
+  | ValFun   Env   Var  Expr
+  deriving (Show, Eq)
+
+type Env = [(Var, Value)]
+
+eval :: Env -> Expr -> Either String Value
+eval env (Var x)       = maybe (throwError  $ x ++ " not found")
+                               return
+                               (lookup x env)
+eval env (Lam x e)     = return $ ValFun env x e
+eval env (App e1 e2)   = do
+                         v1 <- eval env e1
+                         v2 <- eval env e2
+                         case v1 of
+                           ValFun env1 x e -> eval ((x, v2):env1) e
+                           _ -> throwError "First arg to App not a function"
+eval _   (Con x)       = return $ ValInt x
+eval env (Sub e1 e2)   = do
+                         v1 <- eval env e1
+                         v2 <- eval env e2
+                         case (v1, v2) of
+                           (ValInt x, ValInt y) -> return $ ValInt (x - y)
+                           _ -> throwError "Both args to Sub must be ints"
+eval env (If p t f)    = do 
+                         v1 <- eval env p
+                         case v1 of
+                           ValInt x -> if x /= 0
+                                       then eval env t
+                                       else eval env f
+                           _ -> throwError "First arg of If must be an int"
+eval env (Let x e1 e2) = do
+                         v1 <- eval env e1
+                         eval ((x, v1):env) e2
+eval env (LetRec bs e) = do
+                         env' <- evalBinds
+                         eval env' e
+  where
+    evalBinds = mfix $ \env' -> do
+      env'' <- mapM (\(x, e') -> eval env' e' >>= \v -> return (x, v)) bs
+      return $ nub (env'' ++ env)
+
+test3 :: Expr
+test3 = LetRec [ ("even", Lam "x" (If (Var "x")
+                                      (Var "odd" `App` (Var "x" `Sub` Con 1))
+                                      (Con 1)
+                                  ))
+               , ("odd",  Lam "x" (If (Var "x")
+                                      (Var "even" `App` (Var "x" `Sub` Con 1))
+                                      (Con 0)
+                                  ))
+               ]
+               (Var "even" `App` Con 5)
+
+test4 :: Expr
+test4 = LetRec [ ("x", Con 3)
+               , ("y", Var "x")
+               ]
+               (Con 0)
+

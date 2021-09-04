@@ -1,0 +1,47 @@
+type PStream = String
+type PToken a = (String, a)
+data Pstate a = Pstate (String -> ([PToken String], PStream)) a
+
+instance Monad Pstate where
+    return x = Pstate (\_ -> ([("start", "")], "?")) x -- not used ?
+    (Pstate bindparser v) >>= f  = Pstate newparser fv
+        where
+            Pstate fparser fv = f v
+            (btok, brest) = bindparser "this string also not used"
+            (tok, rest) = fparser brest
+            newparser _ = (btok ++ tok, rest)
+
+-- parsers
+parseFid :: Pstate String
+parseFid = Pstate parser "???"
+    where parser r = let (fid, rest) = span (/= '(') r in ([("fid", fid)],rest)
+
+parseSym :: Char -> Pstate String
+parseSym c = Pstate parser "???"
+    where parser r = let rest = parseOne c r in ([("sym", [c])],rest)
+
+parseOne s (h:t) = if h == s then t else error $ "symbol not match:" ++ [h] ++ " /= " ++ [s]
+parseOne s []    = []
+
+parseArgs :: Pstate String
+parseArgs = Pstate parser "???"
+    where parser r = let (args,rest) = span (/=')') r in ([("args", args)],rest)
+
+-- util
+load :: String -> Pstate String
+load s = Pstate (\ls -> ([("load", "")],ls)) "???"
+
+runP :: Pstate String -> ([PToken String], PStream)
+runP (Pstate fparser fv) = fparser "???"
+
+-- combined parser
+parseFunction :: String -> Pstate String
+parseFunction s = do
+    load s --- should be 'return' here ?
+    parseFid
+    parseSym '('
+    parseArgs
+    parseSym ')'
+
+main = putStrLn $ show $ runP $ parseFunction "hello(a b c)"
+

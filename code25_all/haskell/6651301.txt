@@ -1,0 +1,72 @@
+module Interpreter where
+
+--------------------------------------------------------------------
+
+type Id         =   [Char]
+type Output     =   [Char]
+type Value      =   Int
+type Table      =   [(Id, Value)]
+
+data Stm        =   CompoundStm Stm Stm |
+                    AssignStm Id Exp |
+                    PrintStm ExpList deriving Show
+
+data Exp        =   IdExp Id |
+                    NumExp Value |
+                    OpExp Exp Op Exp |
+                    EseqExp Stm Exp deriving Show
+
+data ExpList    =   PairExpList Exp ExpList |
+                    LastExpList Exp deriving Show
+
+data Op         =   Plus | Minus | Times | Div deriving Show
+
+--------------------------------------------------------------------
+
+example ::  Stm
+example =   CompoundStm (AssignStm "a" (OpExp (NumExp 5) Plus (NumExp 3))) 
+            (CompoundStm (AssignStm "b" (EseqExp (PrintStm (PairExpList (IdExp "a")
+             (LastExpList (OpExp (IdExp "a") Minus (NumExp 1))))) (OpExp (NumExp 10) Times
+              (IdExp "a")))) (PrintStm (LastExpList (IdExp "b"))))
+
+--------------------------------------------------------------------
+
+tableUpdate                             ::  Table -> Id -> Value -> Table
+tableUpdate t i v                       =   (i,v):t
+
+tableLookup                             ::  Table -> Id -> Value
+tableLookup ((x,v):t) i | x == i        =   v
+tableLookup ((x,v):t) i | x /= i        =   tableLookup t i
+
+--------------------------------------------------------------------
+
+execute                                 ::  Stm -> IO()
+execute s                               =   putStr ((\(o,_)->o) (interpStm s ("",[])))
+
+interpStm                               ::  Stm -> (Output, Table) -> (Output, Table)
+interpStm (CompoundStm l r) ot          =   interpStm r (interpStm l ot)
+interpStm (PrintStm el) (o,t)           =   (interpExpList el o t)
+interpStm (AssignStm i e) (o,t)         =   f i (interpExp e (o,t))
+        where
+            f i (v,o,t)                 =   (o, tableUpdate t i v)
+
+interpExp                               ::  Exp -> (Output, Table) -> (Value, Output, Table)
+interpExp (IdExp i) (o,t)               =   (tableLookup t i, o, t)
+interpExp (NumExp v) (o,t)              =   (v, o, t)
+interpExp (EseqExp s e) ot              =   interpExp e (interpStm s ot)
+interpExp (OpExp l op r) (o,t)          =   f (interpExp l (o,t)) op r
+        where
+            f (v,o,t) op r              =   g v op (interpExp r (o,t))
+            g v1 Plus (v2,o,t)          =   (v1 + v2, o, t)
+            g v1 Minus (v2,o,t)         =   (v1 - v2, o, t)
+            g v1 Times (v2,o,t)         =   (v1 * v2, o, t)
+            g v1 Div (v2,o,t)           =   (v1 `div` v2, o, t)
+
+interpExpList                           ::  ExpList -> Output -> Table -> (Output, Table)
+interpExpList (LastExpList e) o t       =   f (interpExp e (o,t))       
+        where
+            f (v, o, t)                 =   (o ++ (show v) ++ "\n", t)
+interpExpList (PairExpList e el) o t    =   f (interpExp e (o,t))
+        where
+            f (v, o, t)                 =   interpExpList el (o ++ (show v) ++ " ") t
+

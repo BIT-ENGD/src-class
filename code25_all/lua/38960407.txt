@@ -1,0 +1,177 @@
+attempt to index a nil value
+
+net:add(SpatialConvolution(3, 96, 7, 7, 2, 2))
+
+local torch = require('torch')
+classifyImage()
+torch = require 'torch'
+nn = require 'nn'
+image = require 'image'
+ParamBank = require 'ParamBank'
+label     = require 'classifier_label'
+torch.setdefaulttensortype('torch.FloatTensor')
+
+function classifyImage()
+
+  local opt = {
+    inplace = false,
+    network = "big",
+    backend = "nn",
+    save = "model.t7",
+    img = context.input.image,
+    spatial = false,
+    threads = 4
+  }
+  torch.setnumthreads(opt.threads)
+
+  require(opt.backend)
+  local SpatialConvolution = nn.SpatialConvolutionMM
+  local SpatialMaxPooling = nn.SpatialMaxPooling
+  local ReLU = nn.ReLU
+  local SpatialSoftMax = nn.SpatialSoftMax
+
+  local net = nn.Sequential()
+
+  print('==> init a big overfeat network')
+  net:add(SpatialConvolution(3, 96, 7, 7, 2, 2))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialMaxPooling(3, 3, 3, 3))
+  net:add(SpatialConvolution(96, 256, 7, 7, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialMaxPooling(2, 2, 2, 2))
+  net:add(SpatialConvolution(256, 512, 3, 3, 1, 1, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialConvolution(512, 512, 3, 3, 1, 1, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialConvolution(512, 1024, 3, 3, 1, 1, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialConvolution(1024, 1024, 3, 3, 1, 1, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialMaxPooling(3, 3, 3, 3))
+  net:add(SpatialConvolution(1024, 4096, 5, 5, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialConvolution(4096, 4096, 1, 1, 1, 1))
+  net:add(ReLU(opt.inplace))
+  net:add(SpatialConvolution(4096, 1000, 1, 1, 1, 1))
+  net:add(nn.View(1000))
+  net:add(SpatialSoftMax())
+  -- print(net)
+
+  -- init file pointer
+  print('==> overwrite network parameters with pre-trained weigts')
+  ParamBank:init("net_weight_1")
+  ParamBank:read(        0, {96,3,7,7},      net:get(1).weight)
+  ParamBank:read(    14112, {96},            net:get(1).bias)
+  ParamBank:read(    14208, {256,96,7,7},    net:get(4).weight)
+  ParamBank:read(  1218432, {256},           net:get(4).bias)
+  ParamBank:read(  1218688, {512,256,3,3},   net:get(7).weight)
+  ParamBank:read(  2398336, {512},           net:get(7).bias)
+  ParamBank:read(  2398848, {512,512,3,3},   net:get(9).weight)
+  ParamBank:read(  4758144, {512},           net:get(9).bias)
+  ParamBank:read(  4758656, {1024,512,3,3},  net:get(11).weight)
+  ParamBank:read(  9477248, {1024},          net:get(11).bias)
+  ParamBank:read(  9478272, {1024,1024,3,3}, net:get(13).weight)
+  ParamBank:read( 18915456, {1024},          net:get(13).bias)
+  ParamBank:read( 18916480, {4096,1024,5,5}, net:get(16).weight)
+  ParamBank:read(123774080, {4096},          net:get(16).bias)
+  ParamBank:read(123778176, {4096,4096,1,1}, net:get(18).weight)
+  ParamBank:read(140555392, {4096},          net:get(18).bias)
+  ParamBank:read(140559488, {1000,4096,1,1}, net:get(20).weight)
+  ParamBank:read(144655488, {1000},          net:get(20).bias)
+
+  ParamBank:close()
+
+  -- load and preprocess image
+  print('==> prepare an input image')
+  local img = image.load(opt.img):mul(255)
+
+  -- use image larger than the eye size in spatial mode
+  if not opt.spatial then
+     local dim = (opt.network == 'small') and 231 or 221
+     local img_scale = image.scale(img, '^'..dim)
+     local h = math.ceil((img_scale:size(2) - dim)/2)
+     local w = math.ceil((img_scale:size(3) - dim)/2)
+     img = image.crop(img_scale, w, h, w + dim, h + dim):floor()
+  end
+
+  -- memcpy from system RAM to GPU RAM if cuda enabled
+  if opt.backend == 'cunn' or opt.backend == 'cudnn' then
+    net:cuda()
+    img = img:cuda()
+  end
+
+  -- save bare network (before its buffer filled with temp results)
+  print('==> save model to:', opt.save)
+  torch.save(opt.save, net)
+
+  -- feedforward network
+  print('==> feed the input image')
+  timer = torch.Timer()
+  img:add(-118.380948):div(61.896913)
+  local out = net:forward(img)
+
+  -- find output class name in non-spatial mode
+  local results = {}
+  local topN = 10
+  local probs, idxs = torch.topk(out, topN, 1, true)
+
+  for i=1,topN do
+     print(label[idxs[i]], probs[i])
+     local r = {}
+     r.label = label[idxs[i]]
+     r.prob = probs[i]
+     results[i] = r
+  end
+
+  return results
+end
+
+function errorHandler(err)
+  return tostring( err )
+end
+
+local success, result = xpcall(classifyImage, errorHandler)
+
+
+context.template = {
+  type = "mustache",
+  name = "app/templates/layout",
+
+  partials = {
+    content = "app/templates/classify",
+  }
+}
+
+
+context.output = {
+  success = success,
+  result = result,
+  request = context.input
+}
+
+context.response.status = 200
+
+print( net )
+local net
+net:add
+local net
+nil
+net
+:add
+classifyImage
+print(tostring(torch))
+print(tostring(nn))
+print(tostring(net))
+
+nil
+nil
+nil
+
+table: 0x41448a08
+table: 0x413bdb10
+nil
+
+table: 0x41448a08
+table: 0x413bdb10
+nil
+

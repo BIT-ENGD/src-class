@@ -1,0 +1,79 @@
+#!/bin/bash
+MYAPP=$1
+PIDFILE=/var/run/${MYAPP}_fcgi.pid
+SOCKET=/var/django/${MYAPP}/socket.sock
+MANAGESCRIPT=/var/django/${MYAPP}/manage.py
+# Maximum requests for a child to service before expiring
+#MAXREQ=
+# Spawning method - prefork or threaded
+#METHOD=
+# Maximum number of children to have idle
+MAXSPARE=2
+# Minimum number of children to have idle
+MINSPARE=1
+# Maximum number of children to spawn
+MAXCHILDREN=3
+
+cd "`dirname $0`"
+
+function failure () {
+  STATUS=$?;
+  echo; echo "Failed $1 (exit code ${STATUS}).";
+  exit ${STATUS};
+}
+
+function start_server () {
+  $MANAGESCRIPT runfcgi socket=$SOCKET pidfile=$PIDFILE \
+    ${MAXREQ:+maxrequests=$MAXREQ} \
+    ${METHOD:+method=$METHOD} \
+    ${MAXSPARE:+maxspare=$MAXSPARE} \
+    ${MINSPARE:+minspare=$MINSPARE} \
+    ${MAXCHILDREN:+maxchildren=$MAXCHILDREN} \
+    ${DAEMONISE:+damonize=True}
+  touch $SOCKET
+  chown www-data:www-data $SOCKET
+  chmod 755 $SOCKET
+}
+
+function stop_server () {
+  if [ -f "$PIDFILE" ]
+  then
+    kill `cat $PIDFILE` || failure "Server was not running."
+    rm $PIDFILE
+  fi
+}
+
+DAEMONISE=$3
+
+case "$2" in
+  start)
+    echo -n "Starting fcgi: "
+    [ -e $PIDFILE ] && { echo "PID file exsts."; exit; }
+    start_server || failure "starting fcgi"
+    echo "Done."
+    ;;
+  stop)
+    echo -n "Stopping fcgi: "
+    [ -e $PIDFILE ] || { echo "No PID file found."; exit; }
+    stop_server
+    echo "Done."
+    ;;
+  restart)
+    echo -n "Restarting fcgi: "
+    [ -e $PIDFILE ] || { echo -n "No PID file found..."; }
+    stop_server
+    start_server || failure "restarting fcgi"
+    echo "Done."
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart} [--daemonise]"
+    ;;
+esac
+
+exit 0
+
+/var/django/server.sh mysite start
+
+mysite_fcgi.pid
+/var/django/server.sh mysite1 start
+/var/django/server.sh myothersite start

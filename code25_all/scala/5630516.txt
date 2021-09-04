@@ -1,0 +1,168 @@
+def tryit[T](p: => T) = {
+    Class.forName("org.h2.Driver") //what's the point in this...?
+
+    SessionFactory.concreteFactory = Some(() =>
+        Session.create(java.sql.DriverManager.getConnection("jdbc:h2:~/irc","ScalaIRC",""), new H2Adapter))
+
+    transaction {
+        p
+    }
+}
+
+ val query = from(IRCDB.channels)(c => select(c))
+ IRCDB.tryit {
+     for (r <- query) println("chan: " + r.name)
+ }
+
+transaction { ... }
+import org.squeryl.PrimitiveTypeMode._
+import java.sql.Timestamp
+import java.sql.DriverManager
+import java.util.Date
+import org.squeryl.adapters.H2Adapter
+import org.squeryl.dsl.{OneToMany, ManyToOne, CompositeKey2}
+import org.squeryl._
+
+class ChannelTable(val id: Long, val name : String,
+               val p_mode : Boolean, val s_mode : Boolean,
+               val i_mode : Boolean, val t_mode : Boolean,
+               val n_mode : Boolean, val m_mode : Boolean,
+               val key : Option[String]) extends KeyedEntity[Long] {
+    def this() = this(0,"", false, false, false, false, false, false, Some(""))
+
+    lazy val bans:OneToMany[ChannelBanTable] = IRCDB.channelToChanBans.left(this)
+    lazy val users = IRCDB.channelUsers.left(this)
+    lazy val invites = IRCDB.channelInvites.left(this)
+}
+
+object IRCDB extends Schema {
+    val channels = table[ChannelTable]
+
+    on(channels)(c => declare(
+      c.p_mode defaultsTo(false),
+      c.s_mode defaultsTo(false),
+      c.i_mode defaultsTo(false),
+      c.t_mode defaultsTo(false),
+      c.n_mode defaultsTo(false),
+      c.m_mode defaultsTo(false),
+      c.name is(unique, indexed)
+    ))
+
+    def init {
+        Class.forName("org.h2.Driver") //what's the point in this...?
+
+        SessionFactory.concreteFactory = Some(() =>
+          Session.create(DriverManager.getConnection("jdbc:h2:~/irc","ScalaIRC",""), new H2Adapter))
+    }
+    def getAllChannels = transaction { from(channels)(c => select(c))}
+}
+
+scala> import db._;import org.squeryl.PrimitiveTypeMode._
+import db._
+import org.squeryl.PrimitiveTypeMode._
+scala> IRCDB.init
+scala> transaction { IRCDB.channels.insert(new ChannelTable(0,"#chan_name", false, false, false, false, false, false, None)) }
+res3: db.ChannelTable = db.ChannelTable@4
+
+IRCDB.getAllChannels
+java.lang.RuntimeException: no session is bound to current thread, a session must be created via Session.create 
+and bound to the thread via 'work' or 'bindToCurrentThread'
+    at scala.Predef$.error(Predef.scala:58)
+    at org.squeryl.Session$$anonfun$currentSession$1.apply(Session.scala:117)
+    at org.squeryl.Session$$anonfun$currentSession$1.apply(Session.scala:117)
+    at scala.Option.getOrElse(Option.scala:59)
+    at org.squeryl.Session$.currentSession(Session.scala:116)
+    at org.squeryl.dsl.AbstractQuery.org$squeryl$dsl$AbstractQuery$$_dbAdapter(AbstractQuery.scala:136)
+    at org.squeryl.dsl.AbstractQuery$$anon$1.<init>(AbstractQuery.scala:140)
+    at org.squeryl.dsl.AbstractQuery.iterator(AbstractQuery.scala:138)
+    at scala.collection.IterableLike$class.foreach(IterableLike.scala:79)
+    at org.squeryl.dsl.AbstractQuery.foreach(AbstractQuery.scala:27)
+    at scala.collection.TraversableLike$class.map(TraversableLike.scala:206)
+    at org.squeryl.dsl.AbstractQuery.map(AbstractQuery.scala:27)
+    at scala.runtime.ScalaRunTime$.inner$1(ScalaRunTime.scala:255)
+    at scala.runtime.ScalaRunTime$.stringOf(ScalaRunTime.scala:258)
+    at RequestResult$line7$object$.<init>(<console>:12)
+    at RequestResult$line7$object$.<clinit>(<console>)
+    at RequestResult$line7$object.scala_repl_result(<console>)
+    at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:39)
+    at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:25)
+    at java.lang.reflect.Method.invoke(Method.java:597)
+    at scala.tools.nsc.Interpreter$Request$$anonfun$loadAndRun$1$$anonfun$apply$18.apply(Interpreter.scala:981)
+    at scala.tools.nsc.Interpreter$Request$$anonfun$loadAndRun$1$$anonfun$apply$18.apply(Interpreter.scala:981)
+    at scala.util.control.Exception$Catch.apply(Exception.scala:79)
+    at scala.tools.nsc.Interpreter$Request$$anonfun$loadAndRun$1.apply(Interpreter.scala:980)
+    at scala.tools.nsc.Interpreter$Request$$anonfun$loadAndRun$1.apply(Interpreter.scala:980)
+    at scala.util.control.Exception$Catch.apply(Exception.scala:79)
+    at scala.tools.nsc.Interpreter$Request.loadAndRun(Interpreter.scala:979)
+    at scala.tools.nsc.Interpreter.loadAndRunReq$1(Interpreter.scala:578)
+    at scala.tools.nsc.Interpreter.interpret(Interpreter.scala:597)
+    at scala.tools.nsc.Interpreter.interpret(Interpreter.scala:575)
+    at scala.tools.nsc.InterpreterLoop.reallyInterpret$1(InterpreterLoop.scala:471)
+    at scala.tools.nsc.InterpreterLoop.interpretStartingWith(InterpreterLoop.scala:514)
+    at scala.tools.nsc.InterpreterLoop.command(InterpreterLoop.scala:361)
+    at scala.tools.nsc.InterpreterLoop.processLine$1(InterpreterLoop.scala:242)
+    at scala.tools.nsc.InterpreterLoop.repl(InterpreterLoop.scala:248)
+    at scala.tools.nsc.InterpreterLoop.main(InterpreterLoop.scala:558)
+    at scala.tools.nsc.InterpreterLoop.main(InterpreterLoop.scala:609)
+    at org.jetbrains.plugins.scala.compiler.rt.ConsoleRunner.main(ConsoleRunner.java:33)
+    at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:39)
+    at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:25)
+    at java.lang.reflect.Method.invoke(Method.java:597)
+    at com.intellij.rt.execution.application.AppMain.main(AppMain.java:115)
+
+transaction { from(IRCDB.channels)(c => select(c)) }
+getAllChannels
+def getAllChannels = transaction { 
+  val ret = from(channels)(c => select(c))
+  println("sql: " + ret)
+  ret
+}
+
+sql: 'QueryExpressionNode[root:1a0d111]:rsm='ResultSetMapper:fdf48d()--
+    'FieldSelectElement:ChannelTable1_name
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_i_mode
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_s_mode
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_key
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_n_mode
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_m_mode
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_id
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_t_mode
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'FieldSelectElement:ChannelTable1_p_mode
+        org.squeryl.dsl.ast.FieldSelectElement$$anon$3
+    'ViewExpressionNode[sample:ChannelTable[16e3f87]]:rsm='ResultSetMapper:442b95($(1->ChannelTable.name:java.lang.String),$(2->ChannelTable.i_mode:java.lang.Boolean),$(3->ChannelTable.s_mode:java.lang.Boolean),$(4->ChannelTable.key:Option[java.lang.String]),$(5->ChannelTable.n_mode:java.lang.Boolean),$(6->ChannelTable.m_mode:java.lang.Boolean),$(7->ChannelTable.id:java.lang.Long),$(8->ChannelTable.t_mode:java.lang.Boolean),$(9->ChannelTable.p_mode:java.lang.Boolean))--*
+
+Select
+  ChannelTable1.name as ChannelTable1_name,
+  ChannelTable1.i_mode as ChannelTable1_i_mode,
+  ChannelTable1.s_mode as ChannelTable1_s_mode,
+  ChannelTable1.key as ChannelTable1_key,
+  ChannelTable1.n_mode as ChannelTable1_n_mode,
+  ChannelTable1.m_mode as ChannelTable1_m_mode,
+  ChannelTable1.id as ChannelTable1_id,
+  ChannelTable1.t_mode as ChannelTable1_t_mode,
+  ChannelTable1.p_mode as ChannelTable1_p_mode
+From
+  ChannelTable ChannelTable1
+java.lang.RuntimeException: no session is bound to current thread, a session must be created via Session.create 
+and bound to the thread via 'work' or 'bindToCurrentThread'
+    at scala.Predef$.error(Predef.scala:58)
+    at org.squeryl.Session$$anonfun$currentSession$1.apply(Session.scala:117)
+    at org.squeryl.Session$$anonfun$currentSession$1.apply(Session.scala:117)
+    at scala.Option.getOrElse(Option.scala:59)
+    at org.squeryl.Session$.currentSession(Session.scala:116)
+    at org.squeryl.dsl.AbstractQuery.org$squeryl$dsl$AbstractQuery$$_dbAdapter(AbstractQuery.scala:136)
+    at org.squeryl.dsl.AbstractQuery$$anon$1.<init>(AbstractQuery.scala:140)
+    at org.squeryl.dsl.AbstractQuery.iterator(AbstractQuery.scala:138)
+    at scala.collection.IterableLike$class.foreach(IterableLike.scala:79)
+    at org.squeryl....
+

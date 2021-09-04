@@ -1,0 +1,173 @@
+error: called object ‘rename’ is not a function
+if (g_rename(old_file_name, full_new_file_name) == -1)
+
+cc -Wall -g `pkg-config --cflags --libs gtk+-2.0` app.c -o app
+
+#include <gtk/gtk.h>
+#include <string.h>
+#include <glib.h>
+#include <glib/gstdio.h>
+
+void
+destroy (GtkWidget*, gpointer);
+void
+file_chooser_file_set(GtkWidget*, gpointer);
+
+void
+rename_clicked(GtkWidget*, gpointer);
+
+int main (int argc, char* argv[]){
+  GtkWidget *window, *vbox, *hbox, *rename, *text_rename, *file_chooser;
+
+  gtk_init (&argc, &argv);
+
+  window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  gtk_window_set_title(GTK_WINDOW(window), "File renamer");
+  g_signal_connect(G_OBJECT(window),
+                    "destroy",
+                    G_CALLBACK(destroy),
+                    NULL);
+
+  vbox = gtk_vbox_new(FALSE, 5);
+
+  file_chooser = gtk_file_chooser_button_new("Choose file to rename:", GTK_FILE_CHOOSER_ACTION_OPEN);
+  g_signal_connect(G_OBJECT(file_chooser),
+                    "file-set",
+                    G_CALLBACK(file_chooser_file_set),
+                    NULL);
+
+  gtk_box_pack_start(GTK_BOX(vbox),
+                      GTK_WIDGET(file_chooser),
+                      TRUE,
+                      FALSE,
+                      5);
+
+  hbox = gtk_hbox_new(FALSE, 5);
+
+  rename = gtk_button_new_with_label("Rename");
+
+  gtk_box_pack_end(GTK_BOX(hbox),
+                      GTK_WIDGET(rename),
+                      FALSE,
+                      FALSE,
+                      5);
+
+  text_rename = gtk_entry_new();
+  g_signal_connect(G_OBJECT(rename),
+                    "clicked",
+                    G_CALLBACK(rename_clicked),
+                    text_rename);
+  gtk_box_pack_start(GTK_BOX(hbox),
+                      GTK_WIDGET(text_rename),
+                      TRUE,
+                      TRUE,
+                      5);
+
+  gtk_box_pack_start(GTK_BOX(vbox),
+                      GTK_WIDGET(hbox),
+                      FALSE,
+                      FALSE,
+                      5);
+
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(vbox));
+  gtk_widget_show_all(GTK_WIDGET(window));
+
+  g_object_set_data(G_OBJECT(file_chooser),
+                    "text_rename",
+                    (gpointer) text_rename);
+  g_object_set_data(G_OBJECT(file_chooser),
+                    "rename",
+                    (gpointer) rename);
+
+  g_object_set_data(G_OBJECT(rename),
+                    "file_chooser",
+                    (gpointer)file_chooser);
+  gtk_main();
+
+  return 0;
+}
+
+#define _CHECK_FATAL_ERROR( e )\
+  if ( (e) ) { \
+    g_error("Fatal error: %s", (e)->message); \
+    g_error_free( (e) );\
+  }
+
+#define _PATH_BUFFER_LENGTH 200
+void
+rename_clicked(GtkWidget* rename, gpointer text_entry) {
+  gchar *new_file_name;
+  gchar *old_file_name;
+  gchar *full_new_file_name = g_new0(gchar, _PATH_BUFFER_LENGTH);
+  GtkFileChooserButton *file_chooser;
+
+  GError *error = NULL;
+
+  GRegex *remove_file_name;
+
+  remove_file_name = g_regex_new("/[^/]+$",
+                                0,
+                                0,
+                                &error);
+  _CHECK_FATAL_ERROR( error );
+
+
+  file_chooser = GTK_FILE_CHOOSER_BUTTON(g_object_get_data(G_OBJECT(rename), "file_chooser"));
+
+  new_file_name = g_strdup( gtk_entry_get_text(GTK_ENTRY(text_entry)) );
+  old_file_name = g_strdup(gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser)));
+  if ( !( new_file_name && old_file_name ) )
+    g_error("Error while allocating memory!");
+
+  /*BEGIN*/
+  /* full_new_file_name = dirname( old_file_name ) . new_file_name */
+    gchar *path;
+
+    path = g_regex_replace(remove_file_name,
+                            old_file_name,
+                            strlen(old_file_name),
+                            0,
+                            "/",
+                            0,
+                            &error);
+    _CHECK_FATAL_ERROR( error );
+
+    //Path
+    full_new_file_name[0] = 0;
+    g_strlcat(full_new_file_name, path, _PATH_BUFFER_LENGTH);
+    //name
+    g_strlcat(full_new_file_name, new_file_name, _PATH_BUFFER_LENGTH);
+//    g_print("Full file name: %s\n", full_new_file_name);
+    g_free( path );
+  /*END*/
+
+  if (g_rename(old_file_name, full_new_file_name) == -1)
+    g_error("Error while renaming %s to %s", old_file_name, full_new_file_name);
+
+  gtk_widget_set_sensitive(GTK_WIDGET(rename), FALSE);
+  gtk_widget_set_sensitive(GTK_WIDGET(text_entry), FALSE);
+
+  g_free( new_file_name );
+  g_free( full_new_file_name );
+  g_free( old_file_name );
+  g_regex_unref( remove_file_name );
+}
+
+void
+file_chooser_file_set(GtkWidget* file_chooser, gpointer null) {
+  GtkButton *rename;
+  GtkEntry  *text_rename;
+
+  rename      = GTK_BUTTON(g_object_get_data(G_OBJECT(file_chooser),
+                                             "rename") );
+  text_rename = GTK_ENTRY(g_object_get_data(G_OBJECT(file_chooser),
+                                            "text_rename"));
+
+  gtk_widget_set_sensitive(GTK_WIDGET(rename), TRUE);
+  gtk_widget_set_sensitive(GTK_WIDGET(text_rename), TRUE);
+}
+
+void destroy (GtkWidget* widget, gpointer data) {
+  gtk_main_quit();
+}
+

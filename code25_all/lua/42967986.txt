@@ -1,0 +1,248 @@
+iter_size
+iter_size
+model:forward
+model:backward
+miniBatchSize
+batchSize
+miniBatchSize
+batchSize
+batchSize = 2000
+miniBatchSize = 200
+require 'torch'
+require 'nn'
+require 'optim'
+require 'cunn'
+require 'cutorch'
+local mnist = require 'mnist'
+
+local fullset = mnist.traindataset()
+local testset = mnist.testdataset()
+
+local trainset = {
+    size = 50000,
+    data = fullset.data[{{1,50000}}]:double(),
+    label = fullset.label[{{1,50000}}]
+}
+trainset.data = trainset.data - trainset.data:mean()
+trainset.data = trainset.data:cuda()
+trainset.label = trainset.label:cuda()
+
+local validationset = {
+    size = 10000,
+    data = fullset.data[{{50001,60000}}]:double(),
+    label = fullset.label[{{50001,60000}}]
+}
+validationset.data = validationset.data - validationset.data:mean()
+validationset.data = validationset.data:cuda()
+validationset.label = validationset.label:cuda()
+
+local model = nn.Sequential()
+model:add(nn.Reshape(1, 28, 28))
+model:add(nn.MulConstant(1/256.0*3.2))
+model:add(nn.SpatialConvolutionMM(1, 20, 5, 5, 1, 1, 0, 0))
+model:add(nn.SpatialMaxPooling(2, 2 , 2, 2, 0, 0))
+model:add(nn.SpatialConvolutionMM(20, 50, 5, 5, 1, 1, 0, 0))
+model:add(nn.SpatialMaxPooling(2, 2 , 2, 2, 0, 0))
+model:add(nn.Reshape(4*4*50))
+model:add(nn.Linear(4*4*50, 500))
+model:add(nn.ReLU())
+model:add(nn.Linear(500, 10))
+model:add(nn.LogSoftMax())
+
+model = require('weight-init')(model, 'xavier')
+model = model:cuda()
+
+x, dl_dx = model:getParameters()
+
+local criterion = nn.ClassNLLCriterion():cuda()
+
+local sgd_params = {
+   learningRate = 1e-2,
+   learningRateDecay = 1e-4,
+   weightDecay = 1e-3,
+   momentum = 1e-4
+}
+
+local training = function(batchSize)
+    local current_loss = 0
+    local count = 0
+    local shuffle = torch.randperm(trainset.size)
+    batchSize = batchSize or 2000
+    for t = 0, trainset.size-1, batchSize do
+        -- setup inputs and targets for batch iteration
+        local size = math.min(t + batchSize, trainset.size) - t
+        local inputs = torch.Tensor(size, 28, 28):cuda()
+        local targets = torch.Tensor(size):cuda()
+        for i = 1, size do
+            inputs[i] = trainset.data[shuffle[i+t]]
+            targets[i] = trainset.label[shuffle[i+t]] + 1
+        end
+
+        local feval = function(x_new)
+            local miniBatchSize = 200
+            if x ~= x_new then x:copy(x_new) end   -- reset data
+            dl_dx:zero()
+
+            --[[ ------------------ method 1 original batch
+            local outputs = model:forward(inputs)
+            local loss = criterion:forward(outputs, targets)
+            local gradInput = criterion:backward(outputs, targets)
+            model:backward(inputs, gradInput)
+            --]]
+
+            --[[ ------------------ method 2 iter-size with batch
+            local loss = 0
+            for idx = 1, batchSize, miniBatchSize do
+                local outputs = model:forward(inputs[{{idx, idx + miniBatchSize - 1}}])
+                loss = loss + criterion:forward(outputs, targets[{{idx, idx + miniBatchSize - 1}}])
+                local gradInput = criterion:backward(outputs, targets[{{idx, idx + miniBatchSize - 1}}])
+                model:backward(inputs[{{idx, idx + miniBatchSize - 1}}], gradInput)
+            end
+            dl_dx:mul(1.0 * miniBatchSize / batchSize)
+            loss = loss * miniBatchSize / batchSize
+            --]]
+
+
+            ---[[ ------------------ method 3 mini-batch in batch
+            local outputs = torch.Tensor(batchSize, 10):zero():cuda()
+            for idx = 1, batchSize, miniBatchSize do
+                outputs[{{idx, idx + miniBatchSize - 1}}]:copy(model:forward(inputs[{{idx, idx + miniBatchSize - 1}}]))
+            end
+            local loss = criterion:forward(outputs, targets)
+            local gradInput = criterion:backward(outputs, targets)            
+            for idx = 1, batchSize, miniBatchSize do
+                model:backward(inputs[{{idx, idx + miniBatchSize - 1}}], gradInput[{{idx, idx + miniBatchSize - 1}}])
+            end
+            dl_dx:mul(1.0 * miniBatchSize / batchSize)
+            --]]
+
+            return loss, dl_dx
+        end
+
+        _, fs = optim.sgd(feval, x, sgd_params)
+
+        count = count + 1
+        current_loss = current_loss + fs[1]
+    end
+
+    return current_loss / count   -- normalize loss
+end
+
+local eval = function(dataset, batchSize)
+    local count = 0
+    batchSize = batchSize or 200
+
+    for i = 1, dataset.size, batchSize do
+        local size = math.min(i + batchSize - 1, dataset.size) - i
+        local inputs = dataset.data[{{i,i+size-1}}]:cuda()
+        local targets = dataset.label[{{i,i+size-1}}]:long():cuda()
+        local outputs = model:forward(inputs)
+        local _, indices = torch.max(outputs, 2)
+        indices:add(-1):cuda()
+        local guessed_right = indices:eq(targets):sum()
+        count = count + guessed_right
+    end
+
+    return count / dataset.size
+end
+
+local max_iters = 50
+local last_accuracy = 0
+local decreasing = 0
+local threshold = 1 -- how many deacreasing epochs we allow
+for i = 1,max_iters do
+   -- timer = torch.Timer()
+
+    model:training()
+    local loss = training()
+
+    model:evaluate()
+    local accuracy = eval(validationset)
+    print(string.format('Epoch: %d Current loss: %4f; validation set accu: %4f', i, loss, accuracy))
+    if accuracy < last_accuracy then
+        if decreasing > threshold then break end
+        decreasing = decreasing + 1
+    else
+        decreasing = 0
+    end
+    last_accuracy = accuracy
+
+    --print('    Time elapsed: ' .. i .. 'iter: ' .. timer:time().real .. ' seconds')
+end
+
+testset.data = testset.data:double()
+eval(testset)
+
+--
+-- Different weight initialization methods
+--
+-- > model = require('weight-init')(model, 'heuristic')
+--
+require("nn")
+
+
+-- "Efficient backprop"
+-- Yann Lecun, 1998
+local function w_init_heuristic(fan_in, fan_out)
+   return math.sqrt(1/(3*fan_in))
+end
+
+-- "Understanding the difficulty of training deep feedforward neural networks"
+-- Xavier Glorot, 2010
+local function w_init_xavier(fan_in, fan_out)
+   return math.sqrt(2/(fan_in + fan_out))
+end
+
+-- "Understanding the difficulty of training deep feedforward neural networks"
+-- Xavier Glorot, 2010
+local function w_init_xavier_caffe(fan_in, fan_out)
+   return math.sqrt(1/fan_in)
+end
+
+-- "Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification"
+-- Kaiming He, 2015
+local function w_init_kaiming(fan_in, fan_out)
+   return math.sqrt(4/(fan_in + fan_out))
+end
+
+local function w_init(net, arg)
+   -- choose initialization method
+   local method = nil
+   if     arg == 'heuristic'    then method = w_init_heuristic
+   elseif arg == 'xavier'       then method = w_init_xavier
+   elseif arg == 'xavier_caffe' then method = w_init_xavier_caffe
+   elseif arg == 'kaiming'      then method = w_init_kaiming
+   else
+      assert(false)
+   end
+
+   -- loop over all convolutional modules
+   for i = 1, #net.modules do
+      local m = net.modules[i]
+      if m.__typename == 'nn.SpatialConvolution' then
+         m:reset(method(m.nInputPlane*m.kH*m.kW, m.nOutputPlane*m.kH*m.kW))
+      elseif m.__typename == 'nn.SpatialConvolutionMM' then
+         m:reset(method(m.nInputPlane*m.kH*m.kW, m.nOutputPlane*m.kH*m.kW))
+      elseif m.__typename == 'cudnn.SpatialConvolution' then
+         m:reset(method(m.nInputPlane*m.kH*m.kW, m.nOutputPlane*m.kH*m.kW))
+      elseif m.__typename == 'nn.LateralConvolution' then
+         m:reset(method(m.nInputPlane*1*1, m.nOutputPlane*1*1))
+      elseif m.__typename == 'nn.VerticalConvolution' then
+         m:reset(method(1*m.kH*m.kW, 1*m.kH*m.kW))
+      elseif m.__typename == 'nn.HorizontalConvolution' then
+         m:reset(method(1*m.kH*m.kW, 1*m.kH*m.kW))
+      elseif m.__typename == 'nn.Linear' then
+         m:reset(method(m.weight:size(2), m.weight:size(1)))
+      elseif m.__typename == 'nn.TemporalConvolution' then
+         m:reset(method(m.weight:size(2), m.weight:size(1)))            
+      end
+
+      if m.bias then
+         m.bias:zero()
+      end
+   end
+   return net
+end
+
+return w_init
+

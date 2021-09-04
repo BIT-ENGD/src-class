@@ -1,0 +1,82 @@
+CREATE PROCEDURE [dbo].[sp_DisableEnableForeignKeys] @PutFK CHAR(1)
+as
+
+ DECLARE @IdFK integer
+ DECLARE @ForeignKey sysname
+ DECLARE @ChildTable sysname
+ DECLARE @ParentTable sysname
+ DECLARE @ParentColumn sysname
+ DECLARE @ChildColumn sysname
+ DECLARE @ParentColumns varchar(1000)
+  DECLARE @ChildColumns varchar(1000)
+
+
+
+    IF EXISTS (SELECT 1 FROM sysobjects where type = 'U' and Name ='metForeignKeys')
+        DROP TABLE metForeignKeys
+
+
+    SELECT * INTO metForeignKeys FROM 
+    (
+    SELECT 
+        FK.constid as IdFK,
+        FK.KeyNo,
+        sofk.name as [Foreign Key Name],
+        soch.name as [Child Table],
+        scch.name as [Child Column],
+        sopa.name as [Parent Table],
+        scpa.name as [Parent Column]
+    FROM 
+        sysforeignkeys FK
+
+    INNER JOIN sysobjects sofk on FK.constId = sofk.id
+    INNER JOIN sysobjects soch on FK.fkeyid = soch.id
+    INNER JOIN syscolumns scch on FK.fkeyid = scch.id and FK.fkey = scch.colid
+    INNER JOIN sysobjects sopa on FK.rkeyid = sopa.id
+    INNER JOIN syscolumns scpa on FK.rkeyid = scpa.id and FK.rkey = scpa.colid
+    )T  
+
+
+    DECLARE met_C_Delete CURSOR FOR SELECT DISTINCT IdFK, [Child Table] FROM metForeignKeys ORDER BY [Child Table]
+    OPEN met_C_Delete
+
+    FETCH NEXT FROM met_C_Delete into @IdFK, @ChildTable
+    WHILE @@Fetch_Status = 0
+    BEGIN
+        SELECT @ForeignKey = [Foreign Key Name], @ChildTable = [Child Table], @ParentTable = [Parent Table] 
+            FROM metForeignKeys where IdFK = @IdFK
+
+        IF @PutFK = 'D'
+        BEGIN
+            EXEC( 'ALTER TABLE [' + @ChildTable + '] with check nocheck constraint ' + @ForeignKey)
+
+                IF @@ERROR = 0
+                    BEGIN
+                        --PRINT 'Disabled FK Constraint ' + @ForeignKey + ' on table ' + @ChildTable + ' referencing '+@ParentTable
+                        PRINT @ChildTable+' - Disabled FK Constraint ' + @ForeignKey + ' referencing '+@ParentTable
+                    END
+                ELSE
+                    BEGIN
+                        PRINT 'Error disabling FK Constraint ' + @ForeignKey + ' on table ' + @ChildTable + ' referencing '+@ParentTable
+                        --PRINT @ChildTable+' - Enabled FK Constraint ' + @ForeignKey + ' referencing '+@ParentTable
+                    END
+                END
+        ELSE
+            BEGIN
+                EXEC( 'ALTER TABLE [' + @ChildTable + '] with check check constraint ' + @ForeignKey)
+                IF @@ERROR = 0
+                    BEGIN
+                        PRINT 'Enabled FK Constraint ' + @ForeignKey + ' on table ' + @ChildTable + ' referencing '+@ParentTable
+                    END
+                ELSE
+                    BEGIN
+                        PRINT 'Error enabling FK Constraint ' + @ForeignKey + ' on table ' + @ChildTable + ' referencing '+@ParentTable
+                    END
+            END
+
+        FETCH NEXT FROM met_C_Delete into @IdFK, @ChildTable
+    END
+
+    CLOSE met_C_Delete
+    DEALLOCATE met_C_Delete
+

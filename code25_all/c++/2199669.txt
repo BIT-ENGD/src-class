@@ -1,0 +1,122 @@
+#ifndef _SERVER_H
+#define _SERVER_H
+
+#include "asynserv.h" // header file with the important lib includes
+#include <map>
+
+namespace Connections
+{
+    DWORD WINAPI MainThread(LPVOID lParam); // Main thread
+    DWORD WINAPI DataThread(LPVOID lParam); // thread that will be created for each client
+    struct ClientServer // struct to keep a server and a client pair.
+    {
+    public:
+        struct Client* Client;
+        class Server* Server;
+    };
+    struct Client // a struct wrapper to keep clients
+    {
+    public:
+        Client(SOCKET Connection, int BufferSize, UINT ID);
+        ~Client();
+        SOCKET WorkerSocket;
+        char Buffer[255];
+        bool Connected;
+        int RecvSize;
+        UINT UID;
+        void Send(char * Data);
+        void Disconnect();
+    };
+    class Server
+    {
+    private:
+        SOCKET WorkerSocket;
+        SOCKADDR_IN EndPnt;
+        UINT ID;
+        int CBufferSize;
+    public:
+        Server(int Port, int Backlog, int BufferSize);
+        ~Server();
+        __event void ClientRecieved(Client* Clientr, char * RecData);
+        bool Enabled;
+        int Port;
+        int Backlog;
+        HWND ReqhWnd;
+        std::map<UINT, Client*> ClientPool;
+        void WaitForConnections(Server*);
+        void WaitForData(Client*);
+        void InvokeClientDC(UINT);
+        void Startup();
+        void Shutdown();
+    };
+}
+#endif
+
+#include "Server.h"
+
+namespace Connections
+{
+    void Server::Startup()
+    {
+        WSADATA wsa;
+        WSAStartup(0x0202, &wsa);
+        this->WorkerSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        this->EndPnt.sin_addr.s_addr = ADDR_ANY;
+        this->EndPnt.sin_family = AF_INET;
+        this->EndPnt.sin_port = htons(this->Port);
+        this->Enabled = true;
+        this->ID = 0;
+        bind(this->WorkerSocket, (SOCKADDR*)&this->EndPnt, sizeof(this->EndPnt));
+        printf("[AsynServer]Bound..\n");
+        listen(this->WorkerSocket, this->Backlog);
+                CreateThread(NULL, NULL, &MainThread, this, NULL, NULL);
+    }
+    void Server::WaitForConnections(Server * Ser)
+    {
+        WSAEVENT Handler = WSA_INVALID_EVENT;
+        while(Ser->Enabled)
+        {
+            Handler = WSACreateEvent();
+            WSAEventSelect(Ser->WorkerSocket, Handler, FD_ACCEPT);
+            WaitForSingleObject(Handler, INFINITE);
+            SOCKET accptsock = accept(Ser->WorkerSocket, NULL, NULL);
+            Client * NewClient = new Client(accptsock, 255, Ser->ID++);
+            NewClient->Connected = true;
+            printf("[AsynServer]Client connected.\n");
+            ClientServer * OurStruct = new ClientServer();
+            OurStruct->Server = Ser;
+            OurStruct->Client = NewClient;
+            CreateThread(NULL, NULL, &DataThread, OurStruct, NULL, NULL);
+        }
+    }
+    void Server::WaitForData(Client * RClient)
+    {
+        WSAEVENT Tem = WSA_INVALID_EVENT;
+        Tem = WSACreateEvent();
+        WSAEventSelect(RClient->WorkerSocket, Tem, FD_READ);
+        while(RClient->Connected)
+        {
+            WaitForSingleObject(Tem, INFINITE);
+            RClient->RecvSize = recv(RClient->WorkerSocket, RClient->Buffer, 255, NULL);
+            if(RClient->RecvSize > 0)
+            {
+                RClient->Buffer[RClient->RecvSize] = '\0';
+                __raise this->ClientRecieved(RClient, RClient->Buffer);
+                Sleep(50);
+            }
+        }
+        return;
+    }
+    DWORD WINAPI MainThread(LPVOID lParam)
+    {
+        ((Server*)lParam)->WaitForConnections((Server*)lParam);
+        return 0;
+    }
+    DWORD WINAPI DataThread(LPVOID lParam)
+    {
+        ClientServer * Sta = ((ClientServer*)lParam);
+        Sta->Server->WaitForData(Sta->Client);
+        return 0;
+    }
+}
+

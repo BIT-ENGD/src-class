@@ -1,0 +1,42 @@
+ByteStrings
+{-# LANGUAGE RebindableSyntax    #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+module PipesZeroMQ where
+
+import           Control.Frame
+import           Control.IMonad.Do
+import           Control.IMonad.Trans
+import qualified Control.Monad          as M
+import           Data.ByteString        (ByteString)
+import           Data.String
+import           Prelude                hiding (Monad(..))
+import qualified System.ZMQ3            as ZMQ
+
+type Address = String
+
+fromList :: (M.Monad m) => [b] -> Frame b m (M a) (M a) ()
+fromList xs = mapMR_ yield xs
+
+publisher :: Address -> Frame Void IO (M ByteString) C ()
+publisher addr = do
+  c  <- liftU $ ZMQ.init 1
+  s  <-liftU $ ZMQ.socket c ZMQ.Pub
+  liftU $ ZMQ.bind s addr   
+  liftU $ print "Socket open for business!!!"
+
+  foreverR $ do
+    bs <- await
+    finallyF (ZMQ.close s M.>> ZMQ.term c M.>> print "ZMQ socket closed") $ do
+         (liftU $ ZMQ.send s [] bs)
+         (liftU (print "Sending message"))
+
+λ> runFrame $ (publisher localAddress) <-< (fromList ["This", "that", "that"] >> close)
+
+"Socket open for business"
+"Sending message"
+"ZMQ socket closed"
+*** Exception: ZMQError { errno = 88, source = "send", message = "Socket operation on non-socket" }
+
+publisher
+BytesString

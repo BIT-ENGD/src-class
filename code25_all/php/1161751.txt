@@ -1,0 +1,162 @@
+Public Class AES128Helper
+    Public Password As String = Nothing
+    Public PasswordSalt As String = Nothing
+    Private DefaultIntSize As Integer = 4
+
+    Public Function Encryptaes128(ByVal PlainText() As Byte) As Byte()
+        Try
+            Using MStream As New MemoryStream 'Memory stream to write encrypted data to.
+                Using A128 As New AesManaged
+                    'Key.
+                    Dim DeriveBytes As New Rfc2898DeriveBytes(Password, Encoding.UTF8.GetBytes(PasswordSalt))
+                    A128.Key = DeriveBytes.GetBytes(128 / 8)
+                    'IV.
+                    If Integer.MaxValue = Int64.MaxValue Then DefaultIntSize = 8
+                    MStream.Write(BitConverter.GetBytes(A128.IV.Length), 0, DefaultIntSize)
+                    MStream.Write(A128.IV, 0, A128.IV.Length)
+                    'Create Crypto Stream that transforms memory stream using des encryption.
+                    Using CryptoStream As New CryptoStream(MStream, A128.CreateEncryptor(), CryptoStreamMode.Write)
+                        'Write out and flush TripleDES encrypted file to memory stream.
+                        With CryptoStream
+                            .Write(PlainText, 0, PlainText.Length)
+                            .FlushFinalBlock()
+                        End With
+                        CryptoStream.Close()
+                    End Using
+                    'Return encrypted data.
+                    Return MStream.ToArray
+                End Using
+                MStream.Close()
+            End Using
+        Catch ex As Exception
+            Return Nothing
+        End Try
+    End Function
+
+    Public Function Decryptaes128(ByVal EncryptedByteData() As Byte) As Byte()
+        Try
+            Using MStream As MemoryStream = New MemoryStream(EncryptedByteData) 'Memory stream to write decrypted data to.
+                Using A128 As New AesManaged
+                    'Key.
+                    Dim DeriveBytes As New Rfc2898DeriveBytes(Password, Encoding.UTF8.GetBytes(PasswordSalt))
+                    A128.Key = DeriveBytes.GetBytes(128 / 8)
+                    'Get the IV from the encrypted stream.
+                    A128.IV = ReadByteArray(MStream)
+                    'Create crypto stream set to read and do a TripleDES decryption transform on incoming bytes.
+                    Using CryptoStream As New CryptoStream(MStream, A128.CreateDecryptor(), CryptoStreamMode.Read)
+                        'Get the decrypted bytes.
+                        Dim DestArray() As Byte = New BinaryReader(CryptoStream).ReadBytes(MStream.Length * 2)
+                        Return DestArray 'Return decrypted data.
+                    End Using
+                End Using
+                MStream.Close()
+            End Using
+        Catch ex As Exception
+            Return Nothing
+        End Try
+    End Function
+
+    Private Function ReadByteArray(ByVal s As Stream) As Byte()
+        If Integer.MaxValue = Int64.MaxValue Then DefaultIntSize = 8
+        Dim rawLength(DefaultIntSize - 1) As Byte
+        If s.Read(rawLength, 0, rawLength.Length) <> rawLength.Length Then
+            Throw New SystemException("Stream did not contain properly formatted byte array.")
+        End If
+        Dim buffer(BitConverter.ToInt32(rawLength, 0) - 1) As Byte
+        If s.Read(buffer, 0, buffer.Length) <> buffer.Length Then
+            Throw New SystemException("Did not read byte array properly.")
+        End If
+        Return buffer
+    End Function
+End Class
+
+Dim g As New AES128Helper
+g.Password = "Password"
+g.PasswordSalt = "PasswordSalt"
+Dim b As Byte() = System.Text.Encoding.UTF8.GetBytes("Sad day really.")
+Dim b2 As Byte() = g.Encryptaes128(b)
+Dim b64 As String = Convert.ToBase64String(b2)
+
+Public Class AES128Helper2
+    Public Key As Byte() = Nothing
+    Public IV As Byte() = Nothing
+
+    Public Function Encryptaes128(ByVal PlainText() As Byte) As Byte()
+        Dim CryptoStream As CryptoStream = Nothing
+        Dim MStream As New System.IO.MemoryStream 'Memory stream to write encrypted data to.
+        Dim A128 As New AesManaged
+        Try
+            'Create aes128 Encryptor from this instance.
+            Dim A128Encrypt As ICryptoTransform = A128.CreateEncryptor(Key, IV)
+            'Create Crypto Stream that transforms memory stream using des encryption.
+            CryptoStream = New CryptoStream(MStream, A128Encrypt, CryptoStreamMode.Write)
+            'Write out and flush TripleDES encrypted file to memory stream.
+            With CryptoStream
+                .Write(PlainText, 0, PlainText.Length)
+                .FlushFinalBlock()
+            End With
+            'Return encrypted data.
+            Return MStream.ToArray
+        Catch ex As Exception
+            Return Nothing
+        Finally 'Close streams.
+            If CryptoStream IsNot Nothing Then CryptoStream.Close()
+            If MStream IsNot Nothing Then MStream.Close()
+        End Try
+        Return Nothing
+    End Function
+
+    Public Function Decryptaes128(ByVal EncryptedByteData() As Byte) As Byte()
+        Dim MStream As System.IO.MemoryStream = Nothing 'Memory stream to write decrypted data to.
+        Dim CryptoStreamDecr As CryptoStream
+        Dim A128 As New AesManaged
+        Try
+            'Create aes128 instance and Decryptor.
+            Dim A128Decrypt As ICryptoTransform = A128.CreateDecryptor(Key, IV)
+            'Create crypto stream set to read and do a TripleDES decryption transform on incoming bytes.
+            MStream = New MemoryStream(EncryptedByteData)
+            CryptoStreamDecr = New CryptoStream(MStream, A128Decrypt, CryptoStreamMode.Read)
+            'Get the decrypted bytes.
+            Dim DestArray() As Byte = New BinaryReader(CryptoStreamDecr).ReadBytes(MStream.Length * 2)
+            Return DestArray 'Return decrypted data.
+        Catch ex As Exception
+            Return Nothing
+        Finally 'Close streams.
+            If MStream IsNot Nothing Then MStream.Close()
+            '-- Don't use the following. It gives error "Stream does not support writing
+            'If Not (cryptostreamDecr Is Nothing) Then cryptostreamDecr.Close()
+        End Try
+        Return Nothing
+    End Function
+
+    Public Function Md5Hash(ByVal ByteData() As Byte) As Byte()
+        Return New MD5CryptoServiceProvider().ComputeHash(ByteData)
+    End Function
+
+    Public Function Md5HashString(ByVal ByteData() As Byte) As String
+        Return BitConverter.ToString(Md5Hash(ByteData)).Replace("-", "").ToLower()
+    End Function
+End Class
+
+Dim c As New Cryptography.AES128Helper
+Dim md5 As String = c.Md5HashString(UTF8Encoding.UTF8.GetBytes("Password"))
+Dim key As Byte() = System.Text.Encoding.UTF8.GetBytes(md5)
+Dim iv As Byte() = System.Text.Encoding.UTF8.GetBytes("PasswordSalt")
+Dim data As Byte() = System.Text.Encoding.UTF8.GetBytes("Sad day really.")
+c.Key = key
+c.IV = iv
+Dim enc As Byte() = c.Encryptaes128(data)
+Dim b64 As String = Convert.ToBase64String(enc)
+
+$cc = $_POST['VariableFromSilverlight'];
+$key = 'Password';
+$iv = 'PasswordSalt';
+$length = strlen($cc);
+$cipher = mcrypt_module_open("rijndael-128", '', 'cbc', '');
+$ks = mcrypt_enc_get_key_size($cipher);
+$key = substr(md5($key), 0, $ks);
+mcrypt_generic_init($cipher, $key, $iv);
+$decrypted = mdecrypt_generic($cipher, $cc);
+mcrypt_generic_deinit($cipher);
+echo "decrypted: " . substr($decrypted, 0, $length) . "\n";
+

@@ -1,0 +1,71 @@
+bzip2
+stdout
+fwrite(buffer, 1, length, stdout);
+
+stdout
+stdout
+\n
+realloc
+malloc-free
+char bzBuf[BZBUFMAXLEN];
+BZFILE *bzFp;
+int bzError, bzNBuf;
+char bzLineBuf[BZLINEBUFMAXLEN];
+char *bzBufRemainder = NULL;
+int bzBufPosition, bzLineBufPosition;
+
+bzFp = BZ2_bzReadOpen(&bzError, *fp, 0, 0, NULL, 0); /* http://www.bzip.org/1.0.5/bzip2-manual-1.0.5.html#bzcompress-init */ 
+
+if (bzError != BZ_OK) {
+    BZ2_bzReadClose(&bzError, bzFp);   
+    fprintf(stderr, "\n\t[gchr2] - Error: Bzip2 data could not be retrieved\n\n");
+    return -1;          
+}
+
+bzError = BZ_OK;
+bzLineBufPosition = 0;
+while (bzError == BZ_OK) {
+
+    bzNBuf = BZ2_bzRead(&bzError, bzFp, bzBuf, sizeof(bzBuf));
+
+    if (bzError == BZ_OK || bzError == BZ_STREAM_END) {
+        if (bzBufRemainder != NULL) {
+            /* fprintf(stderr, "copying bzBufRemainder to bzLineBuf...\n"); */
+            strncpy(bzLineBuf, bzBufRemainder, strlen(bzBufRemainder)); /* leave out \0 */
+            bzLineBufPosition = strlen(bzBufRemainder);
+        }
+
+        for (bzBufPosition = 0; bzBufPosition < bzNBuf; bzBufPosition++) {
+            bzLineBuf[bzLineBufPosition++] = bzBuf[bzBufPosition];
+            if (bzBuf[bzBufPosition] == '\n') {
+                bzLineBuf[bzLineBufPosition] = '\0'; /* terminate bzLineBuf */
+
+                /* process the line buffer, e.g. print it out or transform it, etc. */
+                fprintf(stdout, "%s", bzLineBuf);
+
+                bzLineBufPosition = 0; /* reset line buffer position */
+            }
+            else if (bzBufPosition == (bzNBuf - 1)) {
+                bzLineBuf[bzLineBufPosition] = '\0';
+                if (bzBufRemainder != NULL)
+                    bzBufRemainder = (char *)realloc(bzBufRemainder, bzLineBufPosition);
+                else
+                    bzBufRemainder = (char *)malloc(bzLineBufPosition);
+                strncpy(bzBufRemainder, bzLineBuf, bzLineBufPosition);
+            }
+        }
+    }
+}
+
+if (bzError != BZ_STREAM_END) {
+    BZ2_bzReadClose(&bzError, bzFp);
+    fprintf(stderr, "\n\t[gchr2] - Error: Bzip2 data could not be uncompressed\n\n");
+    return -1;  
+} else {   
+    BZ2_bzReadGetUnused(&bzError, bzFp, 0, 0);
+    BZ2_bzReadClose(&bzError, bzFp);
+}
+
+free(bzBufRemainder);
+bzBufRemainder = NULL;
+

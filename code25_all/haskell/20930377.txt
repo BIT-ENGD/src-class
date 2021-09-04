@@ -1,0 +1,98 @@
+openssl s_server
+module Main ( main ) where
+
+import Happstack.Server.Response (ok)
+import Happstack.Server.SimpleHTTPS (TLSConf (..), nullTLSConf, simpleHTTPS)
+import System.Environment (getArgs)
+
+main :: IO ()
+main = do args <- getArgs
+          case args of
+            [keyFile, certFile]         -> runServer keyFile certFile Nothing
+            [keyFile, certFile, caFile] -> runServer keyFile certFile (Just caFile)
+
+runServer :: FilePath -> FilePath -> Maybe FilePath -> IO ()
+runServer keyFile certFile caFile = simpleHTTPS conf $ ok ":-)"
+    where conf = nullTLSConf { tlsPort = 8443
+                             , tlsCert = certFile
+                             , tlsKey  = keyFile
+                             , tlsCA   = caFile
+                             }
+
+#! /bin/sh
+
+openssl ecparam -name secp384r1 -genkey -out selfsigned.key
+openssl req -new -x509 -days 365 -key selfsigned.key -out selfsigned.crt
+
+runghc Main.hs selfsigned.key selfsigned.crt
+
+#! /bin/sh
+
+rm -rf ca
+mkdir ca
+mkdir ca/newcerts
+mkdir ca/private
+touch ca/index.txt
+echo "100001" >ca/serial
+
+openssl ecparam -name secp384r1 -genkey -out ca/private/cakey.pem
+openssl req -new -x509 -days 365 -key ca/private/cakey.pem -out ca/cacert.pem
+
+openssl ecparam -name secp384r1 -genkey -out onelevel-server.key
+openssl req -new -days 365 -key onelevel-server.key -out onelevel-server.req
+openssl ca -config onelevel.openssl.cnf -in onelevel-server.req -out onelevel-server.crt
+
+runghc Main.hs onelevel-server.key onelevel-server.crt ca/cacert.pem
+
+openssl
+openssl s_server -accept 8443 -key onelevel-server.key -cert onelevel-server.crt -CAfile ca/cacert.pem
+
+onelevel.openssl.cnf
+[ ca ]
+default_ca = CA_onelevel
+
+[ CA_onelevel ]
+
+dir              = ./ca
+certs            = $dir/certs
+crl_dir          = $dir/crl
+database         = $dir/index.txt
+new_certs_dir    = $dir/newcerts
+
+certificate      = $dir/cacert.pem
+serial           = $dir/serial
+crlnumber        = $dir/crlnumber
+
+crl              = $dir/crl.pem
+private_key      = $dir/private/cakey.pem
+
+x509_extensions  = onelevel_cert
+
+name_opt         = ca_default
+cert_opt         = ca_default
+
+default_days     = 365
+default_crl_days = 30
+default_md       = default
+preserve         = no
+
+policy           = policy_match
+
+[ policy_match ]
+
+countryName            = match
+stateOrProvinceName    = match
+organizationName       = match
+organizationalUnitName = match
+commonName             = supplied
+emailAddress           = optional
+
+[ onelevel_cert ]
+
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+

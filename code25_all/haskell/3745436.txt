@@ -1,0 +1,44 @@
+{-# LANGUAGE Arrows #-} 
+
+module Ball where
+
+import FRP.Yampa
+
+type Position  = Double
+type Velocity  = Double
+type Height    = Double
+
+data Ball = Ball {
+      height :: Height,
+      width  :: Position,
+      vel    :: Velocity
+} deriving (Show)
+
+type Tip = Event ()
+
+fly :: Position -> (Height, Velocity) -> SF Tip (Ball, Event (Height,Velocity))
+fly w0 (h0, v0) = proc tipEvent -> do
+     let tip = (tipEvent == Event ())
+     v <- (v0+) ^<< integral -< -10.0
+     h <- (h0+) ^<< integral -< v 
+     returnA -< (Ball h w0 v, 
+                 if h < 0 then Event (0,(-v*0.6)) 
+                  else if tip then Event (h, (v*2))
+                   else NoEvent)
+
+bounce w (h,v) = switch (fly w (h,v)) (bounce w)   
+
+runBounce w (h,v)  = embed (bounce 10 (100.0, 10.0)) (deltaEncode 0.1 [NoEvent, NoEvent, NoEvent, Event (), NoEvent])
+
+fly :: Position -> (Height, Velocity, Bool) -> SF Tip (Ball, Event (Height,Velocity,Bool))
+fly w0 (h0, v0, alreadyTipped) = proc tipEvent -> do
+     let tip = tipEvent == Event () && (not alreadyTipped)
+     v <- (v0+) ^<< integral -< -10.0
+     h <- (h0+) ^<< integral -< v 
+     returnA -< (Ball h w0 v, 
+                 if h < 0 then Event (0,(-v*0.6), False) 
+                  else if tip then Event (h, (v*2), True)
+                   else NoEvent)
+
+bounce w (h,v,alreadyTipped) = switch (fly w (h,v,alreadyTipped)) (bounce w)   
+

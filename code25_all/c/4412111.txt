@@ -1,0 +1,163 @@
+A
+B
+#include<avr/io.h>
+#include<avr/eeprom.h>
+#include<avr/interrupt.h>
+
+volatile UINT intrs, i = 1, count, switch_pressed = 0, uiAdd, uiAddEnd, flag_led_intr;
+volatile UINT record, play_recorded_keys, flag_serial_receiver;
+
+volatile unsigned char get_switch=0, data, TX_complete, TX, RX;
+
+extern void __vector_25 (void) __attribute__ ((signal)); //Interrupt vector
+
+#define LED_DELAY 10
+
+#define F_CPU 2000000L
+
+#define BAUDRATE 9600
+
+#define BAUD_PRESCALER (((F_CPU/(BAUDRATE * 16UL)))-1)
+
+void ReadWriteSerialPort(void)
+{
+    while(((UCSR0A) & (1<<UDRE0)) == 0)
+        ;
+
+    UDR0 = RX;
+
+    if(RX == 0x1A) //CRTL-z
+    {
+        record = !record;
+        play_recorded_keys = 0;
+    }
+    else
+        if(RX == 0x19) //CRTL-y
+        {
+            record = 0;
+            uiAdd = 0;
+            play_recorded_keys = !play_recorded_keys;
+        }
+
+    if(record == 1)
+    {
+        EEPROM_write(uiAdd++, RX);
+    }
+
+    if(uiAdd == 4096)
+    {
+        record = 0;
+        uiAddEnd = 4096;
+    }
+    else
+        uiAddEnd = uiAdd;
+}
+
+void initialize(void)
+{
+    cli();        //Stop all interrupts
+
+    flag_led_intr = 0;
+    record = 0;
+    play_recorded_keys = 0;
+    RX = 0;
+    TX = 0;
+    flag_serial_receiver = 0;
+
+    uiAdd = 0;
+    uiAddEnd = 0;
+
+    enable_ports();
+    usart_init();
+
+    sei();
+}
+
+void enable_ports() //Enables PORTB, PORTD
+{
+    DDRB = 0xff;  //PORTB as output for leds
+
+    PORTB = 0xff; //Initialize PORTB
+
+    DDRD = 0x00;  //PORTD as input for switches
+}
+
+void usart_init(void) //Enables USART
+{
+   /* Set baud rate */
+
+   UBRR0L = BAUD_PRESCALER);
+   UBRR0H = (BAUD_PRESCALER>>8);
+
+   /* Set frame format: 8 bit data + start bit + stop bit */
+
+   UCSR0C = 0x06;
+
+   /* Enable reciever and transmitter */
+
+   UCSR0B = 0x98;
+}
+
+void EEPROM_write(unsigned int uiAddress, unsigned char ucData)
+{
+    while(EECR & (1<<EEPE));    /* Wait for completion of previous write */
+
+        EEARH = (uiAddress>>8); /* Set up address and Data Registers */
+        EEARL = uiAddress;
+
+        EEDR = ucData;
+        cli();
+        EECR |= (1<<EEMPE);     /* Write logical one to EEMPE */
+
+        EECR |= (1<<EEPE);      /* Start eeprom write by setting EEPE */
+        sei();
+}
+unsigned char EEPROM_read(unsigned int uiAddress)
+{
+        while(EECR & (1<<EEPE)); /* Wait for completion of previous write */
+
+        EEARH = (uiAddress>>8);  /* Set up address register */
+        EEARL = uiAddress;
+
+        EECR |= (1<<EERE);       /* Start eeprom read by writing EERE */
+
+        return EEDR;             /* Return data from Data Register */
+}
+
+void __vector_25 (void)
+{
+    RX = UDR0;
+    flag_serial_receiver = 1;
+    sei();
+}
+
+int main(void)
+{
+   initialize();
+
+   while(1)
+   {
+        if(flag_serial_receiver == 1)
+        {
+            ReadWriteSerialPort();
+            flag_serial_receiver = 0;
+        }
+
+        if(play_recorded_keys)
+        {
+            TX = EEPROM_read(uiAdd);
+            uiAdd++;
+
+            if(uiAdd == 4096 || uiAdd >= uiAddEnd)
+            {
+                play_recorded_keys = 0;
+                uiAdd = 0;
+            }
+            while(((UCSR0A) & (1<<UDRE0)) == 0)
+                ;
+            UDR0 = TX;
+        }
+    }
+    return(0);
+}
+

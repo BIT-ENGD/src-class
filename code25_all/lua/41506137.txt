@@ -1,0 +1,105 @@
+local enc = nn.Sequential()
+enc:add(nn.LookupTableMaskZero(opt.vocab_size, opt.hidden_size))
+enc.lstmLayers = {}
+for i=1,opt.layer_nums do
+    if opt.use_seqlstm then
+        enc.lstmLayers[i] = nn.SeqLSTM(opt.hidden_size, opt.hidden_size)
+        enc.lstmLayers[i]:maskZero()
+        enc:add(enc.lstmLayers[i])
+    else
+        enc.lstmLayers[i] = nn.LSTM(opt.hidden_size, opt.hidden_size):maskZero(1)
+        enc:add(nn.Sequencer(enc.lstmLayers[i]))
+    end
+end
+enc:add(nn.Select(1, -1))
+
+-- Decoder
+local dec = nn.Sequential()
+dec:add(nn.LookupTableMaskZero(opt.vocab_size, opt.hidden_size))
+dec.lstmLayers = {}
+for i=1,opt.layer_nums do
+    if opt.use_seqlstm then
+        dec.lstmLayers[i] = nn.SeqLSTM(opt.hidden_size, opt.hidden_size)
+        dec.lstmLayers[i]:maskZero()
+        dec:add(dec.lstmLayers[i])
+    else
+        dec.lstmLayers[i] = nn.LSTM(opt.hidden_size, opt.hidden_size):maskZero(1)
+        dec:add(nn.Sequencer(dec.lstmLayers[i]))
+    end
+end
+dec:add(nn.Sequencer(nn.MaskZero(nn.Linear(opt.hidden_size, opt.vocab_size), 1)))
+dec:add(nn.Sequencer(nn.MaskZero(nn.LogSoftMax(), 1)))
+local criterion = nn.SequencerCriterion(nn.MaskZeroCriterion(nn.ClassNLLCriterion(),1))
+
+enc:zeroGradParameters()
+dec:zeroGradParameters()
+
+-- Forward pass
+local encOut = enc:forward(encInSeq)
+forwardConnect(enc, dec)
+local decOut = dec:forward(decInSeq)
+--print(decOut)
+local err = criterion:forward(decOut, decOutSeq)
+
+print(string.format("Iteration %d ; NLL err = %f ", i, err))
+
+-- Backward pass
+local gradOutput = criterion:backward(decOut, decOutSeq)
+dec:backward(decInSeq, gradOutput)
+backwardConnect(enc, dec)
+local zeroTensor = torch.Tensor(encOut):zero()
+enc:backward(encInSeq, zeroTensor)
+
+dec:updateParameters(opt.learningRate)
+enc:updateParameters(opt.learningRate)
+
+-- Concatenate the enc's and dec's parameters
+local x = torch.cat(e_x, d_x)
+local dl_dx = torch.cat(e_dl_dx, d_dl_dx)
+
+local feval = function(x_new)
+    if x ~= x_new then
+        x:copy(x_new)
+        local e_x_new = torch.Tensor(x_new{{1, 1322000}})
+        local d_x_new = torch.Tensor(x_new{{1322001, 2684100}})
+        e_x:copy(e_x_new)
+        d_x:copy(d_x_new)
+    end
+
+    dl_dx:zero()
+    e_dl_dx = dl_dx{{1, 1322000}}
+    d_dl_dx = dl_dx{{1322001, 2684100}}
+
+    -- Forward pass
+    local encOut = enc:forward(encInSeq)
+    forwardConnect(enc, dec)
+    local decOut = dec:forward(decInSeq)
+
+    local err = criterion:forward(decOut, decOutSeq)
+
+    -- print(string.format("Iteration %d ; NLL err = %f ", i, err))
+
+    -- Backward pass
+    local gradOutput = criterion:backward(decOut, decOutSeq)
+    dec:backward(decInSeq, gradOutput)
+    backwardConnect(enc, dec)
+    local zeroTensor = torch.Tensor(encOut):zero()
+    enc:backward(encInSeq, zeroTensor)
+
+    x = torch.cat(e_x, d_x)
+    dl_dx = torch.cat(e_dl_dx, d_dl_dx)
+    return err, dl_dx
+end
+
+_, fs = optim.adadelta(feval, x, optim_configs)
+
+encoder-decoder-coupling.lua:161: torch.DoubleTensor has no call operator
+stack traceback:
+    [C]: in function 'dl_dx'
+    encoder-decoder-coupling.lua:161: in function 'opfunc'
+    /home/mydesktop/torch/install/share/lua/5.2/optim/adadelta.lua:31: in function 'adadelta'
+    encoder-decoder-coupling.lua:185: in main chunk
+    [C]: in function 'dofile'
+    ...ktop/torch/install/lib/luarocks/rocks/trepl/scm-1/bin/th:145: in main chunk
+    [C]: in ?
+

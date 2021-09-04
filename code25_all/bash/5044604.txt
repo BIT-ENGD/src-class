@@ -1,0 +1,95 @@
+#!/bin/bash
+
+maxwidth=50     # line length (in characters)
+filled_char="#"
+blank_char="."
+
+current=0 max=0 i=0
+
+current=${1:-0} 
+max=${2:-100} 
+
+if (( $current > $max )) 
+then 
+    echo >&2 "current value must be smaller max. value" 
+    exit 1 
+fi
+percent=`awk 'BEGIN{printf("%5.2f", '$current' / '$max' * 100)}'`
+
+chars=($current*$maxwidth)/$max
+echo -ne " ["
+
+while (( $i < $maxwidth )) 
+do 
+    if (( $i <= $chars ));then
+        echo -ne $filled_char 
+    else
+        echo -ne $blank_char
+    fi 
+    i=($i+1)
+done 
+
+echo -ne "] $percent%\r" 
+
+
+if (( $current == $max )); then
+    echo -ne "\r"
+    echo
+fi
+
+#!/bin/bash
+
+
+IPTABLES_TARGET="DROP"
+IPTABLES_CHAINNAME="TOR"
+
+WORKING_DIR="/tmp/"
+
+# get IP address of eth0 network interface
+IP_ADDRESS=$(ifconfig eth0 | awk '/inet addr/ {split ($2,A,":"); print A[2]}')
+
+
+
+if ! iptables -L "$IPTABLES_CHAINNAME" -n >/dev/null 2>&1 ; then            #If chain doesn't exist
+    iptables -N "$IPTABLES_CHAINNAME" >/dev/null 2>&1               #Create it
+fi
+
+
+cd $WORKING_DIR
+
+
+wget -q -O - http://proxy.org/tor_blacklist.txt -U NoSuchBrowser/1.0 > temp_tor_list1
+sed -i 's|RewriteCond %{REMOTE_ADDR} \^||g' temp_tor_list1
+sed -i 's|\$.*$||g' temp_tor_list1
+sed -i 's|\\||g' temp_tor_list1
+sed -i 's|Rewrite.*$||g' temp_tor_list1
+
+wget -q -O - "https://check.torproject.org/cgi-bin/TorBulkExitList.py?ip=$IP_ADDRESS&port=80" -U NoSuchBrowser/1.0 > temp_tor_list2
+wget -q -O - "https://check.torproject.org/cgi-bin/TorBulkExitList.py?ip=$IP_ADDRESS&port=9998" -U NoSuchBrowser/1.0 >> temp_tor_list2
+sed -i 's|^#.*$||g' temp_tor_list2
+
+
+
+iptables -F "$IPTABLES_CHAINNAME"
+
+
+CMD=$(cat temp_tor_list1 temp_tor_list2 | uniq | sort)
+UBOUND=$(echo "$CMD" | grep -cve '^\s*$')
+
+for IP in $CMD; do
+    let COUNT=COUNT+1
+    _progress_bar $COUNT $UBOUND
+    iptables -A "$IPTABLES_CHAINNAME" -s $IP -j $IPTABLES_TARGET
+done
+
+iptables -A "$IPTABLES_CHAINNAME" -j RETURN
+
+
+rm temp_tor*
+
+#!/bin/bash
+
+for i in {1..100}; do
+    _progress_bar $i 100
+done
+

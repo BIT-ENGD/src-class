@@ -1,0 +1,72 @@
+No instance for (PersistBackend (GGHandler Scheduler Scheduler) IO)
+  arising from a use of `checkDateStatus'
+Possible fix:
+  add an instance declaration for
+  (PersistBackend (GGHandler Scheduler Scheduler) IO)
+In the first argument of `checkM', namely `checkDateStatus'
+In the expression: checkM checkDateStatus
+In the expression:
+    checkM checkDateStatus
+  $ (jqueryDayField
+       (def {jdsChangeYear = True, jdsYearRange = "2011:2012"}))
+
+getManagerR :: Handler RepHtml
+getManagerR = do
+    ((res, widget), enctype) <- runFormGet productForm
+    let findTestId = 1
+        res' = prepST res
+        scheduledTest = makeScheduledTest res'
+    dataInsert <- runDB $ insert scheduledTest
+    defaultLayout [whamlet|
+<p>Result:#{show res}
+   <form enctype=#{enctype}>
+      ^{widget}
+|]
+
+
+
+productForm :: Html
+            -> Form Scheduler Scheduler (FormResult SelectedProduct, Widget)
+productForm extra = do
+   pInfo <- liftIO getUIdata
+   let products = V.toList $ V.map productACC  $ fst pInfo
+       versions = V.toList $ V.map versionsACC $ snd pInfo
+   (productRes, productView) <- mreq (radioField products) "Placeholder" Nothing
+   versionInfo <- mapM generateVersionSelectFields versions
+   (dateRes, dateView) <- mreq requestedDayField "Schedule" Nothing
+
+--     (dateRes, dateView) <- mreq (jqueryDayField def
+--                           { jdsChangeYear = True
+--                           , jdsYearRange = "2011:2012"
+--                           }) "Schedule" Nothing
+
+   let versionRes = map fst versionInfo
+       versionViews = map snd versionInfo
+       widget = do
+          toWidget [whamlet|
+  #{extra}
+ <p>
+    ^{fvInput productView}
+     $forall versionView <- versionViews
+        ^{fvInput versionView}
+    ^{fvInput dateView}
+    <input type=submit value="Request Test">
+ |]
+
+   return (makeSelected productRes versionRes dateRes, widget)
+
+
+requestedDayField = checkM checkDateStatus $ (jqueryDayField def
+                                                     { jdsChangeYear = True
+                                                     , jdsYearRange = "2011:2012"
+                                                     })
+
+errorMessage :: Text 
+errorMessage = "I can't go for that, no can do."
+
+checkDateStatus date = do
+   maybeTaken <- getBy $ UniqueStartDate date
+   case maybeTaken of
+      Nothing -> return $ Left errorMessage
+      otherwise -> return $ Right date
+

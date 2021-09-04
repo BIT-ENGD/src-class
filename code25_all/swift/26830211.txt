@@ -1,0 +1,78 @@
+    let config = NSURLSessionConfiguration.defaultSessionConfiguration()
+    config.URLCache = NSURLCache.sharedURLCache()
+    //config.URLCache = NSURLCache(memoryCapacity: 512000000, diskCapacity: 1000000000, diskPath: "urlCache")
+
+    let urlString = apiUrlForFilter(filter, withMode: mode, withLimit: limit, withOffset: offset)
+    let url = NSURL(string: urlString)
+
+    var policy: NSURLRequestCachePolicy?
+    if ignoreCache == true {
+        policy = .ReloadIgnoringLocalCacheData
+    } else {
+        policy = .UseProtocolCachePolicy
+    }
+
+    let request = NSURLRequest(URL: url!, cachePolicy: policy!, timeoutInterval: 20)
+    let session = NSURLSession(configuration: config, delegate: self, delegateQueue: nil)
+    let task = session.dataTaskWithRequest(request)
+    task.resume()
+
+func URLSession(session: NSURLSession, dataTask: NSURLSessionDataTask, didReceiveData data: NSData) {
+    if receivedData == nil {
+        receivedData = NSMutableData()
+    }
+    receivedData!.appendData(data)
+    println("did receive data: \(receivedData!.length) bytes")
+}
+
+func URLSession(session: NSURLSession, dataTask: NSURLSessionDataTask, willCacheResponse proposedResponse: NSCachedURLResponse, completionHandler: (NSCachedURLResponse!) -> Void) {
+    println("willCacheResponse was called")
+
+    let response: NSURLResponse = proposedResponse.response
+    let httpResponse = response as NSHTTPURLResponse
+    var headers = httpResponse.allHeaderFields
+
+    var modifiedHeaders = headers        
+    modifiedHeaders.updateValue("max-age=300", forKey: "Cache-Control")
+    let modifiedResponse = NSHTTPURLResponse(URL: httpResponse.URL!, statusCode: httpResponse.statusCode, HTTPVersion: "HTTP/1.1", headerFields: modifiedHeaders)
+    let cachedResponse = NSCachedURLResponse(response: modifiedResponse!, data: proposedResponse.data, userInfo: proposedResponse.userInfo, storagePolicy: proposedResponse.storagePolicy)
+    completionHandler(cachedResponse)
+}
+
+func URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError error: NSError?) {
+    session.finishTasksAndInvalidate()
+
+    if error != nil {
+        var string: String?
+        if errorString != nil {
+            string = errorString
+        } else {
+            string = Helpers.NSURLErrorDomainErrorForCode(error!.code)
+        }
+        errorCallback(string!)
+        return
+    }
+
+    if receivedData == nil {
+        errorCallback("the query returned an empty result")
+        return
+    }
+
+    var jsonError: NSError?
+    let results: AnyObject! = NSJSONSerialization.JSONObjectWithData(receivedData!, options: NSJSONReadingOptions.AllowFragments, error: nil)
+
+    if results == nil {
+        errorCallback("the data returned was not valid JSON")
+        return
+    }
+
+    let jsonParsed = JSONValue.fromObject(results)
+
+    if let parsedAPIError = jsonParsed!["error"]?.string {
+        errorCallback("API error: \(parsedAPIError)")
+        return
+    }
+
+    callback(jsonParsed!, self.serverTime!)
+}
+

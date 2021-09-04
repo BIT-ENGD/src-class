@@ -1,0 +1,45 @@
+akka.actor.Cancellable
+tick(1, 5, context.system.scheduler.schedule(Duration.Zero, 3 seconds, self, "tick"))
+
+val poll = context.system.scheduler.schedule(Duration.Zero, 3 seconds, self, "tick")
+tick(1, 5, poll)
+
+import akka.actor.{Cancellable, ActorSystem}
+import akka.actor.ActorDSL._
+import concurrent.duration._
+
+object PollerDemo {
+  def run() {
+    implicit val system = ActorSystem("DemoPoller")
+    import system.dispatcher
+
+    actor(new Act{
+      become {
+        case "tick" => println("UH-OH!")
+        case "start" =>
+          become {
+            tick(1, 5, context.system.scheduler.schedule(Duration.Zero, 3 seconds, self, "tick"))
+          }
+      }
+      def tick(curr:Long, max:Long, poll:Cancellable):Receive = {
+        case "tick" => {
+          println(s"poll $curr/$max")
+          if(curr > max)
+            cancel(poll)
+          else
+            become{ tick(curr + 1, max, poll) }
+        }
+      }
+      def cancel(poll:Cancellable) {
+        println("cancelling")
+        poll.cancel()
+        println(s"cancelled successfully? ${poll.isCancelled}")
+        println("shutting down")
+        context.system.shutdown()
+      }
+    }) ! "start"
+
+    system.awaitTermination(1 minute)
+  }
+}
+

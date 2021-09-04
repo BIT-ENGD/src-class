@@ -1,0 +1,118 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <termios.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <time.h>
+
+#define CLOCKID CLOCK_REALTIME
+#define SIG SIGRTMIN
+int reset = 0;
+void changemode(int);
+int  kbhit(void);
+int pfds[2];
+
+static void handler(int sig, siginfo_t *si, void *uc)
+{
+    write(pfds[1], "reset", 6);
+}
+
+int main(void)
+{
+    int ch;
+    timer_t timerid;
+    struct sigaction sa;
+    struct itimerspec its;
+    struct sigevent sev;
+    long long freq_nanosecs;
+    char buf[30];
+
+    pipe(pfds);
+
+    sa.sa_flags = 0;
+    sa.sa_sigaction = handler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIG, &sa, NULL) == -1)
+    {
+        printf("Error\n");
+        exit(1);
+    }
+
+    changemode(1);
+
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIG;
+    sev.sigev_value.sival_ptr = &timerid;
+    if (timer_create(CLOCKID, &sev, &timerid) == -1)
+    {
+        printf("Error timer_create");
+        exit(1);
+    }
+
+    its.it_value.tv_sec = 1;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = its.it_value.tv_sec;
+    its.it_interval.tv_nsec = its.it_value.tv_nsec;
+
+    if (timer_settime(timerid, 0, &its, NULL) == -1)
+    {
+        printf("Error timer_settime");
+        exit(1);
+    }
+
+    while(1)
+    {
+        if (kbhit())
+        {
+            ch = getchar();
+            printf("%d %c\n", ch, ch);
+            if (ch == 'q')
+            {
+                printf("\nQuitting...\n");
+                break;
+            }
+        }
+        else
+        {
+            memset(buf, 0, 30);
+            read(pfds[0], buf, 6);
+            printf("\n%s", buf);
+        }
+    }
+
+    changemode(0);
+    return 0;
+}
+
+void changemode(int dir)
+{
+    static struct termios oldt, newt;
+
+    if ( dir == 1 )
+    {
+        tcgetattr( STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~( ICANON | ECHO );
+
+        tcsetattr( STDIN_FILENO, TCSANOW, &newt);
+    }
+    else
+        tcsetattr( STDIN_FILENO, TCSANOW, &oldt);
+}
+
+int kbhit (void)
+{
+    fd_set rdfs;
+
+    FD_ZERO(&rdfs);
+    FD_SET (STDIN_FILENO, &rdfs);
+    FD_SET (pfds[0], &rdfs);
+
+    select(FD_SETSIZE, &rdfs, NULL, NULL, NULL);
+    return FD_ISSET(STDIN_FILENO, &rdfs);
+
+}
+

@@ -1,0 +1,91 @@
+Protected Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+    ' ******* Grab the LDAP info. for current user.
+    Dim ID As FormsIdentity = DirectCast(User.Identity, FormsIdentity)
+    Dim ticket As FormsAuthenticationTicket = ID.Ticket
+    Dim adDirectory As New DirectoryEntry("LDAP://OU=[info],DC=[info],DC=[info],DC=[info]")
+    ' We need to strip off @email.address from the ticket name, so we'll use substring to grab the first 
+    ' five characters.
+    Dim adTicketID As String = ticket.Name.Substring(0, 5)
+    Dim adEmployeeID As String
+    adEmployeeID = adDirectory.Children.Find("CN=" & adTicketID).Properties("employeeID").Value
+
+    ' ******* Lets make sure they have signed the housing contract and the community covenant.
+    Dim dbContractSigs As New pcRoomOccupantsDataContext
+    Dim pcContractSigs = From p In dbContractSigs.webContractSigs _
+                         Where p.people_id = adEmployeeID _
+                         Select p.res_contract, p.comm_life
+    If pcContractSigs.Count.Equals(0) Then
+        Response.Redirect("signcontract.aspx")
+    Else
+        Dim cs As String = pcContractSigs.First.res_contract.ToString
+        Dim cos As String = pcContractSigs.First.comm_life.ToString
+        If cs = "Y" And cos = "Y" Then
+            ' We don't need to do anything.
+            ' We use the else statement b/c there are multiple conditions that could occur besides "N"
+            ' that would cause us to redirect to the signature page, whereas there is only one valid response - "Y".
+        Else
+            ' Redirect the individual to our contracts page.
+            Response.Redirect("signcontract.aspx")
+        End If
+    End If
+
+    ' ******* Now lets find out what gender that individual is.
+    Dim dbIndividual As New pcPeopleDataContext
+    Dim pcIndividual = From p In dbIndividual.PEOPLEs _
+                       Join d In dbIndividual.DEMOGRAPHICs On p.PEOPLE_CODE_ID Equals d.PEOPLE_CODE_ID _
+                       Where p.PEOPLE_ID = adEmployeeID _
+                       Select p, d
+    ' Make a session variable that will carry with the user throughout the session delineating gender.
+    Session("sgender") = pcIndividual.First.d.GENDER.ToString
+    ' Debug Code.
+    ' Put a stop at end sub to get these values.
+    ' Response.Write(adEmployeeID)
+
+End Sub
+Sub LinqDataSource1_Selecting(ByVal sender As Object, ByVal e As LinqDataSourceSelectEventArgs)
+    ' Lets get a list of the dorms that are available for user's gender.
+    Dim pcDorms As New pcDormsDataContext
+    Dim selectedDorms = (From sd In pcDorms.PBU_WEB_DORMs _
+                    Where IIf(Session("sgender").ToString = "M", sd.description = "Male", sd.description = "Female") _
+                    Select sd.dorm_building).Distinct()
+    e.Result = selectedDorms
+End Sub
+Public Sub Button_ItemCommand(ByVal Sender As Object, ByVal e As RepeaterCommandEventArgs)
+    ' ******** Lets pass on the results of our query in LinqDataSource1_Selecting.
+    Session("sdorm") = RTrim(e.CommandName)
+
+    ' ******** Debug code.
+    ' Response.Write(sDorm)
+End Sub
+Sub LinqDataSource2_Selecting(ByVal sender As Object, ByVal e As LinqDataSourceSelectEventArgs)
+    ' ******** Get a list of rooms available in the dorm for user's gender.
+    Dim pcDorms As New pcDormsDataContext
+    Dim selectedDorm = (From sd In pcDorms.PBU_WEB_DORMs _
+                        Where IIf(Session("sgender").ToString = "M", sd.description = "Male", sd.description = "Female") _
+                        And sd.dorm_building = CStr(Session("sdorm")) _
+                        Select sd.dorm_room)
+    e.Result = selectedDorm
+End Sub
+Public Sub Button2_ItemCommand(ByVal Sender As Object, ByVal e As RepeaterCommandEventArgs)
+    ' ******** Lets pass on the results of our query in LinqDataSource2_Selecting.
+    Session("sroom") = RTrim(e.CommandName)
+End Sub
+Sub LinqDataSource3_Selecting(ByVal sender As Object, ByVal e As LinqDataSourceSelectEventArgs)
+    ' ******** Grabs the individuals currently listed as residing in this room and displays them. Note the use of SqlMethods.Like 
+    ' for dorm_building, this is due to legacy issues where dorms sometimes have leading or trailing blank spaces. We could have 
+    ' also used Trim.
+    Dim pcOccupants As New pcRoomOccupantsDataContext
+    Dim roomOccupants = (From ro In pcOccupants.webResidents _
+                       Where SqlMethods.Like(ro.dorm_building, "%" & CStr(Session("sdorm")) & "%") _
+                        And ro.dorm_room = CStr(Session("sroom")) _
+                      Select ro.person_name)
+    e.Result = roomOccupants
+
+    ' ******** Debug code.
+    'Response.Write(CStr(Session("sdorm")))
+    'Response.Write(CStr(Session("sroom")))
+End Sub
+Protected Sub Button4_Click(ByVal sender As Object, ByVal e As EventArgs) Handles Button4.Click
+    ' ******** Reserve the room for a student.
+End Sub
+

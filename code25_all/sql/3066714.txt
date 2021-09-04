@@ -1,0 +1,110 @@
+customer(
+id serial,
+pk_name char(30), {PATERNAL-NAME MATERNAL-NAME, FIRST-NAME MIDDLE-NAME-INITIAL}
+[...]
+);
+unique index on id;
+unique cluster index on pk_name;
+
+
+transaction(
+fk_name char(30),
+tran_type char(1), 
+ticket_number serial,
+[...]
+);
+dups cluster index on fk_name;
+unique index on ticket_number; 
+
+customer.id customer.pk_name               transaction.fk_name            transaction.ticket_number
+----------- ------------------------------ ------------------------------ -------------
+          2|ACEVEDO BERMUDEZ, FRANCISCO J. ACEVEDO BERMUDEZ, FRANCISCO J.|123456
+                                           ACEVEDO BERMUDEZ, FRANCISCO J.|123789
+
+          3|ANDUJAR RODRIGUEZ, WILFREDO C. ANDUJAR RODRIGUEZ, WILFREDO C.|101010
+                                           ANDUJAR RODRIGUEZ, WILFREDO C.|121212
+
+          1|CASTILLO DIAZ, FRANKLIN J.     CASTILLO DIAZ, FRANKLIN J.    |232323
+                                           CASTILLO DIAZ, FRANKLIN J.    |343434
+
+customer.pk_id customer.name                  transactions.fk_id transactions.ticket_#
+-------------- ------------------------------ ------------------ ---------------------
+             2|ACEVEDO BERMUDEZ, FRANCISCO J.                  1|232323
+                                                               1|343434
+
+             3|ANDUJAR RODRIGUEZ, WILFREDO C.                  2|123456
+                                                               2|123789
+
+             1|CASTILLO DIAZ, FRANKLIN J.                      3|101010
+                                                               3|121212
+
+ {ISQL-SE (customer and transactions table reorg - once-daily, before start of    
+  business, procedure}
+
+ unload to "U:\UNL\CUSTOMERS.UNL"
+    select * from customer
+  order by customer.pk_name; 
+
+ unload to "U:\UNL\TRAN_ACTIVES.UNL" 
+    select * from transaction where transaction.status = "A" 
+  order by transaction.fk_name, transaction.trx_date; 
+
+ unload to "U:\UNL\TRAN_INACTIVES.UNL" 
+    select * from transaction
+     where transaction.status != "A" 
+       and transaction.trx_date >= (today - 365) 
+  order by transaction.fk_name, transaction.trx_date desc; 
+
+ unload to "U:\UNL\TRAN_HISTORIC.UNL" 
+    select * from transaction 
+     where transaction.status != "A" 
+       and transaction.trx_date < (today - 365) 
+  order by transaction.trx_date desc; 
+
+ drop table customer;     
+
+ drop table transaction;
+
+ create table customer
+ (
+  id serial,
+  pk_name char(30),
+  [...]
+ ) 
+ in "S:\PAWNSHOP.DBS\CUSTOMER";
+
+
+ create table transaction
+ ( 
+  fk_name char(30),
+  ticket_number serial,
+  tran_type char(1), 
+  status char(1), 
+  trx_date date, 
+  [...]
+ )
+ in "S:\PAWNSHOP.DBS\TRANSACTION"; 
+
+ load from "U:\UNL\CUSTOMERS.UNL"      insert into customer     {>4800 nrows}
+ load from "U:\UNL\TRAN_ACTIVES.UNL"   insert into transaction; {500:600 nrows avg.} 
+ load from "U:\UNL\TRAN_INACTIVES.UNL" insert into transaction; {6500:7000 nrows avg.} 
+ load from "U:\UNL\TRAN_HISTORIC.UNL"  insert into dss:historic;{>500K nrows} 
+
+ create unique cluster index cust_pk_name_idx on customer(pk_name);
+ create        cluster index tran_cust_idx    on transaction(fk_name); 
+
+ {this groups each customers transactions together, actives in 
+  oldest trx_date order first, then inactive transactions within the last year in most  
+  recent trx_date order. inactives older than 1 year are loaded into historic  
+  table in a separate database, on a separate hard disk. historic table  
+  optimization is done on a weekly basis for DSS queries.} 
+
+ create unique index tran_ticket_num_idx on transaction(ticket_num); 
+ create        index tran_trx_date_idx   on transaction(trx_date); 
+ create        index tran_status_idx     on transaction(status); 
+ [...;]
+
+ [grant statements...;] 
+
+ update statistics; 
+

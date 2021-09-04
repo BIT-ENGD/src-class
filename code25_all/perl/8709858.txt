@@ -1,0 +1,89 @@
+#!/usr/bin/perl
+use strict;
+use POSIX qw(strftime);
+use DBI;
+
+my $destdir       = "/mnt/backup";
+my $tmpdir        = "/mnt/backup/tmp";
+my $mysqlpassword = "";
+
+my %backup = (
+    '/home' => [
+        'path/to/exclude/from/backup/*',
+    ],
+    '/etc',
+);
+
+my $now = strftime("%Y-%m-%d-%s", localtime);
+my $tmpbdir = "$tmpdir/backup_$now";
+
+sub printlog
+{
+    print "[", strftime("%D %T", localtime), "] $_[0]\n";
+}
+
+sub backup
+{
+    foreach my $dir (keys %backup) {
+        printlog "Backing up $dir...";
+        my $excludes = "";
+        if ($#{$backup{$dir}}+1 > 0) {
+            for my $i (0 .. $#{$backup{$dir}}) {
+                $excludes = "--exclude $dir/$backup{$dir}[$i] ";
+            }
+            $excludes =~ s/\s$//;
+        }
+        system("tar -cJf $excludes $tmpbdir/$dir.xz $dir");
+        printlog "$dir backup complete.";
+    }
+}
+
+sub backup_mysql
+{
+    printlog "Backing up MySQL...";
+    mkdir("$tmpbdir/mysql");
+    my $dbh = DBI->connect('dbi:mysql:information_schema', 'root', $mysqlpassword, {'RaiseError' => 1});
+    if ($dbh) {
+        my $sth = $dbh->prepare('SELECT SCHEMA_NAME AS `Database` FROM INFORMATION_SCHEMA.SCHEMATA'); $sth->execute;
+        while (my @databases = $sth->fetchrow_array) {
+            system("mysqldump --opt --single-transaction --user=root --password=$mysqlpassword $databases[0] > $tmpbdir/mysql/$databases[0].sql");
+        }
+        system("tar -cjf $tmpbdir/mysql.xz $tmpbdir/mysql");
+        system("rm -rf $tmpbdir/mysql");
+        printlog "MySQL backup complete.";
+    } else {
+        print "Unable to connect to MySQL server.\n$DBI::errstr\n";
+    }
+}
+
+sub archive
+{
+    printlog "Archiving...";
+    system("tar -cf $destdir/backup_$now.tar $tmpbdir/*");
+    system("rm -rf $tmpbdir");
+    printlog "Backup complete in $destdir/backup_$now.tar";
+}
+
+if ($> != 0) {
+    die "You must run this script as root.\n";
+}
+
+printlog "Backup starts.";
+mkdir($tmpbdir);
+
+&backup;
+&backup_mysql;
+&archive;
+
+[...]
+[01/03/12 03:00:03] Backing up /home...
+tar: Removing leading `/' from member names
+tar: /mnt/backup/tmp/backup_2012-01-03-1325556001//home.xz: Cannot stat: No such file or directory
+tar: /home/minecraft/world/region/r.-1.1.mcr: file changed as we read it
+tar: /home/minecraft/world: file changed as we read it
+tar: /home/webserver/ubuntubarsport/log/access_log: file changed as we read it
+tar: Removing leading `/' from hard link targets
+tar: Exiting with failure status due to previous errors
+[...]
+
+tar: /mnt/backup/tmp/backup_2012-01-03-1325556001//home.xz: Cannot stat: No such file or directory

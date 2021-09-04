@@ -1,0 +1,129 @@
+Imports System.Runtime.InteropServices
+
+Public Class PeriodicCaptureWindow
+
+' CREDITS: www.thaiio.com/prog-cgi/vbnetwebcam.html
+
+' Required Declares
+Const WM_CAP As Short = &H400S
+
+Const WM_CAP_DRIVER_CONNECT As Integer = WM_CAP + 10
+Const WM_CAP_DRIVER_DISCONNECT As Integer = WM_CAP + 11
+Const WM_CAP_EDIT_COPY As Integer = WM_CAP + 30
+
+Const WM_CAP_SET_PREVIEW As Integer = WM_CAP + 50
+Const WM_CAP_SET_PREVIEWRATE As Integer = WM_CAP + 52
+Const WM_CAP_SET_SCALE As Integer = WM_CAP + 53
+Const WS_CHILD As Integer = &H40000000
+Const WS_VISIBLE As Integer = &H10000000
+Const SWP_NOMOVE As Short = &H2S
+Const SWP_NOSIZE As Short = 1
+Const SWP_NOZORDER As Short = &H4S
+Const HWND_BOTTOM As Short = 1
+
+Dim iDevice As Integer = 0 ' Current device ID
+Dim hHwnd As Integer ' Handle to preview window
+
+Declare Function SendMessage Lib "user32" Alias "SendMessageA" _
+    (ByVal hwnd As Integer, ByVal wMsg As Integer, ByVal wParam As Integer, _
+    <MarshalAs(UnmanagedType.AsAny)> ByVal lParam As Object) As Integer
+
+Declare Function SetWindowPos Lib "user32" Alias "SetWindowPos" (ByVal hwnd As Integer, _
+    ByVal hWndInsertAfter As Integer, ByVal x As Integer, ByVal y As Integer, _
+    ByVal cx As Integer, ByVal cy As Integer, ByVal wFlags As Integer) As Integer
+
+Declare Function DestroyWindow Lib "user32" (ByVal hndw As Integer) As Boolean
+
+Declare Function capCreateCaptureWindowA Lib "avicap32.dll" _
+    (ByVal lpszWindowName As String, ByVal dwStyle As Integer, _
+    ByVal x As Integer, ByVal y As Integer, ByVal nWidth As Integer, _
+    ByVal nHeight As Short, ByVal hWndParent As Integer, _
+    ByVal nID As Integer) As Integer
+
+Declare Function capGetDriverDescriptionA Lib "avicap32.dll" (ByVal wDriver As Short, _
+    ByVal lpszName As String, ByVal cbName As Integer, ByVal lpszVer As String, _
+    ByVal cbVer As Integer) As Boolean
+
+' Self Declares
+Public ReportingTime As Long ' In milliseconds
+Public Disconnect As Boolean = False
+Public FolderName As String
+Public DeviceNumber As Long
+Public Event ErrorLaunchingCameraControl()
+Dim Running As Boolean = False
+
+' Coding
+
+Private Function _RunCapture()
+    Disconnect = False
+    Running = True
+    Dim sw As New Stopwatch
+    Do While Disconnect = False
+        Application.DoEvents()
+        If Not sw.IsRunning Then
+            sw = New Stopwatch()
+            sw.Reset()
+            sw.Start()
+        End If
+        If sw.ElapsedMilliseconds >= ReportingTime Then
+
+            ' Fetch Image
+            Dim bm As Bitmap
+            bm = New Bitmap(Me.Width, Me.Height, Me.CreateGraphics())
+
+            ' Save Image
+            If Not FolderName.EndsWith("\") Then FolderName = FolderName & "\"
+            Dim SavePath As String = FolderName & Date.Now.ToString().Replace(":", "_").ToString() & ".bmp"
+            bm.Save(SavePath, Imaging.ImageFormat.Bmp) ' <-------- INTERNAL GDI+ EXCEPTION 
+
+            ' Reset Stopwatch
+            sw = New Stopwatch()
+            sw.Reset()
+            sw.Start()
+
+        End If
+    Loop
+    Running = False
+    Return True
+End Function
+
+Public Sub StopCapture_AsyncStop()
+    Disconnect = True
+End Sub
+
+Public Sub StartCapture_AsyncStart()
+    If Not Running Then
+        iDevice = DeviceNumber
+        Dim iHeight As Integer = picCapture.Height
+        Dim iWidth As Integer = picCapture.Width
+
+        hHwnd = capCreateCaptureWindowA(iDevice, WS_VISIBLE Or WS_CHILD, 0, 0, 640, 480, picCapture.Handle.ToInt32, 0)
+
+        If SendMessage(hHwnd, WM_CAP_DRIVER_CONNECT, iDevice, 0) Then
+            SendMessage(hHwnd, WM_CAP_SET_SCALE, True, 0)
+            SendMessage(hHwnd, WM_CAP_SET_PREVIEWRATE, 66, 0)
+            SendMessage(hHwnd, WM_CAP_SET_PREVIEW, True, 0)
+            SetWindowPos(hHwnd, HWND_BOTTOM, 0, 0, picCapture.Width, picCapture.Height, SWP_NOMOVE Or SWP_NOZORDER)
+            _RunCapture()
+        Else
+            DestroyWindow(hHwnd)
+            RaiseEvent ErrorLaunchingCameraControl()
+        End If
+    End If
+End Sub
+
+Private Sub PeriodicCaptureWindow_FormClosing(ByVal sender As Object, ByVal e As System.Windows.Forms.FormClosingEventArgs) Handles Me.FormClosing
+    If Running Then StopCapture_AsyncStop()
+End Sub
+
+Private Sub PeriodicCaptureWindow_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
+    Me.Visible = True
+End Sub
+
+Dim win As New PeriodicCaptureWindow
+win.FolderName = "D:\SPPics"
+win.ReportingTime = 5000
+win.Disconnect = False
+win.Show()
+win.StartCapture_AsyncStart()
+

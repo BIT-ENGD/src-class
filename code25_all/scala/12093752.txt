@@ -1,0 +1,53 @@
+case class Field[I <: AnyRef](name: String, get: I => Any)
+
+type Fields[I <: AnyRef] = List[Field[I]]
+
+trait FieldAccess {
+import FieldMacors._
+    import Field._
+    import language.experimental.macros
+
+    def fields[T <: AnyRef]: Fields[T] = macro fieldsMacro[T]
+
+    def field[T <: AnyRef](name: String): Fields[T] = fields[T].headOption <-- does not work!
+                                                             ^
+}
+ object FieldMacors {
+
+import language.experimental.macros
+import Field._
+
+def fields[T <: AnyRef]: Fields[T] = macro fieldsMacro[T]
+
+/**
+ * Get a list of fiels
+ */
+def fieldsMacro[T <: AnyRef: c.TypeTag](c: Context): c.Expr[Fields[T]] = {
+  import c.universe._
+  val instanceT = c.typeOf[T]
+
+  val fields = instanceT.members.filter(member => member.isTerm && !member.isMethod)
+
+  // transform an iterable of expr in a expr of list.
+  def foldIntoListExpr[T: c.TypeTag](exprs: Iterable[c.Expr[T]]): c.Expr[List[T]] =
+    exprs.foldLeft(reify { Nil: List[T] }) {
+      (accumExpr, expr) =>
+        reify { expr.splice :: accumExpr.splice }
+    }
+
+  val fieldAccessores = for (field <- fields) yield {
+    val name = field.name.toString.trim // Why is there a space at the end of field name?!
+    val nameExpr = c literal name
+
+    // Construct expression (x : $I) => x.$name
+    val getFunArgTree = ValDef(Modifiers(), newTermName("x"), TypeTree(instanceT), EmptyTree)
+    val getFunBodyTree = Select(Ident(newTermName("x")), newTermName(name))
+    val getFunExpr = c.Expr[T => Any](Function(List(getFunArgTree), getFunBodyTree))
+    reify {
+      Field[T](name = nameExpr.splice, get = getFunExpr.splice)
+    }
+  }
+  foldIntoListExpr(fieldAccessores)
+}
+}
+

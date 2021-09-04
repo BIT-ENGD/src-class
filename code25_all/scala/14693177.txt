@@ -1,0 +1,247 @@
+TextField
+texMin
+texMax
+DoubleSlider
+TextField
+ENTER
+setOnKeyReleasedEvent
+bindBidirectional
+bindBidirectional
+    def sliderBlockFactory(slider: DoubleSlider): HBox = {
+      val minText = new TextField()
+      val maxText = new TextField()
+      minText.setText(slider.getValue1().toString)
+      maxText.setText(slider.getValue2().toString)
+
+      slider.value1Property().addListener(
+        new ChangeListener[Number]() {
+          override def changed(ov: ObservableValue[_ <: Number], old_val: Number, new_val: Number) {
+            if (new_val.doubleValue() == null) {
+              minText.setText("")
+            } else {
+              minText.setText(new_val.doubleValue().toString())
+            }
+          }
+        })
+
+      slider.value2Property().addListener(
+        new ChangeListener[Number]() {
+          override def changed(ov: ObservableValue[_ <: Number], old_val: Number, new_val: Number) {
+            if (new_val.doubleValue() == null) {
+              maxText.setText("")
+            } else {
+              maxText.setText(new_val.doubleValue().toString())
+            }
+          }
+        })
+
+      minText.setPrefWidth(40)
+      maxText.setPrefWidth(40)
+
+      val converter: StringConverter[_ <: Number] = new DoubleStringConverter()
+
+      Bindings.bindBidirectional(minText.textProperty(), slider.value1Property(), converter.asInstanceOf[StringConverter[Number]])
+      Bindings.bindBidirectional(maxText.textProperty(), slider.value2Property(), converter.asInstanceOf[StringConverter[Number]])
+
+      val uiSliderBlock = new HBox()
+      uiSliderBlock.getChildren.addAll(minText, slider, maxText)
+      uiSliderBlock
+    }
+
+    def doubleSliderFactory(min: Double, max: Double): DoubleSlider = {
+      val slider = new DoubleSlider()
+
+      slider.setMin(min)
+      slider.setMax(max)
+      slider.setShowTickLabels(true)
+      slider.setShowTickMarks(true)
+      slider.setMajorTickUnit(50)
+      slider.setMinorTickCount(25)
+      slider.setSnapToTicks(true)
+      slider.setPrefWidth(100)
+      slider.setBlockIncrement(10)
+
+      slider
+    }
+
+val myDoubleSlider = sliderBlockFactory(doubleSliderFactory(0.0, 100.0))
+
+class DoubleTextField(var minValue: Double, var maxValue: Double, val initialValue: Double) extends TextField {
+
+  require(minValue < maxValue, "DoubleField min value " + minValue + " greater than max value " + maxValue)
+  require(maxValue > minValue, "DoubleField max value " + minValue + " less than min value " + maxValue)
+  //require(!((minValue <= initialValue) && (initialValue <= maxValue)), "DoubleField initialValue " + initialValue + " not between " + minValue + " and " + maxValue)
+
+  val value: DoubleProperty = new SimpleDoubleProperty(initialValue)
+
+  //scala parsing
+  def parseDouble(s: String) = try {
+    Some(s.toDouble)
+  } catch {
+    case _ ⇒ None
+  }
+
+  def getValue() = value.getValue()
+
+  def setValue(newValue: Double) = value.setValue(newValue)
+
+  def valueProperty(): DoubleProperty = value
+
+  setText(initialValue.toString())
+
+  val doubleField: DoubleTextField = this
+
+  // make sure the value property is clamped to the required range
+  // and update the field's text to be in sync with the value.
+  value.addListener(new ChangeListener[Number]() {
+    override def changed(observableValue: ObservableValue[_ <: Number], oldValue: Number, newValue: Number) {
+      if (newValue == null) {
+        doubleField.setText("")
+      } else {
+        if (newValue.doubleValue() < doubleField.minValue) {
+          value.setValue(doubleField.minValue)
+          return
+        }
+
+        if (newValue.doubleValue() > doubleField.maxValue) {
+          value.setValue(doubleField.maxValue)
+          return
+        }
+
+        if (newValue.doubleValue() == 0 && (textProperty().get() == null || "".equals(textProperty().get()))) {
+          // no action required, text property is already blank, we don't need to set it to 0.
+        } else {
+          doubleField.setText(newValue.toString())
+        }
+      }
+    }
+  })
+
+  // restrict key input to numerals.
+  this.addEventFilter(KeyEvent.KEY_TYPED, new EventHandler[KeyEvent]() {
+    override def handle(keyEvent: KeyEvent) {
+      if (!"0123456789".contains(keyEvent.getCharacter())) {
+        keyEvent.consume()
+      }
+    }
+  })
+
+  // i don't want a realtime change on my textfield,
+  // so i prefer a validate method like focusedProperty (see below)
+  /*this.textProperty().addListener(
+    new ChangeListener[String]() {
+      override def changed(observableValue: ObservableValue[_ <: String], oldValue: String, newValue: String) {
+        if (newValue == null || "".equals(newValue)) {
+          value.setValue(0)
+          return
+        }
+
+        parseDouble(newValue) match {
+          case Some(d: Double) ⇒
+            if (doubleField.minValue > d || d > doubleField.maxValue) {
+              textProperty().setValue(oldValue)
+              value.set(oldValue.toDouble)
+            } else {
+              value.set(d)
+            }
+          case _ ⇒ oldValue //reset to old value
+        }
+
+      }
+    })*/
+
+  // Detect a change in focus on the text field.. If we lose the focus we take appropriate action
+  // problem with boolean : https://stackoverflow.com/questions/11377350/scala-java-interop-class-type-not-converted
+  this.focusedProperty().addListener(
+    new ChangeListener[java.lang.Boolean]() { db ⇒
+      override def changed(observable: ObservableValue[_ <: java.lang.Boolean], oldValue: java.lang.Boolean, newValue: java.lang.Boolean) {
+        if (!newValue) {
+          parseDouble(doubleField.textProperty().get()) match {
+            case Some(d: Double) ⇒
+              if (doubleField.minValue > d || d > doubleField.maxValue) {
+                textProperty().setValue(doubleField.minValue.toString)
+                value.set(textProperty().get().toDouble)
+              } else {
+                value.set(d)
+              }
+            case _ ⇒ println("error") //reset to old value
+          }
+        }
+      }
+    })
+
+}
+
+DoubleSlider
+DoubleTextField
+// inspired by :
+// https://gist.github.com/1962045
+// https://stackoverflow.com/questions/14138082/java-fx-bidirectional-bindings-of-different-properties
+// https://forums.oracle.com/forums/thread.jspa?threadID=2311243
+
+def sliderBlockFactory(slider: DoubleSlider): HBox = {
+  val minText = new DoubleTextField(slider.getMin, slider.getMax, slider.getMin)
+  val maxText = new DoubleTextField(slider.getMin, slider.getMax, slider.getMax)
+
+  slider.value1Property().addListener(
+    new ChangeListener[Number]() {
+      override def changed(ov: ObservableValue[_ <: Number], old_val: Number, new_val: Number) {
+        if (new_val.doubleValue() == null) {
+          minText.setText("")
+        } else {
+          //set new min value of maxText
+          maxText.minValue = new_val.doubleValue()
+
+        }
+      }
+    })
+
+  slider.value2Property().addListener(
+    new ChangeListener[Number]() {
+      override def changed(ov: ObservableValue[_ <: Number], old_val: Number, new_val: Number) {
+        if (new_val.doubleValue() == null) {
+          maxText.setText("")
+        } else {
+          //set new max value of minText
+          minText.maxValue = new_val.doubleValue()
+
+        }
+      }
+    })
+
+  minText.setPrefWidth(40)
+  maxText.setPrefWidth(40)
+
+  /*val converter: StringConverter[_ <: Number] = new DoubleStringConverter()
+  Bindings.bindBidirectional(minText.textProperty(), slider.value1Property(), converter.asInstanceOf[StringConverter[Number]])
+  Bindings.bindBidirectional(maxText.textProperty(), slider.value2Property(), converter.asInstanceOf[StringConverter[Number]])
+  */
+
+  minText.valueProperty().bindBidirectional(slider.value1Property())
+  maxText.valueProperty().bindBidirectional(slider.value2Property())
+
+  val uiSliderBlock = new HBox()
+  uiSliderBlock.getChildren.addAll(minText, slider, maxText)
+  uiSliderBlock
+}
+
+def doubleSliderFactory(min: Double, max: Double): DoubleSlider = {
+  val slider = new DoubleSlider()
+
+  slider.setMin(min)
+  slider.setMax(max)
+  slider.setShowTickLabels(true)
+  slider.setShowTickMarks(true)
+  slider.setMajorTickUnit(50)
+  slider.setMinorTickCount(25)
+  slider.setSnapToTicks(true)
+  slider.setPrefWidth(100)
+  slider.setBlockIncrement(10)
+
+  slider
+}
+
+  val myDoubleSlider = sliderBlockFactory(doubleSliderFactory(0.0, 100.0))
+
+changeListener
+textProperty

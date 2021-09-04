@@ -1,0 +1,66 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Carp;
+use Log::Log4perl;
+use Linux::Inotify2;
+use Storable;
+
+Log::Log4perl->init('/.../log4perl.conf');
+my $server_logger = Log::Log4perl->get_logger("server");
+
+my $tracker = PipelineBatchTracker->new( _logger => $server_logger);
+
+my $inotify = new Linux::Inotify2()
+      or $server_logger->logcroak("Unable to create new inotify object: $!");
+
+# Sets non-blocking inotify
+$inotify->blocking(0);
+
+# define watcher
+$inotify->watch
+    (
+        "/.../serial/",
+        IN_CREATE,
+        sub {
+            my $e = shift;
+            my $pipe;
+            my $serial = $e->{name};
+            my $full = $e->{w}{name} . ${serial};
+
+            $server_logger->info(${serial} . " was created in " . $e->{w}{name}) if $e->IN_CREATE;
+
+            eval {
+                my $pipe = retrieve("${full}");
+                $server_logger->logcroak("Unable to retrieve storable object") unless defined $pipe;
+
+                $server_logger->info(${serial} . " loaded into a Synegie::Pipeline object");
+                # This methods call Log::Log4perl->init
+                # and this is bad cause the server and former
+                # running pipelines are not logging anymore !!!
+                $pipe->setLogger();
+
+                $tracker->addPipeline($pipe);
+            };
+            if ($@) {
+                $server_logger->error("server : Failed to add pipeline : $@");
+            }
+        }
+    );
+
+
+while (1) {
+    $server_logger->trace("--------------------- AND AGAIN -------------------------");
+    $inotify->poll;
+    sleep 2;
+
+    eval {
+        $tracker->poke();
+    };
+    if ($@) {
+        $server_logger->error("server : $@");
+    }
+
+    sleep 30;
+}
+

@@ -1,0 +1,161 @@
+cut
+stdin
+-l
+-f
+#!/bin/bash
+
+shopt -s extglob; # we need maxiumum expression capabilities enabled
+
+# option variables
+declare list='' delim=$'\n' field='' lineNum=1;
+
+while [[ ${1:0:1} = '-' ]]; do # Parse user arguments
+
+    case $1 in
+        -f)
+            field=$2; shift 2;
+        ;;
+        -l)
+            lineNum=$2; shift 2;
+        ;;
+        --list-seperator)
+            delim="$2"; shift 2;
+        ;;
+        --list)
+            list="$2"; shift 2;
+        ;;
+        *) break;;
+    esac
+
+done
+
+# open a user supplied file on stdin
+[[ -e "$1" ]] && exec 0<$1;
+
+# data from 'read/getline'
+declare input='';
+
+# we are using sed to optimize input, the command just prints the desired line
+read -r input < <(sed -n ${lineNum}p) 
+# why doesn't the above work as a pipe into read?
+
+# range of this line
+declare strLen=${#input} value='';
+
+# data processing variables
+declare symbol='' value='';
+
+# REGEX symbol "classes"
+declare nothing='' comma='[,]' quote='["]' backslash='[\]' text='[^,\"]';
+
+# integers:
+declare -i iPos=-1 tPos=0;
+
+# output array:
+declare -a items=();
+
+NextSymbol() {
+
+    symbol="${input:$((++iPos)):1}"; # get next char from string
+
+    (( iPos < strLen )); # return false if we are out of range
+
+}
+
+Accept() {
+
+    [[ -z "$symbol" && -z "$1" ]] && return 0; # accept "nothing/empty"
+
+    # if you can meld the above line into the next line
+    # let me know: pc.wiz.tt@gmail.com; this is some kind of bug!
+    # becare careful because expect expects 'nothing' to be empty.
+    # that's why it says 'end of input'
+
+    [[ "$symbol" =~ ^$1$ ]] && NextSymbol && return 0; # match symbol
+}
+
+Expect() {
+    Accept "$1" && return
+    local msg="$0: parse failure: line $lineNum: expected symbol: "
+    echo "$msg'${1:-end of input}'" >&2;
+    echo "$0: found: '$symbol'" >&2;
+    exit 1;
+}
+
+value() {
+
+    while Accept $text; do # symbol will not be what we expect here
+        value+=${input:$((iPos-1)):1}; # so get what we expect
+    done
+
+    Accept $nothing && { # this will only happen at end of the string
+        value+=${input:$((iPos-1)):1} # get the last char
+        pushValue; # push the data into the array
+    }
+
+}
+
+pushValue() {
+    items[tPos++]=$value;
+    value=''; # clear value!
+}
+
+quote() {
+
+    until [[ $symbol =~ $quote || -z $symbol ]]; do
+        value+=$symbol;
+        NextSymbol;
+    done
+
+    Expect $quote;
+
+}
+
+line() {
+
+    Accept $quote && {
+        quote
+        line;
+    }
+
+    Accept $backslash && {
+        value+=$symbol;
+        NextSymbol;
+        value;
+        line;
+    }
+
+    Accept $comma && {
+        pushValue;
+        line;
+    }
+
+    Accept $text && {
+        value=${input:$((iPos-1)):1};
+        value;
+        line;
+    }
+
+}
+
+NextSymbol;
+    line;
+        Expect $nothing
+
+
+[[ $field ]] && { # want field    
+    echo "${items[field-1]}" # print the item
+                             # (index justified for human use)
+    exit;
+}
+
+[[ $list ]] && { # want list
+    for index in $list; do
+        echo -n "${items[index-1]}${delim}" # print the list 
+                                            # (index justified for human use)
+    done
+    exit;
+}
+
+exit 1; # no field or list
+

@@ -1,0 +1,172 @@
+-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIICmDAaBgkqhkiG9w0BBQMwDQQIybM2XFqx4EwCAQUEggJ4MKg/NE+L6NJgbOf4
+...
+8QnGu4R7lFlweH/VAK8n0L75h3q2g62MKLJqmKLtAILNve4zymnO+LVZ4Js=
+-----END ENCRYPTED PRIVATE KEY-----
+
+InvalidKeySpecException: Password is not ASCII
+
+private PrivateKey readPrivateKey(File inpfil) throws IOException, GeneralSecurityException {
+    String[]                            pbeb64s;                                // PBE ASN.1 data base-64 encoded
+
+    byte[]                              pbedta;                                 // PBE ASN.1 data in bytes
+    EncryptedPrivateKeyInfo             pbeinf;                                 // PBE key info
+    PBEParameterSpec                    pbeprm;                                 // PBE parameters
+    Cipher                              pbecph;                                 // PBE decryption cipher
+
+    byte[]                              pk8dta;                                 // PKCS#8 ASN.1 data in bytes
+    KeyFactory                          pk8fac=KeyFactory.getInstance("RSA");   // PKCS#8 key factory for decoding private key from ASN.1 data.
+
+    pbeb64s=readDataBlocks(inpfil,"ENCRYPTED PRIVATE KEY");
+    if(pbeb64s.length!=1) { throw new GeneralSecurityException("The keystore '"+inpfil+"' contains multiple private keys"); }
+    pbedta=base64.decode(pbeb64s[0]);
+    log.diagln("  - Read private key data");
+
+    pbeinf=new EncryptedPrivateKeyInfo(pbedta);
+    pbeprm=(PBEParameterSpec)pbeinf.getAlgParameters().getParameterSpec(PBEParameterSpec.class);
+    pbecph=Cipher.getInstance(pbeinf.getAlgName());
+    pbecph.init(Cipher.DECRYPT_MODE,pbeDecryptKey,pbeprm);
+
+    pk8dta=pbecph.doFinal(pbeinf.getEncryptedData());
+    log.diagln("  - Private Key: Algorithm= "+pbeinf.getAlgName()+", Iterations: "+pbeprm.getIterationCount()+", Salt: "+Base16.toString(pbeprm.getSalt()));
+    pk8dta=patchKeyData(inpfil,pk8dta);
+    return pk8fac.generatePrivate(new PKCS8EncodedKeySpec(pk8dta));
+    }
+
+import java.io.*;
+import java.security.*;
+import java.security.spec.*;
+import java.util.*;
+import javax.crypto.*;
+import javax.crypto.spec.*;
+
+class BinaryPBEKey
+extends Object
+implements SecretKey
+{
+private final byte[]                    key;
+
+/**
+ * Creates a PBE key from a given binary key.
+ *
+ * @param key       The key.
+ */
+BinaryPBEKey(byte[] key) throws InvalidKeySpecException {
+    if(key==null) { this.key=new byte[0];         }
+    else          { this.key=(byte[])key.clone(); }
+    Arrays.fill(key,(byte)0);
+    }
+
+public byte[] getEncoded() {
+    return (byte[])key.clone();
+    }
+
+public String getAlgorithm() {
+    return "PBEWithMD5AndDES";
+    }
+
+public String getFormat() {
+    return "RAW";
+    }
+
+/**
+ * Calculates a hash code value for the object.
+ * Objects that are equal will also have the same hashcode.
+ */
+public int hashCode() {
+    int                             ret=0;
+
+    for(int xa=1; xa<this.key.length; xa++) { ret+=(this.key[xa]*xa); }
+    return (ret^=getAlgorithm().toLowerCase().hashCode());
+    }
+
+public boolean equals(Object obj) {
+    if(obj==this                 ) { return true;  }
+    if(obj.getClass()!=getClass()) { return false; }
+
+    BinaryPBEKey                    oth=(BinaryPBEKey)obj;
+
+    if(!(oth.getAlgorithm().equalsIgnoreCase(getAlgorithm()))) {
+        return false;
+        }
+
+    byte[]  othkey=oth.getEncoded();
+    boolean ret   =Arrays.equals(key,othkey);
+    Arrays.fill(othkey,(byte)0);
+    return ret;
+    }
+
+public void destroy() {
+    Arrays.fill(this.key,(byte)0);
+    }
+
+/**
+ * Ensure that the password bytes of this key are zeroed out when there are no more references to it.
+ */
+protected void finalize() throws Throwable {
+    try { destroy(); } finally { super.finalize(); }
+    }
+
+/**
+ * Patch the private key ASN.1 data to conform to PKCS#8.
+ * <p>
+ * The SSLPlus private key is not properly encoded PKCS#8 - the PKCS#1 RSAPrivateKey should have been wrapped
+ * inside an OctetString, thus:
+ * <pre>
+ * SSLPlus Encoding:
+ *        0 30  627: SEQUENCE {
+ *        4 02    1:   INTEGER 0
+ *        7 30   13:   SEQUENCE {
+ *        9 06    9:     OBJECT IDENTIFIER rsaEncryption (1 2 840 113549 1 1 1)
+ *       20 05    0:     NULL
+ *                 :     }
+ *       22 30  605:   SEQUENCE {
+ *       26 02    1:     INTEGER 0
+ *       29 02  129:     INTEGER
+ *                 :       00 CA 72 B8 D1 B8 8E B9 39 C0 92 C1 4C 53 B4 F4
+ *       ...
+ *
+ * PKCS#8 Encoding
+ *       0 30  631: SEQUENCE {
+ *       4 02    1:   INTEGER 0
+ *       7 30   13:   SEQUENCE {
+ *       9 06    9:     OBJECT IDENTIFIER rsaEncryption (1 2 840 113549 1 1 1)
+ *      20 05    0:     NULL
+ *                :     }
+ * ==>  22 04  609:   OCTET STRING, encapsulates {
+ *      26 30  605:       SEQUENCE {
+ *      30 02    1:         INTEGER 0
+ *      33 02  129:         INTEGER
+ *                :           00 CA 72 B8 D1 B8 8E B9 39 C0 92 C1 4C 53 B4 F4
+ *      ...
+ * </pre>
+ *
+ * Hex Dumps (1K key, space padded for clarity):
+ *    Before      : 30 820271 020100300D06092A864886F70D0101010500           30 82025B ... A228
+ *    After       : 30 820275 020100300D06092A864886F70D0101010500 04 82025F 30 82025B ... A228
+ *                     ^^^^^^                                         ^^^^^^
+ *                     Add 4 for later 0482xxxx                       Original total + 4 - 22 (equals the key length of 025B+4)
+ */
+private byte[] patchKeyData(File inpfil, byte[] asndta) throws IOException, GeneralSecurityException { // except it really doesn't throw an exception
+    ByteArrayOutputStream               patdta=new ByteArrayOutputStream();
+    int                                 orglen=decodeAsnLength(inpfil,asndta,1);
+
+    patdta.write(asndta,0,1);                                                   // original leader type
+    patdta.write(encodeAsnLength(inpfil,(orglen+4)));                           // new total length
+    patdta.write(asndta,4,(22-4));                                              // bit between total length an where octet-string wrapper needs to be inserted
+    patdta.write(0x04);                                                         // octet-string type
+    patdta.write(encodeAsnLength(inpfil,(orglen+4-22)));                        // octet-string length (key data type+key data length+key data)
+    patdta.write(asndta,22,asndta.length-22);                                   // private key data
+    return patdta.toByteArray();
+    }
+
+private int decodeAsnLength(File inpfil, byte[] asndta, int ofs) throws GeneralSecurityException {
+    if((asndta[ofs]&0xFF)==0x82) { return (((asndta[ofs+1]&0x000000FF)<< 8)|((asndta[ofs+2]&0x000000FF)));                                                           }
+    else                         { throw new GeneralSecurityException("The private key in file '"+inpfil+"' is not supported (ID="+Base16.toString(asndta,0,4)+")"); }
+    }
+
+private byte[] encodeAsnLength(File inpfil, int len) throws GeneralSecurityException {
+    if(len>=0x0100 && len<=0xFFFF) { return new byte[]{ (byte)0x82,(byte)((len>>>8)&0x000000FF),(byte)len };                                                            }
+    else                           { throw new GeneralSecurityException("The new length of "+len+" for patching the private key in file '"+inpfil+"' is out of range"); }
+    }
+

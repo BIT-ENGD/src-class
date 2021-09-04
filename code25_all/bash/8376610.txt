@@ -1,0 +1,41 @@
+# If keyfile exists, try to use that
+if [ -f ${ckeyfile} ]; then
+    if eval /sbin/cryptsetup --key-file ${ckeyfile} luksOpen ${cryptdev} ${cryptname} ${CSQUIET}; then
+        dopassphrase=0
+    else
+        echo "Invalid keyfile. Reverting to passphrase."
+    fi
+fi
+# Ask for a passphrase
+if [ ${dopassphrase} -gt 0 ]; then
+    echo ""
+    echo "A password is required to access the ${cryptname} volume:"
+
+    #loop until we get a real password
+    while ! eval /sbin/cryptsetup luksOpen ${cryptdev} ${cryptname} ${CSQUIET}; do
+        sleep 2;
+        done
+    fi
+    if [ -e "/dev/mapper/${cryptname}" ]; then
+        if [ ${DEPRECATED_CRYPT} -eq 1 ]; then
+            export root="/dev/mapper/root"
+        fi
+    else
+        err "Password succeeded, but ${cryptname} creation failed, aborting..."
+        exit 1
+    fi
+
+if  poll_device "${cryptdev}" ${rootdelay}; then
+    if /sbin/cryptsetup isLuks ${cryptdev} >/dev/null 2>&1; then
+        [ ${DEPRECATED_CRYPT} -eq 1 ] && warn_deprecated
+        if [ -f ${ckeyfile} ]; then
+            bool=true
+            while $bool; then
+                echo "Enter passphrase: "
+                read passphrase
+                tmpkey="tmpkeyfile"
+                cp ${ckeyfile} ${tmpkey} #Create a temporary keyfile
+                echo passphrase >> ${tmpkey} #Add the passphrase to the keyfile
+                if eval /sbin/cryptsetup --key-file ${tmpkey} luksOpen ${cryptdev} ${cryptname} ${CSQUIET}; then
+                    bool=false
+

@@ -1,0 +1,102 @@
+root@www:~/scripts# ./ws_restart.pl
+  * Stopping web server apache2                                   [ OK ]
+sh: Syntax error: "(" unexpected
+  * Stopping MySQL database server mysqld                         [ OK ]
+sh: Syntax error: "(" unexpected
+
+system("/etc/init.d/apache2 stop");
+system("/etc/init.d/mysql stop");
+
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+
+my $old_pids = {};
+my $post_stop_ids = {};
+my @services = qw/apache2 mysql solr/;
+my $app_dir  = '/home/grip/apps/eventfinder';
+
+
+# collect existing pids then kill services
+foreach my $service (@services) {
+  # gather up existing pids
+  $old_pids->{$service} = [ get_pids_by_process($service) ];
+
+  # issue stop command to each service
+  set_service_state($service, 'stop');
+
+  # attempt to regather same ids
+  $post_stop_ids->{$service} = [ get_pids_by_process($service) ];
+
+  # kill any rogue ids left over
+  kill_rogue_procs($post_stop_ids->{$service});
+
+  # give each kill time to finish
+  sleep(5);
+}
+
+
+# attempt to restart killed services
+foreach my $service (@services) {
+  # issue start command to each service
+  set_service_state($service, 'start');
+
+  # Let's give each service enough time to crawl outta bed.
+  # I know how much I hate waking up
+  sleep(5);
+}
+
+# wait for it!...wait for it! :P
+# Pad an extra 5 seconds to give solr enough time to come up before we reindex
+sleep(5);
+
+# start the reindexing process of solr
+system("cd $app_dir ; RAILS_ENV=production rake reindex_active");
+
+# call it a day...phew!
+exit 0;
+
+sub kill_rogue_procs {
+  my @ids = shift;
+  # check if we still have any rogue processes that failed to die
+  # if so, kill them now.
+  if(scalar @ids) {
+    foreach my $pid (@ids) {
+      system("kill $pid");
+    }
+  }
+}
+
+
+sub set_service_state {
+  my ($proc, $state) = @_;
+
+  if($proc eq 'apache2') {
+    system("/etc/init.d/apache2 $state");
+  } elsif($proc eq 'mysql') {
+    system("/etc/init.d/mysql $state");
+  } elsif($proc eq 'solr') {
+    system("cd $app_dir ; RAILS_ENV=production rake sunspot:solr:$state");
+  }
+}
+
+
+sub get_pids_by_process {
+  my $proc = shift;
+
+  my @proc_ids = ();
+
+  open(PSAE, "/bin/ps -ae | grep $proc |") || die("Couldn't run command");
+
+  while(<PSAE>) {
+    push @proc_ids, $_ =~ /(\d{1,5})/;
+  }
+
+  close PSAE;
+
+  return @proc_ids;
+}
+

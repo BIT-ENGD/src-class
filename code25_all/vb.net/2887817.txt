@@ -1,0 +1,190 @@
+ Function StartDataXfer() As Boolean
+  Dim status As Boolean = False
+  Try
+
+   SqlConn.Open()
+   OraConn.Open()
+   c.ErrorLog(Now.ToString & "--Going to Get the messages from oracle", 1)
+
+   If GetMsgsFromOracle() Then
+    c.ErrorLog(Now.ToString & "--Got messages from oracle", 1)
+
+    If ProcessMessages() Then
+     c.ErrorLog(Now.ToString & "--Finished Processing all messages in the queue", 0)
+     status = True
+    Else
+     c.ErrorLog(Now.ToString & "--Failed to Process all messages in the queue", 0)
+     status = False
+    End If
+   Else
+    status = True
+   End If
+   StartDataXfer = status
+  Catch ex As Exception
+  Finally
+   SqlConn.Close()
+   OraConn.Close()
+  End Try
+ End Function
+ Private Function GetMsgsFromOracle() As Boolean
+  Try
+   OraDataAdapter = New OleDb.OleDbDataAdapter
+   OraDataTable = New System.Data.DataTable
+   OraSelCmd = New OleDb.OleDbCommand
+   GetMsgsFromOracle = False
+   With OraSelCmd
+    .CommandType = CommandType.Text
+    .Connection = OraConn
+    .CommandText = GetMsgSql
+   End With
+   OraDataAdapter.SelectCommand = OraSelCmd
+   OraDataAdapter.Fill(OraDataTable)
+   If OraDataTable.Rows.Count > 0 Then
+    GetMsgsFromOracle = True
+   End If
+  Catch ex As Exception
+   GetMsgsFromOracle = False
+  End Try
+ End Function
+
+ Private Function ProcessMessages() As Boolean
+  Try
+   ProcessMessages = False
+   PrepareSQLInsert()
+   PrepOraDel()
+
+   i = 0
+   Dim Method As Integer
+   Dim OraDataRow As DataRow
+   c.ErrorLog(Now.ToString & "--Going to call message sending procedure", 2)
+   For Each OraDataRow In OraDataTable.Rows
+    With OraDataRow
+     Method = GetMethod(.Item(0))
+     SQLInsCmd.Parameters("RelLifeTime").Value = c.RelLifetime
+     SQLInsCmd.Parameters("Param1").Value = Nothing
+     SQLInsCmd.Parameters("ID").Value = GenerateTransactionID()  ' Nothing
+     SQLInsCmd.Parameters("UID").Value = Nothing
+     SQLInsCmd.Parameters("Param").Value = Nothing
+     SQLInsCmd.Parameters("Credit").Value = 0
+     SQLInsCmd.ExecuteNonQuery()
+
+     'check the return value
+     If SQLInsCmd.Parameters("ReturnValue").Value = 1 And SQLInsCmd.Parameters("OutPutParam").Value = 0 Then   'success
+      'delete the input record from the source table once it is logged
+      c.ErrorLog(Now.ToString & "--Moved record successfully", 2)
+      OraDataAdapter.DeleteCommand.Parameters("P(0)").Value = OraDataRow.Item(6)
+      OraDataAdapter.DeleteCommand.ExecuteNonQuery()
+      c.ErrorLog(Now.ToString & "--Deleted record successfully", 2)
+      OraDataAdapter.Update(OraDataTable)
+      c.ErrorLog(Now.ToString & "--Committed record successfully", 2)
+      i = i + 1
+     Else   'failure 
+      c.ErrorLog(Now.ToString & "--Failed to exec: " & c.DestIns & "Status: " & SQLInsCmd.Parameters("OutPutParam").Value & " and TrackId: " & SQLInsCmd.Parameters("TrackID").Value.ToString, 0)
+     End If
+     If File.Exists("stop.txt") Then
+      c.ErrorLog(Now.ToString & "--Stop File Found", 1)
+      'ProcessMessages = True
+      'Exit Function
+      Exit For
+     End If
+    End With
+   Next
+   OraDataAdapter.Update(OraDataTable)
+   c.ErrorLog(Now.ToString & "--Updated Oracle Table", 1)
+   c.ErrorLog(Now.ToString & "--Moved " & i & " records from Oracle to SQL Table", 1)
+   ProcessMessages = True
+  Catch ex As Exception
+   ProcessMessages = False
+   c.ErrorLog(Now.ToString & "--MoveMsgsToSQL: " & ex.Message, 0)
+  Finally
+   OraDataTable.Clear()
+   OraDataTable.Dispose()
+   OraDataAdapter.Dispose()
+   OraDelCmd.Dispose()
+   OraDelCmd = Nothing
+   OraSelCmd = Nothing
+   OraDataTable = Nothing
+   OraDataAdapter = Nothing
+  End Try
+
+ End Function
+
+
+ Public Function GenerateTransactionID() As Int64
+  Dim SeqNo As Int64
+  Dim qry As String
+  Dim SqlTransCmd As New OleDb.OleDbCommand
+  qry = " select seqno from StoreSeqNo"
+  SqlTransCmd.CommandType = CommandType.Text
+  SqlTransCmd.Connection = SqlConn
+  SqlTransCmd.CommandText = qry
+  SeqNo = SqlTransCmd.ExecuteScalar
+
+  If SeqNo > 2147483647 Then
+   qry = "update StoreSeqNo set seqno=1"
+   SqlTransCmd.CommandText = qry
+   SqlTransCmd.ExecuteNonQuery()
+   GenerateTransactionID = 1
+  Else
+   qry = "update StoreSeqNo set seqno=" & SeqNo + 1
+   SqlTransCmd.CommandText = qry
+   SqlTransCmd.ExecuteNonQuery()
+   GenerateTransactionID = SeqNo
+  End If
+
+ End Function
+ Private Function PrepareSQLInsert() As Boolean
+  'function to prepare the insert statement for the insert into the SQL stmt using 
+  'the sql procedure SMSProcessAndDispatch
+  Try
+   Dim dr As DataRow
+   SQLInsCmd = New OleDb.OleDbCommand
+   With SQLInsCmd
+    .CommandType = CommandType.StoredProcedure
+    .Connection = SqlConn
+    .CommandText = SQLInsProc
+
+    .Parameters.Add("ReturnValue", OleDb.OleDbType.Integer)
+    .Parameters("ReturnValue").Direction = ParameterDirection.ReturnValue
+    .Parameters.Add("OutPutParam", OleDb.OleDbType.Integer)
+    .Parameters("OutPutParam").Direction = ParameterDirection.Output
+    .Parameters.Add("TrackID", OleDb.OleDbType.VarChar, 70)
+    .Parameters.Add("RelLifeTime", OleDb.OleDbType.TinyInt)
+    .Parameters("RelLifeTime").Direction = ParameterDirection.Input
+    .Parameters.Add("Param1", OleDb.OleDbType.VarChar, 160)
+    .Parameters("Param1").Direction = ParameterDirection.Input
+    .Parameters.Add("TransID", OleDb.OleDbType.VarChar, 70)
+    .Parameters("TransID").Direction = ParameterDirection.Input
+    .Parameters.Add("UID", OleDb.OleDbType.VarChar, 20)
+    .Parameters("UID").Direction = ParameterDirection.Input
+    .Parameters.Add("Param", OleDb.OleDbType.VarChar, 160)
+    .Parameters("Param").Direction = ParameterDirection.Input
+    .Parameters.Add("CheckCredit", OleDb.OleDbType.Integer)
+    .Parameters("CheckCredit").Direction = ParameterDirection.Input
+    .Prepare()
+   End With
+  Catch ex As Exception
+   c.ErrorLog(Now.ToString & "--PrepareSQLInsert: " & ex.Message)
+  End Try
+ End Function
+
+ Private Function PrepOraDel() As Boolean
+  OraDelCmd = New OleDb.OleDbCommand
+  Try
+   PrepOraDel = False
+   With OraDelCmd
+    .CommandType = CommandType.Text
+    .Connection = OraConn
+    .CommandText = DelSrcSQL
+    .Parameters.Add("P(0)", OleDb.OleDbType.VarChar, 160)   'RowID
+    .Parameters("P(0)").Direction = ParameterDirection.Input
+    .Prepare()
+   End With
+   OraDataAdapter.DeleteCommand = OraDelCmd
+   PrepOraDel = True
+
+  Catch ex As Exception
+   PrepOraDel = False
+  End Try
+ End Function
+

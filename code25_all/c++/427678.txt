@@ -1,0 +1,83 @@
+struct Event {
+    enum { MousePress, KeyPress } type;
+    union {
+        struct { Point pos; MouseButton b; } mousePress;
+        struct { Modifiers mods; char key; } keyPress;
+    };
+};
+void userCode() {
+    for(;;) {
+        Event e; if(pollEvent(&e)) {
+            switch(e.type) {
+                case MousePress: cout<<event.mousePress.pos.x; break; // not typesafe
+                case KeyPress: cout<<event.keyPress.key; break;
+            }
+        }
+    }
+}
+
+struct Input {
+    enum { Mouse, Keyboard, Nothing } whatChanged;
+    MouseButtonsBitfield pressedButtons;
+    bool keysPressed[keyCount];
+};
+void userCode() {
+    for(;;) {
+        Input in = pollInput();
+        switch(in.whatChanged) {
+            // typesafe yay
+            case Mouse: cout << "is LMB pressed? " << bool(in.pressedButtons&LeftButton); break;
+            case Keyboard: cout << "is A pressed? " << in.keysPressed['A']; break;
+        }
+    }
+}
+
+struct Event {
+    // transforms listener by notifying it of event,
+    // returns transormed listener. nondestructive.
+    template<class Listener> // sadly invalid, templates can't be virtual.
+                                              // a solution is to make Listener the base
+                                              // of a hierarchy and make Listener::handle virtual
+                                              // but then we're forced to use imperative style
+    virtual Listener transform(Listener const&) =0;
+};
+struct MousePress : Event { // yay we're extensible via inheritance
+    template<class Listener>
+    virtual Listener transform(Listener const& listener) {
+        return listener.handle(*this); // calls the MousePress overload
+    }
+    Point pos; MouseButton b;
+};
+struct KeyPress : Event {
+    template<class Listener>
+    virtual Listener transform(Listener const& listener) {
+        return listener.handle(*this); // calls the KeyPress overload
+    }
+    Modifiers mods; char key;
+};
+struct NoEvent : Event {
+    template<class Listener>
+    virtual Listener transform(Listener const& listener) {
+        return listener.handle(*this);
+    }
+};
+struct UserWidget {
+    UserWidget handle(NoEvent) {
+        return UserWidget();
+    }
+    UserWidget handle(MousePress p) {
+        return (UserWidget) { string("pressed at")+lex_cast<string>(p.pos)) };
+    }
+    UserWidget handle(KeyPress k) {
+        return (UserWidget) { string("pressed key=")+lex_cast<string>(k.key)) };
+    }
+    string pendingOutput;
+};
+void userTick(UserWidget const& w) {
+    cout<<w.pendingOutput;
+    userTick(pollEvent().transform(w));
+}
+void userCode() {
+    userTick(UserWidget());
+}
+

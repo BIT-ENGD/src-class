@@ -1,0 +1,338 @@
+protected void Page_Load(object sender, EventArgs e)
+{
+
+    DecisionGraph g = new DecisionGraph(this);
+
+    //  Pass is root panel
+    g.BuildGraph("pnl1");
+
+    //  Refreshes graph and returns an obj containing 2 iterable objects 
+    DecisionGraphEnumeration dgEnum = g.RefreshGraph();
+
+    //  Clear panel which will hold active panels
+    pnlMASTER.Controls.Clear();
+
+    IEnumerator<Panel> iEnumOnPath = dgEnum.GetOnPathPanelEnumerator();
+    while (iEnumOnPath.MoveNext())
+    {
+        Panel p = (Panel)iEnumOnPath.Current;
+        p.Visible = true;
+
+        pnlMASTER.Controls.Add(p);
+    }
+
+    IEnumerator<Panel> iEnumOffPath = dgEnum.GetOffPathPanelEnumerator();
+
+    while (iEnumOffPath.MoveNext())
+    {
+        iEnumOffPath.Current.Visible = false;
+    }
+}
+
+using System;
+using System.Data;
+using System.Configuration;
+using System.Web;
+using System.Web.Security;
+using System.Web.UI;
+using System.Web.UI.WebControls;
+using System.Web.UI.WebControls.WebParts;
+using System.Web.UI.HtmlControls;
+using System.Collections;
+using System.Collections.Generic;
+
+
+public class DecisionGraph
+{
+
+    const String NULL_POINTER_NAME = "null";
+    private Node root;
+    private Page webPage;
+
+    //constructor
+    public DecisionGraph(Page pg)
+    {
+        this.webPage = pg;
+        this.root = null;
+    }
+
+    //  method creates a graph structure recursively starting
+    //  with the parameter as root
+    public void BuildGraph(String pnlName)
+    {
+        //  return the reference of the supplied panel
+        Panel p = GetPanel(pnlName);
+
+        // create root
+        root = new Node(p, GetDropDownList(p));
+
+        //  add children nodes to root
+        insert(root);
+
+
+        return;
+    }
+
+    //  adds all child nodes to passed node
+    private void insert(Node n)
+    {
+        // if Panel has a DropDownList
+        if (n.dropDownList != null)// not leaf
+        {
+            // create an array of Nodes to hold references to children
+            n.children = new Node[n.dropDownList.Items.Count];
+
+            int i = 0;
+            foreach (ListItem it in n.dropDownList.Items)
+            {
+                Panel childPanel = GetPanel(it.Value);
+
+                if (childPanel == null)
+                {
+                    //  Panel does not exit
+                    n.children[i] = null;
+                }
+                else
+                {
+
+                    Node childNode = GetNode(childPanel);
+
+                    if (childNode == null)//   Node doesn't exist in structure for chilePanel
+                    {
+                        //  create child node
+                        childNode = new Node(childPanel, GetDropDownList(childPanel));
+
+                        // add child node to arryay of children
+                        n.children[i] = childNode;
+
+                        // add the childs nodes of childNode to childNode
+                        insert(n.children[i]);
+                    }
+                    else
+                    {
+                        // node had already been created, just add reference
+                        n.children[i] = childNode;
+                    }
+
+
+
+                }
+
+                i++;
+            }
+        }
+
+        return;
+
+    }
+
+    //  returns an iterator of all active panels set as visible
+    //  and sets all other panels as hidden
+    public DecisionGraphEnumeration RefreshGraph()
+    {
+        LinkedList<Panel> pathedPanels = new LinkedList<Panel>();
+        LinkedList<Panel> nonPathedPanels = new LinkedList<Panel>();
+
+        FindCurrentPath(root, pathedPanels);
+
+        HideNonPathedNodes(root, nonPathedPanels);
+
+        UnMarkAllNodes(root);
+
+        return new DecisionGraphEnumeration(pathedPanels.GetEnumerator(), nonPathedPanels.GetEnumerator());
+    }
+
+    //  marks each node as valid and saves reference inorder
+    private void FindCurrentPath(Node n, LinkedList<Panel> list)
+    {
+        if (n == null)
+            return;
+
+        n.visitedFlag = true;
+        list.AddLast(n.panel);
+
+        if (n.dropDownList == null)
+            return;
+
+        int index = n.dropDownList.SelectedIndex;
+
+        FindCurrentPath(n.children[index],list);
+
+        return;
+
+    }
+
+    //  finds all non pathed nodes and saves reference in no order
+    private void HideNonPathedNodes(Node n, LinkedList<Panel> list)
+    {
+        if (n == null)
+            return;
+
+        if (!n.visitedFlag)
+        {
+
+            n.ResetDropDownList();
+
+            //  add panel if not already added.
+            if (!list.Contains(n.panel))
+                list.AddLast(n.panel);
+        }
+
+        if(n.children == null)
+            return;
+
+        foreach (Node childNode in n.children)
+            HideNonPathedNodes(childNode, list);
+    }
+
+    // unmarks n and sets all children of n as unmarked
+    private void UnMarkAllNodes(Node n)
+    {
+        if (n == null)
+            return;
+
+        n.visitedFlag = false;
+
+        if (n.children == null)
+        {
+            return;
+        }
+        else
+        {
+            foreach (Node childNode in n.children)
+                UnMarkAllNodes(childNode);
+        }
+
+    }
+
+    // returns node if a node already exists for p in structure, else returns null
+    private Node GetNode(Panel p)
+    {
+        Node n = getNode(root, p);
+
+        return n;
+    }
+
+    // recursive method call for GetNode
+    private Node getNode(Node n, Panel p)
+    {
+        if (n == null || p == null)
+            return null;
+
+        if (n.panel.Equals(p))
+        {
+            return n;
+        }
+        else if (n.children != null)
+        {
+            Node x = null;
+            int i = 0;
+
+            while (x == null && i < n.children.Length)
+            {
+                x = getNode(n.children[i], p);
+                i++;
+            }
+
+            return x;
+        }
+        else
+        {
+            return null;
+        }
+
+    }
+
+    //  returns a DropDownList from p
+    private DropDownList GetDropDownList(Panel p)
+    {
+
+        foreach (Control ctrl in p.Controls)
+        {
+            if (ctrl is DropDownList)
+            {
+                return (DropDownList) ctrl;
+            }
+        }
+
+        return null;
+    }
+
+    //  returns a panel from webpage of contructor using the FindControl method
+    private Panel GetPanel(String panelName)
+    {
+        if(panelName.Equals(NULL_POINTER_NAME))
+            return null;
+
+        Control ctrl = webPage.FindControl(panelName);
+        if (ctrl is Panel)
+        {
+            return (Panel)ctrl;
+        }
+        else
+        {
+            throw new ArgumentException(String.Format("{0} is not a Panel inside page {1}",panelName,webPage.Title.ToString()));
+        }
+    }
+
+
+    private class Node
+    {
+        public Panel panel;
+        public DropDownList dropDownList;
+        public Node[] children;
+        public bool pathedNode;
+        public bool visitedFlag;
+
+        #region Constructors
+
+        public Node() : this(null, null) { }
+
+        public Node(Panel p) : this(p, null) { }
+
+        public Node(Panel pnl, DropDownList d)
+        {
+            this.panel = pnl;
+            this.dropDownList = d;
+            this.children = null;
+            this.pathedNode = false;
+            this.visitedFlag = false;
+        }
+
+        #endregion
+
+        public void ResetDropDownList()
+        {
+            if (dropDownList == null)
+                return;
+            else
+                dropDownList.SelectedIndex = 0;
+        }
+    }
+}
+
+
+public class DecisionGraphEnumeration
+{
+    private IEnumerator<Panel> onPathPanels;
+    private IEnumerator<Panel> offPathPanels;
+
+    internal DecisionGraphEnumeration(IEnumerator<Panel> active, IEnumerator<Panel> nonActive)
+    {
+        onPathPanels = active;
+        offPathPanels = nonActive;
+    }
+
+    public IEnumerator<Panel> GetOnPathPanelEnumerator()
+    {
+        return onPathPanels;
+    }
+
+    public IEnumerator<Panel> GetOffPathPanelEnumerator()
+    {
+        return offPathPanels;
+    }
+
+
+}
+

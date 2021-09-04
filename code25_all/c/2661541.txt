@@ -1,0 +1,68 @@
+clz
+clz
+#include <stdio.h>
+#include <stdint.h>
+
+const unsigned int BASE = 22ULL;
+
+static unsigned int divfp(unsigned int val, int* iter)
+{
+  /* Numerator, denominator, estimate scalar and previous denominator */
+  unsigned long long N,D,F, DPREV;
+  int bitpos;
+
+  *iter = 1;
+  D = val;
+  /* Get the shift amount + is right-shift, - is left-shift. */
+  bitpos = 31 - clz(val) - BASE;
+  /* Normalize into the half-range (0.5, 1.0] */
+  if(0 < bitpos)
+    D >>= bitpos;
+  else
+    D <<= (-bitpos);
+
+  /* (FNi / FDi) == (FN(i+1) / FD(i+1)) */
+  /* F = 2 - D */
+  F = (2ULL<<BASE) - D;
+  /* N = F for the first iteration, because the numerator is simply 1.
+     So don't waste a 64-bit UMULL on a multiply with 1 */
+  N = F;
+  D = ((unsigned long long)D*F)>>BASE;
+
+  while(1){
+    DPREV = D;
+    F = (2<<(BASE)) - D;
+    D = ((unsigned long long)D*F)>>BASE;
+    /* Bail when we get the same value for two denominators in a row.
+      This means that the error is too small to make any further progress. */
+    if(D == DPREV)
+      break;
+    N = ((unsigned long long)N*F)>>BASE;
+    *iter = *iter + 1;
+  }
+  if(0 < bitpos)
+    N >>= bitpos;
+  else
+    N <<= (-bitpos);
+  return N;
+}
+
+
+int main(int argc, char* argv[])
+{
+  double fv, fa;
+  int iter;
+  unsigned int D, result;
+
+  sscanf(argv[1], "%lf", &fv);
+
+  D = fv*(double)(1<<BASE);
+  result = divfp(D, &iter); 
+
+  fa = (double)result / (double)(1UL << BASE);
+  printf("Value: %8.8lf 1/value: %8.8lf FP value: 0x%.8X\n", fv, fa, result);
+  printf("iteration: %d\n",iter);
+
+  return 0;
+}
+

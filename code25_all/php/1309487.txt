@@ -1,0 +1,58 @@
+06:56:46: SUCCESS -- I take down the database after this success
+07:12:48: FAILURE - sent email
+07:13:48: FAILURE
+...
+
+$last_email_time = null; // the time of the last error email sent
+$db_conn = null;
+$script_start_time = time();
+
+while(true) {
+    $success = false;
+
+    // attempt to create a database connection
+    if(!$db_conn) {
+        try {
+            $db_connection_data = $g_pdo_connection_data['freedom'];
+            $db_conn =  new PDO($db_connection_data['string'], $db_connection_data['user'], $db_connection_data['password']);
+            $db_conn->setAttribute (PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $db_conn->setAttribute (PDO::ATTR_TIMEOUT, 60);
+            if(!$db_conn) {
+                throw new Exception("Unable to create a database connection");
+            }
+        } catch(Exception $e) {
+            $last_email_time = handle_error($last_email_time, $e->getMessage());
+            $db_conn = null;
+        }
+    }
+
+    // attempt a query
+    if($db_conn) {
+        try {
+            $q = $db_conn->prepare("SELECT 1 FROM DUAL");
+            $q->execute();
+            $q->closeCursor();
+            if(!$q) {
+                throw new Exception("Unable to query the database");
+            }
+            $success = true;
+        } catch(Exception $e) {
+            $last_email_time = handle_error($last_email_time, $e->getMessage());
+        }
+    }
+
+    // remove the maintenance page if we were successful, else clear the connection
+    if($success) {
+        handle_success();
+        $last_email_time = null;
+    } else {
+        $db_conn = null;
+    }
+
+    flush();
+    if(ob_get_contents() != '') {
+        ob_flush();
+    }
+    sleep(60);
+}
+

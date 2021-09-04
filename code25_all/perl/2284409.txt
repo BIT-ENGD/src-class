@@ -1,0 +1,59 @@
+wait()
+
+use IO::Socket; 
+use Net::hostent; 
+use JSON;
+use DBI;
+use Data::Dumper;
+
+my $port=shift || 9000;
+my $clients_served = 0;
+
+while(1){
+  my $server = IO::Socket::INET->new( Proto => 'tcp', 
+    LocalPort => $port, 
+    Listen => 1, 
+    Reuse => 1); 
+
+  die "can't setup server" unless $server; 
+  print "[Server $0 is running]\n"; 
+
+#### 
+# wait for a client to connect
+# once it has, fork to a seperate thread and
+# retrieve the JSON data
+#### 
+  while (my $client = $server->accept()) { 
+    my $pid = fork();
+
+      if ($pid != 0) {
+        print ("Serving client " . $clients_served++ . "\n");
+      }else{
+        $client->autoflush(1); 
+        my $JSONObject = JSON->new->ascii->pretty->allow_nonref();
+        my $hostinfo = gethostbyaddr($client->peeraddr); 
+        my $client_hostname = ($hostinfo->name || $client->peerhost);
+
+        printf "connect from %s\n", $client_hostname;
+
+        print " $client_hostname connected..\n";
+        syswrite($client, "Reached Server\n", 2048);
+        if (sysread($client, my $buffer, 2048) > 0) {
+
+          foreach my $tasks($JSONObject->decode($buffer)){
+            foreach my $task (@$tasks){
+              insert_record($client_hostname, $task); #empty method, contents does not affect result
+            }
+          }
+        }
+
+        print " $client_hostname disconnected..\n";
+        close $client; 
+        exit 0;
+      }
+  }
+  $server->close();
+}
+
+exit 0;
+

@@ -1,0 +1,101 @@
+Private Shared _mailSent As Boolean = False
+Private _mailError As String
+Public Property mailError() As String
+    Get
+        Return _mailError
+    End Get
+    Set(value As String)
+        _mailError = value
+    End Set
+End Property
+Public Property mailSent() As Boolean
+    Get
+        Return _mailSent
+    End Get
+    Set(value As Boolean)
+        _mailSent = value
+    End Set
+End Property
+
+Private Sub SendCompletedCallback(ByVal sender As Object, ByVal e As AsyncCompletedEventArgs)
+    Dim token As String = e.UserState.ToString()
+
+    If Not e.Error Is Nothing Then
+        mailError = String.Format("{0} - {1}. {2}", token, e.Error.ToString(), e.UserState.ToString())
+        mailSent = False
+    Else
+        mailSent = True
+    End If
+End Sub
+Public Sub SendEmail(ByVal eFrom As String,
+                     ByVal eTo As String,
+                     ByVal eBody As String,
+                     ByVal eBodyIsHtml As Boolean,
+                     ByVal eSubject As String,
+                     Optional ByVal smtpHost As String = "<ip>",
+                     Optional ByVal eReplyTo As String = "",
+                     Optional ByVal priority As Integer = 1,
+                     Optional ByVal eDisplayName As String = "",
+                     Optional ByVal eCC As String = "",
+                     Optional ByVal eBCC As String = "")
+    Try
+        Dim emailFrom As New MailAddress(eFrom, eDisplayName, Encoding.UTF8)
+        Dim emailTo As New MailAddress(eTo)
+        Dim client As New SmtpClient()
+
+        With client
+            .Host = smtpHost
+        End With
+
+        Using message As New MailMessage(emailFrom, emailTo)
+            With message
+                .Subject = eSubject
+                .SubjectEncoding = Encoding.UTF8
+                .Body = eBody
+                .BodyEncoding = Encoding.UTF8
+                .IsBodyHtml = eBodyIsHtml
+
+                Select Case priority
+                    Case 0
+                        .Priority = MailPriority.Low
+                    Case 1
+                        .Priority = MailPriority.Normal
+                    Case 2
+                        .Priority = MailPriority.High
+                End Select
+
+                If eReplyTo.Length > 0 Then
+                    Dim eReplyTos As String() = eReplyTo.Split(New Char() {","c})
+                    For i As Integer = 0 To eReplyTos.Length - 1
+                        .ReplyToList.Add(eReplyTos(i).ToString)
+                    Next
+                End If
+
+                If eCC.Length > 0 Then
+                    Dim eCCs As String() = eCC.Split(New Char() {","c})
+                    For i As Integer = 0 To eCCs.Length - 1
+                        .CC.Add(eCCs(i).ToString)
+                    Next
+                End If
+
+                If eBCC.Length > 0 Then
+                    Dim eBCCs As String() = eBCC.Split(New Char() {","c})
+                    For i As Integer = 0 To eBCCs.Length - 1
+                        .Bcc.Add(eBCCs(i).ToString)
+                    Next
+                End If
+            End With
+
+            AddHandler client.SendCompleted, AddressOf SendCompletedCallback
+
+            Dim userState As String = "Test"
+            client.SendAsync(message, userState)
+        End Using
+    Catch ex As Exception
+        mailError = "Execption Error: " & ex.Message
+        If Not ex.InnerException Is Nothing Then
+            mailError &= "<br /><br />" & ex.InnerException.ToString
+        End If
+    End Try
+End Sub
+

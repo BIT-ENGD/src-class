@@ -1,0 +1,58 @@
+pipes-4.0
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
+import Pipes
+import Pipes.Core
+import Control.Monad.Trans.State       
+import Control.Monad
+
+newtype Object = Obj Int
+               deriving (Show)
+
+newtype ObjectId = ObjId Int
+                 deriving (Show, Num)
+
+writeObjects :: Proxy ObjectId Object () X IO r
+writeObjects = evalStateT (forever go) (ObjId 0)
+  where go = do i <- get
+                obj <- lift $ request i
+                lift $ lift $ putStrLn $ "Wrote "++show obj
+                modify (+1)
+
+produceObjects :: [Object] -> Proxy X () ObjectId Object IO ()
+produceObjects = go
+  where go [] = return ()
+        go (obj:rest) = do
+            lift $ putStrLn $ "Producing "++show obj
+            objId <- respond obj
+            lift $ putStrLn $ "Object "++show obj++" has ID "++show objId
+            go rest
+
+objects = [ Obj i | i <- [0..10] ]
+
+writeObjects
+request
+ObjId 0
+produceObjects
+Obj 0
+writeObjects
+request
+ObjId 1
+respond
+produceObjects
+ObjId 0
+produceObjects
+Obj 1
+main = void $ run $ produceObjects objects >>~ const writeObjects
+
+const
+ObjId 0
+Producing Obj 0
+Wrote Obj 0
+Object Obj 0 has ID ObjId 1
+Producing Obj 1
+...
+
+main = void $ run $ const (produceObjects objects) +>> writeObjects
+
+Obj 0

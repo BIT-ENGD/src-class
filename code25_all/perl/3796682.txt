@@ -1,0 +1,82 @@
+quotemeta (and \Q ... \E ) are useful when interpolating strings 
+into regular expressions, because by default an interpolated variable 
+will be considered a mini-regular expression.  
+
+/[A-Za-z_0-9]/
+\
+\n
+\r
+\
+à
+a
+\n
+\r
+nasty_names
+use strict; use warnings; use autodie;
+use String::ShellQuote;
+use File::Find;
+use File::Path;
+use IPC::System::Simple 'capturex';
+
+my @nasty_names;
+my $top_dir = '/Users/andrew/bin/pipetestdir/testdir';
+my $sub_dir = "easy_to_remove_me";
+my (@qfail, @sfail, @ipcfail);
+
+sub wanted { 
+    if ($File::Find::name) { 
+         my $rtr;
+         my $exec1="ls ".quotemeta($File::Find::name);
+         my $exec2="ls ".shell_quote($File::Find::name);
+         my @exec3= ("ls", $File::Find::name);
+
+         $rtr=`$exec1`;  
+         push @qfail, "$exec1" 
+              if $rtr=~/^\s*$/ ;
+
+         $rtr=`$exec2`;
+         push @sfail, "$exec2" 
+              if $rtr=~/^\s*$/ ;
+
+         $rtr = capturex(@exec3);
+         push @ipcfail, \@exec3
+              if $rtr=~/^\s*$/ ;     
+    }
+}
+
+chdir($top_dir) or die "$!";
+mkdir "$top_dir/$sub_dir";
+chdir "$top_dir/$sub_dir";
+
+push @nasty_names, "name with new line \n in the middle";
+push @nasty_names, "name with CR \r in the middle";
+push @nasty_names, "name with tab\tright there";
+push @nasty_names, "utf \x{0061}\x{0300} combining diacritic";
+push @nasty_names, "utf e̋ alt combining diacritic";
+push @nasty_names, "utf e\x{cc8b} alt combining diacritic";
+push @nasty_names, "utf άέᾄ greek";
+push @nasty_names, 'back\slashes\\Not\\\at\\\\end';
+push @nasty_names, qw|back\slashes\\IS\\\at\\\\end\\\\|;
+
+sub create_nasty_files {
+    for my $name (@nasty_names) {
+       open my $fh, '>', $name ; 
+       close $fh;
+    }
+}
+
+for my $dir (@nasty_names) {
+    chdir("$top_dir/$sub_dir");
+    mkpath($dir);
+    chdir $dir;
+    create_nasty_files();
+}
+
+find(\&wanted, $top_dir);
+
+print "\nquotemeta failed on:\n", join "\n", @qfail;
+print "\nShell Quote failed on:\n", join "\n", @sfail;
+print "\ncapturex failed on:\n", join "\n", @ipcfail;
+print "\n\n\n",
+      "Remove \"$top_dir/$sub_dir\" before running again...\n\n";
+

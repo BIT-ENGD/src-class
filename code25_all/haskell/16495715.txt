@@ -1,0 +1,83 @@
+type Tag = Int
+
+data State a =
+    Literal Tag a (State a)
+  | Split (State a) (State a)
+  | OpenGroup Tag (State a)
+  | CloseGroup Tag (State a)
+  | Accept                     -- end of expression like "abc"
+  | Final                      -- end of expression like "abc$"
+
+-- "^a+(b*)c$"
+
+c = Literal 3 'c' $ Final 1
+b = OpenGroup 1 $ Literal 2 'b' bs
+bs = Split b $ CloseGroup 1 c
+expr = Literal 1 'a' $ Split expr bs
+
+import           Control.Applicative
+import           Text.Parsec         hiding (many, optional, (<|>))
+import           Text.ExpressionEngine.Types
+import qualified Text.ExpressionEngine.Types as T
+
+type ParserState = Int
+type ExpParser = Parsec String ParserState
+type ExpParserS a = ExpParser (T.State a)
+
+parseExpression :: String -> T.State Char
+parseExpression e = case runParser p 1 e e of
+  Left err -> error $ show err
+  Right r -> r
+where
+  p = p_rec_many p_char $ p_end 1
+
+p_rec_many :: ExpParser (T.State a -> T.State a) -> ExpParserS a -> ExpParserS a
+p_rec_many p e = many'
+  where
+    many' = p_some <|> e
+    p_some = p <*> many'
+
+p_end :: Int -> ExpParserS a
+p_end n = (Final n <$ char '$') <|> (Accept n <$ eof)
+
+step_index :: ExpParser Int
+step_index = do
+  index <- getState
+  updateState succ
+  return index
+
+p_char = do
+  c <- noneOf "^.[$()|*+?{\\"
+  i <- step_index
+  return $ Literal i c
+
+-- "(a|b|c)$"
+
+final = Final 1
+c = Literal 3 'c' final
+b = Split (Literal 2 'b' final) c
+a = Split (Literal 1 'a' final) b
+
+p_regex :: T.State Char -> ExpParser (T.State Char)
+p_regex e = do
+  first <- p_rec_many p_char $ pure e
+  (Split first <$> (char '|' *> p_regex e)) <|> return first
+
+parseExpression :: String -> T.State Char
+parseExpression e = case runParser p 1 e e of
+  Left err -> error $ show err
+  Right r -> r
+  where
+    p = p_regex <*> p_end 1
+
+Literal 1 'a' (Literal 2 'b' (Accept 1))
+
+Literal 1 'a' (Literal 2 'b' (Literal 3 'c' (Final 1)))
+
+Couldn't match expected type `a0 -> b0'
+        with actual type `ExpParser (T.State Char)'
+Expected type: T.State Char -> a0 -> b0
+Actual type: T.State Char -> ExpParser (T.State Char)
+In the first argument of `(<*>)', namely `p_regex'
+In the expression: p_regex <*> p_end 1
+

@@ -1,0 +1,64 @@
+#!/bin/bash
+
+rm -v -R temp/
+mkdir temp
+mkdir temp/raw
+
+DIR="/media/mdrive/dump/"
+
+if [ -z "$DIR" ]; then
+    echo >&2 "Syntax: $0 <directory>"
+    exit 1
+fi
+
+if [ ! -d "$DIR" ]; then
+    echo >&2 "\"$DIR\" is not a directory"
+    exit 1
+fi
+
+cd "$DIR"
+
+for file in *.jpg *.JPG; do
+    first=${file::1}
+    mkdir -p $first && mv $file $first/;
+done
+
+cp -v -R /media/mdrive/dump/* /media/mdrive/stagingForUpload/
+cp -v -f -R /media/mdrive/dump/* /media/mdrive/original/
+cp -v -R /media/mdrive/dump/* temp/raw/
+rm -v -R /media/mdrive/dump/*
+
+# Creates directories
+mkdir temp/images
+mkdir temp/medium
+mkdir temp/large
+
+# Copies ~/Desktop/raw into ~/Desktop/small, medium & large
+cp -v -R temp/raw/* temp/images/
+cp -v -R temp/raw/* temp/medium/
+mv -v temp/raw/* temp/large/
+rm -v -R temp/raw/
+
+# Converts images into respective size and quality
+find temp/images/* -maxdepth 2 -iname "*.jpg" -print0 | xargs -0 mogrify -resize 100x100">" -quality 80 -compress JPEG -monitor -strip
+find temp/medium/* -maxdepth 2 -iname "*.jpg" -print0 | xargs -0 mogrify -resize 428x270"^" -quality 80 -compress JPEG -monitor -strip
+find temp/medium/* -maxdepth 2 -iname "*.jpg" -print0 | xargs -0 mogrify -resize 428x270">" -quality 80 -compress JPEG -monitor -strip
+find temp/large/* -maxdepth 2 -iname "*.jpg" -print0 | xargs -0 mogrify -resize 800x800">" -quality 85 -compress JPEG -monitor -strip -gravity SouthEast -draw 'text 10,10 "www.kmstools.com"'
+
+#Batch Renames
+find temp/medium -iname "*.jpg" -printf 'mv %p %p\n' | sed 's/\.jpg$/_MED\.jpg/' | while read l; do eval $l; done
+find temp/large -iname "*.jpg" -printf 'mv %p %p\n' | sed 's/\.jpg$/_LRG\.jpg/' | while read l; do eval $l; done
+
+# Consolidates images into image directory
+mv temp/large temp/images
+mv temp/medium temp/images
+
+# Removes Thumbs.db
+find temp/images/ -type f -iname Thumbs.db | while read FILE ; do rm "${FILE}" ; done
+
+# Copies images/ to website_directory_structure
+cp -v -R temp/images/* /media/mdrive/website_directory_structure/
+
+# Uploades files to Old KMS Webserver
+ncftpput -m -R -F -u <username> -p <password> <webserver>.com /public_html/images/ temp/images/
+

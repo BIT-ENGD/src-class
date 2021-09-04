@@ -1,0 +1,69 @@
+CREATE TABLE "a" (
+ "id" SERIAL PRIMARY KEY
+);
+
+CREATE TABLE "b" (
+ "one" integer,
+ "two" integer,
+ "a_id" integer REFERENCES "a",
+ PRIMARY KEY ("one", "two")
+);
+
+CREATE TABLE "c" (
+ "id" SERIAL PRIMARY KEY,
+ "a_id" integer REFERENCES "a",
+ "b_one" integer,
+ "b_two" integer,
+ FOREIGN KEY ("b_one", "b_two") REFERENCES "b"
+);
+
+table | columns        | foreign table | foreign columns
+--------------------------------------------------------
+ b    | {a_id}         | a             | {id}
+ c    | {a_id}         | a             | {id}
+ c    | {b_one, b_two} | b             | {one, two}
+
+SELECT conrelid::regclass as "table",
+       conkey as columns, 
+       confrelid::regclass as "foreign table", 
+       confkey as "foreign columns"
+  FROM pg_constraint
+ WHERE contype = 'f' ;
+
+ table | columns | foreign table | foreign columns 
+-------+---------+---------------+-----------------
+ b     | {3}     | a             | {1}
+ c     | {2}     | a             | {1}
+ c     | {3,4}   | b             | {1,2}
+
+SELECT conrelid::regclass as "table",
+       a.attname as columns,
+       confrelid::regclass as "foreign table",
+       af.attname as "foreign columns"
+  FROM pg_attribute AS af,
+       pg_attribute AS a,
+       ( SELECT conrelid,
+                confrelid,
+                conkey[i] AS conkey,
+                confkey[i] as confkey
+           FROM ( SELECT conrelid,
+                         confrelid, 
+                         conkey, 
+                         confkey, 
+                         generate_series(1, array_upper(conkey, 1)) AS i
+                    FROM pg_constraint
+     WHERE contype = 'f'
+         ) AS ss
+       ) AS ss2
+ WHERE af.attnum = confkey
+   AND af.attrelid = confrelid
+   AND a.attnum = conkey
+   AND a.attrelid = conrelid ;
+
+ table | columns | foreign table | foreign columns 
+-------+---------+---------------+-----------------
+ b     | a_id    | a             | id
+ c     | a_id    | a             | id
+ c     | b_one   | b             | one
+ c     | b_two   | b             | two
+

@@ -1,0 +1,44 @@
+Coroutine
+data Step a b r 
+  = Stop
+  | Yield b r      
+  | Await (a -> r) 
+
+instance Functor (Step a b) where
+   fmap g s = case s of 
+   Stop       -> Stop
+   Yield b r  -> Yield b $ g r
+   Await f    -> Await (g . f) 
+
+data CoroutineT m a b = CoT { resume :: m (Step a b (CoroutineT m a b)) }
+
+run_ :: Monad m => CoroutineT m a b -> [a] -> m [b]
+run_ (CoT m) as = m >>= \step -> case step of
+     Stop      -> return []
+     Yield o r -> liftM (o:) $ run_ r as 
+     Await k   -> case is of 
+       []     -> return [] 
+       (x:xs) -> run_ (k x) xs
+
+instance Monad m => Functor (CoroutineT m a) where
+  fmap g (CoT m) = CoT $ liftM ap m where 
+    ap Stop        = Stop
+    ap (Yield b r) = Yield (g b) (fmap g r)
+    ap (Await k)   = Await $ (fmap g) . k
+
+
+instance Monad m => Monad (CoroutineT m a) where
+   return b      = CoT . return . Yield b $ return b    
+   (CoT m) >>= g = CoT $ liftM go m where 
+        go Stop        = Stop
+        go (Yield b r) = undefined      -- * This line I am having trouble with
+        go (Await k)   = Await $ (>>=g) . k
+
+Yield
+(>>=)     :: CoroutineT m a b -> (b -> CoroutineT m a c) -> CoroutineT m a c
+(g b)     :: CoroutineT m a c
+r         :: CoroutineT m a b
+(r >>= g) :: CoroutineT m a c
+
+bind
+Yield

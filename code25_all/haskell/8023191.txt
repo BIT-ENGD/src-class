@@ -1,0 +1,78 @@
+{-# LANGUAGE TemplateHaskell #-}
+
+import Prelude hiding ((.))
+
+import Control.Category ((.))
+import Happstack.Server (Response, ServerPartT, nullConf, ok, simpleHTTP)
+import Happstack.Server.Heist (render)
+import Text.Boomerang.TH (derivePrinterParsers)
+import Text.Templating.Heist (Splice, bindSplices, emptyTemplateState, getParamNode)
+import Text.Templating.Heist.TemplateDirectory (TemplateDirectory, newTemplateDirectory')
+import Web.Routes (RouteT, Site, runRouteT)
+import Web.Routes.Boomerang (Router, anyString, boomerangSite, int, lit, (<>), (</>))
+import Web.Routes.Happstack (implSite)
+
+import qualified Data.ByteString.Char8 as C
+import qualified Data.Text as T
+import qualified Text.XmlHtml as X
+
+data Sitemap = Factorial Int
+             | Reverse String
+
+$(derivePrinterParsers ''Sitemap)
+
+-- Conversion between type-safe URLs and URL strings.
+sitemap :: Router Sitemap
+sitemap = rFactorial . (lit "factorial" </> int)
+       <> rReverse . (lit "reverse" </> anyString)
+
+-- Serve a page for each type-safe URL.
+route :: TemplateDirectory (RouteT Sitemap (ServerPartT IO)) -> Sitemap -> RouteT Sitemap (ServerPartT IO) Response
+route templates url = case url of
+                        Factorial _num -> render templates (C.pack "factorial") >>= ok
+                        Reverse _str   -> render templates (C.pack "reverse") >>= ok
+
+site :: TemplateDirectory (RouteT Sitemap (ServerPartT IO)) -> Site Sitemap (ServerPartT IO Response)
+site templates = boomerangSite (runRouteT $ route templates) sitemap
+
+-- <factorial>n</factorial> --> n!
+factorialSplice :: (Monad m) => Splice m
+factorialSplice = do input <- getParamNode
+                     let n = read . T.unpack $ X.nodeText input :: Int
+                     return [X.TextNode . T.pack . show $ product [1 .. n]]
+
+-- <reverse>text</reverse> --> reversed text
+reverseSplice :: (Monad m) => Splice m
+reverseSplice = do input <- getParamNode
+                   return [X.TextNode . T.reverse $ X.nodeText input]
+
+main :: IO ()
+main = do templates <- newTemplateDirectory' path . bindSplices splices $ emptyTemplateState path
+          simpleHTTP nullConf $ implSite "http://localhost:8000" "" $ site templates
+    where splices = [(T.pack "factorial", factorialSplice), (T.pack "reverse", reverseSplice)]
+          path = "."
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Factorial</title>
+    </head>
+    <body>
+        <p>The factorial of 6 is <factorial>6</factorial>.</p>
+        <p>The factorial of ??? is ???.</p>
+    </body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Reverse</title>
+    </head>
+    <body>
+        <p>The reverse of "<tt>hello world</tt>" is "<tt><reverse>hello world</reverse></tt>".</p>
+        <p>The reverse of "<tt>???</tt>" is "<tt>???</tt>".</p>
+    </body>
+</html>
+

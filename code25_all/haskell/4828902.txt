@@ -1,0 +1,52 @@
+data Writer1M a = Writer1M { write :: P.PutM a }
+or
+data Writer2M a = Writer2M { write :: (a, P.Put) }
+
+-- This works well and consumes almost no memory.
+
+type Writer = P.Put
+
+writer :: P.Put -> Writer
+writer put = put
+
+writeToFile :: String -> Writer -> IO ()
+writeToFile path writer = BL.writeFile path (P.runPut writer)
+
+
+-- This one will cause memory leak.
+
+data Writer1M a = Writer1M { write :: P.PutM a }
+
+instance Monad Writer1M where
+  return a = Writer1M $ return a
+  ma >>= f = Writer1M $ (write ma) >>= \a -> write $ f a
+
+type WriterM = Writer1M
+type Writer = WriterM ()
+
+writer :: P.Put -> Writer
+writer put = Writer1M $ put
+
+writeToFile :: String -> Writer -> IO ()
+writeToFile path writer = BL.writeFile path (P.runPut $ write writer)
+
+-- This one will crash as well with exactly the
+-- same memory foot print as Writer1M
+
+data Writer2M a = Writer2M { write :: (a, P.Put) }
+
+instance Monad Writer2M where
+  return a = Writer2M $ (a, return ())
+  ma >>= f = Writer2M $ (b, p >> p')
+                        where (a,p) = write ma
+                              (b,p') = write $ f a
+
+type WriterM = Writer2M
+type Writer = WriterM ()
+
+writer :: P.Put -> Writer
+writer put = Writer2M $ ((), put)
+
+writeToFile :: String -> Writer -> IO ()
+writeToFile path writer = BL.writeFile path (P.runPut $ snd $ write writer)
+

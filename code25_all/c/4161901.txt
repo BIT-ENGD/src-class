@@ -1,0 +1,162 @@
+    #include <stdio.h>
+    #include <string.h>
+    #include <ctype.h>
+    #include <stdlib.h>
+    #include <math.h>
+
+    void parseFile(FILE * fp, FILE * sketcher); 
+    void processArgument(char argument[]);
+    void printOutput();
+    #define MAX_WORD 256
+    #define initial_size 17    
+    extern const char argument[];
+
+    FILE* popen(const char*, const char*);
+
+    int pclose(FILE*);
+
+    struct pointxy {
+
+        double x;
+        double y;
+
+    };
+
+    struct figure{
+
+        char figureName[MAX_WORD];
+        struct pointxy vertices[17];
+        int countPoints;
+
+    };
+
+    struct figure figurehere[17];
+    struct figure newFigure[17];
+
+#include "draw2.h"
+#include "draw2a.h"
+#include "memwatch.h"
+
+struct figure *figureHere;
+void printOutput(){
+    printf("./draw2 started on:");
+
+    fflush(stdout);
+    system("date\n");
+}
+/*send what ever there is after the child to sketchpad(in that specific line)*/
+void child (char line[], char word[], char nameFigure[], FILE * sketcher){          
+    sscanf(line, "%s%s", word, nameFigure);
+    fprintf (sketcher, "%s\n", &line[6]);
+} 
+
+/*I construct the struct by reading from the Figure line to the end figure line.*/
+struct figure* figureFunction (FILE * fp, char line[], char word[], char figureName[], int countNumberoffigures){
+    double startx, starty;
+    int temp = 1;
+    sscanf(line, "%s%s%lf%lf%s", word, figureName, &startx, &starty, word);
+    figureHere->vertices[0].x = startx;              
+    figureHere->vertices[0].y = starty;
+    strcpy(figureHere->figureName, figureName);
+    fgets(line, MAX_WORD - 1, fp);                  
+    int nuRead = sscanf(line, "%s", word);              
+    int i = 1;                                                     
+    while (strncmp(word, "End", MAX_WORD)!=0){ 
+        if (strncmp(word, "#", MAX_WORD) == 0){
+            printf("%s",line);
+        }           
+        if (strncmp(word, "draw", MAX_WORD) == 0){
+            sscanf (line, "%s%lf%lf", word, &startx, &starty);
+            figureHere->vertices[i].x = figureHere->vertices[i-1].x + startx;
+            figureHere->vertices[i].y = figureHere->vertices[i-1].y + starty;
+            i += 1;
+        }
+        fgets(line, MAX_WORD - 1, fp);
+        nuRead = sscanf(line, "%s", word);
+    }                                          
+    figureHere->countPoints = i;
+    return figureHere;                        
+}  
+
+#include "draw2.h"
+#include "draw2a.h"
+#include "draw2b.h"
+#include "memwatch.h" 
+
+struct figure myFigures[17];
+
+struct figure **pointsAndname;                     
+
+const char Exec_c[]  = "java -jar Sketchpad.jar";
+
+void parseFile(FILE * fp, FILE *sketcher){ 
+    char line [MAX_WORD], word [MAX_WORD], figureName [MAX_WORD];
+    int countNumberoffigures;                                   //accounts to which figure in the array we are on
+    printOutput();
+    int temp = 1;
+    countNumberoffigures = 0;
+    while ( fgets(line, MAX_WORD - 1, fp) != NULL ){
+        int nuRead = sscanf(line, "%s", word);
+        if ( nuRead > 0 ){
+            if(strncmp(word, "Figure", MAX_WORD)==0){           //1)reads the figure, name and the two starting points
+                countNumberoffigures += 1;                      //accounts to which figure in the array we are on
+                pointsAndname = malloc(sizeof(struct figure*)*temp);
+                pointsAndname[countNumberoffigures -1] = figureFunction(fp,line, word, figureName, countNumberoffigures);
+            }                                                 
+            if(strncmp(word, "printFigure", MAX_WORD)==0){      //4)read the command printFigure, name of the figure
+                printFigure(fp, line, countNumberoffigures);
+            }
+            if(strncmp(word, "drawFigure", MAX_WORD)==0){       //5)read the command drawFigure and the name of the figure
+                drawFigure(sketcher, line, countNumberoffigures);
+            }
+            if(strncmp(word, "translate", MAX_WORD)==0){        //6)read the command translate 
+                translate(line, sketcher, countNumberoffigures);
+            }
+            if(strncmp(word, "child", MAX_WORD)==0){            //7)reads command child and the name of the figure
+                child(line, word, figureName, sketcher);
+            }
+            if(strncmp(word, "#", MAX_WORD)==0){                //8)reads the whole line until the \n
+                printf(line);
+                //printf("ani po\n");
+            }
+            if(strncmp(word, "end", MAX_WORD)==0){
+                fprintf (sketcher, "end\n");
+                //printf("ani po\n");
+            }
+            if(strncmp(word, "rotate", MAX_WORD)==0){
+                rotate(line, sketcher, countNumberoffigures);
+            }
+        }
+    }
+}
+
+void processArgument(char argument[]){
+    FILE *sketcher;
+    FILE *fp;
+    fp = fopen (argument, "r");
+    sketcher = popen(Exec_c, "w");
+    if (sketcher == NULL){
+        printf ("Could not open pipe to %s\n", argument);
+    }else{
+      parseFile(fp, sketcher);
+        fclose(fp);
+        if (pclose(sketcher) == -1){
+          fprintf(stderr, "draw_line error: couldn't close pipe to %s.\n", Exec_c);
+          exit(EXIT_FAILURE);
+        }
+    }
+}
+
+int main (int argc,  char *argv[]){
+    int i;
+    if ( argc < 2 ){
+        printf ("%s\n", "0 comment(s)");
+    }else{
+        for (i = 1; i < argc; i++){
+            processArgument(argv[i]);
+        }
+    }
+    //int *a = malloc(sizeof(int));
+    return 0;
+}
+

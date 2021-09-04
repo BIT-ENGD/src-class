@@ -1,0 +1,133 @@
+Windows could not stop the Test service on Local Computer.
+
+Error 1061: The service cannot accept control messages at this time.
+
+module Main where
+
+import Control.Applicative
+import Foreign
+import System.Win32
+
+wIN32_OWN_PROCESS :: DWORD
+wIN32_OWN_PROCESS = 0x00000010
+
+sTART_PENDING, rUNNING :: DWORD
+sTART_PENDING = 0x00000002
+rUNNING = 0x00000004
+
+aCCEPT_STOP, aCCEPT_NONE :: DWORD
+aCCEPT_STOP = 0x00000001
+aCCEPT_NONE = 0x00000000
+
+nO_ERROR :: DWORD
+nO_ERROR = 0x00000000
+
+type HANDLER_FUNCTION = DWORD -> IO ()
+type MAIN_FUNCTION = DWORD -> Ptr LPTSTR -> IO ()
+
+data TABLE_ENTRY = TABLE_ENTRY LPTSTR (FunPtr MAIN_FUNCTION)
+
+instance Storable TABLE_ENTRY where
+  sizeOf _ = 8
+  alignment _ = 4
+  peek ptr = TABLE_ENTRY <$> peek (castPtr ptr) <*> peek (castPtr ptr `plusPtr` 4)
+  poke ptr (TABLE_ENTRY name proc) = do
+      poke (castPtr ptr) name
+      poke (castPtr ptr `plusPtr` 4) proc
+
+data STATUS = STATUS DWORD DWORD DWORD DWORD DWORD DWORD DWORD
+
+instance Storable STATUS where
+  sizeOf _ = 28
+  alignment _ = 4
+  peek ptr = STATUS 
+      <$> peek (castPtr ptr)
+      <*> peek (castPtr ptr `plusPtr` 4)
+      <*> peek (castPtr ptr `plusPtr` 8)
+      <*> peek (castPtr ptr `plusPtr` 12)
+      <*> peek (castPtr ptr `plusPtr` 16)
+      <*> peek (castPtr ptr `plusPtr` 20)
+      <*> peek (castPtr ptr `plusPtr` 24)
+  poke ptr (STATUS a b c d e f g) = do
+      poke (castPtr ptr) a
+      poke (castPtr ptr `plusPtr` 4)  b
+      poke (castPtr ptr `plusPtr` 8)  c
+      poke (castPtr ptr `plusPtr` 12) d
+      poke (castPtr ptr `plusPtr` 16) e
+      poke (castPtr ptr `plusPtr` 20) f
+      poke (castPtr ptr `plusPtr` 24) g
+
+foreign import stdcall "wrapper"
+    smfToFunPtr :: MAIN_FUNCTION -> IO (FunPtr MAIN_FUNCTION)
+foreign import stdcall "wrapper"
+    handlerToFunPtr :: HANDLER_FUNCTION -> IO (FunPtr HANDLER_FUNCTION)
+foreign import stdcall "windows.h RegisterServiceCtrlHandlerW"
+    c_RegisterServiceCtrlHandler
+        :: LPCTSTR -> FunPtr HANDLER_FUNCTION -> IO HANDLE
+foreign import stdcall "windows.h SetServiceStatus"
+    c_SetServiceStatus :: HANDLE -> Ptr STATUS -> IO BOOL
+foreign import stdcall "windows.h StartServiceCtrlDispatcherW"
+    c_StartServiceCtrlDispatcher :: Ptr TABLE_ENTRY -> IO BOOL
+
+main :: IO ()
+main =
+  withTString "Test" $ \name ->
+  smfToFunPtr svcMain >>= \fpMain ->
+  withArray [TABLE_ENTRY name fpMain, TABLE_ENTRY nullPtr nullFunPtr] $ \ste ->
+  c_StartServiceCtrlDispatcher ste >> return ()
+
+svcMain :: MAIN_FUNCTION
+svcMain argc argv = do
+    appendFile "c:\\log.txt" "svcMain: svcMain here!\n"
+    args <- peekArray (fromIntegral argc) argv
+    fpHandler <- handlerToFunPtr svcHandler
+    h <- c_RegisterServiceCtrlHandler (head args) fpHandler
+    _ <- setServiceStatus h running
+    appendFile "c:\\log.txt" "svcMain: exiting\n"
+
+svcHandler :: DWORD -> IO ()
+svcHandler _ = appendFile "c:\\log.txt" "svcCtrlHandler: received.\n"
+
+setServiceStatus :: HANDLE -> STATUS -> IO BOOL
+setServiceStatus h status = with status $ c_SetServiceStatus h
+
+running :: STATUS
+running  = STATUS wIN32_OWN_PROCESS rUNNING aCCEPT_STOP nO_ERROR 0 0 3000
+
+sc create Test binPath= c:\Main.exe
+C:\path>ghc -threaded --make Main.hs
+[1 of 1] Compiling Main             ( Main.hs, Main.o )
+Linking Main.exe ...
+
+C:\path>
+
+C:\Path>sc query Test
+
+SERVICE_NAME: Test
+        TYPE               : 10  WIN32_OWN_PROCESS
+        STATE              : 4  RUNNING
+                                (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
+        WIN32_EXIT_CODE    : 0  (0x0)
+        SERVICE_EXIT_CODE  : 0  (0x0)
+        CHECKPOINT         : 0x0
+        WAIT_HINT          : 0x0
+
+C:\Path>
+
+log.txt
+svcMain
+svcMain: svcMain here!
+svcMain: exiting
+
+C:\Path>sc query Test
+
+SERVICE_NAME: Test
+        TYPE               : 10  WIN32_OWN_PROCESS
+        STATE              : 1  STOPPED
+        WIN32_EXIT_CODE    : 0  (0x0)
+        SERVICE_EXIT_CODE  : 0  (0x0)
+        CHECKPOINT         : 0x0
+        WAIT_HINT          : 0x0
+
+C:\Path>
+

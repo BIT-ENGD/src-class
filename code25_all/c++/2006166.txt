@@ -1,0 +1,179 @@
+safeArray.Create( VT_VARIANT, 2, numElements ); // 2 dimensional, 30000 rows, 3 columns
+
+//-----------------------------------------------------------------------------
+template< typename _ValueType >
+void setSafeArrayElement( const _ValueType& value, 
+                          const int row, 
+                          const int column, 
+                          COleSafeArray& safeArray
+                         )
+{
+  VARIANT variant;
+  VariantInit(&variant);
+  {
+    COleVariant oleVariant = value;  
+    variant = oleVariant;
+    oleVariant.Detach();
+  }
+  long coordinates[2] = { row, column };
+  safeArray.PutElement( coordinates, &variant );
+  VariantClear(&variant);
+}
+
+//-----------------------------------------------------------------------------
+#define XL_CELLTYPE_TEXT        "@"
+#define XL_CELLTYPE_DOUBLE2     "#'##0.00"
+#define XL_CELLTYPE_DOUBLE3     "#'##0.000"
+#define XL_CELLTYPE_DOUBLE4     "#'##0.0000"
+#define XL_CELLTYPE_DOUBLE6     "#'##0.000000"
+#define XL_CELLTYPE_DOUBLE8     "#'##0.00000000"
+#define XL_CELLTYPE_NUMBER      "0"
+#define XL_CELLTYPE_NUMBER1000  "#'##0"
+#define XL_CELLTYPE_DATE        "TT.MM.JJJJ"
+#define XL_CELLTYPE_GENERAL     "Standard"
+
+//-----------------------------------------------------------------------------
+void CexcelTestDlg::OnBnClickedButton2()
+{
+  const bool closeExcel = true;
+  const int rows = 30000;
+  const int columns = 3;
+
+  //AfxOleGetMessageFilter()->SetMessagePendingDelay( x );
+  AfxOleGetMessageFilter()->EnableNotRespondingDialog( FALSE );
+  AfxOleGetMessageFilter()->EnableBusyDialog( FALSE );
+
+  Excel11::_ApplicationPtr    app;
+  Excel11::WorkbooksPtr       books;
+  Excel11::_WorkbookPtr       book;
+  Excel11::SheetsPtr          sheets;
+  Excel11::_WorksheetPtr      sheet;
+  app.CreateInstance( "Excel.Application" );
+  try
+  {
+    //app->Visible        = VARIANT_TRUE;
+    app->Visible        = VARIANT_FALSE;
+    app->Interactive    = VARIANT_FALSE;
+    app->UserControl    = VARIANT_FALSE;
+    app->ScreenUpdating = VARIANT_FALSE;
+    app->DisplayAlerts  = VARIANT_FALSE;
+    books           = app->GetWorkbooks();    // all open files
+    book            = books->Add();           // add new file
+    sheets          = book->Sheets;           // all worksheets
+
+    try 
+    {
+      COleSafeArray safeArray;
+      DWORD numElements[] = { rows, columns };
+      safeArray.Create( VT_VARIANT, 2, numElements );
+
+      // rename default worksheet
+      Excel11::_WorksheetPtr
+      sheet1          = sheets->GetItem(1);
+      sheet1->Name    = "Blah"; 
+
+      // format columns
+      {
+        std::string coords = getExcelCoordinates( 0, 0 );   // getExcelCoordinates returns strings like "A1", "F23", ... (excel cell coordinates)
+        Excel11::RangePtr range = sheet1->Range[coords.c_str()][coords.c_str()];
+        range = range->EntireColumn;
+        range->NumberFormat = XL_CELLTYPE_TEXT;
+
+        coords = getExcelCoordinates( 0, 1 );
+        range = sheet1->Range[coords.c_str()][coords.c_str()];
+        range = range->EntireColumn;
+        range->NumberFormat = XL_CELLTYPE_DATE;
+
+        coords = getExcelCoordinates( 0, 2 );
+        range = sheet1->Range[coords.c_str()][coords.c_str()];
+        range = range->EntireColumn;
+        range->NumberFormat = XL_CELLTYPE_DOUBLE2;
+      }
+
+      // fill line by line
+      for( int row = 0; row < rows; ++row )
+      {        
+        CString rowName;
+        rowName.Format( "%d", row + 1 );        
+        // Text
+        CString v0 = CString( "Wusel Dusel " ) + rowName;
+        setSafeArrayElement( v0, row, 0, safeArray );        
+        // Date
+        CString v1 = "11.12.1975";
+        setSafeArrayElement( v1, row, 1, safeArray );
+        // Number
+        double v2 = 123.45;
+        setSafeArrayElement( v2, row, 2, safeArray );
+      }
+
+      // export safearray to excel
+      if( rows )
+      {
+        const std::string   cellCoordTopLeft      = getExcelCoordinates( 0, 0 );
+        const std::string   cellCoordBottomRight  = getExcelCoordinates( rows-1, columns-1 );
+
+        Excel11::RangePtr range = sheet1->Range[ cellCoordTopLeft.c_str(), cellCoordBottomRight.c_str()];      
+        COleVariant         vtOptional((long)DISP_E_PARAMNOTFOUND,VT_ERROR);
+        // export the whole safeArray contents to excel
+        range->PutValue( vtOptional, COleVariant( safeArray ) );
+      }
+
+      // optimize column widths
+      Excel11::RangePtr cells = sheet1->Cells;
+      cells->Select();
+      cells->EntireColumn->AutoFit();
+      Excel11::RangePtr singleCell = sheet1->Range["A1"]["A1"];
+      singleCell->Select();
+
+      // clear safeArray
+      VARIANT* varPtr = 0;
+      try 
+      {
+        // Get a pointer to the elements of the array
+        // and increments the lock count on the array
+        safeArray.AccessData((LPVOID*)&varPtr);
+        for( int i = 0; i < rows * columns; ++i )
+        {
+          VARIANT& vp = varPtr[i];
+          VariantClear( &vp );
+        }
+        //decrement lock count
+        safeArray.UnaccessData();
+      }
+      catch (COleException *pEx)
+      {
+        AfxThrowOleDispatchException(1003, _T("Unexpected Failure in FastSort method"));
+        pEx->Delete();
+      }
+      //safeArray.DestroyData();            //???
+      //safeArray.DestroyDescriptor();    //???  
+      safeArray.Clear();
+    }
+    catch( std::exception& err )
+    {
+      MessageBox( err.what() );
+    }
+
+    if( closeExcel )
+    {
+      book->Close( VARIANT_FALSE );   // close the file
+      app->Quit();                    // close Excel instance
+    }
+    else
+    {
+      app->Visible        = VARIANT_TRUE;
+      app->Interactive    = VARIANT_TRUE;
+      app->UserControl    = VARIANT_TRUE;
+      app->ScreenUpdating = VARIANT_TRUE;
+      app->DisplayAlerts  = VARIANT_TRUE;
+    }
+    app.Release();
+  }
+  catch( _com_error& err )
+  {
+    CString s(err.Description().GetBSTR());
+    MessageBox(s);
+  }
+
+}
+

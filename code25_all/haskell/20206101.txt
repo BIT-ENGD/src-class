@@ -1,0 +1,305 @@
+allowedMoves :: MancalaBoard -> Player -> [Int]
+allowedMoves board p
+    | (p == PlayerA && getCurPlayer board == p) = findIndices (>0) (init(take (length (playerSide board PlayerA)+1) (getBoardData board)))
+    | (p == PlayerB && getCurPlayer board == p) = map (+(length (playerSide board PlayerA))) (findIndices (>0) (init(drop (length (playerSide board PlayerA)) (getBoardData board))))
+    | otherwise = []
+
+data MancalaBoard = MancalaBoardImpl [Int] Player
+
+*MancalaBoard> let board = [5,0,2,7,0,1,5,6,1,7,7,5,0,2] :: [Int]
+*MancalaBoard> let mboard = MancalaBoardImpl board PlayerB
+*MancalaBoard> move mboard 7
+Player A: [5,0,2,7,0,1,5]
+Player B: [0,2,8,8,6,1,3]
+Current turn: PlayerB
+
+Player A: [5,0,2,7,0,1,5]
+Player B: [6,1,7,7,5,0,2]
+Current turn: PlayerB
+Player B, please make your move
+7
+*** Exception: Not an allowed move
+
+module MancalaBoard (MancalaBoard, Player, initial, getCurPlayer,
+            getBoardData, numCaptured, move, allowedMoves, isAllowedMove,
+            gameOver, winners) where
+
+import Data.List as List -- for List.elemIndex
+import Data.Maybe as Maybe -- for List.elemIndex
+
+{-
+ - The stones on a Mancala board are simply recorded as a list of Ints.  The
+ -  Ints come in the following order:
+ - 1. The boardSize pits belonging to PlayerA
+ - 2. The store belonging to PlayerA
+ - 3. The boardSize pits belonging to PlayerB
+ - 4. The store belonging to PlayerB
+ -}
+
+data MancalaBoard = MancalaBoardImpl [Int] Player
+
+data Player = PlayerA | PlayerB deriving (Eq, Show)
+
+---- Functions/constants for Player ----
+
+allPlayers = [PlayerA, PlayerB]
+numPlayers = length allPlayers
+
+
+playerNum :: Player -> Int
+playerNum p = fromJust $ List.elemIndex p allPlayers
+
+
+playerWithNum :: Int -> Player
+playerWithNum i = allPlayers !! i
+
+
+nextPlayer :: Player -> Player
+{- Find the player whose turn is next -}
+nextPlayer p = playerWithNum $ ((playerNum p) + 1) `mod` numPlayers
+
+
+---- Functions/constants for MancalaBoard ----
+
+{- number of pits on each side -}
+boardSize = 6
+{- number of stones in each pit -}
+startStones = 4
+
+{- the initial mancala board -}
+initial :: MancalaBoard
+initial = MancalaBoardImpl (concat $ take numPlayers (repeat boardSide)) PlayerA
+                        -- One side of board                pit at end
+    where boardSide = take boardSize (repeat startStones) ++ [0]
+
+
+{- return the index of the first pit belonging to a player -}
+indexForFirstPit :: Player -> Int
+indexForFirstPit p = (playerNum p) * (boardSize + 1)
+
+
+{- return the index of the store for that player -}
+indexForPlayerStore :: Player -> Int
+indexForPlayerStore p = boardSize + (indexForFirstPit p)
+
+
+{- return the indices for the pits (without the store) for a player -}
+indicesForPlayerSide :: Player -> [Int]
+indicesForPlayerSide p = [firstPit .. lastPit] where
+    firstPit = indexForFirstPit p
+    lastPit = firstPit + boardSize - 1
+
+
+---- Retrieve information about Mancala Board
+{- return the player who has the current turn -}
+getCurPlayer :: MancalaBoard -> Player
+getCurPlayer (MancalaBoardImpl xs player) = player
+
+
+{- return the list of all pits in the board -}
+getBoardData :: MancalaBoard -> [Int]
+getBoardData (MancalaBoardImpl xs player) = xs
+
+{- return the side of the board for a specified player, including the store at
+ - the end -}
+playerSide :: MancalaBoard -> Player -> [Int]
+playerSide (MancalaBoardImpl xs player) p
+    | (p == PlayerA) = take (length xs `div` 2) xs
+    | (p == PlayerB) = drop (length xs `div` 2) xs
+
+{- return the number of captured pieces in specified player's store -}
+numCaptured :: MancalaBoard -> Player -> Int
+numCaptured board p = last $ playerSide board p
+
+{- allowedMoves returns a list of valid moves for the current player:
+ - ie. the indices of pits which belong to that player, and which contain one
+ - or more pieces -}
+allowedMoves :: MancalaBoard -> Player -> [Int]
+allowedMoves board p
+    | (p == PlayerA && getCurPlayer board == p) = findIndices (>0) (init(take (length (playerSide board PlayerA)+1) (getBoardData board)))
+    | (p == PlayerB && getCurPlayer board == p) = map (+(length (playerSide board PlayerA))) (findIndices (>0) (init(drop (length (playerSide board PlayerA)) (getBoardData board))))
+    | otherwise = []
+
+{- check that a move is valid for the current player -}
+isAllowedMove :: MancalaBoard -> Int -> Bool
+isAllowedMove board q = q `elem` allowedMoves board (getCurPlayer board)
+
+{- We number the pits from 0 to 13 (2 players, 6 pits each and 1 store each)
+ - This function takes a board and applies the move where the player selects
+ - the numbered pit, giving back an updated board after the move -}
+move :: MancalaBoard -> Int -> MancalaBoard
+move (MancalaBoardImpl xs PlayerA) n
+    | ((isAllowedMove (MancalaBoardImpl xs PlayerA) n) == True) = (MancalaBoardImpl intmap (choose PlayerA))
+    | otherwise = error "Not an allowed move" where
+        q = xs !! n
+        plusoned = map (+1) (take q (drop (n+1) xs))
+        intmap = (take n xs) ++ [0] ++ plusoned ++ drop (n+1+q) xs
+        choose plyr 
+            | (n + q == 6) = PlayerA
+            | otherwise = PlayerB
+move (MancalaBoardImpl xs PlayerB) n
+    | ((isAllowedMove (MancalaBoardImpl xs PlayerB) n) == True) = (MancalaBoardImpl reswapsides (choose PlayerB))
+    | otherwise = error "Not an allowed move" where
+        swapsides = drop (length xs `div` 2) xs ++ take (length xs `div` 2) xs
+        performmove = getBoardData $ move (MancalaBoardImpl swapsides PlayerA) (n - (length xs `div` 2))
+        reswapsides = drop (length xs `div` 2) performmove ++ take (length xs `div` 2) performmove
+        choose plyr
+            | (n + (xs !! n) == 13) = PlayerB
+            | otherwise = PlayerA
+
+{- gameOver checks to see if the game is over (i.e. if one player's side of the
+ - board is all empty -}
+gameOver :: MancalaBoard -> Bool
+gameOver board = (all (==0) (init (playerSide board PlayerA))) || (all (==0) (init (playerSide board PlayerB)))
+
+{- winner returns a list of players who have the top score: there will only be 
+ - one in the list if there is a clear winner, and none if it is a draw -}
+winners :: MancalaBoard -> [Player]
+winners board = filter g allPlayers 
+    where g plyr 
+            | (sum(playerSide board plyr) == maximum (mapsum board)) = True
+            | otherwise = False 
+          mapsum board = map f allPlayers
+          f plyr = sum (playerSide board plyr)    
+
+---- show
+instance Show MancalaBoard where
+    show (MancalaBoardImpl boardData player) =
+           -- (show boardData) ++ " " ++ (show player)
+        "Player A: " ++ (show (take ((length boardData) `div` 2) boardData)) ++ "\n" ++
+        "Player B: " ++ (show (drop ((length boardData) `div` 2) boardData)) ++ "\n" ++
+        "Current turn: " ++ (show player)
+
+---- tests
+
+testboard1 = MancalaBoardImpl [4,4,4,4,4,4,0,4,4,4,4,4,4,0] PlayerA
+testboard2 = MancalaBoardImpl [0,1,2,3,4,5,6,5,5,5,5,0,0,7] PlayerB
+testboard3 = MancalaBoardImpl [1,1,1,1,1,1,18,2,2,2,2,2,2,12] PlayerA
+testboard4 = MancalaBoardImpl [0,1,0,2,0,3,6,5,0,10,0,15,0,21] PlayerB
+
+testGetCurPlayer = (getCurPlayer testboard1 == PlayerA)
+
+testGetBoardData = (getBoardData testboard2 == [0,1,2,3,4,5,6,5,5,5,5,0,0,7])
+
+testPlayerSide = (playerSide testboard3 PlayerA == [1,1,1,1,1,1,18])
+
+testNumCaptured = (numCaptured testboard4 PlayerB == 21)
+
+testAllowedMoves = (allowedMoves testboard1 PlayerA == [0,1,2,3,4,5])
+
+testIsAllowedMove = (isAllowedMove testboard2 0 == False)
+
+testMove = (getCurPlayer(move testboard4 9) == PlayerA) && (getBoardData(move testboard4 9) == [1,2,1,3,1,4,6,5,0,0,1,16,1,22])
+
+testGameOver = (gameOver testboard3 == False)
+
+testWinners = (winners testboard1 == [PlayerA,PlayerB])
+
+-- TwoPlayerMancala.hs
+import MancalaBoard
+
+main :: IO ()
+main = do
+    putStrLn "Welcome! This program allows two people to play Mancala with each other."
+    putStrLn "For Player A, their pits are numbered 0, 1, 2, 3, 4, and 5. 6 is their store."
+    putStrLn "For Player B, their pits are numbered 7, 8, 9, 10, 11, and 12. 13 is their store."
+    putStrLn "In other words, this program represents a board that looks like this:"
+    putStrLn "[  ] [ 0] [ 1] [ 2] [ 3] [ 4] [ 5] [ 6]"    
+    putStrLn "[13] [12] [11] [10] [ 9] [ 8] [ 7] [  ]"
+    putStrLn "Balls travel counterclockwise on this board."
+    putStrLn "To quit, enter \"quit\" at any point"
+    putStrLn "The game begins now."
+    playGame
+
+playGame :: IO ()
+playGame = do
+    putStrLn $ show initial 
+    n <- getLine
+    let num = read n :: Int
+    makeMove initial num
+
+makeMove board n = do
+    let board1 = move board n
+    putStrLn $ show board1
+    if (gameOver board1) 
+    then endGame board1
+    else return ()
+    if (show (getCurPlayer board1) == "PlayerA") then putStrLn "Player A, please make your move"
+    else putStrLn "Player B, please make your move"
+    m <- getLine
+    if (m == "quit") 
+    then endGame board1
+    else return ()
+    let mum = read m :: Int
+    makeMove board1 mum
+
+endGame :: MancalaBoard -> IO ()
+endGame board = do
+    putStrLn "The game is over! Here is the final board: "
+    putStrLn $ show board
+    putStrLn "The winner is: "
+    putStrLn $ show (winners board)
+    return ()
+
+    {-if ((winners board) == [PlayerA]) 
+    then let winner = "Player A" else 
+    if ((winners board) == [PlayerB]) 
+    then let winner = "Player B" else 
+    let winner = ""
+    putStrLn "The game is over! Here is the final board:"
+    putStrLn $ show board
+    if (winner == ("Player A" || "Player B")) 
+    then putStrLn "The winner is " ++ winner
+    else putStrLn "The game was a tie!"-}
+
+*Main> main
+Welcome! This program allows two people to play Mancala with each other.
+For Player A, their pits are numbered 0, 1, 2, 3, 4, and 5. 6 is their store.
+For Player B, their pits are numbered 7, 8, 9, 10, 11, and 12. 13 is their store.
+In other words, this program represents a board that looks like this:
+[  ] [ 0] [ 1] [ 2] [ 3] [ 4] [ 5] [ 6]
+[13] [12] [11] [10] [ 9] [ 8] [ 7] [  ]
+Balls travel counterclockwise on this board.
+To quit, enter "quit" at any point
+The game begins now.
+Player A: [4,4,4,4,4,4,0]
+Player B: [4,4,4,4,4,4,0]
+Current turn: PlayerA
+2
+Player A: [4,4,0,5,5,5,1]
+Player B: [4,4,4,4,4,4,0]
+Current turn: PlayerA
+Player A, please make your move
+5
+Player A: [4,4,0,5,5,0,2]
+Player B: [5,5,5,5,4,4,0]
+Current turn: PlayerB
+Player B, please make your move
+8
+Player A: [4,4,0,5,5,0,2]
+Player B: [5,0,6,6,5,5,1]
+Current turn: PlayerB
+Player B, please make your move
+12
+Player A: [5,5,1,6,5,0,2]
+Player B: [5,0,6,6,5,0,2]
+Current turn: PlayerA
+Player A, please make your move
+1
+Player A: [5,0,2,7,6,1,3]
+Player B: [5,0,6,6,5,0,2]
+Current turn: PlayerA
+Player A, please make your move
+5
+Player A: [5,0,2,7,6,0,4]
+Player B: [5,0,6,6,5,0,2]
+Current turn: PlayerA
+Player A, please make your move
+4
+Player A: [5,0,2,7,0,1,5]
+Player B: [6,1,7,7,5,0,2]
+Current turn: PlayerB
+Player B, please make your move
+7
+*** Exception: Not an allowed move
+

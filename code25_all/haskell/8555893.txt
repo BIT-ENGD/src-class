@@ -1,0 +1,68 @@
+module Main(main) where
+
+import qualified Media.Streaming.GStreamer as GS
+import Data.Maybe
+import System.IO
+import System.Exit
+import System.Glib.MainLoop as Glib
+import System.Glib.Signals as Glib
+import System.Glib.Properties as Glib
+
+
+makeElement:: String → String → IO GS.Element
+makeElement elementType elementName = do
+    element ← GS.elementFactoryMake elementType (Just elementName)
+    case element of
+        Just element' → return element'
+        Nothing → do
+            hPutStrLn stdout ("Cannot create element!")
+            hFlush stdout
+            exitFailure
+
+player =  do
+    GS.init
+
+    pipeline ← GS.pipelineNew "video-stream"
+
+    source  ← makeElement "v4l2src" "video-source"
+    color   ← makeElement "ffmpegcolorspace" "video-color"
+    tee     ← makeElement "tee" "stream-tee"
+    rQ      ← makeElement "queue" "record-queue"
+    vQ      ← makeElement "queue" "video-queue"
+    encoder ← makeElement "y4menc" "video-encoder"
+    rSink   ← makeElement "filesink" "record-sink"
+    sink    ← makeElement "ximagesink" "video-sink"
+
+    let elements = [source,color,encoder,rSink,vQ,rQ,sink,tee]
+
+    Glib.objectSetPropertyString "location" rSink "rec"
+
+    mapM_ (GS.binAdd (GS.castToBin pipeline)) elements
+
+    -- Request Pads from tee
+    dPad ← GS.elementGetRequestPad tee "src%d"
+    rPad ← GS.elementGetRequestPad tee "src%d"
+    -- Request Static Pads from queue
+    sDPad ← GS.elementGetStaticPad vQ "sink"
+    sRPad ← GS.elementGetStaticPad rQ "sink"
+    -- Link tee source to queue sink
+    GS.padLink (fromJust dPad) (fromJust sDPad)
+    GS.padLink (fromJust rPad) (fromJust sRPad)
+
+    GS.elementReleaseRequestPad tee $ fromJust dPad
+    GS.elementReleaseRequestPad tee $ fromJust rPad
+
+    GS.elementLink source color
+    GS.elementLink color tee
+    GS.elementLink vQ sink
+    GS.elementLink rQ encoder
+    GS.elementLink encoder rSink
+
+
+    GS.elementSetState pipeline GS.StatePlaying
+
+main = do
+    loop ← Glib.mainLoopNew Nothing False
+    player
+    Glib.mainLoopRun loop
+

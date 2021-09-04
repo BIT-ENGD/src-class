@@ -1,0 +1,57 @@
+@repository = Svn::Repos.open('/path/to/repository')
+
+@repository = Svn::Repos.open('svn://localhost/some/path')
+
+/SourceCache/subversion/subversion-35/subversion/subversion/libsvn_subr/io.c:2710: 2: Can't open file 'svn://localhost/format': No such file or directory
+
+svn ls svn://localhost/some/path
+
+require 'svn/ra'
+
+class SvnWrapper
+  def initialize(repository_uri, repository_username, repository_password)
+    # Remove any trailing slashes from the path, as the SVN library will choke
+    # if it finds any.
+    @repository_uri = repository_uri.gsub(/[\/]+$/, '')
+
+    # Initialize repository session.
+    @context = Svn::Client::Context.new
+    @context.add_simple_prompt_provider(0) do |cred, realm, username, may_save|
+      cred.username = repository_username
+      cred.password = repository_password
+      cred.may_save = true
+    end
+
+    config = {}
+    callbacks = Svn::Ra::Callbacks.new(@context.auth_baton)
+    @session = Svn::Ra::Session.open(@repository_uri, config, callbacks)
+  end
+
+  def ls(relative_path, revision = nil)
+    relative_path = relative_path.gsub(/^[\/]+/, '').gsub(/[\/]+$/, '')
+    entries, properties = @session.dir(relative_path, revision)
+
+    return entries.keys.sort
+  end
+
+  def info(relative_path, revision = nil)
+    path = File.join(@repository_uri, relative_path)
+    data = {}
+
+    @context.info(path, revision) do |dummy, infoStruct|
+      # These values are enumerated at http://svn.collab.net/svn-doxygen/structsvn__info__t.html.
+      data['url'] = infoStruct.URL
+      data['revision'] = infoStruct.rev
+      data['kind'] = infoStruct.kind
+      data['repository_root_url'] = infoStruct.repos_root_url
+      data['repository_uuid'] = infoStruct.repos_UUID
+      data['last_changed_revision'] = infoStruct.last_changed_rev
+      data['last_changed_date'] = infoStruct.last_changed_date
+      data['last_changed_author'] = infoStruct.last_changed_author
+      data['lock'] = infoStruct.lock
+    end
+
+    return data
+  end
+end
+

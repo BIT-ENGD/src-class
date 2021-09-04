@@ -1,0 +1,142 @@
+Vec4f multiplier, addend;
+Vec4f vecList[];
+for (int i = 0; i < count; i++)
+    vecList[i] = vecList[i] * multiplier + addend;
+
+{-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -O2 -fvia-C -optc-O3 -fexcess-precision -optc-march=native #-}
+
+import Data.Vector.Storable
+import qualified Data.Vector.Storable as V
+import Foreign.C.Types
+import Data.Bits
+
+repCount = 10000
+arraySize = 20000
+
+a = fromList $ [0.2::CFloat,  0.1, 0.6, 1.0]
+m = fromList $ [0.99::CFloat, 0.7, 0.8, 0.6]
+
+multAdd :: Int -> CFloat -> CFloat
+multAdd !i !v = v * (m ! (i .&. 3)) + (a ! (i .&. 3))
+
+multList :: Int -> Vector CFloat -> Vector CFloat
+multList !count !src
+    | count <= 0    = src
+    | otherwise     = multList (count-1) $ V.imap multAdd src
+
+main = do
+    print $ Data.Vector.Storable.sum $ multList repCount $ 
+        Data.Vector.Storable.replicate (arraySize*4) (0::CFloat)
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+typedef float v4fs __attribute__ ((vector_size (16)));
+typedef struct { float x, y, z, w; } Vector4;
+
+void setv4(v4fs *v, float x, float y, float z, float w) {
+    float *a = (float*) v;
+    a[0] = x;
+    a[1] = y;
+    a[2] = z;
+    a[3] = w;
+}
+
+float sumv4(v4fs *v) {
+    float *a = (float*) v;
+    return a[0] + a[1] + a[2] + a[3];
+}
+
+void vecmult(v4fs *MAYBE_RESTRICT s, v4fs *MAYBE_RESTRICT d, v4fs a, v4fs m) {
+    for (int j = 0; j < N; j++) {
+        d[j] = s[j] * m + a;
+    }
+}
+
+void scamult(float *MAYBE_RESTRICT s, float *MAYBE_RESTRICT d,
+             Vector4 a, Vector4 m) {
+    for (int j = 0; j < (N*4); j+=4) {
+        d[j+0] = s[j+0] * m.x + a.x;
+        d[j+1] = s[j+1] * m.y + a.y;
+        d[j+2] = s[j+2] * m.z + a.z;
+        d[j+3] = s[j+3] * m.w + a.w;
+    }
+}
+
+int main () {
+    v4fs a, m;
+    v4fs *s, *d;
+
+    setv4(&a, 0.2, 0.1, 0.6, 1.0);
+    setv4(&m, 0.99, 0.7, 0.8, 0.6);
+
+    s = calloc(N, sizeof(v4fs));
+    d = s;
+
+    double start = clock();
+    for (int i = 0; i < M; i++) {
+
+#ifdef COPY
+        d = malloc(N * sizeof(v4fs));
+#endif
+
+#ifdef VECTOR
+        vecmult(s, d, a, m);
+#else
+        Vector4 aa = *(Vector4*)(&a);
+        Vector4 mm = *(Vector4*)(&m);
+        scamult((float*)s, (float*)d, aa, mm);
+#endif
+
+#ifdef COPY
+        free(s);
+        s = d;
+#endif
+    }
+    double end = clock();
+
+    float sum = 0;
+    for (int j = 0; j < N; j++) {
+        sum += sumv4(s+j);
+    }
+    printf("%-50s %2.5f %f\n\n", NAME,
+            (end - start) / (double) CLOCKS_PER_SEC, sum);
+}
+
+import System.Process
+import GHC.IOBase
+
+cBase = ("cmath", "gcc mult.c -ggdb --std=c99 -DM=10000 -DN=20000")
+cOptions = [
+            [("32", "-m32"), ("64", "-m64")],
+            [("generic", ""), ("native", "-march=native -msse4")],
+            [("O1", "-O1"), ("O2", "-O2"), ("O3", "-O3")],
+            [("restrict", "-DMAYBE_RESTRICT=__restrict__"),
+                ("norestrict", "-DMAYBE_RESTRICT=")],
+            [("vector", "-DVECTOR"), ("scalar", "")],
+            [("copy", "-DCOPY"), ("nocopy", "")]
+           ]
+
+-- Fold over the Cartesian product of the double list. Probably a Prelude function
+-- or two that does this, but hey. The 'perm' referred to permutations until I realized
+-- that this wasn't actually doing permutations. '
+permfold :: (a -> a -> a) -> a -> [[a]] -> [a]
+permfold f z [] = [z]
+permfold f z (x:xs) = concat $ map (\a -> (permfold f (f z a) xs)) x
+
+prepCmd :: (String, String) -> (String, String) -> (String, String)
+prepCmd (name, cmd) (namea, cmda) =
+    (name ++ "-" ++ namea, cmd ++ " " ++ cmda)
+
+runCCmd name compileCmd = do
+    res <- system (compileCmd ++ " -DNAME=\\\"" ++ name ++ "\\\" -o " ++ name)
+    if res == ExitSuccess
+        then do system ("./" ++ name)
+                return ()
+        else    putStrLn $ name ++ " did not compile"
+
+main = do
+    mapM_ (uncurry runCCmd) $ permfold prepCmd cBase cOptions
+

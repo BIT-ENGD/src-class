@@ -1,0 +1,91 @@
+Imports System
+Imports System.Configuration
+Imports System.Data
+Imports System.Data.OleDb
+Imports System.Data.SqlClient
+Imports System.Drawing
+Imports System.IO
+Imports System.Net.Mail
+Imports System.Text
+Imports System.Web
+Imports Microsoft.Office.Interop  
+
+Public Shared Function writeToExcelFile(ByVal template As String, ByVal filename As String, ByVal data As DataSet) As String
+    If File.Exists(filename) Then
+        File.Delete(filename)
+    End If
+    If template <> String.Empty AndAlso filename <> String.Empty Then
+        File.Copy(template, filename)
+    End If
+
+    Dim connString As String = "Provider=Microsoft.Jet.OLEDB.4.0;Data Source=" + filename + ";Extended Properties=""Excel 8.0;HDR=Yes;"""
+    Dim conn As New OleDbConnection(connString)
+
+    Try
+        conn.Open()
+
+        Dim cmd As New OleDbCommand()
+
+        For Each table As DataTable In data.Tables
+            Dim tableName As String = table.TableName.Replace(" ", "")
+
+            Dim tableCreate As String = "CREATE TABLE [" + tableName + "] ("
+
+            Dim sql As String = "INSERT INTO [" + tableName + "$]("
+            Dim colName As String = String.Empty
+
+        For Each col As DataColumn In table.Columns
+            colName = col.ColumnName.Replace("#", "num")
+
+            If colName.Contains(" ") Then
+                sql += " [" + colName.Replace("'", "") + "],"
+            Else
+                sql += " " + colName.Replace("'", "") + ","
+            End If
+
+            tableCreate += " [" + colName + "] varchar(255),"
+        Next
+
+        If tableCreate.EndsWith(",") Then
+            tableCreate = tableCreate.TrimEnd(New [Char]() {","c})
+        End If
+
+        tableCreate += ") "
+
+        cmd = New OleDbCommand(tableCreate, conn)
+        cmd.ExecuteNonQuery()
+
+        If sql.EndsWith(",") Then
+            sql = sql.TrimEnd(New [Char]() {","c})
+        End If
+
+        sql += ") "
+
+        For Each row As DataRow In table.Rows
+            Dim values As String = " VALUES("
+
+            For Each col As DataColumn In table.Columns
+                Try
+                    values += "'" + cleanString(row(col).ToString()).Substring(0, 250) + "...',"
+                Catch e As Exception
+                    values += "'" + cleanString(row(col).ToString()) + "',"
+                End Try
+            Next
+
+            If values.EndsWith(",") Then
+                values = values.TrimEnd(New [Char]() {","c})
+            End If
+
+            values += ") "
+            cmd = New OleDbCommand(sql + values, conn)
+            cmd.ExecuteNonQuery()
+        Next
+    Next
+    conn.Close()
+    Return filename
+Catch e As Exception
+    Throw New Exception(e.Message)
+    Return String.Empty
+End Try
+End Function
+

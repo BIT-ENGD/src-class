@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+use strict;
+use Socket;
+
+my $socket_name = 'catsock';
+my $client_message = "Hello server, this is the client.";
+
+my $SOCK;
+socket($SOCK, PF_UNIX, SOCK_STREAM, 0) or die "socket: $!";
+connect($SOCK, sockaddr_un($socket_name)) or die "connect: $!";
+
+$| = 1, select $_ for select $SOCK; # turn on autoflush
+print $SOCK $client_message; # send the message
+shutdown($SOCK,1); # finished writing
+print "sent:     $client_message\n";
+
+my $server_message = do { local $/; <$SOCK> }; # get the response
+print "recieved: $server_message\n\n";
+
+#!/usr/bin/perl
+use strict;
+use Socket;
+use threads;
+use threads::shared;
+
+sub threadfunc
+{
+    print "    waiting 5 seconds in new thread...\n";
+    sleep(5);
+    print "    exiting thread...\n\n";
+}
+
+my $server_message = "Hello client, this is the server.";
+my $socket_name = 'catsock';
+
+my $SERVER;
+my $CLIENT;
+socket($SERVER, PF_UNIX, SOCK_STREAM, 0) or die "socket: $!";
+unlink($socket_name);
+bind($SERVER, sockaddr_un($socket_name)) or die "bind: $!";
+chmod(0660, $socket_name);
+listen($SERVER, SOMAXCONN) or die "listen: $!";
+
+print "server started on $socket_name\n\n";
+
+while(1) {
+    accept($CLIENT, $SERVER);
+
+    my $client_message = do { local $/; <$CLIENT> }; # grab entire message
+    print "recieved: $client_message\n";
+
+    print "creating new thread...\n";
+    my $thr = threads->create(\&threadfunc);
+    $thr->detach();
+
+    print $CLIENT $server_message; # send the response
+    print "sent: $server_message\n\n";
+
+    close $CLIENT;
+}
+

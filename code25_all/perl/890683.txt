@@ -1,0 +1,63 @@
+use strict;
+use warnings;
+
+use Tie::File;
+
+use Data::Dumper;
+
+use Digest::MD5 qw(md5_hex);
+
+# open an existing file in read-only mode
+use Fcntl 'O_RDONLY';
+
+die "Usage: $0 <unsorted input filename> <sorted output filename>" if ($#ARGV < 1);
+
+our $recordsWrittenCount = 0;
+our $fieldsSorted = 0;
+
+our @array;
+
+tie @array, 'Tie::File', $ARGV[0], memory => 50_000_000, mode => O_RDONLY or die "Cannot open $ARGV[0]: $!";
+
+open(OUTFILE, ">" .  $ARGV[1]) or die "Cannot open $ARGV[1]: $!";
+
+our @tempRecordStorage = ();
+
+our $dx = 0;
+
+# Now read in the EL6 file
+
+our $numberOfLines = @array; # accessing @array in a loop might be expensive as it is tied?? 
+
+for($dx = 0; $dx < $numberOfLines; ++$dx)
+{
+    if($array[$dx] eq 'RECORD')
+    {
+        ++$recordsWrittenCount;
+
+        my $endOfRecord = $dx;
+
+        until($array[++$endOfRecord] eq '.')
+        {
+            push @tempRecordStorage, $array[$endOfRecord];
+            ++$fieldsSorted;
+        }
+
+        print OUTFILE "RECORD\n";
+
+        local $, = "\n";
+        print OUTFILE sort @tempRecordStorage;
+        @tempRecordStorage = ();
+
+        print OUTFILE "\n.\n"; # PERL does not postfix trailing separator after the last array element, so we need to do this ourselves)
+
+        $dx = $endOfRecord;     
+    }
+}
+
+close(OUTFILE);
+
+# Display results to user
+
+print "\n[*] Done: " . $fieldsSorted . " fields sorted from " . $recordsWrittenCount . " records written.\n";
+

@@ -1,0 +1,76 @@
+package AA;
+
+use strict;
+use warnings;
+use WWW::Curl::Easy;
+use WWW::Curl::Multi;
+use Data::Dumper;
+
+sub new {
+ my $class = shift;
+ my $self = {};
+ bless $self, $class;
+ return $self;
+}
+
+sub tofile { 
+ return syswrite($_[1], $_[0]); #This is where first and the second error occurs
+}
+
+sub downloadfiles{
+ my $self = shift;
+ my $files = shift;
+ my %easy;
+ my $curl = WWW::Curl::Easy->new;
+ my $active_handles = 0;
+ my $curlm = WWW::Curl::Multi->new;
+ my $dir = "dl/"; 
+ my $fh;
+ foreach my $file (@$files) {
+  my $curl_id = $active_handles + 1; # This should be a handle unique id.
+  my $code = 0;
+  $easy{$curl_id} = $curl;
+  $code+= $curl->setopt(CURLOPT_PRIVATE, $curl_id);
+
+  #Open the filehandle
+  open($fh, ">$dir$curl_id") or die "\nopen: $!\n\n";
+  binmode $fh;
+
+  # do the usual configuration on the handle
+  $code+= $curl->setopt(CURLOPT_FILE, *$fh);
+  $code+= $curl->setopt(CURLOPT_FAILONERROR, 1);
+  $code+= $curl->setopt(CURLOPT_HEADER, 1);
+  $code+= $curl->setopt(CURLOPT_CONNECTTIMEOUT, 2);
+  $code+= $curl->setopt(CURLOPT_URL, $file);
+  $code+= $curl->setopt(CURLOPT_WRITEFUNCTION, \&tofile);
+  $code+= $curl->setopt(CURLOPT_NOPROGRESS, 1);
+  $code+= $curl->setopt(CURLOPT_VERBOSE, 0);
+  $code+= $curl->setopt(CURLOPT_HEADER, 0);
+
+  if ($code ne 0) {
+   die("Failed to initialize curl");
+  }
+
+  # Add some easy handles
+  $curlm->add_handle($curl);
+  $active_handles++;
+ }
+ print "\nActive handles: ".$active_handles."\n";
+ while ($active_handles) {
+  my $active_transfers = $curlm->perform; #This is where second error comes from
+  if ($active_transfers != $active_handles) {
+   while (my ($id, $return_value) = $curlm->info_read) {
+    print $id;
+    if ($id) {
+     $active_handles--;
+     my $actual_easy_handle = $easy{$id};
+     delete $easy{$id};
+    }
+   }
+  }
+ }
+ close $fh;
+}
+
+1;
+

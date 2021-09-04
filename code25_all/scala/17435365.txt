@@ -1,0 +1,282 @@
+import org.lwjgl.opengl.Display
+import org.lwjgl.opengl.DisplayMode
+import org.lwjgl.opengl.PixelFormat
+import org.lwjgl.opengl.ContextAttribs
+import org.lwjgl.opengl.GL11
+import org.lwjgl.opengl.GL20
+import org.lwjgl.opengl.GL15
+import org.lwjgl.opengl.GL30
+import org.lwjgl.BufferUtils
+import utils.Shader
+import utils.ShaderProgram
+
+class Tutorial3(WIDTH: Int, HEIGHT: Int, TITLE: String) extends utils.Disposable {
+
+  /**
+   * Create an Int VBO for our triangle
+   */
+  private var triangleVbo = 0
+  /**
+   * Create an Int VAO for our triangle
+   */
+  private var triangleVao = 0
+  /**
+   * Create a Float array for storing our triangle's vertices. 3 vertices, containing 3 values each (x,y,z)
+   */
+  private val triangleVertices: Array[Float] = new Array[Float](9)
+  /**
+   * Create a Float array for storing our trangle's colors
+   */
+  private val triangleColors: Array[Float] = new Array[Float](9)
+
+  val vertexShader = new Shader()
+  val fragmentShader = new Shader()
+  val program = new ShaderProgram()
+
+  setupOpenGl
+  setupShapes
+
+  while(!Display.isCloseRequested()) {
+    loopCycle
+    Display sync 60
+    Display update
+  }
+
+  dispose
+
+  private def setupOpenGl() {
+
+     try {
+
+       val pixelFormat = new PixelFormat
+       val contextAttribs = new ContextAttribs(3, 3).withForwardCompatible(true).withProfileCore(true)
+       Display setDisplayMode new DisplayMode(WIDTH, HEIGHT)
+       Display setTitle TITLE
+       Display create (pixelFormat, contextAttribs)
+
+       GL11 glClearColor (1.0f, 0f, 0f, 1.0f)
+
+     } catch {
+
+       case e:Throwable => e printStackTrace; sys exit 1
+
+     }
+
+  }
+
+  private def setupShapes() {
+
+    //Triangle
+    triangleVertices(0) = -0.5f
+    triangleVertices(1) = -0.5f
+    triangleVertices(2) = 0f
+
+    triangleVertices(3) = 0.5f
+    triangleVertices(4) = -0.5f
+    triangleVertices(5) = 0f
+
+    triangleVertices(6) = 0f
+    triangleVertices(7) = 0.5f
+    triangleVertices(8) = 0f
+
+    //Colors
+    triangleColors(0) = 1.0f
+    triangleColors(1) = 0f
+    triangleColors(2) = 0f
+
+    triangleColors(3) = 0f
+    triangleColors(4) = 1.0f
+    triangleColors(5) = 0f
+
+    triangleColors(6) = 0f
+    triangleColors(7) = 0f
+    triangleColors(8) = 1.0f
+
+    val triangleBuffer = BufferUtils createFloatBuffer triangleVertices.length
+
+    triangleBuffer put triangleVertices
+
+    triangleBuffer flip ()
+
+    triangleVao = GL30 glGenVertexArrays ()
+    GL30 glBindVertexArray triangleVao
+
+    triangleVbo = GL15 glGenBuffers ()
+    GL15 glBindBuffer (GL15 GL_ARRAY_BUFFER, triangleVbo)
+    GL15 glBufferData (GL15 GL_ARRAY_BUFFER, triangleBuffer, GL15 GL_STATIC_DRAW)
+
+    GL20 glEnableVertexAttribArray 0
+    GL20 glVertexAttribPointer (0, 3, GL11 GL_FLOAT, false, 0, 0)
+
+    vertexShader loadShader ("vertex_shader_tutorial_3.glsl", GL20 GL_VERTEX_SHADER)
+    fragmentShader loadShader ("fragment_shader_tutorial_3.glsl", GL20 GL_FRAGMENT_SHADER)
+
+    program createProgram ()
+    program addShader vertexShader
+    program addShader fragmentShader
+
+    program linkProgram ()
+    program useProgram ()
+
+    GL15 glBindBuffer (GL15 GL_ARRAY_BUFFER, 0)
+    GL30 glBindVertexArray (0)
+
+  }
+
+  private def loopCycle() {
+    //Do Drawing / Logic
+    GL11 glClear (GL11 GL_COLOR_BUFFER_BIT)
+
+    GL30 glBindVertexArray triangleVao
+    GL20 glEnableVertexAttribArray 0
+
+    GL11 glDrawArrays(GL11 GL_TRIANGLES, 0, triangleVertices length)
+
+    GL20 glDisableVertexAttribArray 0
+    GL30 glBindVertexArray 0
+  }
+
+  override def dispose() {
+      GL20 glDisableVertexAttribArray 0
+
+      GL15 glBindBuffer (GL15 GL_ARRAY_BUFFER, 0)
+      GL15 glDeleteBuffers triangleVbo
+
+      GL30 glBindVertexArray 0
+      GL30 glDeleteVertexArrays triangleVao
+
+      Display destroy
+  }
+
+}
+
+object Tutorial3 {
+
+  def main(args: Array[String]) {
+    new Tutorial3(800, 600, "OpenGL 3.3 Tutorial 3")
+  }
+
+}
+
+package utils
+
+import java.io.File
+import java.io.BufferedReader
+import java.io.FileReader
+import org.lwjgl.opengl.GL30
+import org.lwjgl.opengl.GL15
+import org.lwjgl.opengl.GL11
+import org.lwjgl.opengl.GL20
+
+class Shader extends Disposable {
+
+  private var shader: Int = 0
+  private var typ: Int = 0
+  private var loaded: Boolean = false
+
+  def loadShader(filename: String, typ: Int): Boolean = {
+
+    val file: File = new File(System getProperty "user.dir", filename)
+
+    if(!file.exists())
+      false
+
+    var line: String = ""
+    val reader: BufferedReader = new BufferedReader(new FileReader(file))
+    var shaderSource: String = ""
+
+    while({line = reader.readLine(); line != null}) {
+      shaderSource = shaderSource + line + "\n"
+    }
+
+    reader close
+
+    this.shader = GL20 glCreateShader typ
+
+    GL20 glShaderSource (this.shader, shaderSource)
+    GL20 glCompileShader this.shader
+
+    val status: Int = GL20 glGetShaderi(this.shader, GL20 GL_COMPILE_STATUS)
+
+    if(status != 1)
+      false
+
+    this.typ = typ
+    this.loaded = true
+
+    true
+  }
+
+  def isLoaded(): Boolean = {
+    this.loaded
+  }
+
+  def getShaderId(): Int = {
+    this.shader
+  }
+
+  override def dispose() {
+    GL20 glDeleteShader this.shader
+  }
+
+}
+
+package utils
+
+import org.lwjgl.opengl.GL20
+
+class ShaderProgram extends Disposable {
+
+  private var program: Int = 0
+  private var linked: Int = 0
+
+  def createProgram() {
+    program = GL20 glCreateProgram
+  }
+
+  def useProgram() {
+    GL20 glUseProgram this.program
+  }
+
+  def addShader(shader: Shader): Boolean = {
+    GL20 glAttachShader(this.program, shader getShaderId)
+    shader isLoaded
+  }
+
+  def linkProgram(): Boolean = {
+    GL20 glLinkProgram this.program
+    this.linked = GL20 glGetProgrami (this.program, GL20 GL_LINK_STATUS)
+    this.linked != 0
+  }
+
+  def getProgramId(): Int = {
+    this.program
+  }
+
+  override def dispose() {
+    GL20 glDeleteProgram this.program
+  }
+
+}
+
+#version 330
+
+layout (location = 0) in vec3 inPosition;
+layout (location = 1) in vec3 inColor;
+
+smooth out vec3 theColor;
+
+void main() {
+    gl_Position = vec4(inPosition, 1.0);
+    theColor = inColor;
+}
+
+#version 330
+
+smooth in vec3 theColor;
+out vec4 outColor;
+
+void main() {
+    outColor = vec4(theColor, 1.0);
+}
+

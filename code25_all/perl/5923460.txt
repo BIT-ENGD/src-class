@@ -1,0 +1,76 @@
+#!/usr/bin/perl
+use strict; use warnings;
+
+# local hostname
+my $hostname = `/bin/hostname`;
+
+# setup array of servers/websites to check
+my @sitestocheck = ('swdlp.apple.com');
+
+# the relative url of the website response script in each site
+my $responseprogram = "/cgi-bin/WebObjects/SoftwareDownloadApp.woa/wa/getProductData?localang=en_us&grp_code=quicktime&returnURL=http://www.apple.com/quicktime/download";
+
+# path to the log file with the response data
+my $statusdir = "./tmp";
+
+# mail feature
+my $mailprog ='/usr/sbin/sendmail';
+my $adminmail = 'root@localhost';
+my $frommail = 'root@$hostname';
+
+###############################################################
+# End Configuration                                           #
+###############################################################
+# main program
+use Crypt::SSLeay;
+use LWP::UserAgent;
+
+# now check each url in your array
+foreach my $sitetocheck (@sitestocheck)
+{
+    my $ua = new LWP::UserAgent;
+    my $req = new HTTP::Request 'GET',"https://$sitetocheck$responseprogram";
+    my $res = $ua->request($req);
+    if ($res->is_success) 
+    {
+        if ($res->content =~ m/Quicktime/i)
+        {
+             my $response = "SERVER OK:$sitetocheck:".$res->content;}
+        else
+        {
+            my $response = "Our apologies but there was an unexpected error with the application. This problem has been noted, and an email has been sent to the administrators. Please check back in a few hours to try the download again. ";
+        }
+    }
+    else
+    {
+        my $timestamp = localtime;
+        my $response = "WARNING! $hostname UNABLE TO CONNECT TO $sitetocheck at $timestamp";
+        my $traceroute = `/usr/sbin/traceroute $sitetocheck`;
+    }
+    # write server status to the main log file
+    open(FILE,">>$statusdir/statuslog.txt");
+    flock(FILE, 2);
+    print FILE "$response\n$traceroute\n\n";
+    flock(FILE, 8);
+
+    # write to a current status file for each server or website
+    # being monitored
+    open(FILE,">$statusdir/$sitetocheck");
+    flock(FILE, 2);
+    print FILE $response;
+    flock(FILE, 8);
+}
+
+# if there is an error mail the administrator
+if (my $response =~ m/apologies/i)
+{
+    open( MAIL, "|$mailprog -t" );
+    print MAIL "Subject: $hostname unable to connect to $sitetocheck\n";
+    print MAIL "From: $frommail\n";
+    print MAIL "To: $adminmail\n";
+    print MAIL "Reply-to: $frommail\n\n";
+    print MAIL "$response\n$traceroute";
+    print MAIL "\n\n";
+    close MAIL;
+}
+

@@ -1,0 +1,82 @@
+#!/usr/bin/perl -w
+
+use strict;
+use POSIX;
+use POSIX ":sys_wait_h";
+use IO::Socket;
+use IO::Handle;
+use DBI;
+
+my $pid= fork();
+exit() if $pid;
+die "Couldn't fork: $! " unless defined($pid);
+
+POSIX::setsid() or die "Can't start a new session $!";
+my $time_to_die =0;
+my $server;
+
+sub signal_handler {
+    $time_to_die = 1;
+    close($server);
+}
+
+$SIG{INT}= $SIG{TERM} = \&signal_handler;
+
+sub REAPER {
+    while ((my $waitedpid = waitpid(-1,WNOHANG)) > 0) { }
+    $SIG{CHLD} = \&REAPER;
+}
+
+my $server_port = 6741;
+$server= new IO::Socket::INET(LocalPort     => $server_port,
+                              TYPE      => SOCK_STREAM,
+                  Reuse     => 1,
+                  Listen    => 10) or die "Couldn't be a tcp server on port $server_port: $@\n";
+
+until($time_to_die) {
+    my $client;
+
+    while($client = $server->accept()) {
+        $SIG{CHLD} = \&REAPER;    
+        defined(my $child_pid=fork()) or die "Can't fork new child $!";
+        next if $child_pid;
+
+        if($child_pid == 0) {
+            close($server);
+        }
+
+        $client->autoflush(1);
+        print $client "Command :";
+
+        while(<$client>) {
+            next unless /\S/;
+
+        my $full_enter_str = $_;
+        chomp($full_enter_str);
+
+            if($full_enter_str =~ /(<\w\d\d\d\w>),(\d{5}),(M|O),(\d{6}),(\d{6}),(\d{4}\.\d{4}\w),(\d{5}\.\d{4}\w),(\d{2}.\d),(\d{3}\.\d),(\d{3}\.\d),(\d),(\d{2})/) {
+                my $dbm = DBI->connect("DBI:mysql:database=homepage;host=127.0.0.1;port=3306", "av", "") or die "MySQL connect error";
+                $dbm->do("INSERT INTO `new_table` VALUES (NULL, '".$1."')");
+                $dbm->disconnect();
+            }
+    }
+    continue {
+      print $client "Command :";
+    }
+    exit;
+}
+continue {
+    close($client);
+}
+
+<T060M>,00287,M,124427,220411,5800.1577N,04200.1038E,01.0,073.4,196.4,1,69
+
+0x0000:  4500 0073 0003 0000 f606 d057 d557 5cc6  E..s.......W.W\.
+0x0010:  c0a8 0164 dcc4 1a55 4016 741d b90a 79e4  ...d...U@.t...y.
+0x0020:  5018 2c60 3b1f 0000 3c54 3036 304d 3e2c  P.,`;...<T060M>,
+0x0030:  3030 3238 372c 4d2c 3130 3432 3339 2c32  00287,M,104239,2
+0x0040:  3430 3431 312c 3537 3434 2e35 3432 384e  40411,5744.5428N
+0x0050:  2c30 3431 3030 2e34 3133 3445 2c31 312e  ,04100.4134E,11.
+0x0060:  302c 3030 302e 302c 3039 362e 342c 312c  0,000.0,096.4,1,
+0x0070:  3646 0d                                  6F.
+

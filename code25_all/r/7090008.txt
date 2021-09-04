@@ -1,0 +1,67 @@
+Error in output[[var]][rng] <- df[[var]] : 
+  incompatible types (from S4 to logical) in subassignment type fix
+
+Pond
+day
+flux.cor
+     Pond Obs                Date     Time   Temp       DO   pH U day month    PAR
+932    5 932 2011-06-16 17:31:00 17:31:00 294.05 334.3750 8.47 2   1     1 685.08
+933    5 933 2011-06-16 17:41:00 17:41:00 294.05 339.0625 8.47 2   1     1 808.44
+934    5 934 2011-06-16 17:51:00 17:51:00 294.02 340.6250 8.46 2   1     1 752.78
+935    5 935 2011-06-16 18:01:00 18:01:00 294.00 340.6250 8.45 2   1     1 684.14
+936    5 936 2011-06-16 18:11:00 18:11:00 293.94 340.9375 8.50 2   1     1 625.86
+937    5 937 2011-06-16 18:21:00 18:21:00 293.88 341.5625 8.48 2   1     1 597.06
+    day.night Treat            H  pOH           OH   DO.cor   sd.DO    av.DO   DO.sat
+932         1     A 3.388442e-09 5.53 2.951209e-06 342.1406 2.63078 342.1406 274.0811
+933         1     A 3.388442e-09 5.53 2.951209e-06 339.0625 2.63078 342.1406 274.0811
+934         1     A 3.467369e-09 5.54 2.884032e-06 340.6250 2.63078 342.1406 274.2432
+935         1     A 3.548134e-09 5.55 2.818383e-06 340.6250 2.63078 342.1406 274.3513
+936         1     A 3.162278e-09 5.50 3.162278e-06 340.9375 2.63078 342.1406 274.6763
+937         1     A 3.311311e-09 5.52 3.019952e-06 341.5625 2.63078 342.1406 275.0020
+      DO_flux      NEP.hr  flux.cor  sd.flux    av.flux
+932 -3.078125 -3.09222602 -3.078125 2.104482 -0.1070312
+933  1.562500  1.54903673  1.562500 2.104482 -0.1070312
+934  0.000000 -0.01375489  0.000000 2.104482 -0.1070312
+935  0.312500  0.29876654  0.312500 2.104482 -0.1070312
+936  0.625000  0.61126617  0.625000 2.104482 -0.1070312
+
+    # function that generates predictions of O2 flux given GPP R and gas exchange
+flux.pred <- function(GPP24, PAR, R24, Temp, U, DO, DOsat){
+    # calculates Schmidt coefficient from water temperature
+    Sc<-function(Temp){
+        S<-0.0476*(Temp)^2 + 3.7818*(Temp)^2 - 120.1*Temp + 1800.6
+        }
+    # calculates piston velocity k (m h-1) from wind speed at 10m (m s-1)
+    k600<-function(U){
+        k.600<-(2.07 + 0.215*((U)^1.7))/100 
+        }
+    # calculates piston velocity k (m h-1) from wind speed at 10m (m s-1)
+    k<-function(Temp,U){
+        k<-k600(U)*((Sc(Temp)/600)^-0.5)
+        }
+    # physical gas flux (mg O2 m-2 10mins-1)
+    D<-function(Temp,U,DO,DOsat){
+        d<-(k(Temp,U)/6)*(DO-DOsat)
+    }   
+
+  # main function to generate predictions   
+flux<-(GPP24/sum(YSI$PAR[YSI$PAR>40]))*(ifelse(YSI$PAR>40, YSI$PAR, 0))-(R24/144)+D(YSI$Temp,YSI$U,YSI$DO,YSI$DO.sat)
+return(flux)
+}
+
+   # likelihood function
+ll<-function(GPP24, PAR, R24, Temp, U, DO.cor, DO.sat){
+    pred = (flux.pred(GPP24, PAR, R24, Temp, U, DO.cor, DOsat))
+    pred = pred[-144]
+    obs = YSI$flux.cor[-144]
+    return(-sum(dnorm(obs, mean=pred, sd=sqrt(var(obs-pred)))))
+    } 
+
+metabolism<-ddply(YSI, .(Pond,Treat,day,month), summarise,
+mle = mle2(ll,start=list(GPP24=100, R24=100)))
+
+for(i in 1:length(unique(YSI$day))){
+GPP<-numeric(length=length(unique(YSI$day)))
+GPP[i]<-mle2(ll,start=list(GPP24=100, R24=100))
+    }
+

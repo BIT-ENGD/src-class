@@ -1,0 +1,215 @@
+has_many :posts
+Posts has_many :comments
+class PostsController < ApplicationController
+
+  before_filter :authenticate
+
+  auto_complete_for :tag, :tag_name
+  auto_complete_for :ugtag, :ugctag_name
+
+  def index
+    @tag_counts = Tag.count(:group => :tag_name, 
+       :order => 'count_all DESC', :limit => 20)
+       conditions, joins = {}, :votes
+
+    @ugtag_counts = Ugtag.count(:group => :ugctag_name, 
+       :order => 'count_all DESC', :limit => 20)
+       conditions, joins = {}, :votes
+
+    @vote_counts = Vote.count(:group => :post_title, 
+          :order => 'count_all DESC', :limit => 20)
+          conditions, joins = {}, :votes
+
+
+       unless(params[:tag_name] || "").empty?
+         conditions = ["tags.tag_name = ? ", params[:tag_name]]
+         joins = [:tags, :votes]
+       end
+       @posts= current_user.posts.paginate(
+                 :select => "posts.*, count(*) as vote_total", 
+                 :joins => joins, 
+                 :conditions=> conditions, 
+                 :group => "votes.post_id, posts.id ", 
+                 :order => "created_at DESC",
+                 :page => params[:page], :per_page => 5)
+        @popular_posts=Post.paginate(
+                 :select => "posts.*, count(*) as vote_total", 
+                 :joins => joins, 
+                 :conditions=> conditions, 
+                 :group => "votes.post_id, posts.id", 
+                 :order => "vote_total DESC",
+                 :page => params[:page], :per_page => 3)
+
+    respond_to do |format|
+      format.html # index.html.erb
+      format.xml  { render :xml => @posts }
+      format.json { render :json => @posts }
+      format.atom
+    end
+  end
+
+  def show
+    @post = Post.find(params[:id])
+
+
+    respond_to do |format|
+      format.html # show.html.erb
+      format.xml  { render :xml => @post }
+    end
+  end
+
+  def new
+    @post = Post.new
+
+    respond_to do |format|
+      format.html # new.html.erb
+      format.xml  { render :xml => @post }
+    end
+  end
+
+  def edit
+    @post = Post.find(params[:id])
+  end
+
+  def create
+    @post = current_user.posts.create(params[:post])
+
+    respond_to do |format|
+      if @post.save
+        flash[:notice] = 'Post was successfully created.'
+        format.html { redirect_to(@post) }
+        format.xml  { render :xml => @post, :status => :created, :location => @post }
+      else
+        format.html { render :action => "new" }
+        format.xml  { render :xml => @post.errors, :status => :unprocessable_entity }
+      end
+    end
+  end
+
+  def update
+    @post = Post.find(params[:id])
+
+    respond_to do |format|
+      if @post.update_attributes(params[:post])
+        flash[:notice] = 'Post was successfully updated.'
+        format.html { redirect_to(@post) }
+        format.xml  { head :ok }
+      else
+        format.html { render :action => "edit" }
+        format.xml  { render :xml => @post.errors, :status => :unprocessable_entity }
+      end
+    end
+  end
+
+
+  def destroy
+    @post = Post.find(params[:id])
+    @post.destroy
+
+
+    respond_to do |format|
+      format.html { redirect_to(posts_url) }
+      format.xml  { head :ok }
+    end
+  end
+end
+
+class CommentsController < ApplicationController
+
+  before_filter :authenticate, :except => [:show, :create]
+
+  def index
+
+    @comments = Comment.find(:all, :include => :post, :order => "created_at DESC").paginate :page => params[:page], :per_page => 5
+
+    respond_to do |format|
+      format.html # index.html.erb
+      format.xml  { render :xml => @comments }
+      format.json { render :json => @comments }
+      format.atom
+    end
+  end
+
+  def show
+     @comment = Comment.find(params[:id])
+
+     respond_to do |format|
+       format.html # show.html.erb
+       format.xml  { render :xml => @comment }
+     end
+   end
+
+   # GET /posts/new
+   # GET /posts/new.xml
+
+   # GET /posts/1/edit
+   def edit
+     @comment = Comment.find(params[:id])
+   end
+
+   def update
+     @comment = Comment.find(params[:id])
+
+     respond_to do |format|
+       if @comment.update_attributes(params[:comment])
+         flash[:notice] = 'Comment was successfully updated.'
+         format.html { redirect_to(@comment) }
+         format.xml  { head :ok }
+       else
+         format.html { render :action => "edit" }
+         format.xml  { render :xml => @comment.errors, :status => :unprocessable_entity }
+       end
+     end
+   end
+
+
+ def create
+   @post = Post.find(params[:post_id])
+   @comment = @post.comments.build(params[:comment])
+
+   respond_to do |format|
+     if @comment.save
+       flash[:notice] = "Thanks for adding this comment" 
+       format.html { redirect_to @post }
+       format.js
+     else
+       flash[:notice] = "Make sure you include your name and a valid email address" 
+       format.html { redirect_to @post }
+
+
+   end
+ end
+end 
+
+
+
+
+
+
+
+ def destroy
+    @comment = Comment.find(params[:id])
+    @comment.destroy
+
+
+
+    respond_to do |format|
+      format.html { redirect_to Post.find(params[:post_id]) }
+      format.js
+
+    end
+  end
+
+end
+
+<% Comment.find(:all, :order => 'created_at DESC', :limit => 3).each do |comment| -%>
+                <div id="side-bar-comments">
+                    <p>
+                        <div class="small"><%=h comment.name %> commented on:</div>
+                        <div class="dark-grey"><%= link_to h(comment.post.title), comment.post %><br/></div>
+                        <i><%=h truncate(comment.body, :length => 100) %></i><br/>
+                        <div class="small"><i> <%= time_ago_in_words(comment.created_at) %> ago</i></div>
+                    </p>
+                </div>
+            <% end -%>
+

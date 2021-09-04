@@ -1,0 +1,105 @@
+' need to call Invoke before can update UI elements
+    Dim args As Object() = {command, data}
+    Invoke(_processInStream, args)
+
+Public Class srvMain
+
+' start the InStream code to receive data control.Invoke callback, used to process the socket notification event on the GUI's thread
+Delegate Sub ProcessSocketCommandHandler(ByVal command As NotifyCommandIn, ByVal data As Object)
+Dim _processInStream As ProcessSocketCommandHandler
+
+' network communication
+Dim WithEvents _serverPRC As New ServerSocket
+Dim _encryptDataIn() As Byte
+Dim myConn As SqlConnection
+Dim _strsql As String = String.Empty
+
+Protected Overrides Sub OnStart(ByVal args() As String)
+    ' watch for filesystem changes in 'FTP Files' folder
+    Watch()
+
+    ' hookup Invoke callback
+    _processInStream = New ProcessSocketCommandHandler(AddressOf ProcessSocketCommandIn)
+    ' listen for Ultimate sending signatures
+    _serverPRC.Start(My.Settings.listen_port_prc)
+    myConn = New SqlConnection(My.Settings.Mill_SQL_Connect)
+End Sub
+
+Protected Overrides Sub OnStop()
+    ' Add code here to perform any tear-down necessary to stop your service.
+End Sub
+
+' this is where we will break the data down into arrays
+Private Sub processDataIn(ByVal data As Object)
+    Try
+        If data Is Nothing Then
+            Throw New Exception("Stream empty!")
+        End If
+
+        Dim encdata As String
+
+        ' decode to string and perform split(multi chars not supported)
+        encdata = Encoding.Default.GetString(data)
+
+        _strsql = encdata
+        myConn.Open()
+        Dim commPrice As New SqlCommand(_strsql, myConn)
+        Dim resPrice As SqlDataReader = commPrice.ExecuteReader
+
+        '********************************THIS MUST BE DYNAMIC FOR MORE THAN ONE NATIONAL
+        If resPrice.Read = True And resPrice("ats" & "_price") IsNot DBNull.Value Then
+            'If resPrice("ats" & "_price") Is DBNull.Value Then
+            ' cannot find price so error
+            'natPrice = ""
+            'natAllow = 2
+            'End If
+            natPrice = resPrice("ats" & "_price")
+            natAllow = resPrice("ats" & "_allow")
+        Else
+            ' cannot find price so error
+            natPrice = ""
+            natAllow = 2
+        End If
+
+
+        myConn.Close()
+        ' substring not found therefore must be a pricing query
+        'MsgBox("string: " & encdata.ToString)
+        'natPrice = "9.99"
+
+    Catch ex As Exception
+        ErrHandle("4", "Process Error: " + ex.Message + ex.Data.ToString)
+    Finally
+        myConn.Close() ' dont forget to close!
+    End Try
+End Sub
+
+'========================
+'= ServerSocket methods =
+'========================
+' received a socket notification for receiving from Ultimate
+Private Sub ProcessSocketCommandIn(ByVal command As NotifyCommandIn, ByVal data As Object)
+    ' holds the status message for the command
+    Dim status As String = ""
+    Select Case command
+        Case NotifyCommandIn.Listen
+            'status = String.Format("Listening for server on {0} ...", CStr(data))
+            status = "Waiting..."
+        Case NotifyCommandIn.Connected
+            'status = "Connected to Ultimate" ' + CStr(data)
+            status = "Receiving..."
+        Case NotifyCommandIn.Disconnected
+            status = "Waiting..." ' disconnected from Ultimate now ready...
+        Case NotifyCommandIn.ReceivedData
+            ' store the encrypted data then process
+            processDataIn(data)
+    End Select
+End Sub
+
+' called from socket object when a network event occurs.
+Private Sub NotifyCallbackIn(ByVal command As NotifyCommandIn, ByVal data As Object) Handles _serverPRC.Notify
+    ' need to call Invoke before can update UI elements
+    Dim args As Object() = {command, data}
+    Invoke(_processInStream, args)
+End Sub
+

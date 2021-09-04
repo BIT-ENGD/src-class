@@ -1,0 +1,49 @@
+private def trainTree(samples: Seq[Sample], usedFeatures: Set[Int]): DTree = {
+  if (shouldStop(samples)) {
+    DTLeaf(makeProportions(samples))
+  } else {
+    val featureIdx = getSplittingFeature(samples, usedFeatures)
+    val (statsWithFeature, statsWithoutFeature) = samples.partition(hasFeature(featureIdx, _))
+    DTBranch(
+      trainTree(statsWithFeature, usedFeatures + featureIdx), 
+      trainTree(statsWithoutFeature, usedFeatures + featureIdx),
+      featureIdx)
+  }
+}
+
+private def trainTreeNoMaxDepth(startingSamples: Seq[Sample], startingMaxDepth: Int): DTree = {
+  // Use arraybuffer as dense mutable int-indexed map - no IndexOutOfBoundsException, just expand to fit
+  type DenseIntMap[T] = ArrayBuffer[T]
+  def updateIntMap[@specialized T](ab: DenseIntMap[T], idx: Int, item: T, dfault: T = null.asInstanceOf[T]) = {
+    if (ab.length <= idx) {ab.insertAll(ab.length, Iterable.fill(idx - ab.length + 1)(dfault)) }
+    ab.update(idx, item)
+  }
+  var currentChildId = 0 // get childIdx or create one if it's not there already
+  def child(childMap: DenseIntMap[Int], heapIdx: Int) =
+    if (childMap.length > heapIdx && childMap(heapIdx) != -1) childMap(heapIdx)
+    else {currentChildId += 1; updateIntMap(childMap, heapIdx, currentChildId, -1); currentChildId }
+  // go down
+  val leftChildren, rightChildren = new DenseIntMap[Int]() // heapIdx -> childHeapIdx
+  val todo = Stack((startingSamples, Set.empty[Int], startingMaxDepth, 0)) // samples, usedFeatures, maxDepth, heapIdx
+  val branches = new Stack[(Int, Int)]() // heapIdx, featureIdx
+  val nodes = new DenseIntMap[DTree]() // heapIdx -> node
+  while (!todo.isEmpty) {
+    val (samples, usedFeatures, maxDepth, heapIdx) = todo.pop()
+    if (shouldStop(samples) || maxDepth == 0) {
+      updateIntMap(nodes, heapIdx, DTLeaf(makeProportions(samples)))
+    } else {
+      val featureIdx = getSplittingFeature(samples, usedFeatures)
+      val (statsWithFeature, statsWithoutFeature) = samples.partition(hasFeature(featureIdx, _))
+      todo.push((statsWithFeature, usedFeatures + featureIdx, maxDepth - 1, child(leftChildren, heapIdx)))
+      todo.push((statsWithoutFeature, usedFeatures + featureIdx, maxDepth - 1, child(rightChildren, heapIdx)))
+      branches.push((heapIdx, featureIdx))
+    }
+  }
+  // go up
+  while (!branches.isEmpty) {
+    val (heapIdx, featureIdx) = branches.pop()
+    updateIntMap(nodes, heapIdx, DTBranch(nodes(child(leftChildren, heapIdx)), nodes(child(rightChildren, heapIdx)), featureIdx))
+  }
+  nodes(0)
+}
+

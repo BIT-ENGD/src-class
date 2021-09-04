@@ -1,0 +1,86 @@
+let lastSynchronizationDate = (NSUserDefaults.standardUserDefaults().objectForKey("com.fridge.sync") as [String: NSDate])["skin"]!
+    query.whereKey("updatedAt", greaterThanOrEqualTo: lastSynchronizationDate)
+    query.findObjectsInBackgroundWithBlock { (remoteSkins, error) -> Void in
+      if error != nil {
+        return
+      }
+      if remoteSkins.isEmpty {
+        return
+      }
+      RLMRealm.defaultRealm().transactionWithBlock {
+        let deletedSkins = (remoteSkins as [PFObject]).filter {
+          $0["state"] as Int == 0
+          }.map {
+            Skin(forPrimaryKey: $0["color"])
+          }.filter {
+            $0 != nil
+          }.map {
+            $0!
+        }
+        let createdSkins = (remoteSkins as [PFObject]).filter {
+          $0["state"] as Int != 0
+          }.filter {
+            let skin = Skin(forPrimaryKey: $0["color"])
+            println(skin.name)
+            return skin == nil
+          }.map { (remoteSkin) -> Skin in
+            let remoteSkinModel = RemoteSkinModel(remoteSkin)
+            let skin = Skin()
+            skin.skinModel = remoteSkinModel // Error
+            return skin
+        }
+        let updatedSkins = (remoteSkins as [PFObject]).filter {
+          $0["state"] as Int != 0
+          }.map {
+            ($0, Skin(forPrimaryKey: $0["color"]))
+          }.filter {
+            $0.1 != nil
+          }.map {
+            $0.1.skinModel = RemoteSkinModel($0.0)
+        }
+        RLMRealm.defaultRealm().deleteObjects(deletedSkins)
+        RLMRealm.defaultRealm().addObjects(createdSkins)
+      }
+    }
+
+class Skin: RLMObject {
+  dynamic var name: String = ""
+  dynamic var hexString: String = ""
+
+  var skinModel: SkinModel! {
+    didSet {
+      name = skinModel.name ?? oldValue.name ?? ""
+      hexString = skinModel.hexString ?? oldValue.name ?? ""
+    }
+  }
+
+  override class func primaryKey() -> String {
+    return "hexString"
+  }
+
+  override class func ignoredProperties() -> [AnyObject] {
+    return ["skinModel"]
+  }
+
+  func save() {
+
+  }
+}
+
+protocol SkinModel {
+  var name: String { get }
+  var hexString: String { get }
+}
+
+class RemoteSkinModel: SkinModel {
+  let remoteSkin: PFObject
+  let name: String
+  let hexString: String
+
+  init(_ remoteSkin: PFObject) {
+    self.remoteSkin = remoteSkin
+    self.name = remoteSkin["name"] as? String ?? ""
+    self.hexString = remoteSkin["color"] as? String ?? ""
+  }
+}
+

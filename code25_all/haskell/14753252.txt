@@ -1,0 +1,70 @@
+eq :: (Eq a) => TMaybe (sym :: Symbol) a -> TMaybe (sym :: Symbol) a -> Bool
+
+"Just"' with
+{-# LANGUAGE DataKinds, KindSignatures, GADTs, FlexibleInstances #-} 
+
+import GHC.TypeLits
+
+data TMaybe :: Symbol -> * -> * where
+  TNothing  :: TMaybe "Nothing" a
+  TJust :: a -> TMaybe "Just" a
+
+nonEmpty :: Maybe a -> TMaybe "Just" a
+nonEmpty (Just x) = TJust x
+nonEmpty Nothing = error "invalid nonEmpty data"
+
+-- this fromJust rejects TNothing at compile time  
+fromJust :: (sym ~ "Just") => TMaybe (sym :: Symbol) a -> a
+fromJust (TJust x) = x
+
+tmbToMaybe :: TMaybe (sym :: Symbol) a -> Maybe a
+tmbToMaybe TNothing = Nothing
+tmbToMaybe (TJust x) = Just x
+
+mbToTNothing Nothing = TNothing
+
+mbToTJust (Just x) = TJust x
+
+instance Eq a => Eq (TMaybe (sym :: Symbol) a) where
+     TNothing == TNothing = True
+     TJust x == TJust y = x == y
+     _ == _ = False    -- useless, equal types required
+
+instance Ord a => Ord (TMaybe (sym :: Symbol) a) where
+     compare TNothing TNothing = EQ
+     compare (TJust x) (TJust y) = Prelude.compare x y
+     compare TNothing _ = LT   -- useless, equal types required
+     compare _ TNothing = GT   -- useless, equal types required
+
+instance  Functor (TMaybe (sym :: Symbol))  where
+    fmap _ TNothing       = TNothing
+    fmap f (TJust a)      = TJust (f a)
+
+instance  Monad (TMaybe "Just") where
+    (TJust x) >>= k      = k x
+
+    (TJust _) >>  k      = k
+
+    return            = TJust
+    fail _              = error "can't fail to TNothing"
+
+--------------------------
+
+-- defining eq to admit parameter types with different symbol
+
+eq :: (Eq a) => TMaybe (sym :: Symbol) a -> TMaybe (sym :: Symbol) a -> Bool
+eq TNothing TNothing = True
+eq (TJust x) (TJust y) = x == y
+eq _ _ = False
+
+---------------------------
+
+-- Test
+
+main = do
+        print $ fromJust $ TJust (5::Int)   -- type-checks
+        -- print $ fromJust TNothing   -- as expected, does not type-check
+
+        -- print $ TNothing == TJust (5::Int)  -- as expected, does not type-check, types required equal at function def.
+        print $ TNothing `eq` TJust (5::Int)   -- does not type-check either
+

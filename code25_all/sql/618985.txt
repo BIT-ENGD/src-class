@@ -1,0 +1,107 @@
+ALTER PROCEDURE [dbo].[SearchForums]
+(
+    --Input Params
+    @SearchText VARCHAR(200),
+    @GroupId INT = -1,
+    @ClientId INT,
+    --Paging Params
+    @CurrentPage INT,
+    @PageSize INT,           
+    @OutTotalRecCount INT OUTPUT
+)
+AS
+
+--Create Temp Table to Store Query Data
+CREATE TABLE #SearchResults
+(
+    Relevance INT IDENTITY,
+    ThreadID INT,
+    PostID INT,
+    [Description] VARCHAR(2000),
+    Author BIGINT
+)
+
+--Create and populate table of all GroupID's This search will return from
+CREATE TABLE #GroupsToSearch
+(
+GroupId INT
+)
+IF @GroupId = -1
+    BEGIN
+        INSERT INTO #GroupsToSearch
+        SELECT GroupID FROM SNetwork_Groups WHERE ClientId = @ClientId
+    END
+ELSE
+    BEGIN
+        INSERT INTO #GroupsToSearch
+        VALUES(@GroupId)
+    END
+
+--Get Thread Titles
+INSERT INTO #SearchResults
+    SELECT 
+        SNetwork_Threads.[ThreadId],
+        (SELECT NULL) AS PostId,
+        SNetwork_Threads.[Description],
+        SNetwork_Threads.[OwnerUserId]
+    FROM 
+        SNetwork_Threads
+        INNER JOIN SNetwork_Groups ON SNetwork_Groups.GroupId = SNetwork_Threads.GroupId        
+    WHERE 
+        FREETEXT(SNetwork_Threads.[Description], @SearchText) AND
+        Snetwork_Threads.GroupID IN (SELECT GroupID FROM #GroupsToSearch) AND
+        SNetwork_Groups.ClientId = @ClientId
+
+
+--Get Thread Descriptions
+INSERT INTO #SearchResults
+    SELECT 
+        SNetwork_Threads.[ThreadId],
+        (SELECT NULL) AS PostId,
+        SNetwork_Threads.[Description],
+        SNetwork_Threads.[OwnerUserId]
+    FROM 
+        SNetwork_Threads
+        INNER JOIN SNetwork_Groups ON SNetwork_Groups.GroupId = SNetwork_Threads.GroupId        
+    WHERE 
+        FREETEXT(SNetwork_Threads.[Name], @SearchText) AND
+        Snetwork_Threads.GroupID IN (SELECT GroupID FROM #GroupsToSearch) AND
+        SNetwork_Groups.ClientId = @ClientId
+
+
+--Get Posts
+INSERT INTO #SearchResults
+    SELECT 
+        SNetwork_Threads.ThreadId,
+        SNetwork_Posts.PostId,
+        SNetwork_Posts.PostText,
+        SNetwork_Posts.[OwnerUserId]
+    FROM 
+        SNetwork_Posts 
+        INNER JOIN SNetwork_Threads ON SNetwork_Threads.ThreadId = SNetwork_Posts.ThreadId
+        INNER JOIN SNetwork_Groups ON SNetwork_Groups.GroupId = SNetwork_Threads.GroupId        
+    WHERE 
+        FREETEXT(SNetwork_Posts.PostText, @SearchText) AND
+        Snetwork_Threads.GroupID IN (SELECT GroupID FROM #GroupsToSearch) AND
+        SNetwork_Groups.ClientId = @ClientId
+
+
+--Return Paged Result Sets
+SELECT @OutTotalRecCount =  COUNT(*) FROM #SearchResults
+SELECT  
+    #SearchResults.[ThreadID],
+    #SearchResults.[PostID],
+    #SearchResults.[Description],
+    #SearchResults.[Author]
+FROM  
+    #SearchResults          
+WHERE  
+    #SearchResults.[Relevance] >= (@CurrentPage - 1) * @PageSize + 1 AND 
+    #SearchResults.[Relevance] <= @CurrentPage*@PageSize
+ORDER BY Relevance ASC
+
+
+--Clean Up
+DROP TABLE #SearchResults
+DROP TABLE #GroupsToSearch
+

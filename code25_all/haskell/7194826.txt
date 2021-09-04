@@ -1,0 +1,71 @@
+-- file DirectAddressTable.hs
+module DirectAddressTable 
+       ( DAT
+       , newDAT
+       , lookupDAT
+       , insertDAT
+       , getAssocsDAT
+       )
+       where
+
+import Data.Array.IO
+import Data.Array.MArray
+
+newtype DAT = DAT (IOArray Int Char)
+
+-- create a fixed size array; missing keys have value '-'.
+newDAT :: Int -> IO DAT
+newDAT n = do a <- newArray (0, n - 1) '-'
+              return (DAT a)
+
+-- lookup an item.
+lookupDAT :: DAT -> Int -> IO (Maybe Char)
+lookupDAT (DAT a) i = do c <- readArray a i 
+                         return (if c=='-' then Nothing else Just c)
+
+-- insert an item
+insertDAT :: DAT -> Int -> Char -> IO ()
+insertDAT (DAT a) i v = writeArray a i v
+
+-- get all associations (exclude missing items, i.e. those whose value is '-').
+getAssocsDAT :: DAT -> IO [(Int,Char)]
+getAssocsDAT (DAT a) = 
+  do assocs <- getAssocs a
+     return [ (k,c) | (k,c) <- assocs, c /= '-' ]
+
+-- file DirectTableTest.hs
+import DirectAddressTable
+import Control.Concurrent
+import Control.Parallel
+import System.Environment
+
+main = 
+  do args <- getArgs
+     let numThreads = read (args !! 0)
+     vs <- sequence (replicate numThreads newEmptyMVar)
+     a <- newDAT arraySize     
+     sequence_ [ forkIO (doLotsOfStuff numThreads i a >>= putMVar v) 
+               | (i,v) <- zip [1..] vs]
+     sequence_ [ takeMVar v >>= \a -> getAssocsDAT a >>= \xs -> print (last xs)  
+               | v <- vs]     
+
+doLotsOfStuff :: Int -> Int -> DAT -> IO DAT
+doLotsOfStuff numThreads i a = 
+  do let p j c = (c `seq` insertDAT a j c) >> 
+                 lookupDAT a j >>= \v -> 
+                 v `pseq` return ()  
+     sequence_ [ p j c | (j,c) <- bunchOfKeys i ]
+     return a
+  where  bunchOfKeys i = take numElems $ zip cyclicIndices $ drop i cyclicChars
+         numElems      = numberOfElems `div` numThreads
+
+cyclicIndices = cycle [0..highestIndex]
+cyclicChars   = cycle chars
+chars         = ['a'..'z']
+
+-- Parameters
+arraySize :: Int
+arraySize     = 100
+highestIndex  = arraySize - 1
+numberOfElems = 10 * 1000 * 1000     
+

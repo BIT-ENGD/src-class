@@ -1,0 +1,194 @@
+Echo Server listening port...
+Echo Server: Waiting from client connection.
+Connecting to the server.
+Connected to the server.
+Dispatcher send: 10
+Dispatcher send: 11
+Dispatcher send: 12
+Dispatcher send: 13
+Dispatcher read...
+Dispatcher read...
+Dispatcher readed 10
+
+import java.io.*;
+import java.net.*;
+
+public class EchoTest {
+  public static void main(String[] args) {
+    EchoServer.listen();
+    EchoClient client = new EchoClient();
+    EchoServer server = EchoServer.accept();
+  }
+}
+
+class EchoClient implements Runnable {
+  private static final int PORT = 13244;
+
+  Socket socket;
+  Disp disp;
+  Thread client;
+
+  public EchoClient() {
+    client = new Thread(this);
+    client.start();
+  }
+
+  public void run() {
+    try {
+      System.out.println("Connecting to the server.");
+      Socket socket = new Socket("localhost", PORT);
+      System.out.println("Connected to the server.");
+      disp = new Disp(socket);
+
+      disp.send(10);
+      disp.send(11);
+      disp.send(12);
+      disp.send(13);
+
+
+    } catch(IOException e) {
+      System.out.println("Would not connect to local host: " + PORT);
+      System.exit(-1);
+    }
+  }
+
+  public void send(int m) {
+    disp.send(m);
+    System.out.println("Sent message " + m);
+
+    int echo = disp.getMsg();
+
+    if(m == echo) {
+      System.out.println("Message " + m + "sent and received.");
+    } else {
+      System.out.println("Message " + m + "cannot be echoed correctly.");
+    }
+  }
+}
+
+class EchoServer implements Runnable{
+  private static final int PORT = 13244;
+  private static ServerSocket serverSocket;
+
+  Disp disp;
+
+  public EchoServer(Socket s) {
+    disp = new Disp(s);
+  }
+
+  public static void listen() {
+    System.out.println("Echo Server listening port...");
+
+    try {
+      serverSocket = new ServerSocket(PORT);
+    } catch (IOException e) {
+      System.out.println("Could not listen on port: " + PORT);
+      System.exit(-1);
+    }
+  }
+
+  public static EchoServer accept(){
+    try {
+      System.out.println("Echo Server: Waiting from client connection.");
+      return new EchoServer(serverSocket.accept());
+    } catch(IOException e) {
+      System.out.println("Couldn't accept connection from client.");
+      System.exit(-1);
+    }
+
+    return null;
+  }
+
+  public void run() {
+    while(true) {
+      int m = disp.getMsg();
+      disp.send(m);
+    }
+  }
+}
+
+class Disp implements Runnable{
+  int msg = -1;
+  Socket socket;
+  BufferedInputStream input;
+  DataInputStream dis;
+  BufferedOutputStream output;
+  DataOutputStream dos;
+  Thread daemon;
+
+  public Disp(Socket s) {
+    this.socket = s;
+
+    try{
+      input = new BufferedInputStream(socket.getInputStream());
+      dis = new DataInputStream(input);
+
+      output = new BufferedOutputStream(socket.getOutputStream());
+      dos = new DataOutputStream(output);
+    }catch(IOException e) {
+    }
+    daemon = new Thread(this);
+    daemon.start();
+  }
+
+  public void run() {
+    while(true) {
+      int m = get();
+      setMsg(m);
+    }
+  }
+
+  public void send(int m) {
+    synchronized(dos) {
+      try{
+        System.out.println("Dispatcher send: " + m);
+        dos.writeInt(m);
+        dos.flush();
+      } catch(IOException e) {
+      }
+    }
+  }
+
+  public int get() {
+    System.out.println("Dispatcher read...");
+    synchronized(dis) {
+      try{
+        int m = dis.readInt();
+        System.out.println("Dispatcher readed " + m);
+        return m;
+      } catch(IOException e) {
+      }
+    }
+
+    return -1;
+  }
+
+  synchronized public void setMsg(int m) {
+    while(true) {
+      if(msg == -1) {
+        try {
+          wait();
+        } catch(InterruptedException e) {
+        } 
+      } else {
+        msg = m;
+        notifyAll();
+      }
+    }
+  }
+
+  synchronized public int getMsg() {
+    while(true) {
+      if(msg != -1) {
+        try {
+          wait();
+        } catch(InterruptedException e) {
+        } 
+      } else {
+        notifyAll();
+        return msg;
+      }
+    }
+  }
+}
+

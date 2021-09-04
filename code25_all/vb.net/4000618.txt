@@ -1,0 +1,120 @@
+Public Class EventLog
+    Inherits DataGridView
+
+    Public EventList As New List(Of EventLogItem)
+
+    ..Column creation code, etc..
+End Class
+
+Public Class EventLogItem
+
+    Public Property Index As Integer
+    Public Property Timestamp As String
+    Public Property User As String = String.Empty
+    Public Property [Step] As String = String.Empty
+    Public Property Type As Types
+    Public Property Message As String
+    Public Property TypeIcon As Image
+
+    Public Enum Types
+        SeriousError = -2
+        NormalError = -1
+        Warning = 0
+        NormalEvent = 1
+        ImportantEvent = 2
+        ManualEntry = 3
+    End Enum
+
+    Private Sub New()
+        Me.Timestamp = DateTime.Now.ToString("MM/dd/yyyy HH:mm:ss.f")
+        Me.Type = Types.NormalEvent
+        SetTypeIcon()
+    End Sub
+    Public Sub New(ByVal Message As String)
+        Me.New()
+        Me.Message = Message
+    End Sub
+    Public Sub New(ByVal Message As String, ByVal User As String)
+        Me.New()
+        Me.Message = Message
+        Me.User = User
+    End Sub
+    Public Sub New(ByVal Message As String, ByVal User As String, ByVal Type As Types)
+        Me.New(Message, User)
+        Me.Type = Type
+        SetTypeIcon()
+    End Sub
+    Public Sub New(ByVal Message As String, ByVal User As String, ByVal Type As Types, ByVal [Step] As Integer)
+        Me.New(Message, User, Type)
+        Me.Step = ([Step] + 1).ToString
+    End Sub
+
+    Private Sub SetTypeIcon()
+        Select Case Me.Type
+            Case Types.NormalError
+                Me.TypeIcon = My.Resources.ErrorIcon
+            Case Types.SeriousError
+                Me.TypeIcon = My.Resources.ErrorIcon
+            Case Types.Warning
+                Me.TypeIcon = My.Resources.WarningIcon
+            Case Types.ManualEntry
+                Me.TypeIcon = My.Resources.ManualIcon
+            Case Else
+                Me.TypeIcon = My.Resources.OkayIcon
+        End Select
+    End Sub
+End Class
+
+Inside my main-form class:
+    Public Sub NewEventLogEntry(ByVal Message As String, ByVal ex As Exception, ByVal Type As EventLogItem.Types, ByVal IncludeProcessStepNumber As Boolean)
+        If IncludeProcessStepNumber Then
+            SafeInvokeControl(EventLog, Sub(x)
+                                            Dim FirstRow As Integer = x.FirstDisplayedScrollingRowIndex
+                                            Dim [Event] As New EventLogItem(Message, My.Settings.SelectedUser, Type, Device.CurrentProcessStep)
+                                            [Event].Index = x.RowCount + 1
+                                            x.EventList.Insert(0, [Event])
+                                            x.DataSource = GetType(List(Of EventLogItem))
+                                            x.DataSource = x.EventList
+                                            x.SetRowStyles()
+                                            If FirstRow >= 0 And FirstRow < x.RowCount Then x.FirstDisplayedScrollingRowIndex = FirstRow
+                                        End Sub)
+        Else
+            SafeInvokeControl(EventLog, Sub(x)
+                                            Dim FirstRow As Integer = x.FirstDisplayedScrollingRowIndex
+                                            Dim [Event] As New EventLogItem(Message, My.Settings.SelectedUser, Type)
+                                            [Event].Index = x.RowCount + 1
+                                            x.EventList.Insert(0, [Event])
+                                            x.DataSource = GetType(List(Of EventLogItem))
+                                            x.DataSource = x.EventList
+                                            x.SetRowStyles()
+                                            If FirstRow >= 0 And FirstRow < x.RowCount Then x.FirstDisplayedScrollingRowIndex = FirstRow
+                                        End Sub)
+        End If
+        If Type < EventLogItem.Types.Warning Then
+            Dim ErrorBox As New ErrorBox
+            Dim ErrorBoxThread As New Threading.Thread(AddressOf ErrorBox.ShowDialog)
+            ErrorBoxThread.IsBackground = True
+            ErrorBox.Exception = ex
+            If Type = EventLogItem.Types.NormalError Then
+                ErrorBox.Type = ErrorBox.Types.Error
+                ErrorBox.Message = Message
+            ElseIf Type = EventLogItem.Types.SeriousError Then
+                ErrorBox.Type = ErrorBox.Types.SeriousError
+                ErrorBox.Message = Message & vbNewLine & vbNewLine & "This is a serious error and indicates that the program is " & _
+                    "unstable. The source of this error should be corrected before this program is used for anything important."
+            End If
+            StopMasterTimer()
+            ErrorBoxThread.Start()
+        End If
+    End Sub
+end main-form class snippet
+
+Inside a serial port device class:
+ <Runtime.CompilerServices.MethodImplAttribute(Runtime.CompilerServices.MethodImplOptions.Synchronized)> _
+    Private Shared Sub Port_DataReceived(ByVal sender As Object, ByVal e As System.IO.Ports.SerialDataReceivedEventArgs) Handles Port.DataReceived
+        ..some code..
+        ch4cp.NewEventLogEntry("testing")
+        ..some more code..
+    End Sub
+End serial port device class snippet
+

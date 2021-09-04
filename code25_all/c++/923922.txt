@@ -1,0 +1,97 @@
+#include <queue>
+
+using namespace std;
+
+class GThreadObject
+{
+    class event
+    {
+        public:
+        void (GThreadObject::*funcPtr)(void *);
+        void * data;
+    };
+
+public:
+    void functionOne(char * argOne, int argTwo);
+
+private:
+    void workerThread();
+    queue<GThreadObject::event*> jobQueue;
+    void functionOneProxy(void * buffer);
+    void functionOneInternal(char * argOne, int argTwo);
+
+};
+
+
+
+#include <iostream>
+#include "GThreadObject.h"
+
+using namespace std;
+
+/* On a continuous loop, reading tasks from queue
+ * When a new event is received it executes the attached function pointer
+ * It should block on a condition, but Thread code removed to decrease clutter
+ */
+void GThreadObject::workerThread()
+{
+    //New Event added, process it
+    GThreadObject::event * receivedEvent = jobQueue.front();
+
+    //Execute the function pointer with the attached data
+    (*this.*receivedEvent->funcPtr)(receivedEvent->data);
+}
+
+/*
+ * This is the public interface, Can be called from child threads
+ * Instead of executing the event directly it adds it to a job queue
+ * Then the workerThread picks it up and executes all tasks on the same thread
+ */
+void GThreadObject::functionOne(char * argOne, int argTwo)
+{
+
+    //Malloc an object the size of the function arguments
+    int argumentSize = sizeof(char*)+sizeof(int);
+    void * myData = malloc(argumentSize);
+    //Copy the data passed to this function into the buffer
+    memcpy(myData, &argOne, argumentSize);
+
+    //Create the event and push it on to the queue
+    GThreadObject::event * myEvent = new event;
+    myEvent->data = myData;
+    myEvent->funcPtr = &GThreadObject::functionOneProxy;
+    jobQueue.push(myEvent);
+
+    //This would be send a thread condition signal, replaced with a simple call here
+    this->workerThread();
+}
+
+/*
+ * This handles the actual event
+ */
+void GThreadObject::functionOneInternal(char * argOne, int argTwo)
+{
+    cout << "We've made it to functionTwo char*:" << argOne << " int:" << argTwo << endl;
+
+    //Now do the work
+}
+
+/*
+ * This is the function I would like to remove if possible
+ * Split the void * buffer into arguments for the internal Function
+ */
+void GThreadObject::functionOneProxy(void * buffer)
+{
+    char * cBuff = (char*)buffer;
+    functionOneInternal((char*)*((unsigned int*)cBuff), (int)*(cBuff+sizeof(char*)));
+};
+
+int main()
+{
+    GThreadObject myObj;
+
+    myObj.functionOne("My Message", 23);
+
+    return 0;
+}
+

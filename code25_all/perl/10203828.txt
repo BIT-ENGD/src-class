@@ -1,0 +1,58 @@
+#!/usr/bin/perl 
+
+if (! -d "converted" ) { 
+    mkdir "converted" ; 
+} 
+
+foreach my $inFile (@ARGV) { 
+    open INFILE, "<$inFile" ; 
+    my $outFile = $inFile ; 
+    $outFile =~ s/\.[^\.]*$/.sql/ ; 
+    $outFile =~ s/^dbo\.// ; 
+    open OUTFILE, ">converted/$outFile" ; 
+
+    print OUTFILE "DELIMITER \$\$;\n" ; 
+    print OUTFILE "SET SQL_MODE = ANSI_QUOTES\$\$" ; 
+    while( <INFILE> ) { 
+        s/\@\@identity/LAST_INSERT_ID()/i ; 
+        s/\s(\@[^\s\,\)\@]+)/"$1"/g ; 
+        /SET QUOTED_IDENTIFIER ON/ && next ; 
+        /SET NOCOUNT ON/ && next ; 
+        /SET\s*LOCK_TIMEOUT.*/ && next ; 
+        /^\s*GO\s*$/ && next ; 
+        /SET QUOTED_IDENTIFIER OFF/i && next ; 
+        /SET QUOTED_IDENTIFIER ON/ && next ; 
+        /SET ANSI_NULLS ON/ && next ; 
+        /SET ANSI_NULLS OFF/ && next ; 
+        s/nvarchar/varcharg/ ; 
+        if (/(CREATE\s+PROCEDURE)\s+([^\n\r]*)/) { 
+            print OUTFILE "DROP PROCEDURE IF EXISTS $2 \$\$\n\n" ; 
+            print OUTFILE "$1 $2 (\n"  ; 
+            next ; 
+        }; 
+        if (/^\s*AS\s*$/) { 
+            print OUTFILE ")\n"  ; 
+            print OUTFILE "BEGIN\n"  ; 
+            next ; 
+        }; 
+        s/(BEGIN\s+TRAN[^\n\r]*)/\/*$1*\// ; 
+        s/(COMMIT\s+TRAN[^\n\r]*)/\/*$1*\// ; 
+        tr/[A-Z]/[a-z]/; 
+        s/getdate\(\)/NOW()/i ; 
+        s/select\s/SELECT / ; 
+        s/update\s/UPDATE / ; 
+        s/insert\s/INSERT / ; 
+        s/declare\s/DECLARE / ; 
+        s/where\s/WHERE / ; 
+        s/values/VALUES/ ; 
+        s/begin/BEGIN/ ; 
+        s/if/IF/ ; 
+        /([^\r\n]*)/ && print OUTFILE "$1\n" ; 
+    } 
+    print OUTFILE "END;\n" ; 
+    print OUTFILE "\$\$\n" ; 
+    print OUTFILE "DELIMITER ;\$\$\n" ; 
+    close OUTFILE ; 
+    close INFILE ; 
+} 
+

@@ -1,0 +1,44 @@
+gem 'sql_explain', :path => "/home/mike/projects/sql_explain/"
+
+...
+  spec.files = %w(README.rdoc sql_explain.rb lib/sql_explain.rb lib/railtie.rb sql_explain.gemspec)
+...
+
+require 'lib/railtie.rb'
+
+require 'active_record'
+require 'sql_explain'
+
+module SqlExplain
+  class Railtie < Rails::Railtie
+    railtie_name :sql_explain
+    initializer 'sql_explain.extend.activerecord' do
+      if defined?(ActiveRecord)
+        ActiveRecord::ConnectionAdapters::MysqlAdapter.include SqlExplain::AR
+      end
+    end
+  end
+end
+
+module SqlExplain
+  module AR
+    def self.included(base_klass)
+      base_klass.send :alias_method_chain, :select, :explain
+    end
+
+
+    def select_with_explain(sql, name = nil)
+      @connection.query_with_result = true
+      result = execute('explain ' + sql, :skip_logging)
+      rows = []
+      result.each_hash { |row| rows << row }
+      result.free
+      @connection.more_results && @connection.next_result    # invoking stored procedures with CLIENT_MULTI_RESULTS requires this to tidy up else connection will be dropped
+      exp_string = ""
+      rows.each{|row| row.each_pair{|k,v| exp_string += " #{k}: #{v} |"}}
+      log(exp_string, "Explanation") {}
+      select_without_explain(sql, name)
+    end
+  end
+end
+

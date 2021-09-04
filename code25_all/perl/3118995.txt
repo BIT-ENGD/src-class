@@ -1,0 +1,67 @@
+#!/usr/bin/perl -w
+#
+
+use DBI;
+use Net::FTP;
+
+our $dbh = DBI->connect('DBI:mysql:database:127.0.0.1','user','password') or die "Aargh $!\n";
+$transquery=q{SELECT dest_login,dest_password FROM list where id=123};
+$sth=$dbh->prepare($transquery);
+$sth->execute();
+while($co=$sth->fetchrow_hashref){
+  $login=$co->{'dest_login'};
+  $pass=$co->{'dest_password'};
+}
+
+$changeresult='FAIL';
+$actionlog='';
+$newstring='';
+$upperchars='ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+$lowerchars='abcdefghijklmnopqrstuvwxyz';
+$allowedchars='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$';
+$l=length($upperchars);
+  $newstring.=substr($upperchars,int(rand($l)),1);
+  $newstring.=substr($lowerchars,int(rand($l)),1);
+$l=length($allowedchars);
+for ($i=0;$i<6;$i++){
+  $newstring.=substr($allowedchars,int(rand($l)),1);
+}
+print "$newstring\n";
+$actionlog .= "Setting Password for $login from $pass to $newstring\n";
+$username=
+eval{
+    $ftp=Net::FTP->new('x.x.x.x',Timeout=>480,Debug=>1) or die "Error connecting FTP $!\n";
+    $changepassword="$pass/$newstring/$newstring";
+    $ftp->login($login,$changepassword) or die "Error changing password $!\n";
+    #If we are here, time to update the password
+    $changeresult='SUCCESS';
+    $actionlog .= "Password successfully updated\n";
+    $transquery=q{UPDATE list set dest_password=(?) where id=123};
+    $sth=$dbh->prepare($transquery);
+    $sth->execute($newstring);
+  };
+
+  if ($@) {
+    $actionlog = $actionlog . "$@\n";
+  };
+if($actionlog ne ""){
+  #print $actionlog;
+
+  #my $send_to  = "To: someone\@example.com\n";
+  my $send_to  = "To: databaseusers\@example.com\n";
+  my $sendmail = "/usr/sbin/sendmail -t";
+
+  open(SENDMAIL, "|$sendmail") or die "Cannot open $sendmail: $!";
+  print SENDMAIL "Reply-to: databasepassword\@example.com\n";
+  print SENDMAIL "Subject: Password Change Information [$changeresult]\n";
+  print SENDMAIL $send_to;
+  print SENDMAIL "Content-type: text/plain\n\n";
+  print SENDMAIL $send_to;
+  print SENDMAIL "Content-type: text/plain\n\n";
+  print SENDMAIL $actionlog;
+  close(SENDMAIL);
+  $actionlog='';
+}
+else{
+  #print "Nothing done this session\n";
+

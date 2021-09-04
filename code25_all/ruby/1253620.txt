@@ -1,0 +1,38 @@
+require 'rubygems'
+require 'eventmachine'
+require 'rufus/tokyo/tyrant'
+
+class LineCounter < EM::Connection
+  ActionAllow = "action=dunno\n\n"
+
+  def post_init
+    puts "Received a new connection"
+    @tokyo = Rufus::Tokyo::Tyrant.new('server', 1978)
+    @data_received = ""
+  end
+
+  def receive_data data
+    @data_received << data
+    @data_received.lines do |line|
+      key = line.split('=')[0]
+      value = line.split('=')[1]
+      @reverse_client_name = value.strip() if key == 'reverse_client_name'
+      @client_address = value.strip() if key == 'client_address'
+      @tokyo[@client_address] = @reverse_client_name
+    end
+    puts @client_address, @reverse_client_name
+    send_data ActionAllow
+  end
+
+  def unbind
+    @tokyo.close
+  end
+end
+
+EventMachine::run {
+  host,port = "127.0.0.1", 9997
+  EventMachine::start_server host, port, LineCounter
+  puts "Now accepting connections on address #{host}, port #{port}..."
+  EventMachine::add_periodic_timer( 10 ) { $stderr.write "*" }
+}
+

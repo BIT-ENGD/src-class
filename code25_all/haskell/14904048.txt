@@ -1,0 +1,61 @@
+import Control.Monad.State
+
+data Free f a = Roll (f (Free f a))
+              | Pure a
+
+instance Functor f => Monad (Free f) where
+  return         = Pure
+  (Pure a) >>= f = f a
+  (Roll f) >>= g = Roll $ fmap (>>= g) f
+
+data Expr a = I a
+            | Plus (Expr a) (Expr a)
+            deriving (Show)
+
+data StackProgram a next = Pop  (a -> next)
+                         | Push a next
+
+instance Functor (StackProgram a) where
+  fmap f (Pop    k) = Pop (f.k)
+  fmap f (Push i x) = Push i (f x)
+
+liftF :: Functor f => f a -> Free f a
+liftF l = Roll $ fmap return l
+
+push :: a -> Free (StackProgram a) ()
+push i = liftF $ Push i ()
+
+pop :: Free (StackProgram a) a
+pop = liftF $ Pop id
+
+prog3 :: Free (StackProgram (Expr Int)) (Expr Int)
+prog3 = do
+  push (I 3)
+  push (I 4)
+  a <- pop
+  b <- pop
+  return (Plus a b)
+
+showSP' :: (Show a, Show b) => Free (StackProgram a) b -> [a] -> State Int String
+showSP' (Pure a)           _        = return $ "return " ++ show a
+showSP' (Roll (Pop f))    (a:stack) = do 
+  i <- get
+  put (i+1)
+  rest <- showSP' (f a) stack
+  return $ "var" ++ show i ++ " <- pop " ++ show (a:stack) ++ "\n" ++ rest
+showSP' (Roll (Push i n))  stack    = do
+  rest <- showSP' n (i:stack) 
+  return $ "push " ++ show i ++ " " ++ show stack ++ "\n" ++ rest
+
+showSP :: (Show a, Show b) => Free (StackProgram a) b -> [a] -> String
+showSP prg stk = fst $ runState (showSP' prg stk) 0
+
+*Main> putStrLn $ showSP prog3 []
+push I 3 []
+push I 4 [I 3]
+var0 <- pop [I 4,I 3]
+var1 <- pop [I 3]
+return Plus (I 4) (I 3)
+
+Plus (I 4) (I 3)
+Plus var0 var1

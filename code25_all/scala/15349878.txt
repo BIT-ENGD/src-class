@@ -1,0 +1,87 @@
+trait MongoDocument[T <: MongoDocument[T]] {
+  self: T =>
+
+  val db: DefaultDB
+  val collection: String
+
+  var fields: List[MongoField[T,_]] = List.empty
+  def apply(doc: TraversableBSONDocument): T = { // loads the content of supplied document
+    fields.foreach { field =>
+      doc.get(field.field).foreach(field.load(_))
+    }
+    this
+  }
+}
+trait MongoMetaDocument[T <: MongoDocument[T]] extends MongoDocument[T] {
+  self: T =>
+
+  type DocType = T
+
+  protected val clazz = this.getClass.getSuperclass
+  def create: T = clazz.newInstance().asInstanceOf[T]
+
+  def find(id: String): Future[Option[T]] = {
+    db(collection).find(BSONDocument("_id" -> BSONObjectID(id)))
+      .headOption().map(a => a.map(create.apply(_)))
+  }
+}
+
+abstract class MongoField[Doc <: MongoDocument[Doc], T](doc: MongoDocument[Doc], val field: String) {
+  var value: Option[T] = None
+
+  def is: Option[T] = value
+  def apply(in: T) { value = Some(in) }
+  def unset() { value = None }
+
+  def load(bson: BSONValue)
+
+  doc.fields ::= this
+}
+
+class MongoInteger[Doc <: MongoDocument[Doc]](doc: Doc, field: String)
+  extends MongoField[Doc, Int](doc, field) {
+
+  def load(bson: BSONValue) { value = Try(bson.asInstanceOf[BSONNumberLike].toInt).toOption }
+}
+
+class MongoDoc[Doc <: MongoDocument[Doc], SubDocF <: MongoMetaDocument[SubDoc], SubDoc <: MongoDocument[SubDoc]](doc: Doc, field: String, meta: SubDocF)
+  extends MongoField[Doc, SubDocF#DocType](doc, field) {
+
+  def load(bson: BSONValue) {
+    value = Try(bson.asInstanceOf[TraversableBSONDocument]).toOption.map { doc =>
+       meta.create.apply(doc)
+    }
+  }
+}
+
+class SubEntity extends MongoDocument[SubEntity] {
+  val db = Db.get
+  val collection = ""
+
+  val field = new MongoInteger(this, "field")
+}
+object SubEntity extends SubEntity with MongoMetaDocument[SubEntity]
+
+class Another extends MongoDocument[Another] {
+  val db = Db.get
+  val collection = "test"
+
+  val subEntity = new MongoDoc(this, "subEntity", SubEntity)
+}
+object Another extends Another with MongoMetaDocument[Another]
+
+Db.get
+DefaultDB
+MongoDoc
+Doc
+SubDocF
+SubEntity.type
+SubEntity
+MongoMetaDocument[SubEntity]
+SubDoc
+SubEntity
+val subEntity = new MongoDoc[Another,SubEntity.type,SubEntity](this, "subEntity", SubEntity)
+
+MongoDocument
+create
+implicitly

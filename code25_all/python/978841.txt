@@ -1,0 +1,205 @@
+...
+sucessfully added vote # 2281
+sucessfully added vote # 2282
+sucessfully added vote # 2283
+sucessfully added vote # 2284
+floorvotes_db.py:35: Warning: Data truncated for column 'vote_value' at row 1
+  r['bill ID']  , r['last name'], r['vote'])
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "floorvotes_db.py", line 67, in addAllFiles
+    addFile(file)
+  File "floorvotes_db.py", line 61, in addFile
+    add(record)
+  File "floorvotes_db.py", line 35, in add
+    r['bill ID']  , r['last name'], r['vote'])
+  File "build/bdist.linux-i686/egg/MySQLdb/cursors.py", line 166, in execute
+  File "build/bdist.linux-i686/egg/MySQLdb/connections.py", line 35, in defaulte     rrorhandler
+KeyboardInterrupt
+
+
+import os, re, datetime, string
+
+# Data
+DIR  = '/mydir'
+tfn = r'C:\Documents and Settings\Owner\Desktop\data.txt'
+rgxs = {
+    'bill number': {
+        'rgx': r'(A|S)[0-9]+-?[A-Za-z]* {50}'}
+    }
+
+# Compile rgxs for speediness
+for rgx in rgxs: rgxs[rgx]['rgx'] = re.compile(rgxs[rgx]['rgx'])
+splitter = rgxs['bill number']['rgx']
+
+# Guts
+class floor_vote_file:
+
+    def __init__(self, fn):
+        self.iterdata = (str for str in
+                         splitter.split(open(fn).read())
+                         if str and str <> 'A' and str <> 'S')
+
+    def iterVotes(self):
+        for record in self.data:
+            if record: yield billvote(record)
+
+class billvote(object):
+
+    def __init__(self, section):
+        self.data    = [line.strip() for line
+                        in section.splitlines()]
+        self.summary = self.data[1].split()
+        self.vtlines = self.data[2:]
+        self.date    = self.date()
+        self.year    = self.year()
+        self.votes   = self.parse_votes()
+        self.record = self.record()
+
+    # Parse summary date
+    def date(self):
+        d = [int(str) for str in self.summary[0].split('/')]
+        return datetime.date(d[2],d[0],d[1]).toordinal()
+
+    def year(self):
+        return datetime.date.fromordinal(self.date).year
+
+    def session(self):
+        """
+        arg: 2-digit year int
+        returns: 4-digit session
+        """
+        def odd():
+            return divmod(self.year, 2)[1] == 1
+
+        if odd():
+            return str(string.zfill(self.year, 2)) + \
+                   str(string.zfill(self.year + 1, 2))
+        else:
+            return str(string.zfill(self.year - 1, 2))+ \
+                   str(string.zfill(self.year, 2))
+
+    def house(self):
+        if self.summary[2] == 'Assembly': return 1
+        if self.summary[2] == 'Senate'  : return 2
+
+    def splt_v_line(self, line):
+        return [string for string in line.split('   ')
+                if string <> '']
+
+    def splt_v(self, line):
+        return line.split()
+
+    def prse_v(self, item):
+        """takes split_vote item"""
+        return {
+            'vote'     : unicode(item[0]),
+            'last name': unicode(' '.join(item[1:]))
+            }
+
+    # Parse votes - main
+    def parse_votes(self):
+        nested = [[self.prse_v(self.splt_v(vote))
+                   for vote in self.splt_v_line(line)]
+                  for line in self.vtlines]
+        flattened = []
+        for lst in nested:
+            for dct in lst:
+                flattened.append(dct)
+        return flattened
+
+    # Useful data objects
+    def record(self):
+        return {
+            'date'    : unicode(self.date),
+            'year'    : unicode(self.year),
+            'session' : unicode(self.session()),
+            'house'   : unicode(self.house()),
+            'bill ID' : unicode(self.summary[1]),
+            'ayes'    : unicode(self.summary[5]),
+            'nays'    : unicode(self.summary[7]),
+            }
+
+    def iterRecords(self):
+
+        for vote in self.votes:
+            r = self.record.copy()
+            r['vote']      = vote['vote']
+            r['last name'] = vote['last name']
+            yield r
+
+test = floor_vote_file(tfn)
+
+
+import MySQLdb as dbapi2
+import floorvotes_parse as v
+import os
+
+# Initial database crap
+db = dbapi2.connect(db=r"db",
+                    user="user",
+                    passwd="XXXXX")
+cur = db.cursor()
+
+if db and cur: print "\nConnected to db.\n"
+
+def commit(): db.commit()
+
+def ext():
+    cur.close()
+    db.close()
+    print "\nConnection closed.\n"
+
+# DATA
+
+DIR  = '/mydir'
+files = [DIR+fn for fn in os.listdir(DIR)
+         if fn.startswith('fvote')]
+
+# Add stuff
+def add(r):
+    """add a record"""
+    cur.execute(
+u'''INSERT INTO ny_votes (vote_house, vote_date, vote_year, bill_id,
+member_lastname, vote_value) VALUES
+(%s            , %s       , %s          ,
+ %s            , %s       , %s      )''',
+(r['house']    , r['date']     , r['year'],
+ r['bill ID']  , r['last name'], r['vote'])
+)
+
+    #print "added", r['year'], r['bill ID']
+
+def crt():
+    """create table"""
+    SQL = """
+CREATE TABLE ny_votes (openleg_id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+vote_house int(1), vote_date int(5), vote_year int(2), bill_id varchar(8),
+member_lastname varchar(50), vote_value varchar(10));
+"""
+    cur.execute(SQL)
+    print "\nCreate ny_votes.\n"
+
+def rst():
+    SQL = """DROP TABLE ny_votes"""
+    cur.execute(SQL)
+    print "\nDropped ny_votes.\n"
+    crt()
+
+def addFile(fn):
+    """parse and add all records in a file"""
+    n = 0
+    for votes in v.floor_vote_file(fn).iterVotes():
+        for record in votes.iterRecords():
+            add(record)
+        n += 1
+        print 'sucessfully added vote # ' + str(n)
+
+def addAllFiles():
+    for file in files:
+        addFile(file)
+
+if __name__=='__main__':
+    rst()
+    addAllFiles()
+

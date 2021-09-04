@@ -1,0 +1,150 @@
+#################### SUR JUNIPER FUNCTIONS ######################################################################
+sub hardware {
+my $session = shift(@_);
+my @data_results = shift(@_);
+my $sur_fpc;
+my $sur_pic;
+my $sur_port;
+my $hostname_sur;
+my $model;
+my $version;
+my $interface_admin_sur;
+my $interface_phy_sur;
+my $hostname_cisco;
+my $cisco_version;
+my $module_state_sur;
+my @interface_error_dump;
+my $msc;
+my $hostname_msc;
+my $device;
+print @data_results;
+my %hw_cmd_jun = (
+        "show_ver" => "show version",
+        "cli_len"  => "set cli screen-length 100000",
+        "int_ext"  => "show interfaces $data_results[3] extensive",
+        "int_err"  => "show interfaces $data_results[3] extensive | match errors",
+        "int_log"  => "show log messages | match SNMP_TRAP_LINK | match $data_results[3]",
+        "sh_fpc"   => "show chassis fpc $sur_fpc",
+);
+my %hw_cmd_cisco = (
+        "term_len" => "terminal length 0",
+        "int_err"  => "show interface $data_results[3] | include errors",
+        "int_log"  => "show log | include $data_results[3]",
+);
+
+
+##Determine what OS the router is running###
+$session->cmd($hw_cmd_cisco{"term_len"});
+my @show_version = $session->cmd($hw_cmd_jun{"show_ver"});
+### If it is a Juniper ###
+if (grep /^\s*JUNOS/, @show_version) {
+        $device = "juniper";
+
+        ### Grab the SUR HOSTNAME, VERSION OF CODE, AND MODEL ###
+        foreach my $version_line (@show_version) {
+                if ( $version_line =~ /\bHostname:\s(re[0-1]-sur[0-9]{2}.*)/) {
+                         $hostname_sur = $1;
+                }
+                elsif ( $version_line =~ /\bHostname:\s(re[0-1]-ce-[a-z]*[0-9]{2}.*)/) {
+                         $msc = "Yes";
+                         $hostname_msc = $1;
+                }
+        }
+        foreach my $version_line (@show_version) {
+                if ($version_line =~ /Model[:]\s([a-z]*[0-9]*)/) {
+                                $model = $1;
+                }
+                if ($version_line =~ /boot\s([[]\d.\dR\d.\d[\]])/) {
+                                $version = $1;
+
+                }
+        }
+        ### CHECK THE INTERFACE OF THE SUR FOR STATE ###
+        $session->cmd($hw_cmd_jun{"cli_len"});
+        my @interface_extensive_dump = $session->cmd($hw_cmd_jun{"int_ext"});
+        foreach my $interface_state_line (@interface_extensive_dump) {
+                if ( $interface_state_line =~ /\bPhysical\sinterface:\s[ge]{2}-[0-9]\/[0-9]\/[0-9][,]\s(\bEnabled|Administratively\sdown),\sPhysical\s[a-z]{4}\sis\s(Up|Down)/) {
+                         $interface_admin_sur = $1;
+                         $interface_phy_sur = $2;
+                }
+        }
+
+                ### CHECK TO SEE IF ANYTHING THERE IS ANYTHING IN THE LOG PERTAINING TO THE INTERFACE ###
+                my @interface_log_dump = $session->cmd($hw_cmd_jun{"int_log"});
+
+                ### Check which FPC, PIC, and PORT ###
+                foreach my $user_dump_line (@data_results) {
+                        if ($user_dump_line =~ /[a-z]{2}-([0-9])\/([0-9])\/([0-9])/) {
+                                $sur_fpc  = $1;
+                                $sur_pic  = $2;
+                                $sur_port = $3;
+                        }
+                }
+
+                 ### CHECK THE STATE OF THE MODULE ###
+                my @module_state_dump = $session->cmd($hw_cmd_jun{"sh_fpc"});
+                foreach my $module_line (@module_state_dump) {
+                        if ($module_line =~ /(Online|Offline)/) {
+                                 $module_state_sur = $1;
+                        }
+                }
+                if ($msc eq "Yes") {
+                        return($hostname_msc,$model,$version);
+                }
+                else {
+                        return($device,$hostname_sur,$model,$version,$interface_admin_sur,
+                               \@interface_error_dump,\@interface_log_dump,$interface_phy_sur,
+                                $sur_fpc,$sur_pic,$sur_port,$module_state_sur);
+                }
+}
+else {
+$device = "cisco";
+
+## This is a Cisco device ##
+### Gather the hostname, version, and model of the CRS ###
+   foreach my $version_line_cisco (@show_version) {
+        if ($version_line_cisco =~ /([a-z][a-z][a-z]?[0-9][0-9][.](.*)[.](.*)[.][a-z]*)/) {
+                 $hostname_cisco = $1;
+        }
+        if ($version_line_cisco =~ /(Version\s[0-9].[0-9].[0-9]\[[0-9]{2}\])/) {
+                 $cisco_version = $1;
+        }
+        #if ($version_line_cisco =~ /(cisco\sCRS-\d\d?/[A-Z]\*/) {
+        #       $cisco_model = $1;
+        #}
+   }
+   ### Gather any interface error statistics on the sur ###
+   my @cisco_int_errors_dump = $session->cmd($hw_cmd_cisco{"int_err"});
+   ### Gather any interface information in the log ###
+   my @cisco_int_log_dump = $session->cmd($hw_cmd_cisco{"int_log"});
+        return ($device,$hostname_cisco,$cisco_version,\@cisco_int_errors_dump,
+                \@cisco_int_log_dump);
+}## else
+}## end &hardware()
+##################################################################################################
+
+
+## Perform Hardware Check ##
+(my $type,my  $hostname,
+  my $model,my  $version,
+  my $interface_admin,my  @int_err_dump,
+  my @int_log_dump,my  $int_phy,
+  my $fpc, my $pic,my  $port,
+  my $mod_state) = &hardware($sur_session, @data_results);
+
+### CHECK THE INTERFACE OF THE SUR FOR STATE ###
+        $session->cmd($hw_cmd_jun{"cli_len"});
+        my @interface_extensive_dump = $session->cmd($hw_cmd_jun{"int_ext"});
+
+[jgearh200@srv01-netops CBH]$ perl cbh_script_final.pl 
+Use of uninitialized value in concatenation (.) or string at cbh_script_final.pl line 47.
+Use of uninitialized value in concatenation (.) or string at cbh_script_final.pl line 47.
+Use of uninitialized value in concatenation (.) or string at cbh_script_final.pl line 47.
+Use of uninitialized value in concatenation (.) or string at cbh_script_final.pl line 47.
+Use of uninitialized value in concatenation (.) or string at cbh_script_final.pl line 55.
+Use of uninitialized value in concatenation (.) or string at cbh_script_final.pl line 55.
+Use of uninitialized value in string eq at cbh_script_final.pl line 117.
+
+7BAC012C <FQDN> <ip-address> ge-1/2/1 <ip-address> ACTIVATED <ip-address>
+7BAC012C 4011 
+

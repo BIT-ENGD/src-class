@@ -1,0 +1,148 @@
+#!/usr/bin/perl 
+
+#---------------------------------------------------------------------
+# Description: Extract Lab data from text file and insert to database
+#---------------------------------------------------------------------
+
+# Modules Required
+use DBI;  # check drivers
+
+
+#print "vs2-001-001-ma-sampleFile\n";
+
+
+my $filename = "vs2-001-001-ma-sampleFile.txt";   
+
+#initialize variable $count
+my $count = 0 ;    
+#initialise variables for parameters
+my ($paraval, $paraname, $pararange, $paraunit);
+#uncomment it To use keyboard input. and type filename with extension
+# Ex: fileName.txt or fileName.csv    
+#chomp($filename=<>);       
+open (OUT,">>$filename.csv") || die print "No\t $!";
+close OUT;
+
+open (IN,"$filename") || die print "Noo Input. $!";
+my @file=<IN>;
+
+#join the lines with # dilimits
+my $string = join('#', @file);
+
+    $string =~s /[\r]//g;   # To remove space. 
+    $string =~s /[\n]//g;
+    $string =~s /[\t]//g;   # To remove tab
+
+
+print "\n Parsing data now....\n";
+# pattern under while loop will do the work. 
+# it will take date as 13 Oct 2010 in $1 and rest values in $2  
+# $string=~/Equine Profile Plus\s+#(.*?\s+)\s+.*?(Sample.*)##/g
+
+ while($string=~/Equine Profile Plus\s+#(.*?\s+)\s+.*?(Sample.*?)##/g)
+ {
+    my($date,$line,$Sample_Type,$Patient_ID, $Sample_Id,
+         $Doctor_Id,$Location,$Rotor, $Serial,$para,
+         $QC,$HEM,$LIP,$ICT);
+    $count++;
+
+    $date=$1;
+    $line=$2;       
+    if ($line=~/Sample Type:(.*?)#/gis){
+        $Sample_Type=clean($1);
+    }if ($line=~/Patient ID:(.*?)#/gis){
+        $Patient_ID=clean($1);
+    }if ($line=~/Sample ID:(.*?)#/gis){
+        $Sample_Id=clean($1);
+    }if ($line=~/Doctor ID:(.*?)#/gis){
+        $Doctor_Id=clean($1);
+    }if ($line=~/Location:(.*?)#/gis){
+        $Location=clean($1);
+    }if ($line=~/Rotor Lot Number:(.*?)#/gis){
+        $Rotor=clean($1);
+    }if ($line=~/Serial Number:(.*?)#/gis){
+        $Serial=clean($1);
+    }if ($line=~/#(NA+.*?GLOB.*?)#/gis){
+
+        $para=$1;
+        $para =~ s/#/;/g;
+        $para =~ s/\s\s/ /g;   #remove spaces.
+        $para =~ s/\s\s/ /g;   
+        $para =~ s/\s\s/ /g;  
+        $para =~ s/\s\s/ /g;
+        $para =~ s/\s\s/ /g;
+        $para =~ s/\s\s/ /g;
+        $para =~ s/ /:/g;
+
+        if ($line=~/#QC(.*?) #HEM(.*?) LIP(.*?) ICT(.*?)  /gis){
+        $QC=clean($1);
+        $HEM=clean($2);
+        $LIP=clean($3);
+        $ICT=clean($4);
+    }
+        while($para =~ /(.*?):(.*?):(.*?);/g){
+        $paraname = $1;
+        $paraval = $2;
+        $pararange = $3;
+        #$paraunit = $4;    
+
+               #data from text file written to a CSV file.
+        open (OUT,">>$filename.csv") || die print "No";             
+               print OUT "\"$count\",\"$date\",\"$Sample_Type\",\"$Patient_ID\",
+                   \"$Sample_Id\",\"$Doctor_Id\",\"$Location\",\"$Rotor\",
+                   \"$Serial\", \"$QC\",\"$HEM\",\"$LIP\",\"$ICT\",
+                   \"$paraname\",\"$paraval\",\"$pararange\",\n";
+        }
+    }
+ }
+ close OUT;
+
+ #Load csv into mysql
+print "\n Inserting into data base \n";
+# comment it while not loading into the database.
+
+&loaddata('$filename.csv');      
+print "\n Database insert completed \n";
+ sub clean
+{
+my ($line) = shift (@_);
+$line =~ s/\n//g;
+$line =~ s/\r//g;
+$line =~ s/^\s+//g; 
+$line =~ s/\s\s//g;
+$line =~ s/\s+$//g;
+$line =~ s/#//g;
+return ($line);
+}
+
+
+
+#init the mysql DB
+sub init_dbh{
+
+$db="parameters";
+$host="localhost";
+$user="**";
+$password="**";
+
+my $dbh   = DBI->connect ("DBI:mysql:database=$db:host=$host",
+                          $user,
+                          $password)
+                          or die "Can't connect to database: $DBI::errstr\n";
+
+       return $dbh;
+
+}
+
+#Load data to mysql table
+sub loaddata{
+        my ($name) = @_;
+        my $DBH = init_dbh( );
+        my $STH_GO = $DBH->prepare(q{
+           LOAD DATA LOCAL INFILE 'vs2-001-001-ma-sampleFile.txt.csv' 
+            INTO TABLE parameter FIELDS TERMINATED BY ',' ENCLOSED BY
+            '"' LINES TERMINATED BY '\n'; })or die "ERROR: ". $DBI::errstr;
+        $STH_GO->execute();
+
+        }
+

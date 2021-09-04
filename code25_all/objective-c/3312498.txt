@@ -1,0 +1,56 @@
+Boolean addOrUpdateKey(NSString *service, NSString *key)
+{
+  OSStatus retVal;
+  SecKeychainRef systemKeychainRef;
+  SecKeychainItemRef kcItem;
+  UInt32 pwSize = 0;
+  char *password = NULL;
+  AuthorizationRef authRef;
+  AuthorizationItem right = { "system.keychain.modify", 0, NULL, 0 };
+  AuthorizationRights rightSet = { 1, &right };
+
+
+  retVal = AuthorizationCreate(&rightSet, kAuthorizationEmptyEnvironment, kAuthorizationFlagExtendRights | kAuthorizationFlagInteractionAllowed, &authRef);
+  if (retVal != errSecSuccess) {
+    NSLog(@"Failed to get right to modify system keychain %@", SecCopyErrorMessageString(retVal, NULL));
+    return FALSE;
+  }
+  SecKeychainSetUserInteractionAllowed(TRUE);
+  retVal = SecKeychainOpen("/Library/Keychains/System.keychain", &systemKeychainRef);
+  if (retVal != errSecSuccess) {
+    NSLog(@"Failed to open System keychain %@", SecCopyErrorMessageString(retVal, NULL));
+    return FALSE;
+  }
+  retVal = SecKeychainUnlock(systemKeychainRef, 0, NULL, FALSE);
+  retVal = SecKeychainFindGenericPassword(NULL, 
+                                          [service length], 
+                                          [service cString], 
+                                          0, 
+                                          NULL, 
+                                          &pwSize, 
+                                          (void**)&password, 
+                                          &kcItem);
+  if (retVal == errSecItemNotFound) {
+    retVal = SecKeychainAddGenericPassword(systemKeychainRef, 
+                                           [service length], 
+                                           [service cString], 
+                                           0, 
+                                           NULL, 
+                                           [key length], 
+                                           [key cString], 
+                                            &kcItem);
+    if (retVal != errSecSuccess) {
+      NSLog(@"Failed to add new key to keychain %@", SecCopyErrorMessageString(retVal, NULL));
+      return FALSE;
+    }
+  }
+
+  retVal = SecKeychainItemModifyAttributesAndData(kcItem, NULL, [key length], [key cString]);
+  if (retVal != errSecSuccess) {
+    NSLog(@"Failed to update password for key %@", SecCopyErrorMessageString(retVal, NULL));
+    return FALSE;
+  }
+
+  return TRUE;
+}
+

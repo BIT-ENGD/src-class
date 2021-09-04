@@ -1,0 +1,65 @@
+Public Class CallQueue
+    Private first As New Node(Nothing) 'owned by consumer'
+    Private last As Node = first 'owned by producers'
+    Private Class Node
+        Public ReadOnly action As Action
+        Public [next] As Node
+        Public Sub New(ByVal action As Action)
+            Me.action = action
+        End Sub
+    End Class
+
+    Private _running As Integer
+    Private Function TryAcquireConsumer() As Boolean
+        Threading.Thread.MemoryBarrier()
+
+        'Dont bother acquiring if there are no items to consume'
+        'This unsafe check is alright because enqueuers call this method, so we never end up with a non-empty idle queue'
+        If first.next Is Nothing Then Return False
+
+        Threading.Thread.MemoryBarrier()
+
+        'Try to acquire'
+        Return Threading.Interlocked.Exchange(_running, 1) = 0
+    End Function
+    Private Function TryReleaseConsumer() As Boolean
+        Do
+            Threading.Thread.MemoryBarrier()
+
+            'Dont release while there are still things to consume'
+            If first.next IsNot Nothing Then Return False
+
+            Threading.Thread.MemoryBarrier()
+
+            'Release'
+            _running = 0
+
+            Threading.Thread.MemoryBarrier()
+
+            'It is possible that a new item was queued between the first.next check and releasing'
+            'Therefore it is necessary to check if we can re-acquire in order to guarantee we dont leave a non-empty queue idle'
+            If Not TryAcquireConsumer() Then Return True
+        Loop
+    End Function
+
+    Public Sub QueueAction(ByVal action As Action)
+        'Enqueue'
+        'Essentially, this works because each node is returned by InterLocked.Exchange *exactly once*'
+        'Each node has its .next property set exactly once, and also each node is targeted by .next exactly once, so they end up forming a valid tail'
+        Dim n = New Node(action)
+        Threading.Interlocked.Exchange(last, n).next = n
+
+        'Start the consumer thread if it is not already running'
+        If TryAcquireConsumer() Then
+            Call New Threading.Thread(Sub() Consume()).Start()
+        End If
+    End Sub
+    Private Sub Consume()
+        'Run until queue is empty'
+        Do Until TryReleaseConsumer()
+            first = first.next
+            Call first.action()
+        Loop
+    End Sub
+End Class
+

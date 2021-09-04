@@ -1,0 +1,146 @@
+class MemoryClassLoader extends ChainedAction {
+
+    private static final Logger LOG = Logger.getLogger(MemoryClassLoader.class);
+
+    private LoaderImpl impl;
+
+    private class LoaderImpl extends ClassLoader {
+
+        // The compiler tool
+        private final JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+
+        // Compiler options
+        private final Iterable<String> options = Arrays.asList("-verbose");
+
+        // DiagnosticCollector, for collecting compilation problems
+        private final DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<JavaFileObject>();
+
+        // Our FileManager
+        private final MemoryFileManager manager = new MemoryFileManager(this.compiler);
+
+        public LoaderImpl(File sourceDirectory) {
+
+            List<Source> list = new ArrayList<Source>();
+
+            File[] files = sourceDirectory.listFiles(new FilenameFilter() {
+
+                @Override
+                public boolean accept(File dir, String name) {
+
+                    return name.endsWith(Kind.SOURCE.extension);
+                }
+            });
+
+            for (File file : files) {
+                list.add(new Source(file));
+            }
+
+            CompilationTask task = compiler.getTask(null, manager, diagnostics, options, null, list);
+            Boolean compilationSuccessful = task.call();
+
+            LOG.info("Compilation has " + ((compilationSuccessful) ? "concluded successfully" : "failed"));
+
+            // report on all errors to screen
+            for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
+                LOG.warn(diagnostic.getMessage(null));
+            }
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            synchronized (this.manager) {
+                Output output = manager.map.remove(name);
+                if (output != null) {
+                    byte[] array = output.toByteArray();
+                    return defineClass(name, array, 0, array.length);
+                }
+            }
+            return super.findClass(name);
+        }
+    }
+
+    @Override
+    protected void run() {  
+
+        impl = new LoaderImpl(new File(/* Some directory path */));
+
+    }
+}
+
+
+
+class MemoryFileManager extends ForwardingJavaFileManager<JavaFileManager> {
+
+    final Map<String, Output> map = new HashMap<String, Output>();
+
+    MemoryFileManager(JavaCompiler compiler) {
+        super(compiler.getStandardFileManager(null, null, null));
+    }
+
+    @Override
+    public Output getJavaFileForOutput(Location location, String name, Kind kind, FileObject source) {
+
+        Output output = new Output(name, kind);
+        map.put(name, output);
+
+        return output;
+    }
+
+}
+
+
+class Output extends SimpleJavaFileObject {
+
+    private final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+    Output(String name, Kind kind) {
+        super(URI.create("memo:///" + name.replace('.', '/') + kind.extension), kind);
+    }
+
+    byte[] toByteArray() {
+        return this.baos.toByteArray();
+    }
+
+    @Override
+    public ByteArrayOutputStream openOutputStream() {
+        return this.baos;
+    }
+}
+
+
+
+class Source extends SimpleJavaFileObject {
+
+
+    public Source(File file) {
+        super(file.toURI(), Kind.SOURCE);
+    }
+
+
+    @Override
+    public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+
+        StringBuilder sb = new StringBuilder("");
+        try {
+            File file = new File(uri);
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+
+            sb = new StringBuilder((int) file.length());
+            String line = "";
+            while ((line = br.readLine()) != null) {
+                sb.append(line);
+                sb.append("\n");
+            }
+        } catch (FileNotFoundException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        return sb.toString();
+    }
+}
+

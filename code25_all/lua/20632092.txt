@@ -1,0 +1,79 @@
+ffi.metatype
+ffi = require("ffi")
+srate = 48000
+
+ffi.cdef[[
+typedef struct sin_state {
+    float _now;   // time of last eval
+    float _last;  // result of last eval
+    float _freq;  // frequency
+    float _gain;  // gain
+    float _phase; // phase
+    float _w;     // angular speed in radians/sample
+    float _p;     // update parameter
+    float _y[3];  // last 3 steps
+} sin_t;
+]]
+
+sin = {}
+
+sin.mt = {
+    __call = function(s,now)
+        if s._now < now then
+            s._now = now
+            s._phase = (s._phase + s._w) % 2 * math.pi
+            s._y[1] = s._p * s._y[2] - s._y[3]
+            s._y[3] = s._y[2]
+            s._y[2] = s._y[1]
+            s._last = s._y[1] * s._gain
+        end
+        return s._last 
+    end,
+
+    __index = function(s,k)
+        return s["_"..k]
+    end,
+
+    __newindex = function(s,k,v)
+        -- update parameter
+        s["_"..k] = v
+        -- update internal state
+        sin.update(s)
+    end
+}
+
+function sin.update(s)
+    s._w = s._freq * 2 * math.pi / srate
+    s._p = 2 * math.cos(s._w)
+    s._y[3] = math.sin(-2 * s._w + s._phase)
+    s._y[2] = math.sin(-1 * s._w + s._phase)
+    s._y[1] = s._p * s._y[2] - s._y[3]
+    s._last = s._y[1] * s._gain
+end
+
+sin.state = ffi.metatype("sin_t",sin.mt)
+
+function sin.new(t)
+    local t = t or {}
+    local params = {
+        _freq = t.freq or 440,
+        _gain = t.gain or 1,
+        _phase = t.phase or 0,
+    }
+    local s = sin.state(params)
+    sin.update(s)
+    return s
+end
+
+s = sin.new()
+print(s(1))
+s = nil
+print("garbage collecting")
+collectgarbage()
+print("done")
+
+% luajit test.lua
+6.6929342068534e-09
+garbage collecting
+[1]    20398 segmentation fault (core dumped)  luajit test.lua
+

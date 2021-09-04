@@ -1,0 +1,438 @@
+template <class Type>
+class GArray
+{
+    Type *p;
+    uint32 len;
+    uint32 alloc;
+
+protected:
+    bool fixed;
+
+public:
+    /// Constructor
+    GArray(int PreAlloc = 0)
+    {
+        p = 0;
+        len = 0;
+        fixed = false;
+
+        alloc = PreAlloc;
+        if (alloc)
+        {
+            int Bytes = sizeof(Type) * alloc;
+            p = (Type*) malloc(Bytes);
+            if (p)
+            {
+                memset(p, 0, Bytes);
+            }
+            else
+            {
+                alloc = 0;
+            }
+        }
+    }
+
+    /// Destructor  
+    ~GArray()
+    {
+        Length(0);
+    }   
+
+    /// Returns the number of used entries
+    uint32 Length() const
+    {
+        return len;
+    }
+
+    /// Sets the length of available entries
+    bool Length(uint32 i)
+    {
+        if (i > 0)
+        {
+            if (i > len && fixed)
+                return false;
+
+            uint nalloc = alloc;
+            if (i < len)
+            {
+                // Shrinking
+            }
+            else
+            {
+                // Expanding
+                int b;
+                for (b = 4; (1 << b) < i; b++)
+                    ;
+                nalloc = 1 << b;
+                LgiAssert(nalloc >= i);
+            }
+
+            if (nalloc != alloc)
+            {
+                Type *np = (Type*)malloc(sizeof(Type) * nalloc);
+                if (!np)
+                {
+                    return false;
+                }
+
+                if (p)
+                {
+                    // copy across common elements
+                    memcpy(np, p, min(len, i) * sizeof(Type));
+                    free(p);
+                }
+                p = np;
+                alloc = nalloc;
+            }
+
+            if (i > len)
+            {
+                // zero new elements
+                memset(p + len, 0, sizeof(Type) * (i - len));
+            }
+
+            len = i;
+        }
+        else
+        {
+            if (p)
+            {
+                int Length = len;
+                for (uint i=0; i<Length; i++)
+                {
+                    p[i].~Type();
+                }
+                free(p);
+                p = 0;
+            }
+            len = alloc = 0;
+        }
+
+        return true;
+    }
+
+    GArray<Type> &operator =(const GArray<Type> &a)
+    {
+        Length(a.Length());
+        if (p && a.p)
+        {
+            for (int i=0; i<len; i++)
+            {
+                p[i] = a.p[i];
+            }
+        }
+        return *this;
+    }
+
+    /// \brief Returns a reference a given entry.
+    ///
+    /// If the entry is off the end of the array and "fixed" is false,
+    /// it will grow to make it valid.
+    Type &operator [](uint32 i)
+    {
+        static Type t;
+        if
+        (
+            i < 0
+            ||
+            (fixed && i >= len)
+        )
+        {
+            ZeroObj(t);
+            return t;
+        }
+
+        #if 0
+        if (i > 15000000)
+        {
+            #if defined(_DEBUG) && defined(_MSC_VER)
+            LgiAssert(0);
+            #endif
+
+            ZeroObj(t);
+            return t;
+        }
+        #endif
+
+        if (i >= alloc)
+        {
+            // increase array length
+            uint nalloc = max(alloc, GARRAY_MIN_SIZE);
+            while (nalloc <= i)
+            {
+                nalloc <<= 1;
+            }
+
+            // alloc new array
+            Type *np = (Type*) malloc(sizeof(Type) * nalloc);
+            if (np)
+            {
+                // clear new cells
+                memset(np + len, 0, (nalloc - len) * sizeof(Type));
+                if (p)
+                {
+                    // copy across old cells
+                    memcpy(np, p, len * sizeof(Type));
+
+                    // clear old array
+                    free(p);
+                }
+
+                // new values
+                p = np;
+                alloc = nalloc;
+            }
+            else
+            {
+                static Type *t = 0;
+                return *t;
+            }
+        }
+
+        // adjust length of the the array
+        if (i + 1 > len)
+        {
+            len = i + 1;
+        }
+
+        return p[i];
+    }
+
+    /// Delete all the entries as if they are pointers to objects
+    void DeleteObjects()
+    {
+        for (uint i=0; i<len; i++)
+        {
+            DeleteObj(p[i]);
+        }
+        Length(0);
+    }
+
+    /// Delete all the entries as if they are pointers to arrays
+    void DeleteArrays()
+    {
+        for (int i=0; i<len; i++)
+        {
+            DeleteArray(p[i]);
+        }
+        Length(0);
+    }
+
+    /// Find the index of entry 'n'
+    int IndexOf(Type n)
+    {
+        for (uint i=0; i<len; i++)
+        {
+            if (p[i] == n) return i;
+        }
+
+        return -1;
+    }
+
+    /// Returns true if the item 'n' is in the array
+    bool HasItem(Type n)
+    {
+        return IndexOf(n) >= 0;
+    }
+
+    /// Deletes an entry
+    bool DeleteAt
+    (
+        /// The index of the entry to delete
+        uint Index,
+        /// true if the order of the array matters, otherwise false.
+        bool Ordered = false
+    )
+    {
+        if (p && Index >= 0 && Index < len)
+        {
+            // Delete the object
+            p[Index].~Type();
+
+            // Move the memory up
+            if (Index < len - 1)
+            {
+                if (Ordered)
+                {
+                    memmove(p + Index, p + Index + 1, (len - Index - 1) * sizeof(Type) );
+                }
+                else
+                {
+                    p[Index] = p[len-1];
+                }
+            }
+
+            // Adjust length
+            len--;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// Deletes the entry 'n'
+    bool Delete
+    (
+        /// The value of the entry to delete
+        Type n,
+        /// true if the order of the array matters, otherwise false.
+        bool Ordered = false
+    )
+    {
+        int i = IndexOf(n);
+        if (p && i >= 0)
+        {
+            return DeleteAt(i, Ordered);
+        }
+
+        return false;
+    }
+
+    /// Appends an element
+    void Add
+    (
+        /// Item to insert
+        const Type &n
+    )
+    {
+        (*this)[len] = n;
+    }
+
+    /// Appends multiple elements
+    void Add
+    (
+        /// Items to insert
+        Type *s,
+        /// Length of array
+        int count
+
+    )
+    {
+        if (!s || count < 1)
+            return;
+
+        int i = len;
+        Length(len + count);
+        Type *d = p + i;
+        while (count--)
+        {
+            *d++ = *s++;
+        }
+    }
+
+    /// Inserts an element into the array
+    bool AddAt
+    (
+        /// Item to insert before
+        int Index,
+        /// Item to insert
+        Type n
+    )
+    {
+        // Make room
+        if (Length(len + 1))
+        {
+            if (Index < len - 1)
+            {
+                // Shift elements after insert point up one
+                memmove(p + Index + 1, p + Index, (len - Index - 1) * sizeof(Type) );
+            }
+            else if (Index >= len)
+            {
+                // Add at the end, not after the end...
+                Index = len - 1;
+            }
+
+            // Insert item
+            p[Index] = n;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// Sorts the array
+    void Sort(int (*Compare)(Type*, Type*))
+    {
+        typedef int (*qsort_compare)(const void *, const void *);
+        qsort(p, len, sizeof(Type), (qsort_compare)Compare);
+    }
+
+    /// \returns a reference to a new object on the end of the array
+    Type &New()
+    {
+        return (*this)[len];
+    }
+
+    /// Returns the memory held by the array and sets itself to empty
+    Type *Release()
+    {
+        Type *Ptr = p;
+        p = 0;
+        len = alloc = 0;
+        return Ptr;
+    }
+};
+
+2>lgi8d.lib(Lgi8d.dll) : error LNK2005: "public: int __thiscall GArray<char *>::Length(void)" (?Length@?$GArray@PAD@@QAEHXZ) already defined in FrameStore.obj
+2>D:\Home\matthew\network_camera\src\vod_test\Debug\vod_test.exe : fatal error LNK1169: one or more multiply defined symbols found
+
+void DeleteFromArray(GArray<char> &a, int Start, int Len)
+{
+    assert(Len >= 0);
+
+    int64 StartTs = LgiCurrentTime();
+
+    int Del = min(Len, a.Length() - Start);
+    if (Del > 0)
+    {
+        int Remain = a.Length() - Start - Del;
+        if (Remain > 0)
+        {
+            memmove(&a[Start], &a[Start+Del], Remain);
+            MoveBytes += Remain;
+            a.Length(Start+Remain);
+        }
+        else a.Length(Start);
+    }
+
+    int64 End = LgiCurrentTime();
+    DeleteTime += End - StartTs;
+}
+
+void Scan()
+{
+    if (!Init)
+    {
+        Init = true;
+        GAutoString Path = FrameFile::GetPath();
+        GAutoPtr<GDirectory> Dir(FileDev->GetDir());
+        GArray<char*> k;
+
+        int64 Size = 0;
+        for (bool b = Dir->First(Path); b; b = Dir->Next())
+        {
+            if (!Dir->IsDir())
+            {
+                char *e = LgiGetExtension(Dir->GetName());
+                if (e && !stricmp(e, "mjv"))
+                {
+                    char p[MAX_PATH];
+                    Dir->Path(p, sizeof(p));
+                    k.Add(NewStr(p));
+                    Size += Dir->GetSize();
+                }
+            }
+        }
+
+        GAutoPtr<Prog> p(new Prog(Size));
+        for (int i=0; i<k.Length(); i++)
+        {
+            Files.Add(new FrameFile(k[i], p));
+        }
+
+        k.DeleteArrays();
+    }
+}
+

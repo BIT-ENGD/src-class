@@ -1,0 +1,72 @@
+###Generate Traning index
+#sizeLearning; double; probability of being in the training set
+#exprSet; expressionSet; Expression set of interest
+
+generateIndex <- function(sizeLearning, exprSet){
+
+  total.size <- length(pData(exprSet)$Factor)
+  learning.size <- round(sizeLearning * total.size)
+  validation.size <- total.size - learning.size
+
+  K <- nlevels(factor(pData(exprSet)$Factor))
+  learning.index <- NULL
+  props <- round(learning.size/total.size * table(factor(pData(exprSet)$Factor)))
+  props[1] <- learning.size - sum(props[2:K])
+  for (k in 1:K) {
+    y.num <- as.numeric(factor(pData(exprSet)$Factor))
+    learning.index <- c(learning.index, sample(which(y.num ==k))[1:props[k]])
+  }
+
+  return(learning.index)
+}
+
+#testData is a expression set with 122 samples and almost 10000 genes.
+
+for(outerLoopCounter in 1:5){
+
+
+  learning.index <- generateIndex(0.8, testData)
+  validation.index <- (1:ncol(testData))[-learning.index]
+
+  outerLoopTraining <- testData[,learning.index]
+  outerLoopValidation <- testData[,validation.index]
+
+  for(innerLoopCounter in 1:5){
+    #Hier moet de dataset weer gesplits
+    #Training_T 80% / Test_T 20%
+    #Respect to outcome / original set
+
+    learningInnerLoop.index <- generateIndex(0.8, outerLoopTraining)
+    validationInnerLoop.index <- (1:ncol(outerLoopTraining))[-learningInnerLoop.index]
+
+    TrainingSet <- outerLoopTraining[,learningInnerLoop.index]
+    ValidationSet <- outerLoopTraining[,validationInnerLoop.index]
+
+    Outcome <- as.character(pData(TrainingSet)$Outcome)
+    TrainingSetDataFrame <- cbind(as.data.frame(t(exprs(TrainingSet))), Outcome)
+
+    Outcome <- as.character(pData(ValidationSet)$Outcome)
+    ValidationSetDataFrame <- cbind(as.data.frame(t(exprs(ValidationSet))), Outcome)
+
+    cl <- makeCluster(4)
+    clusterExport(cl, "TrainingSetDataFrame")
+    weightsWMW <- parLapply(cl, 1:(ncol(TrainingSetDataFrame)-1), function(i) wilcox.test(TrainingSetDataFrame[TrainingSetDataFrame$Outcome==1,i], TrainingSetDataFrame[TrainingSetDataFrame$Outcome==2,i])$p.value)
+    stopCluster(cl)
+
+    #The weights are used as a feature selection criteria and tested in multiple machine learning models
+  }
+
+  Outcome <- as.character(pData(outerLoopTraining)$Outcome)
+  TrainingSetDataFrame <- cbind(as.data.frame(t(exprs(outerLoopTraining))), Outcome)
+
+  Outcome <- as.character(pData(outerLoopValidation)$Outcome)
+  ValidationSetDataFrame <- cbind(as.data.frame(t(exprs(outerLoopValidation))), Outcome)
+
+  cl <- makeCluster(4)
+  clusterExport(cl, "TrainingSetDataFrame")
+  weightsWMW <- parLapply(cl, 1:(ncol(TrainingSetDataFrame)-1), function(i) wilcox.test(TrainingSetDataFrame[TrainingSetDataFrame$Outcome==1,i], TrainingSetDataFrame[TrainingSetDataFrame$Outcome==2,i])$p.value)
+  stopCluster(cl)
+
+  #here again the model is tested but now on a larger dataset, I test only the best feature selection method + machine learning model
+}
+

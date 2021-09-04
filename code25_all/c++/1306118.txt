@@ -1,0 +1,78 @@
+CreateEvent()
+WaitForMultipleObjects(2, handles, false, INFINITE)
+SetEvent()
+// thread function
+unsigned __stdcall ThreadPool::threadFunction(void* params) {
+    // some housekeeping
+    HANDLE signals[2];
+    signals[0] = waitSignal;
+    signals[1] = endSignal;
+
+    do {
+        // wait for one of the signals
+        waitResult = WaitForMultipleObjects(2, signals, false, INFINITE);
+
+        // try to get the next job parameters;
+        if (tp->getNextJob(threadId, data)) {
+            // execute job
+            void* output = jobFunc(data.params);
+
+            // tell thread pool that we're done and collect output
+            tp->collectOutput(data.ID, output);
+        }
+
+        tp->threadDone(threadId);
+    }
+    while (waitResult - WAIT_OBJECT_0 == 0);
+
+    // if we reach this point, endSignal was sent, so we are done !
+
+    return 0;
+}
+
+// create all threads
+for (int i = 0; i < nbThreads; ++i) {
+    threadData data;
+    unsigned int threadId = 0;
+    char eventName[20];
+
+    sprintf_s(eventName, 20, "WaitSignal_%d", i);
+
+    data.handle = (HANDLE) _beginthreadex(NULL, 0, ThreadPool::threadFunction,
+        this, CREATE_SUSPENDED, &threadId);
+    data.threadId = threadId;
+    data.busy = false;
+    data.waitSignal = CreateEvent(NULL, true, false, eventName);
+
+    this->threads[threadId] = data;
+
+    // start thread
+    ResumeThread(data.handle);
+}
+
+// add job
+void ThreadPool::addJob(int jobId, void* params) {
+    // housekeeping
+    EnterCriticalSection(&(this->mutex));
+
+    // first, insert parameters in the list
+    this->jobs.push_back(job);
+
+    // then, find the first free thread and wake it
+    for (it = this->threads.begin(); it != this->threads.end(); ++it) {
+        thread = (threadData) it->second;
+
+        if (!thread.busy) {
+            this->threads[thread.threadId].busy = true;
+
+            ++(this->nbActiveThreads);
+
+            // wake thread such that it gets the next params and runs them
+            SetEvent(thread.waitSignal);
+            break;
+        }
+    }
+
+    LeaveCriticalSection(&(this->mutex));
+}
+

@@ -1,0 +1,43 @@
+{-# LANGUAGE QuasiQuotes, TemplateHaskell, TypeFamilies, OverloadedStrings #-}
+{-# LANGUAGE GADTs, FlexibleContexts #-}
+import Database.Persist
+import Database.Persist.Sqlite
+import Database.Persist.TH
+import System.Environment (getArgs)
+import System.Directory (canonicalizePath, getDirectoryContents, doesDirectoryExist, doesFileExist)
+import System.FilePath (combine, takeExtension)
+import Control.Monad (filterM, mapM_)
+import Control.Monad.IO.Class (liftIO)
+
+share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistUpperCase|
+File                                                       
+  path String
+  deriving (Show)
+|]
+main :: IO ()
+main = do
+  args <- getArgs
+  path <- canonicalizePath $ head args
+  runSqlite "files.sqlite" $ do
+    runMigration migrateAll
+    liftIO $ processDirectory path
+    return ()
+
+processDirectory path = files >>= mapM_ processFile >>
+                        directories >>= mapM_ processDirectory
+  where contents  = getDirectoryContents path >>=
+                    return . map (combine path) . filter (`notElem` [".", ".."]) 
+        directories = contents >>= filterM doesDirectoryExist
+        files = contents >>= filterM doesFileExist
+
+processFile path = insert $ File path
+
+No instance for (PersistStore IO)
+      arising from a use of `processFile'
+    Possible fix: add an instance declaration for (PersistStore IO)
+    In the first argument of `mapM_', namely `processFile'
+    In the second argument of `(>>=)', namely `mapM_ processFile'
+    In the first argument of `(>>)', namely
+      `files >>= mapM_ processFile'
+Failed, modules loaded: none.
+

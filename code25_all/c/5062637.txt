@@ -1,0 +1,90 @@
+/**
+ * Following async signal safe functions are used
+ * fstat, time, localtime_r, asctime_r, rename, open, write, close
+ *
+ */
+
+void sysLog( Sint8 *fname, Sint32 tskId, Sint32 logType, const char *format, ...)
+
+{
+
+FILE          *fp;
+
+   time_t        sysTime;
+
+   va_list       args;
+
+   struct stat   fStat;
+
+   mode_t        usrMask;
+
+   Sint8         tmpStg[256];
+
+   char         newFileName[256];
+
+   char         localtimestamp[256];
+
+   struct       tm newtime;
+
+   int pfd;
+
+   //-- to sprintf base header and main msg into buffers before write
+   char logTimeEtc[255];
+
+   char logMainMsg[1000];
+
+
+    //Startup task must create this file
+    if (stat( fname, &fStat ) < 0)
+      if(errno!= ENOENT)
+        return;
+
+    //-- Get the local time
+    time( &sysTime);
+    localtime_r(&sysTime, &newtime);
+    asctime_r(&newtime, localtimestamp );
+    localtimestamp[24]=0;//remove line feed
+
+    //clear user file and dir permissions
+    usrMask = umask(0);
+
+    //-- rename file when >10MB
+    if (fStat.st_size < (10000000)) {
+      if ((pfd = open(fname, O_WRONLY | O_CREAT | O_APPEND )) == -1){
+        printf ("\n**ERR.%s fopen() %s Failed: name=%s  %s >> errno= %d\n",__FUNCTION__, fname, cmnTskName[tskId], strerror(errno), errno);
+        return;
+      }
+
+    }
+    else {
+      //-- rename the current file, with current time stamp attached.
+      strcpy(newFileName,fname);
+      strcat(newFileName,"-");
+      strcat(newFileName, (const char *)&localtimestamp[4]);
+      rename(fname,newFileName);
+
+      //-- open the file as new now
+      if ((pfd = open(fname, O_WRONLY | O_CREAT | O_TRUNC)) == -1){
+        printf ("\n**ERR.%s fopen() %s Failed: name=%s  %s >> errno= %d\n",__FUNCTION__, fname, cmnTskName[tskId], strerror(errno), errno);
+        return;
+      }
+    }
+
+    umask(usrMask);
+
+
+
+
+    //-- Write initial standard stuff like timestamp, log type etc
+    sprintf(logTimeEtc,"%s %s.%s: pid=%d ", &localtimestamp[4], logTypeName[logType],cmnTskName[tskId], getpid());
+    write(pfd,logTimeEtc,strlen(logTimeEtc));
+
+    //-- write main message
+    va_start(args, format);
+    vsprintf(logMainMsg, format, args);
+    va_end(args);
+    write(pfd,logMainMsg,strlen(logMainMsg));
+
+    close(pfd);
+}//-- sysLog
+

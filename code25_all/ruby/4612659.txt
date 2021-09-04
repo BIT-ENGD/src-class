@@ -1,0 +1,41 @@
+desc "Creates cards for a retailer"
+task :order_cards, [:number_of_cards, :value, :retailer_name] => :environment do |t, args|
+  t = Time.now
+  puts "Searching for retailer"
+  @retailer = Retailer.find_by_name(args[:retailer_name])
+  puts "Retailer found"
+  puts "Generating codes"
+  value = args[:value].to_i
+  number_of_cards = args[:number_of_cards].to_i
+  codes = []
+  top_off_codes(codes, number_of_cards)
+  while codes != codes.uniq
+    codes.uniq!
+    top_off_codes(codes, number_of_cards)
+  end
+  stored_codes = Card.all.collect do |c|
+    c.code
+  end
+  while codes != (codes - stored_codes)
+    codes -= stored_codes
+    top_off_codes(codes, number_of_cards)
+  end
+  puts "Codes are unique and generated"
+  puts "Creating bundle"
+  @bundle = @retailer.bundles.create!(:value => value)
+  puts "Bundle created"
+  puts "Creating cards"
+  @bundle.transaction do
+    codes.each do |code|
+      @bundle.cards.create!(:code => code)
+    end
+  end
+  puts "Cards generated in #{Time.now - t}s"
+end
+
+def top_off_codes(codes, intended_number)
+  (intended_number - codes.size).times do
+    codes << ReadableRandom.get(CODE_LENGTH)
+  end
+end
+

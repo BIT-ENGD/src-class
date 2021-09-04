@@ -1,0 +1,95 @@
+/* function for serial communication */
+void SerWrite(unsigned char *data,unsigned char length)
+{
+unsigned char i = 0;
+UCSRB = 0x08; // enable transmitter
+while (length > 0) {
+    if (UCSRA & 0x20) { // wait for empty transmit buffer
+        UDR = data[i++];
+        length --;
+    }
+}
+while (!(UCSRA & 0x40)); 
+for (i = 0; i < 0xFE; i++)
+    for(length = 0; length < 0xFE; length++); 
+}
+
+void SerRead(unsigned char *data, unsigned char length,unsigned int timeout)
+{
+unsigned char i = 0;
+unsigned int  time = 0;
+UCSRB = 0x10; // enable receiver
+/* non blocking */
+if (timeout != 0) {
+    while (i < length && time++ < timeout) {
+        if (UCSRA & 0x80) {
+            data[i++] = UDR;
+            time = 0;
+        }
+    }
+    if (time > timeout) data[0] = 'T';
+}
+/* blocking */
+else {
+    while (i < length) {
+        if (UCSRA & 0x80) 
+            data[i++] = UDR;
+    }
+}   
+}
+
+#include "asuro.h"
+
+void Sekunden(unsigned int s)       //Unterprogramm für Sekundenschleife (maximal 65s)
+    {
+    unsigned int t;                 // Definierung t als Vorzeichenloses int
+    for(t=0;t<s*1000;t++)           // 1000*s durchlaufen
+        {
+        Sleep(72);                  // = 1ms
+        }
+    }
+
+int main (void)
+{
+unsigned char daten[2], merker=0;   //Speicher bereitstellen, merker für start/stop
+Init();
+UBRRL = 0x67;   //4800bps @ 8MHz
+Marke:                              // Endlosschleife
+SerRead(daten,1,0);                 // Daten einlesen
+switch (daten[0])                   //und verarbeiten
+{
+    case 0x38:  MotorDir(FWD,FWD);  // Vorwärts
+                MotorSpeed(merker*120,merker*120);
+                SerWrite("Vor                 \r",22);
+                break;
+    case 0x36:  MotorDir(FWD,FWD);  // Links
+                MotorSpeed(merker*120,merker*170);
+                SerWrite("Links               \r",22);
+                break;
+    case 0x37:  MotorDir(RWD,RWD);  // Rückwärts
+                MotorSpeed(merker*120,merker*120);
+                SerWrite("Zurueck             \r",22);
+                break;
+    case 0x34:  MotorDir(FWD,FWD);  // Rechts
+                MotorSpeed(merker*170,merker*120);
+                SerWrite("Rechts              \r",22);
+                break;
+    case 0x35:  if(merker==1)
+                {
+                MotorDir(FREE,FREE);// Stop
+                MotorSpeed(0,0);
+                SerWrite("Stop                \r",22);
+                merker=0;
+                break;
+                }
+                else
+                {
+                MotorDir(FWD,FWD);// Start
+                MotorSpeed(120,120);
+                SerWrite("Start                \r",22);
+                merker=1;
+                break;
+                }
+
+}
+

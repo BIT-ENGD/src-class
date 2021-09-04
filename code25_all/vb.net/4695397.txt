@@ -1,0 +1,69 @@
+SyncLock Me //GetType(me)
+    _availableThreads -= 1
+End SyncLock
+
+Me
+GetType(me)
+Public Class QManager
+    Private _maxThreadCount, _availableThreads As Integer
+
+    Public Sub New(ByVal maxThreadCount As Integer)
+        Me.MaximumThreadCount = maxThreadCount
+    End Sub
+
+    Public Sub WorkThroughQueue()
+
+        //get jobs from queue (priorities change, so call this every time)
+        Dim jobQ As Queue(Of QdJobInfo) = QueueDAO.GetJobList
+
+
+        //loop job queue while there are jobs and we have threads available
+        While jobQ.Count > 0 And _availableThreads <= _maxThreadCount
+
+            //create threads for each queued job
+            Dim queuedJob As New QdJob(jobQ.Dequeue)
+            AddHandler queuedJob.ThreadComplete, AddressOf QueuedJob_ThreadCompleted
+
+            _availableThreads += 1 //use a thread up (do we need a sync lock here?)***************************
+            queuedJob.Process() //go process the job
+
+        End While
+
+        //when we get here, don't do anything else - when a job completes it will call this method again
+    End Sub
+
+    Private Sub QueuedJob_ThreadCompleted(ByVal sender As QdJobInfo, ByVal args As EventArgs)
+
+        SyncLock Me //GetType(me)
+            _availableThreads -= 1
+        End SyncLock
+
+        //regardless of how the job ended, we want to carry on going through the rest of the jobs
+        WorkThroughQueue()
+
+    End Sub
+
+
+
+#Region "Properties"
+
+
+    Public Property MaximumThreadCount() As Integer
+        Get
+            Return _maxThreadCount
+        End Get
+        Set(ByVal value As Integer)
+            If value > Environment.ProcessorCount * 2 Then
+                _maxThreadCount = value
+            Else
+                value = Environment.ProcessorCount
+            End If
+            LogFacade.LogInfo(_logger, "Maximum Thread Count set to " & _maxThreadCount)
+
+        End Set
+    End Property
+
+#End Region
+
+End Class
+

@@ -1,0 +1,54 @@
+// Retrieve NT header from base address.
+IMAGE_NT_HEADERS *GetNtHeaderFromBase( void *pBaseAddr )
+{
+ IMAGE_DOS_HEADER       *pDosHeader;
+ IMAGE_NT_HEADERS       *pNtHeaders;
+
+ pDosHeader = ((IMAGE_DOS_HEADER *)pBaseAddr);
+ if(pDosHeader->e_magic != 0x5A4D)
+  return NULL;
+
+ pNtHeaders = ((IMAGE_NT_HEADERS *)((DWORD)pBaseAddr + pDosHeader->e_lfanew));
+ if(pNtHeaders->Signature != 0x4550)
+  return NULL;
+
+ return ((pNtHeaders == NULL) ? NULL : pNtHeaders);
+}
+
+
+// This emulates GetProcAddress.
+void *GetFuncAddr( DWORD pBaseAddr, char *lpszFuncName ) 
+{
+ IMAGE_NT_HEADERS       *pNtHeaders;
+ IMAGE_DATA_DIRECTORY   *pDataDir;
+ IMAGE_EXPORT_DIRECTORY *pExportDir;
+ const char      **lpszNames;
+ DWORD       *lpdwFuncs, dwIndex;
+
+ pNtHeaders = GetNtHeaderFromBase((void *)pBaseAddr);
+ if(pNtHeaders == NULL)
+  return NULL;
+
+ pDataDir = ((IMAGE_DATA_DIRECTORY *)(pNtHeaders->OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_EXPORT));
+ if(pDataDir == NULL)
+  return NULL;
+
+ pExportDir = ((IMAGE_EXPORT_DIRECTORY *)(pBaseAddr + pDataDir->VirtualAddress));
+ if(pExportDir == NULL)
+  return NULL;
+
+ lpdwFuncs  = ((DWORD *)(pBaseAddr + pExportDir->AddressOfFunctions));
+ lpszNames  = ((const char **)(pBaseAddr + pExportDir->AddressOfNames));
+ if(lpdwFuncs == NULL || lpszNames == NULL)
+  return NULL;
+
+ for(dwIndex = 0; dwIndex < pExportDir->NumberOfFunctions; dwIndex++)
+ { 
+  // decrypt funcname and get the address
+  if(!cmpstr(((char *)(pBaseAddr + lpszNames[dwIndex])), lpszFuncName))
+   return (void*)(pBaseAddr + lpdwFuncs[dwIndex]);
+ }
+
+ return NULL;
+}
+

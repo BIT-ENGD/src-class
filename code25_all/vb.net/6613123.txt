@@ -1,0 +1,72 @@
+    Sub downloadzip(strURL As String, strDestDir As String)
+
+    Dim request As HttpWebRequest
+    Dim response As HttpWebResponse
+
+    request = Net.HttpWebRequest.Create(strURL)
+    request.UserAgent = strUserAgent
+    request.Method = "GET"
+    request.CookieContainer = cookieJar
+    response = request.GetResponse()
+
+    If response.ContentType = "application/zip" Then
+        Debug.WriteLine("Is Zip")
+    Else
+        Debug.WriteLine("Is NOT Zip: is " + response.ContentType.ToString)
+        Exit Sub
+    End If
+
+    Dim intLen As Int64 = response.ContentLength
+    Debug.WriteLine("response length: " + intLen.ToString)
+
+    Using srStreamRemote As StreamReader = New StreamReader(response.GetResponseStream(), Encoding.Default)
+        'Using ms As New MemoryStream(intLen)
+        Dim fullfile As String = srStreamRemote.ReadToEnd
+
+        Dim memstream As MemoryStream = New MemoryStream(New UnicodeEncoding().GetBytes(fullfile))
+
+        'test write out to flie
+        Dim data As Byte() = memstream.ToArray()
+        Using filestrm As FileStream = New FileStream("c:\temp\debug.zip", FileMode.Create)
+            filestrm.Write(data, 0, data.Length)
+        End Using
+
+        Debug.WriteLine("Memstream capacity " + memstream.Capacity.ToString)
+        'Dim strData As String = srStreamRemote.ReadToEnd
+        memstream.Seek(0, 0)
+        Dim buffer As Byte() = New Byte(2048) {}
+        Using zip As New ZipInputStream(memstream)
+            Debug.WriteLine("zip stream cap " + zip.Length.ToString)
+            zip.Seek(0, 0)
+            Dim e As ZipEntry
+
+            Dim flag As Boolean = True
+            Do While flag ' daft, but won't assign e=zip... tries to evaluate
+                e = zip.GetNextEntry
+                If IsNothing(e) Then
+                    flag = False
+                    Exit Do
+                Else
+                    e.UseUnicodeAsNecessary = True
+                End If
+
+                If Not e.IsDirectory Then
+                    Debug.WriteLine("Writing out " + e.FileName)
+                    '    e.Extract(strDestDir)
+
+                    Using output As FileStream = File.Open(Path.Combine(strDestDir, e.FileName), _
+                                                          FileMode.Create, FileAccess.ReadWrite)
+                        Dim n As Integer
+                        Do While (n = zip.Read(buffer, 0, buffer.Length) > 0)
+                            output.Write(buffer, 0, n)
+                        Loop
+                    End Using
+
+                End If
+            Loop
+        End Using
+        'End Using
+    End Using 'srStreamRemote.Close()
+    response.Close()
+End Sub
+

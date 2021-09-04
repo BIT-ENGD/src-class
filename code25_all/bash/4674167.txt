@@ -1,0 +1,97 @@
+#!/bin/bash
+# Script to back up directories on several windows machines
+# Permissions, owners, etc. are preserved (-av option)
+# Only differences are submitted
+# Execute this script from where you want
+
+# Make sure only root can run our script
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root" 1>&2
+   exit 1
+fi
+
+# Specify the current date for the log-file name
+current_date=$(date +%Y-%m-%d_%H%M%S)
+
+# Specify the path to a list of file patterns not included in backup
+script_path=$(dirname $(readlink -f $0))
+rsync_excludes=$script_path/rsync_exclude.patterns
+
+# Specify mount/rsync options
+credential_file="/root/.smbcredentials"
+# Specify windows shares
+smb_shares=( //192.168.0.100/myFiles )
+# Specify the last path component of the directory name to backup shares 
+# content into
+smb_share_ids=( "blacksmith" )
+# Specify with trailing '/' to transfer only the dir content
+rsync_src="/mnt/smb_backup_mount_point/"
+rsync_dst_root=(~/BACKUPS)
+
+# Check if all arrays have the same size
+if [ "${#smb_shares[@]}" -ne "${#smb_share_ids[@]}" ]; then
+  echo "Please specify one id for each samba share!"
+  exit 1
+fi
+
+# Run foor loop to sync all specified shares
+for (( i = 0 ; i < ${#smb_shares[@]} ; i++ ))
+do
+  # Check if mount point already exists
+  echo -n "Checking if mount point exists ... "
+  if [ -d $rsync_src ]; then
+    echo "Exists, exit!"
+    exit 1
+  else
+    echo "No, create it"
+    mkdir $rsync_src
+  fi
+
+  # Try to mount share and perform rsync in case of success
+  echo -n "Try to mount ${smb_shares[$i]} to $rsync_src ... "
+  mount -t cifs ${smb_shares[$i]} $rsync_src -o credentials=/root/.smbcredentials,iocharset=utf8,uid=0,file_mode=0600,dir_mode=0600
+  if [ "$?" -eq "0" ]; then
+    echo "Success"
+
+    # Specify the log-file name
+    rsync_logfile="$rsync_dst_root/BUP_${smb_share_ids[$i]}_$current_date.log"
+
+    # Build rsync destination root
+    rsync_dst=( $rsync_dst_root"/"${smb_share_ids[$i]} )
+
+    # Check if rsync destination root already exists
+    echo -n "Check if rsync destination root already exists ... "
+    if [ -d $rsync_dst ]; then
+      echo "Exists"
+    else
+      echo "Does not exist, create it"
+      mkdir -p $rsync_dst
+    fi
+
+    # Run rsync process
+    # -av                   > archieve (preserve owner, permissions, etc.) and verbosity
+    # --stats               > print a set of statistics showing the effectiveness of the rsync algorithm for your files
+    # --bwlimit=KBPS        > transfer rate limit - 0 defines no limit
+    # --progress            > show progress
+    # --delete              > delete files in $DEST that have been deletet in $SOURCE
+    # --delete-after        > delete files at the end of the file transfer on the receiving machine
+    # --delete-excluded     > delete excluded files in $DEST
+    # --modify-window       > files differ first after this modification time
+    # --log-file            > save log file
+    # --exclude-from        > exclude everything from within an exclude file
+    rsync -av --stats --bwlimit=0 --progress --delete --delete-after --delete-excluded --modify-window=2 --log-file=$rsync_logfile --exclude-from=$rsync_excludes $rsync_src $rsync_dst
+  fi
+
+  # Unmount samba share
+  echo -n "Unmount $rsync_src ... "
+  umount $rsync_src
+  [ "$?" -eq "0" ] && echo "Success"
+
+  # Delete mount point
+  echo -n "Delete $rsync_src ... "
+  rmdir $rsync_src
+  [ "$?" -eq "0" ] && echo "Success"
+
+
+done
+

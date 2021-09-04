@@ -1,0 +1,57 @@
+func imagePickerController(picker: UIImagePickerController!, didFinishPickingMediaWithInfo info:NSDictionary) {
+    let tempImage = info[UIImagePickerControllerMediaURL] as NSURL
+    videos.append(tempImage)
+    let pathString = tempImage.relativePath
+    self.dismissViewControllerAnimated(true, completion: {})
+}
+
+var composition = AVMutableComposition()
+let trackVideo:AVMutableCompositionTrack = composition.addMutableTrackWithMediaType(AVMediaTypeVideo, preferredTrackID: CMPersistentTrackID())
+let trackAudio:AVMutableCompositionTrack = composition.addMutableTrackWithMediaType(AVMediaTypeAudio, preferredTrackID: CMPersistentTrackID())
+var insertTime = kCMTimeZero
+
+for i in 0...(videos.count-1){
+    let moviePathUrl = videos[i]
+    let sourceAsset = AVURLAsset(URL: moviePathUrl, options: nil)
+
+    let tracks = sourceAsset.tracksWithMediaType(AVMediaTypeVideo)
+    let audios = sourceAsset.tracksWithMediaType(AVMediaTypeAudio)
+
+    if tracks.count > 0{
+        var videoDuration = CMTimeRangeMake(kCMTimeZero, sourceAsset.duration);
+
+        let assetTrack:AVAssetTrack = tracks[0] as AVAssetTrack
+        let assetTrackAudio:AVAssetTrack = audios[0] as AVAssetTrack
+
+        trackVideo.insertTimeRange(videoDuration, ofTrack: assetTrack, atTime: insertTime, error: nil)
+        trackAudio.insertTimeRange(videoDuration, ofTrack: assetTrackAudio, atTime: insertTime, error: nil)
+
+        //Rotate
+        var rotater = AVMutableVideoCompositionLayerInstruction(assetTrack: assetTrack)
+        rotater.setTransform(assetTrack.preferredTransform, atTime: insertTime)
+        rotater.setOpacity(0.0, atTime: CMTimeAdd(insertTime, sourceAsset.duration))
+        instructions.append(rotater)
+
+        //Resize
+        var resizer = AVMutableVideoCompositionLayerInstruction(assetTrack: assetTrack)
+        resizer.setCropRectangle(CGRectMake(0, 0, 300, 300), atTime: insertTime)
+        instructions.append(resizer)
+
+        insertTime = CMTimeAdd(insertTime, sourceAsset.duration)
+
+    }
+}
+
+var instruction = AVMutableVideoCompositionInstruction();
+instruction.timeRange = CMTimeRangeMake(kCMTimeZero, insertTime);
+
+instruction.layerInstructions = instructions;
+var mainCompositionInst = AVMutableVideoComposition()
+mainCompositionInst.instructions = NSArray(object: instruction)
+
+mainCompositionInst.frameDuration = CMTimeMake(1, 60);
+mainCompositionInst.renderSize = CGSizeMake(300, 300);
+
+var exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
+exporter.videoComposition = mainCompositionInst;
+

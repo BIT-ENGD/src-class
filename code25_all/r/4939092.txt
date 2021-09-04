@@ -1,0 +1,78 @@
+
+# exp is the expression table, a matrix; 'classes' is list of known classes
+exp <- as.matrix(read.table(file='hy3ExpHsaMir.txt', sep='\t', row.names=1, header=T, check.names=F))
+#best is to use 0 and 1 as class labels (instead of 'p', 'g', etc.) with 1 for 'positive' items (positive for recurrence, or for disease, etc.)
+classes <- c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+yesPredVal = 1 # class label for 'positive' items in 'classes'
+
+library(CMA)
+library(WilcoxCV)
+myNumFun <- function(x, y){round(y(as.numeric(x), na.rm=T), 4)}
+set.seed(631)
+out = ''
+out2 = '\nEffect of varying the training-set size:\nTraining-set size\tSuccessful iterations\tMean acc.\tSD acc.\tMean sens.\tSD sens.\tMean spec.\tSD spec.\tMean PPV\tSD PPV\tMean NPV\tSD NPV\tTotal genes in the classifiers\n'
+
+niter = 1000
+diffTest = 'limma'
+diffGeneNum = 15
+svmCost <- c(0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50)
+
+for(g in 0:10){ # varying the training/test-set sizes
+ ntest = 3+g*3 # test-set size
+ result <- matrix(nrow=0, ncol=7)
+ colnames(result) <- c('trainSetSize', 'iteration', 'acc', 'sens', 'spec', 'ppv', 'npv')
+ diffGenes <- numeric()
+
+ # generate training and test sets
+ lsets <- GenerateLearningsets(n=ncol(exp), y=classes, method=c('MCCV'), niter=niter, ntrain=ncol(exp)-ntest)
+
+ # actual prediction work
+ svm <- classification(t(exp), factor(classes), learningsets=lsets, genesellist= list(method=diffTest), classifier=svmCMA, nbgene= diffGeneNum, tuninglist=list(grids=list(cost=svmCost)), probability=TRUE)
+ svm <- join(svm)
+ # genes in classifiers
+ svmGenes <- GeneSelection(t(exp), classes, learningsets=lsets, method=diffTest)
+
+ actualIters=0
+ for(h in 1:niter){
+  m <- ntest*(h-1)
+  # valid SVM classification requires min. 2 classes
+  if(1 < length(unique(classes[-lsets@learnmatrix[h,]]))){
+   actualIters = actualIters+1
+   tp <- tn <- fp <- fn <- 0
+   for(i in 1:ntest){
+    pred <- svm@yhat[m+i]
+    known <- svm@y[m+i]
+    if(pred == known){
+     if(pred == yesPredVal){tp <- tp+1}
+     else{tn <- tn+1}
+    }else{
+     if(pred == yesPredVal){fp <- fp+1}
+     else{fn <- fn+1}
+    }
+   }
+   result <- rbind(result, c(ncol(exp)-ntest, h, (tp+tn)/(tp+tn+fp+fn), tp/(tp+fn), tn/(tn+fp), tp/(tp+fp), tn/(tn+fn)))
+   diffGenes <- c(diffGenes, toplist(svmGenes, k=diffGeneNum, iter=h, show=F)$index)
+  } # end if valid SVM
+ } # end for h
+
+ # output accuracy, etc.
+ out = paste(out, 'SVM MCCV using ',  niter, ' attempted iterations and ', actualIters, ' successful iterations, with ', ncol(exp)-ntest, ' of ', ncol(exp), ' total samples used for training:\nThe means (ranges; SDs) of prediction accuracy, sensitivity, specificity, PPV and NPV in fractions are ', 
+myNumFun(result[, 'acc'],mean), ' (', myNumFun(result[, 'acc'], min), '-', myNumFun(result[, 'acc'], max), '; ', myNumFun(result[, 'acc'], sd), '), ', 
+ myNumFun(result[, 'sens'], mean), ' (', myNumFun(result[, 'sens'], min), '-', myNumFun(result[, 'sens'], max), '; ', myNumFun(result[, 'sens'], sd), '), ', 
+ myNumFun(result[, 'spec'], mean), ' (', myNumFun(result[, 'spec'], min), '-', myNumFun(result[, 'spec'], max), '; ', myNumFun(result[, 'spec'], sd), '), ', 
+ myNumFun(result[, 'ppv'], mean), ' (', myNumFun(result[, 'ppv'], min), '-', myNumFun(result[, 'ppv'], max), '; ', myNumFun(result[, 'ppv'], sd), '), and ', 
+ myNumFun(result[, 'npv'], mean), ' (', myNumFun(result[, 'npv'], min), '-', myNumFun(result[, 'npv'], max), '; ', myNumFun(result[, 'npv'], sd), '), respectively.\n', sep='')
+
+ # output classifier genes
+ diffGenesUnq <- unique(diffGenes)
+ out = paste(out, 'A total of ', length(diffGenesUnq), ' genes occur in the ', actualIters, ' classifiers, with occurrence frequencies in fractions:\n', sep='')
+ for(i in 1:length(diffGenesUnq)){
+  out = paste(out, rownames(exp)[diffGenesUnq[i]], '\t', round(sum(diffGenes == diffGenesUnq[i])/actualIters, 3), '\n', sep='')
+ }
+
+ # output split-size effect
+ out2 = paste(out2, ncol(exp)-ntest, '\t', actualIters, '\t', myNumFun(result[, 'acc'], mean), '\t', myNumFun(result[, 'acc'], sd), '\t', myNumFun(result[, 'sens'], mean), '\t', myNumFun(result[, 'sens'], sd), '\t', myNumFun(result[, 'spec'], mean), '\t', myNumFun(result[, 'spec'], sd), '\t', myNumFun(result[, 'ppv'], mean), '\t', myNumFun(result[, 'ppv'], sd), 
+'\t', myNumFun(result[, 'npv'], mean), '\t', myNumFun(result[, 'npv'], sd), '\t', length(diffGenesUnq), '\n', sep='')
+} # end for g
+
+cat(out, out2, sep='')

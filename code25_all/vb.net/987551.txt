@@ -1,0 +1,221 @@
+Bitmap
+OnLayoutUpdated()
+InvalidateVisual()
+Point(0.0,-0.5)
+Imports System
+Imports System.Collections.Generic
+Imports System.Windows
+Imports System.Windows.Media
+Imports System.Windows.Media.Imaging
+
+Class Bitmap Inherits FrameworkElement
+' Use FrameworkElement instead of UIElement so Data Binding works as expected
+
+Private _sourceDownloaded As EventHandler
+Private _sourceFailed As EventHandler(Of ExceptionEventArgs)
+Private _pixelOffset As Windows.Point
+
+Public Sub New()
+    _sourceDownloaded = New EventHandler(AddressOf OnSourceDownloaded)
+    _sourceFailed = New EventHandler(Of ExceptionEventArgs)(AddressOf OnSourceFailed)
+
+    AddHandler LayoutUpdated, AddressOf OnLayoutUpdated
+End Sub
+
+Public Shared ReadOnly SourceProperty As DependencyProperty = DependencyProperty.Register("Source", GetType(BitmapSource), GetType(Bitmap), New FrameworkPropertyMetadata(Nothing, FrameworkPropertyMetadataOptions.AffectsRender Or FrameworkPropertyMetadataOptions.AffectsMeasure, New PropertyChangedCallback(AddressOf Bitmap.OnSourceChanged)))
+
+Public Property Source() As BitmapSource
+    Get
+        Return DirectCast(GetValue(SourceProperty), BitmapSource)
+    End Get
+    Set(ByVal value As BitmapSource)
+        SetValue(SourceProperty, value)
+    End Set
+End Property
+
+Public Shared Function FindParentWindow(ByVal child As DependencyObject) As Window
+    Dim parent As DependencyObject = VisualTreeHelper.GetParent(child)
+
+    'Check if this is the end of the tree
+    If parent Is Nothing Then
+        Return Nothing
+    End If
+
+    Dim parentWindow As Window = TryCast(parent, Window)
+    If parentWindow IsNot Nothing Then
+        Return parentWindow
+    Else
+        ' Use recursion until it reaches a Window
+        Return FindParentWindow(parent)
+    End If
+End Function
+
+Public Event BitmapFailed As EventHandler(Of ExceptionEventArgs)
+
+' Return our measure size to be the size needed to display the bitmap pixels.
+'
+' Use MeasureOverride instead of MeasureCore so Data Binding works as expected.
+' Protected Overloads Overrides Function MeasureCore(ByVal availableSize As Size) As Size
+Protected Overloads Overrides Function MeasureOverride(ByVal availableSize As Size) As Size
+    Dim measureSize As New Size()
+
+    Dim bitmapSource As BitmapSource = Source
+    If bitmapSource IsNot Nothing Then
+
+        Dim ps As PresentationSource = PresentationSource.FromVisual(Me)
+        If Me.VisualParent IsNot Nothing Then
+            Dim window As Window = window.GetWindow(Me.VisualParent)
+            If window IsNot Nothing Then
+                ps = PresentationSource.FromVisual(window.GetWindow(Me.VisualParent))
+            ElseIf FindParentWindow(Me) IsNot Nothing Then
+                ps = PresentationSource.FromVisual(FindParentWindow(Me))
+            End If
+        End If
+        '
+        If ps IsNot Nothing Then
+            Dim fromDevice As Matrix = ps.CompositionTarget.TransformFromDevice
+
+            Dim pixelSize As New Vector(bitmapSource.PixelWidth, bitmapSource.PixelHeight)
+            Dim measureSizeV As Vector = fromDevice.Transform(pixelSize)
+            measureSize = New Size(measureSizeV.X, measureSizeV.Y)
+        Else
+            measureSize = New Size(bitmapSource.PixelWidth, bitmapSource.PixelHeight)
+        End If
+    End If
+
+    Return measureSize
+End Function
+
+Protected Overloads Overrides Sub OnRender(ByVal dc As DrawingContext)
+    Dim bitmapSource As BitmapSource = Me.Source
+    If bitmapSource IsNot Nothing Then
+        _pixelOffset = GetPixelOffset()
+
+        ' Render the bitmap offset by the needed amount to align to pixels.
+        dc.DrawImage(bitmapSource, New Rect(_pixelOffset, DesiredSize))
+    End If
+End Sub
+
+Private Shared Sub OnSourceChanged(ByVal d As DependencyObject, ByVal e As DependencyPropertyChangedEventArgs)
+    Dim bitmap As Bitmap = DirectCast(d, Bitmap)
+
+    Dim oldValue As BitmapSource = DirectCast(e.OldValue, BitmapSource)
+    Dim newValue As BitmapSource = DirectCast(e.NewValue, BitmapSource)
+
+    If ((oldValue IsNot Nothing) AndAlso (bitmap._sourceDownloaded IsNot Nothing)) AndAlso (Not oldValue.IsFrozen AndAlso (TypeOf oldValue Is BitmapSource)) Then
+        RemoveHandler DirectCast(oldValue, BitmapSource).DownloadCompleted, bitmap._sourceDownloaded
+        RemoveHandler DirectCast(oldValue, BitmapSource).DownloadFailed, bitmap._sourceFailed
+        ' ((BitmapSource)newValue).DecodeFailed -= bitmap._sourceFailed; // 3.5
+    End If
+    If ((newValue IsNot Nothing) AndAlso (TypeOf newValue Is BitmapSource)) AndAlso Not newValue.IsFrozen Then
+        AddHandler DirectCast(newValue, BitmapSource).DownloadCompleted, bitmap._sourceDownloaded
+        AddHandler DirectCast(newValue, BitmapSource).DownloadFailed, bitmap._sourceFailed
+        ' ((BitmapSource)newValue).DecodeFailed += bitmap._sourceFailed; // 3.5
+    End If
+
+End Sub
+
+Private Sub OnSourceDownloaded(ByVal sender As Object, ByVal e As EventArgs)
+    InvalidateMeasure()
+    InvalidateVisual()
+End Sub
+
+Private Sub OnSourceFailed(ByVal sender As Object, ByVal e As ExceptionEventArgs)
+    Source = Nothing
+    ' setting a local value seems scetchy...
+    RaiseEvent BitmapFailed(Me, e)
+End Sub
+
+Private Sub OnLayoutUpdated(ByVal sender As Object, ByVal e As EventArgs)
+    ' This event just means that layout happened somewhere. However, this is
+    ' what we need since layout anywhere could affect our pixel positioning.
+    Dim pixelOffset As Windows.Point = GetPixelOffset()
+    If Not AreClose(pixelOffset, _pixelOffset) Then
+        InvalidateVisual()
+    End If
+End Sub
+
+' Gets the matrix that will convert a Windows.Point from "above" the
+' coordinate space of a visual into the the coordinate space
+' "below" the visual.
+Private Function GetVisualTransform(ByVal v As Visual) As Matrix
+    If v IsNot Nothing Then
+        Dim m As Matrix = Matrix.Identity
+
+        Dim transform As Transform = VisualTreeHelper.GetTransform(v)
+        If transform IsNot Nothing Then
+            Dim cm As Matrix = transform.Value
+            m = Matrix.Multiply(m, cm)
+        End If
+
+        Dim offset As Vector = VisualTreeHelper.GetOffset(v)
+        m.Translate(offset.X, offset.Y)
+
+        Return m
+    End If
+
+    Return Matrix.Identity
+End Function
+
+Private Function TryApplyVisualTransform(ByVal Point As Windows.Point, ByVal v As Visual, ByVal inverse As Boolean, ByVal throwOnError As Boolean, ByRef success As Boolean) As Windows.Point
+    success = True
+    If v IsNot Nothing Then
+        Dim visualTransform As Matrix = GetVisualTransform(v)
+        If inverse Then
+            If Not throwOnError AndAlso Not visualTransform.HasInverse Then
+                success = False
+                Return New Windows.Point(0, 0)
+            End If
+            visualTransform.Invert()
+        End If
+        Point = visualTransform.Transform(Point)
+    End If
+    Return Point
+End Function
+
+Private Function ApplyVisualTransform(ByVal Point As Windows.Point, ByVal v As Visual, ByVal inverse As Boolean) As Windows.Point
+    Dim success As Boolean = True
+    Return TryApplyVisualTransform(Point, v, inverse, True, success)
+End Function
+
+Private Function GetPixelOffset() As Windows.Point
+    Dim pixelOffset As New Windows.Point()
+
+    Dim ps As PresentationSource = PresentationSource.FromVisual(Me)
+    If ps IsNot Nothing Then
+        Dim rootVisual As Visual = ps.RootVisual
+
+        ' Transform (0,0) from this element up to pixels.
+        pixelOffset = Me.TransformToAncestor(rootVisual).Transform(pixelOffset)
+        pixelOffset = ApplyVisualTransform(pixelOffset, rootVisual, False)
+        pixelOffset = ps.CompositionTarget.TransformToDevice.Transform(pixelOffset)
+
+        ' Round the origin to the nearest whole pixel.
+        pixelOffset.X = Math.Round(pixelOffset.X)
+        pixelOffset.Y = Math.Round(pixelOffset.Y)
+
+        ' Transform the whole-pixel back to this element.
+        pixelOffset = ps.CompositionTarget.TransformFromDevice.Transform(pixelOffset)
+        pixelOffset = ApplyVisualTransform(pixelOffset, rootVisual, True)
+        pixelOffset = rootVisual.TransformToDescendant(Me).Transform(pixelOffset)
+
+    End If
+
+    Return pixelOffset
+End Function
+
+Private Function AreClose(ByVal Point1 As Windows.Point, ByVal Point2 As Windows.Point) As Boolean
+    Return AreClose(Point1.X, Point2.X) AndAlso AreClose(Point1.Y, Point2.Y)
+End Function
+
+Private Function AreClose(ByVal value1 As Double, ByVal value2 As Double) As Boolean
+    If value1 = value2 Then
+        Return True
+    End If
+    Dim delta As Double = value1 - value2
+    Return ((delta < 0.00000153) AndAlso (delta > -0.00000153))
+End Function
+
+
+End Class
+

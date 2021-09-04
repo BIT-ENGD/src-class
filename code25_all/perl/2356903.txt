@@ -1,0 +1,80 @@
+$sh = fsockopen("127.0.0.1", 7890, $errno, $errstr, 30);
+if (!$sh) 
+{
+echo "$errstr ($errno)<br />\n";
+} 
+else 
+{
+
+    $out = base64_encode('contents');
+    fwrite($sh, $out);
+    fclose($sh);
+}
+
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Proc::Daemon;
+use Proc::PID::File;
+use IO::Socket;
+use MIME::Base64;
+use Net::Address::IP::Local;
+
+MAIN:
+{
+#setup some vars to be used down...
+if (Proc::PID::File->running())
+        {
+                exit(0);
+        }
+
+
+        my $sock = new IO::Socket::INET(
+                        LocalHost => $ip,
+                        LocalPort => $port,
+                        Proto => 'tcp',
+                        Listen => SOMAXCONN,
+                        Reuse => 1);
+
+        $sock or die "no socket :$!";
+        my($new_sock, $c_addr, $buf);
+
+for (;;) 
+        {
+
+                # setup log file 
+                open(LH, ">>".$logs);
+
+                print "SERVER started on $ip:$port \n";
+                print LH "SERVER started on $ip:$port \n";
+
+                while (($new_sock, $c_addr) = $sock->accept())
+                {
+                        my ($client_port, $c_ip) =sockaddr_in($c_addr);
+                        my $client_ipnum = inet_ntoa($c_ip);
+                        my $client_host =gethostbyaddr($c_ip, AF_INET);
+
+                        my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime time;
+                        $year += 1900;
+                        $mon += 1;
+                        print "$year-$mon-$mday $hour:$min:$sec [".time()."] - got a connection from: [$client_ipnum]";
+
+                        open(AL, ">>".$accessLog);
+                        print AL "$year-$mon-$mday $hour:$min:$sec [".time()."] - got a connection from: [$client_ipnum]\n";
+                        close AL;
+
+                        while (defined ($buf = <$new_sock>))
+                        {
+                                print "contents:",  decode_base64($buf), " \n";
+                                open(FH, ">".$basepath."file_" . time() .".txt")  or warn "Can't open ".$basepath."file_".time().".txt for writing: $!";
+                                print FH decode_base64($buf);
+                                close FH;
+                        }
+                }
+                close LH;
+
+        }
+
+}
+

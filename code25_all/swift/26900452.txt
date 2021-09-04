@@ -1,0 +1,147 @@
+private func resolveServiceAddresses() {
+    for service in self.services {
+        service.delegate = self;
+        service.resolveWithTimeout(30.0);
+    }
+ }
+
+private func connectWithService(service: NSNetService) -> Bool {
+    var isConnecting:Bool = false;
+
+    //Copy Service Addresses
+    let addresses = service.addresses;
+
+    if (self.browserSocket == nil || !(self.browserSocket?.isConnected)!) {
+        // Initialize Socket
+        self.browserSocket = GCDAsyncSocket(delegate: self, delegateQueue: dispatch_get_main_queue());
+
+        // Connect
+        while (!isConnecting && (addresses?.count > 0 )){
+
+            let address = addresses?[0] as NSData;
+
+            var error: NSError?;
+            if (self.browserSocket.connectToAddress(address, error: &error)) {
+                isConnecting = true;
+            } else if (error != nil) {
+                println("Unable to connect to address. Error \(error) with user info \(error?.userInfo)");
+            }
+        }
+
+    } else {
+        println("Connecting is: \(self.browserSocket.isConnected)");
+        isConnecting = self.browserSocket.isConnected;
+    }
+
+    return isConnecting;
+}
+
+// MARK: NSNetServiceBrowserDelegate methods
+
+func netServiceBrowser(aNetServiceBrowser: NSNetServiceBrowser, didFindService aNetService: NSNetService, moreComing: Bool) {
+    // This device is not advertising/publishing. So don't need any test before updating servies
+    self.services.append(aNetService);
+
+    if (!moreComing) {
+        println("Service found is : \(aNetService)");
+        self.resolveServiceAddresses();
+    }
+}
+
+// MARK: NSNetServiceDelegate methods
+
+func netService(sender: NSNetService, didNotResolve errorDict: [NSObject : AnyObject]) {
+    sender.delegate = nil;
+    println("Did not resolve service: domain:\(sender.domain) type:\(sender.type) name:\(sender.name) on port: \(sender.port) with error: \(errorDict)");
+}
+
+func netServiceDidResolveAddress(sender: NSNetService) {
+    // Connect with Service
+    if (self.connectWithService(sender)) {
+        println("Connecting with service: domainName= \(sender.domain), type= \(sender.type), name= \(sender.name), onPort= \(sender.port)");
+    } else {
+        println("Unable to connect with service: domainName= \(sender.domain), type= \(sender.type), name= \(sender.name), onPort= \(sender.port)");
+    }
+}
+
+// GCDAsyncSocketDelegate methods
+
+func socket(sock: GCDAsyncSocket!, didConnectToHost host: String!, port: UInt16) {
+    println("Did connect to host: \(host) on port:\(port)");
+
+    // Start Reading
+    sock.readDataToLength(UInt(sizeof(UInt64)), withTimeout: -1.0, tag: 0);
+}
+
+func socketDidDisconnect(sock: GCDAsyncSocket!, withError err: NSError!) {
+    println("Socket did disconnect with error \(err?)");
+
+}
+
+Service found is : <NSNetService 0x1454b490> local. _mpstest._tcp. iPad 30
+Connecting with service: domainName= local., type= _mpstest._tcp., name= iPad 30, onPort= 50490
+Connecting with service: domainName= local., type= _mpstest._tcp., name= iPad 30, onPort= 50490
+Socket did disconnect with error nil
+Socket did disconnect with error Optional(Error Domain=NSPOSIXErrorDomain Code=60 "Operation timed out" UserInfo=0x1465c350 {NSLocalizedFailureReason=Error in connect() function, NSLocalizedDescription=Operation timed out})
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+
+    // Publish the service
+    self.publishService();
+}
+
+// MARK: Button callbacks
+
+private func publishService() {
+    // Initialize GCDAsyncSocket
+    self.socket = GCDAsyncSocket(delegate: self, delegateQueue: dispatch_get_main_queue());
+
+    // Start listening for incoming connections
+    var error: NSError?;
+    if (self.socket.acceptOnPort(0, error: &error)) {
+        // Initialize Service
+        self.service = NSNetService(domain: "local.", type: "_mpstest._tcp", name: UIDevice.currentDevice().name, port:0);
+
+        // Configure Service
+        self.service.delegate = self;
+        self.service.includesPeerToPeer = true;
+        self.service.publishWithOptions(.ListenForConnections);
+    } else {
+        println("Unable to create socket. Error \(error?.description) with user info \(error?.userInfo)");
+    }
+}
+
+// MARK: NSNetServiceDelegate Methods
+
+func netServiceDidPublish(sender: NSNetService) {
+    println("Bonjour Service published: domainName= \(sender.domain), type= \(sender.type), name= \(sender.name), onPort= \(sender.port)");
+}
+
+func netService(sender: NSNetService, didNotPublish errorDict: [NSObject : AnyObject]) {
+    println("Failed to publish service: domainName= \(sender.domain), type= \(sender.type), name= \(sender.name), onPort= \(sender.port) error= \(errorDict)");
+}
+
+// MARK: GCDAsyncSocketDelegate method
+
+func socket(sock: GCDAsyncSocket!, didAcceptNewSocket newSocket: GCDAsyncSocket!) {
+    println("Local socket with host:\(sock.connectedHost) and port:\(sock.connectedPort) accepts new socket with host:\(newSocket.connectedHost) and port:\(newSocket.connectedPort))");
+
+    // Updating socket
+    self.socket = newSocket;
+
+    //Read data from socket
+    let size = sizeof(UInt64);
+    newSocket.readDataToLength(UInt(size), withTimeout: -1.0, tag: 0);
+}
+
+func socketDidDisconnect(sock: GCDAsyncSocket!, withError err: NSError!) {
+    println("Socket with host:\(sock.connectedHost) and port:\(sock.connectedPort) is disconnected");
+    if (self.socket == sock) {
+        self.socket.delegate = nil;
+        self.socket = nil;
+    }
+}
+
+Bonjour Service published: domainName= local., type= _mpstest._tcp., name= iPad 30, onPort= 50490
+

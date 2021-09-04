@@ -1,0 +1,66 @@
+class ConcurrentReferenceCounted : private NonCopyable {
+ public:
+  ConcurrentReferenceCounted() : ref_count_(1) {}
+
+  virtual ~ConcurrentReferenceCounted() {}
+
+  void retain() {
+    ScopedLock lock(mutex_);
+    ++ref_count_;
+  }
+
+  void release() {
+    bool should_die = false;
+    {
+      ScopedLock lock(mutex_);
+      should_die = --ref_count_ == 0;
+    }
+    if (should_die) delete this;
+  }
+
+ private:
+  size_t ref_count_;
+  Mutex mutex_;
+};
+
+class ScopedRetain {
+public:
+  ScopedRetain(ConcurrentReferenceCounted *object) : object_(object) {
+    retain();
+  }
+
+  ScopedRetain() : object_(NULL) {}
+
+  ~ScopedRetain() {
+    release();
+  }
+
+  void hold(ConcurrentReferenceCounted *object) {
+    assert(!object_); // cannot hold more then 1 object
+    object_ = object;
+    retain();
+  }
+
+private:
+  ConcurrentReferenceCounted *object_;
+
+  void release() {
+    if (object_) object_->release();
+  }
+
+  void retain() {
+    object_->retain();
+  }
+};
+
+Object *target;
+ScopedRetain sr;
+
+if (objects_.get(key, &target))
+  sr.hold(target);
+else
+  return;
+
+// use target
+// no need to 'release'
+

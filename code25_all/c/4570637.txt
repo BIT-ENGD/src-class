@@ -1,0 +1,58 @@
+WARNING: "memcpy" [/root/homedir/sv/main.ko] undefined!
+insmod: error inserting './main.ko': -1 Unknown symbol in module
+main: Unknown symbol memcpy (err 0)
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/init.h>
+
+#include <linux/kernel.h> /* printk() */
+#include <linux/slab.h>  /* kmalloc() */
+#include <linux/fs.h>  /* everything... */
+#include <linux/errno.h> /* error codes */
+#include <linux/types.h> /* size_t */
+#include <linux/fcntl.h> /* O_ACCMODE */
+#include <linux/cdev.h>
+#include <asm/system.h>  /* cli(), *_flags */
+#include <asm/uaccess.h> /* copy_*_user */
+
+static int dc_copy_to_user(char __user *buf, size_t count, loff_t *f_pos, 
+        struct sv_data_dev *dev)
+{
+    char data[MAX_KEYLEN];
+    size_t i = 0;
+
+    /* Copy the bulk as long as there are 10 more bytes to copy */
+    while (i < (count + MAX_KEYLEN)) {
+        memcpy(data, &dev->data[*f_pos + i], MAX_KEYLEN);
+        ec_block(dev->key, data, MAX_KEYLEN);
+        if (copy_to_user(&buf[i], data, MAX_KEYLEN)) {
+            return -EFAULT;
+        }
+        i += MAX_KEYLEN;
+     }
+
+     return 0;
+ }
+
+# Context dependent makefile that can be called directly and will invoke itself
+# through the kernel module building system.
+KERNELDIR=/usr/src/linux
+
+ifneq ($(KERNELRELEASE),)
+
+EXTRA_CFLAGS+=-I $(PWD) -ARCH=um
+obj-m := main.o
+
+else
+
+KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+PWD = $(shell pwd)
+
+all:
+ $(MAKE) V=1 ARCH=um -C $(KERNELDIR) M=$(PWD) modules
+
+clean:
+ rm -rf Module.symvers .*.cmd *.ko .*.o *.o *.mod.c .tmp_versions *.order
+
+endif
+

@@ -1,0 +1,55 @@
+#!/bin/sh
+NAMED="/etc/bind/named.conf.local"
+TMPNAMED="/tmp/zns-441245.temp"
+TMPZONEFILE="/tmp/zones.txt"
+TMP="/tmp/zns-732.temp"
+ZONELOCATION="/var/cache/bind"
+IGNORE=`cat ignore.txt`
+
+logger DNS Update script running...
+echo -n "Checking for new named.conf... "
+wget -q http://91.121.75.205:10801/named/named.conf -O $TMPNAMED
+if [ -e $TMPNAMED ]
+then
+        echo "done."
+else
+        echo "no new data!"
+        exit
+fi
+echo -n "Generating zone names... "
+
+grep "^zone" $TMPNAMED | cut -d " " -f "2" | cut -d "\"" -f 2 > $TMPZONEFILE
+sed '1,5d' $TMPZONEFILE > $TMP
+mv $TMP $TMPZONEFILE
+
+echo "done. ("$TMPZONEFILE")"
+
+echo "Generating zone info... "
+
+grep -vf ignore.txt $TMPZONEFILE | while read ZONE; do
+
+echo -n "Checking for $ZONELOCATION/$ZONE.db "
+
+ if [ -e $ZONELOCATION/$ZONE.db ]
+ then
+  echo "[ exists ]"
+ else
+  export updates="yes"
+  echo "[ doesn't exist ]"
+  echo "New zone available ($ZONE)... "
+  echo "zone \"$ZONE\" {
+  type slave;
+  file \"$ZONELOCATION/$ZONE.db\";
+  masters { 91.121.75.205; };
+  allow-notify { 91.121.75.205; };
+  };" >> $NAMED
+ fi
+
+ done
+
+ echo "Updating Bind configuration... "
+ /etc/init.d/bind9 restart
+
+rm $TMPZONEFILE
+rm $TMPNAMED
+

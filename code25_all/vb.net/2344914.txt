@@ -1,0 +1,125 @@
+Public Class DefaultRegistry
+    Inherits Registry
+
+    Public Sub New()
+        ''//Generic Repositories
+        AddGenericRepositories()
+        ''//Custom Repositories
+        AddCustomRepositories()
+        ''//Application Services
+        AddApplicationServices()
+        ''//Validator
+        [For](GetType(IValidator)).Use(GetType(Validator))
+    End Sub
+
+    Private Sub AddGenericRepositories()
+        ''//ForRequestedType(GetType(IRepository(Of ))).TheDefaultIsConcreteType(GetType(Repository(Of )))
+        [For](GetType(IEntityDuplicateChecker)).Use(GetType(EntityDuplicateChecker))
+        [For](GetType(IRepository(Of ))).Use(GetType(Repository(Of )))
+        [For](GetType(INHibernateRepository(Of ))).Use(GetType(NHibernateRepository(Of )))
+        [For](GetType(IRepositoryWithTypedId(Of ,))).Use(GetType(RepositoryWithTypedId(Of ,)))
+        [For](GetType(INHibernateRepositoryWithTypedId(Of ,))).Use(GetType(NHibernateRepositoryWithTypedId(Of ,)))
+    End Sub
+
+    Private Sub AddCustomRepositories()
+        Scan(AddressOf SetupCustomRepositories)
+    End Sub
+
+    Private Shared Sub SetupCustomRepositories(ByVal y As IAssemblyScanner)
+        y.Assembly("DebtRemedy.Core")
+        y.Assembly("DebtRemedy.Data")
+        y.WithDefaultConventions()
+    End Sub
+
+    Private Sub AddApplicationServices()
+        Scan(AddressOf SetupApplicationServices)
+    End Sub
+
+    Private Shared Sub SetupApplicationServices(ByVal y As IAssemblyScanner)
+        y.Assembly("DebtRemedy.ApplicationServices")
+        y.With(New FirstInterfaceConvention)
+    End Sub
+
+End Class
+
+Public Class FirstInterfaceConvention
+    Implements ITypeScanner
+
+    Public Sub Process(ByVal type As Type, ByVal graph As PluginGraph) Implements ITypeScanner.Process
+        If Not IsConcrete(type) Then
+            Exit Sub
+        End If
+        ''//only works on concrete types
+        Dim firstinterface = type.GetInterfaces().FirstOrDefault()
+        ''//grabs first interface
+        If firstinterface IsNot Nothing Then
+            graph.AddType(firstinterface, type)
+        Else
+            ''//registers type
+            ''//adds concrete types with no interfaces
+            graph.AddType(type)
+        End If
+    End Sub
+End Class
+
+    Public Class StructureMapServiceLocator
+    Inherits ServiceLocatorImplBase
+    Private container As IContainer
+
+    Public Sub New(ByVal container As IContainer)
+        Me.container = container
+    End Sub
+
+    Protected Overloads Overrides Function DoGetInstance(ByVal serviceType As Type, ByVal key As String) As Object
+        Return If(String.IsNullOrEmpty(key), container.GetInstance(serviceType), container.GetInstance(serviceType, key))
+    End Function
+
+    Protected Overloads Overrides Function DoGetAllInstances(ByVal serviceType As Type) As IEnumerable(Of Object)
+        Dim objList As New List(Of Object)
+        For Each obj As Object In container.GetAllInstances(serviceType)
+            objList.Add(obj)
+        Next
+        Return objList
+    End Function
+End Class
+
+    Public Class ServiceLocatorControllerFactory
+    Inherits DefaultControllerFactory
+
+    Protected Overloads Overrides Function GetControllerInstance(ByVal requestContext As RequestContext, ByVal controllerType As Type) As IController
+        If controllerType Is Nothing Then
+            Return Nothing
+        End If
+
+        Try
+            Return TryCast(ObjectFactory.GetInstance(controllerType), Controller)
+        Catch generatedExceptionName As StructureMapException
+            System.Diagnostics.Debug.WriteLine(ObjectFactory.WhatDoIHave())
+            Throw
+        End Try
+    End Function
+
+End Class
+
+Dim container As IContainer = New Container(New DefaultRegistry)
+ControllerBuilder.Current.SetControllerFactory(New ServiceLocatorControllerFactory())
+
+ServiceLocator.SetLocatorProvider(Function() New StructureMapServiceLocator(container))
+
+Public Class DataCaptureController
+Inherits BaseController
+
+Private ReadOnly clientRepository As IClientRepository()
+Private ReadOnly pageRepository As IRepository(Of Page)
+
+Public Sub New(ByVal clientRepository As IClientRepository(), ByVal pageRepository As IRepository(Of Page))
+    Check.Require(clientRepository IsNot Nothing, "clientRepository may not be null")
+    Check.Require(pageRepository IsNot Nothing, "pageRepository may not be null")
+    Me.clientRepository = clientRepository
+    Me.pageRepository = pageRepository
+End Sub
+
+Function Index() As ActionResult
+    Return View()
+End Function
+

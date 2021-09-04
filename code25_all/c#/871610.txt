@@ -1,0 +1,45 @@
+frame.Save(inStream, jpegCodec, parameters);
+
+/// <summary>
+    /// Writes a frame to the stream
+    /// </summary>
+    /// <param name="frame">The frame to write</param>
+    public void Write(Bitmap frame) {
+        using (EncoderParameter qualityParameter = new EncoderParameter(Encoder.Quality, 50L)) {
+            using (EncoderParameters parameters = new EncoderParameters(1)) {
+                parameters.Param[0] = qualityParameter;
+
+                ImageCodecInfo[] codecs = ImageCodecInfo.GetImageEncoders();
+                ImageCodecInfo jpegCodec = null;
+
+                foreach (ImageCodecInfo codec in codecs) {
+                    if (codec.MimeType == "image/jpeg") {
+                        jpegCodec = codec;
+                        break;
+                    }
+                }
+
+                using (MemoryStream inStream = new MemoryStream()) {
+                    frame.Save(inStream, jpegCodec, parameters); // HUUUGE Memory Leak
+                    Byte[] buffer = new Byte[inStream.Length];
+                    inStream.Read(buffer, 0, buffer.Length);
+
+                    using (MemoryStream outStream = new MemoryStream()) {
+                        using (GZipStream gzipStream = new GZipStream(outStream, CompressionMode.Compress)) {
+                            gzipStream.Write(buffer, 0, buffer.Length);
+                        }
+
+                        Byte[] frameData = outStream.ToArray();
+                        Byte[] packet = new Byte[15 + frameData.Length];
+                        Byte[] frameLength = BitConverter.GetBytes(frameData.Length);
+
+                        Array.Copy(frameLength, 0, packet, 0, frameLength.Length);
+                        Array.Copy(frameData, 0, packet, 15, frameData.Length);
+
+                        m_Socket.Send(packet);
+                    }
+                }
+            }
+        }
+    }
+

@@ -1,0 +1,163 @@
+[error] (run-main) scala.slick.SlickException: 
+    Select(TableNode, "USER_NAME") found. This is typically 
+    caused by an attempt to use a "raw" table object directly 
+    in a query without introducing it through a generator.
+scala.slick.SlickException: Select(TableNode, "USER_NAME") 
+    found. This is typically caused by an attempt to use a "raw" table 
+    object directly in a query without introducing it through a generator.
+    at scala.slick.ast.Select.<init>(Node.scala:340)
+    at scala.slick.ast.Select.copy(Node.scala:338)
+    at scala.slick.ast.Select.nodeRebuild(Node.scala:345)
+    at scala.slick.ast.Select.nodeRebuild(Node.scala:338)
+    at scala.slick.ast.UnaryNode$class.nodeRebuild(Node.scala:141)
+    at scala.slick.ast.Select.nodeRebuild(Node.scala:338)
+    at scala.slick.ast.SimpleNode$$anonfun$nodeMapChildren$1.apply(Node.scala:62)
+    at scala.slick.ast.SimpleNode$$anonfun$nodeMapChildren$1.apply(Node.scala:62)
+    at scala.Option.map(Option.scala:145)
+    at scala.slick.ast.SimpleNode$class.nodeMapChildren(Node.scala:62)
+    at scala.slick.ast.Select.nodeMapChildren(Node.scala:338)
+    at scala.slick.compiler.Inline.scala$slick$compiler$Inline$$tr$1(Inline.scala:67)
+    at scala.slick.compiler.Inline$$anonfun$scala$slick$compiler$Inline$$tr$1$3.apply(Inline.scala:67)
+    at scala.slick.compiler.Inline$$anonfun$scala$slick$compiler$Inline$$tr$1$3.apply(Inline.scala:67)
+    at scala.slick.ast.Node$$anonfun$nodeMapNodes$1.apply(Node.scala:38)
+    at scala.slick.ast.Node$$anonfun$nodeMapNodes$1.apply(Node.scala:37)
+    at scala.collection.mutable.ResizableArray$class.foreach(ResizableArray.scala:59)
+    at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:47)
+    at scala.slick.ast.Node$class.nodeMapNodes(Node.scala:37)
+    at scala.slick.ast.ProductNode$$anon$3.nodeMapNodes(Node.scala:82)
+    at scala.slick.ast.SimpleNode$class.nodeMapChildren(Node.scala:62)
+    at scala.slick.ast.ProductNode$$anon$3.nodeMapChildren(Node.scala:82)
+    at scala.slick.compiler.Inline.scala$slick$compiler$Inline$$tr$1(Inline.scala:67)
+    at scala.slick.compiler.Inline$$anonfun$scala$slick$compiler$Inline$$tr$1$3.apply(Inline.scala:67)
+    at scala.slick.compiler.Inline$$anonfun$scala$slick$compiler$Inline$$tr$1$3.apply(Inline.scala:67)
+    at scala.slick.ast.Node$$anonfun$nodeMapNodes$1.apply(Node.scala:38)
+    at scala.slick.ast.Node$$anonfun$nodeMapNodes$1.apply(Node.scala:37)
+    at scala.collection.immutable.List.foreach(List.scala:309)
+    at scala.slick.ast.Node$class.nodeMapNodes(Node.scala:37)
+    at scala.slick.ast.Pure.nodeMapNodes(Node.scala:151)
+    at scala.slick.ast.SimpleNode$class.nodeMapChildren(Node.scala:62)
+    at scala.slick.ast.Pure.nodeMapChildren(Node.scala:151)
+    at scala.slick.compiler.Inline.scala$slick$compiler$Inline$$tr$1(Inline.scala:67)
+    at scala.slick.compiler.Inline$$anonfun$scala$slick$compiler$Inline$$tr$1$3.apply(Inline.scala:67)
+    at scala.slick.compiler.Inline$$anonfun$scala$slick$compiler$Inline$$tr$1$3.apply(Inline.scala:67)
+    at scala.slick.ast.Node$$anonfun$nodeMapNodes$1.apply(Node.scala:38)
+    at scala.slick.ast.Node$$anonfun$nodeMapNodes$1.apply(Node.scala:37)
+    at scala.collection.immutable.List.foreach(List.scala:309)
+
+package com.typesafe.slick.examples.lifted
+
+import scala.slick.driver.ExtendedProfile
+import scala.slick.session.Session
+import scala.slick.driver.H2Driver
+import scala.slick.driver.SQLiteDriver
+
+trait Profile {
+  val profile: ExtendedProfile
+}
+
+case class Picture(url: String, id: Option[Int] = None)
+
+trait PictureComponent { this: Profile => //requires a Profile to be mixed in...
+  import profile.simple._ //...to be able import profile.simple._ 
+
+  object Pictures extends Table[(String, Option[Int])]("PICTURES") {
+    //                    ^ Table comes from the *current* profile
+    def id = column[Option[Int]]("PIC_ID", O.PrimaryKey, O.AutoInc)
+    def url = column[String]("PIC_URL", O.NotNull)
+
+    def * = url ~ id
+
+    val autoInc = url returning id into { case (url, id) => Picture(url, id) }
+
+    def insert(picture: Picture)(implicit session: Session): Picture = {
+      autoInc.insert(picture.url)
+    }
+  }
+}
+
+case class User(name: String, picture: Picture, id: Option[Int] = None)
+
+case class UserAndPicId(name: String, picId: Int)
+
+trait UserComponent { this: Profile with PictureComponent => //requires Profile and Picture (see def insert)
+  import profile.simple._
+
+  object Users extends Table[(String, Int, Option[Int])]("USERS") {
+    def id = column[Option[Int]]("USER_ID", O.PrimaryKey, O.AutoInc)
+    def name = column[String]("USER_NAME", O.NotNull)
+    def pictureId = column[Int]("PIC_ID", O.NotNull)
+    def * = name ~ pictureId ~ id
+    def justNameAndPicId = name ~ pictureId <> (UserAndPicId, UserAndPicId.unapply _)
+
+    private def autoInc(implicit session: Session) = name ~ pictureId returning id into {
+      case (_, id) => id
+    }
+
+    def insert(user: User)(implicit session: Session): User = {
+      val picture = if (user.picture.id.isEmpty) { //if no picture id...
+        Pictures.insert(user.picture) //...insert
+      } else user.picture //else return current picture
+
+      val id = autoInc.insert(user.name, picture.id.get)
+      user.copy(picture = picture, id = id)
+    }
+
+    def userAndPicById = for {
+      id <- Parameters[Int]
+      user <- this if user.id === id
+    } yield justNameAndPicId
+  }
+}
+
+/**
+ * The Data Access Layer contains all components and a profile
+ */
+class DAL(override val profile: ExtendedProfile) extends UserComponent with PictureComponent with Profile {
+  import profile.simple._
+  def create(implicit session: Session): Unit = {
+    (Users.ddl ++ Pictures.ddl).create //helper method to create all tables
+  }
+}
+
+/**
+ * Run SLICK code with multiple DBMSs using the Cake pattern.
+ * Typically this technique can be used to have different DBMS 
+ * in production and test (other scenarios are possible as well)
+ */
+object MultiDBCakeExample {
+  // We only need the DB/session imports outside the DAL
+  import scala.slick.session.{ Database, Session }
+
+  def run(name: String, dal: DAL, db: Database) {
+    import dal._
+    import dal.profile.simple._
+
+    println("Running test against " + name)
+    db withSession { implicit session: Session =>
+      dal.create
+
+      //creating our default picture
+      val defaultPic = Pictures.insert(Picture("http://pics/default"))
+      println("  Inserted picture: " + defaultPic)
+
+      //inserting users
+      val (user1, user2, user3) = (User("name1", defaultPic), User("name2", Picture("http://pics/2")), User("name3", defaultPic))
+      println("  Inserted user: " + Users.insert(user1))
+      println("  Inserted user: " + Users.insert(user2))
+      println("  Inserted user: " + Users.insert(user3))
+      println("  All pictures: " + Query(Pictures).list)
+      println("  All users : " + Query(Users).list)
+
+      println("  Attempting to fetch UserAndPicId by id")
+      Users.userAndPicById(1).firstOption
+    }
+  }
+
+  def main(args: Array[String]) {
+    run("H2", new DAL(H2Driver),
+      Database.forURL("jdbc:h2:mem:test1", driver = "org.h2.Driver"))
+    run("SQLite", new DAL(SQLiteDriver),
+      Database.forURL("jdbc:sqlite::memory:", driver = "org.sqlite.JDBC"))
+  }
+}
+

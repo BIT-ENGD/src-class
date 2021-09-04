@@ -1,0 +1,213 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.IO;
+
+namespace RemoteClient
+{
+    public partial class Form1 : Form
+    {
+        private int MyPort = 56789;
+        private IPAddress myIp = IPAddress.Parse("210.232.115.79");
+        private IPAddress serverIp = IPAddress.Parse("72.216.18.77"); // Master Server's IP Address
+        public static TcpClient masterServer = new TcpClient();
+
+        private StreamWriter responseWriter;
+        private StreamReader commandReader;
+
+        private Thread connectionThread;
+        private Thread commandsThread;
+
+        private bool RequestExitConnectionThread { get; set; }
+
+        private delegate void AddMessageDelegate(string message, int category);
+        private delegate void ConnectedDelegate();
+
+        private bool isConnected { get; set; }
+
+        public Form1()
+        {
+            InitializeComponent();
+            isConnected = false;
+        }
+
+        private void LogMessage(string message, int category)
+        {
+            if (category == 1)
+            {
+                ListViewItem item = new ListViewItem(message);
+                item.BackColor = Color.LightGreen;
+                item.UseItemStyleForSubItems = true;
+                Log.Items.Add(item).SubItems.Add(DateTime.Now.ToString());
+            }
+            if (category == 2)
+            {
+                ListViewItem item = new ListViewItem(message);
+                item.BackColor = Color.Orange;
+                item.UseItemStyleForSubItems = true;
+                Log.Items.Add(item).SubItems.Add(DateTime.Now.ToString());
+            }
+            if (category == 3)
+            {
+                ListViewItem item = new ListViewItem(message);
+                item.BackColor = Color.Yellow;
+                item.UseItemStyleForSubItems = true;
+                Log.Items.Add(item).SubItems.Add(DateTime.Now.ToString());
+            }
+            if (category == 0)
+            {
+                Log.Items.Add(message).SubItems.Add(DateTime.Now.ToString());
+            }
+        }
+
+        private void Connected()
+        {
+            LogMessage("Found and Accepted Master Server's connection. Waiting for reply...",1);
+            Status.Text = "Connected!";
+            Status.ForeColor = Color.Green;
+
+            commandsThread = new Thread(new ThreadStart(RecieveCommands));
+
+            sendClientInfo();
+        }
+
+        private void exitButton_Click(object sender, EventArgs e)
+        {
+            Disconnect();
+            exitButton.Enabled = false;
+            exitButton.Text = "Closing...";
+
+            if (connectionThread != null)
+            {
+                while (connectionThread.IsAlive)
+                {
+                    Application.DoEvents();
+                }
+            }
+
+            this.Close();
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            Connect();
+        }
+
+        private void Disconnect()
+        {
+            RequestExitConnectionThread = true;
+
+            if (masterServer != null)
+                masterServer.Close();
+
+            if (connectionThread != null)
+                connectionThread.Abort();
+
+            LogMessage("Closing Client. Please wait while Program threads end.", 2);
+        }
+
+        private void Disconnected()
+        {
+            Status.Text = "Disconnected";
+            Status.ForeColor = Color.Red;
+            Connect();
+        }
+
+        private void Connect()
+        {
+            LogMessage("Attempting to connect to Master Server...", 1);
+
+            connectionThread = new Thread(new ThreadStart(CreateConnection));
+            connectionThread.Start();
+        }
+
+        private void CreateConnection()
+        {
+            int i = 1;
+            bool success = false;
+
+            while (!success)
+            {
+                try
+                {
+                    using (masterServer = new TcpClient())
+                    {
+                        IAsyncResult result = masterServer.BeginConnect(serverIp, MyPort, null, null);
+                        success = result.AsyncWaitHandle.WaitOne(1000, false);
+                    }
+
+                    if (success)
+                    {
+                        BeginInvoke(new ConnectedDelegate(this.Connected), new object[] {});
+                        break;
+                    }
+                    else
+                    {
+                        Thread.Sleep(2000);
+                        BeginInvoke(new AddMessageDelegate(LogMessage), new object[] { "Connection Retry # " + i.ToString() + ". Master Server hasn't been started yet.", 3 });
+                    }
+                }
+                catch
+                {
+                    MessageBox.Show("Error!");
+                }
+                i++;
+            }
+
+        }
+
+        private void RecieveCommands()
+        {
+            MessageBox.Show("Hello!");
+            commandReader = new StreamReader(masterServer.GetStream());
+
+            string CommandResponse = commandReader.ReadLine();
+            string Command = null;
+
+            if (CommandResponse != null)
+                MessageBox.Show("Recieved Command that was NOT null!");
+
+            if (CommandResponse != null)
+            {
+                MessageBox.Show("Recieved null response!");
+                BeginInvoke(new AddMessageDelegate(LogMessage), new object[] { "Disconnected From Master Server. Reason: Recieved Null response.", 1 });
+                Disconnected();
+            }
+            else if (CommandResponse.StartsWith("0"))
+            {
+                MessageBox.Show("Recieved 0 as a response!");
+                Command = CommandResponse.Substring(2).Trim();
+
+                isConnected = false;
+                BeginInvoke(new AddMessageDelegate(LogMessage), new object[] { "Disconnected From Master Server. Reason: " + Command, 1 });
+            }
+            else if (CommandResponse.StartsWith("1"))
+            {
+                MessageBox.Show("Recieved 1 as a response!");
+                isConnected = true;
+                BeginInvoke(new AddMessageDelegate(LogMessage), new object[] { "Connected to Master Server Successfully.", 1 });
+            }
+        }
+
+
+        //************************** RESPONSE'S BELOW HERE ************************* \\
+
+        private void sendClientInfo()
+        {
+            responseWriter = new StreamWriter(masterServer.GetStream());
+
+            responseWriter.WriteLine(myIp.ToString());
+            responseWriter.Flush();
+        }
+
+    }
+}
+

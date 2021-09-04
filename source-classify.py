@@ -18,10 +18,10 @@ CLASS_NUM=0
 FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
-EPOCH_NUM=500
+EPOCH_NUM=200
 MAX_TOKEN=400
 SEQUENCE_LEN=MAX_TOKEN
-FILTER_NUM=3
+FILTER_NUM=64
 DROPOUT=0.5
 MODEL_NAME="src_cat.pth"
 ONNX_MODEL_PATH="src_cat.onnx"
@@ -204,7 +204,7 @@ class TextCNNEx(nn.Module):
         embedding_X = self.W(X) # [batch_size, sequence_length, embedding_size]
         embedding_X = embedding_X.unsqueeze(1) # add channel(=1) [batch, channel(=1), sequence_length, embedding_size]
         conved = self.conv1(embedding_X)# [batch_size, output_channel, 1, 1]
-        conved = self.conv2(conved)# [batch_size, output_channel, 1, 1]
+        #conved = self.conv2(conved)# [batch_size, output_channel, 1, 1]
         conved = self.dropout(conved)
         flatten = conved.view(batch_size, -1)# [batch_size, output_channel*1*1]
         output = self.fc(flatten)

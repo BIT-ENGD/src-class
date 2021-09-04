@@ -1,0 +1,60 @@
+device_id = "553CDA2DEAC90"
+query_id = ""
+dim = 120
+
+wifi.setmode(wifi.STATION)
+wifi.sta.config("SSID","PASSWORD")
+wifi.sta.connect()
+wifi.sta.setip({ip="10.0.0.122",netmask="255.255.255.0",gateway="10.0.0.2"})
+
+outpin = 7 --GPIO13 
+gpio.mode(outpin,gpio.OUTPUT)
+gpio.write(outpin,gpio.LOW)
+inpin = 6 --GPIO12
+gpio.mode(inpin,gpio.INT,gpio.PULLUP)
+
+function zero_cross()
+    dt = 75*dim
+    tmr.delay(dt)
+    gpio.write(outpin,gpio.HIGH)
+    tmr.delay(1)
+    gpio.write(outpin,gpio.LOW)
+    tmr.wdclr()
+end
+
+gpio.trig(inpin,"up",zero_cross)
+
+function sendData()
+    if(wifi.sta.status() == 5)then
+        conn=net.createConnection(net.TCP, 0)
+        conn:connect(PORT,'IP')
+        if(firstStart == 0)then
+            conn:send(device_id)
+            conn:send("|0|")
+        else
+            if(query_id == nil)then
+                conn:send(device_id)
+                conn:send("|0|")
+                conn:send(dim)
+            else
+                conn:send(device_id)
+                conn:send("|")
+                conn:send(query_id)
+                conn:send("|")
+                conn:send(dim)
+                query_id = nil
+            end
+        end
+        conn:on("receive", function(conn, payload)
+            payload = string.gsub(payload, " ", "")
+            dim = string.sub(payload, 0, string.find(payload, "|")-1)
+            payload = string.gsub(payload, dim.."|", "")
+            query_id = payload
+            conn:close()
+        end)
+    else
+        wifi.sta.connect()
+    end
+end
+tmr.alarm(6, 1000, 1, sendData )
+

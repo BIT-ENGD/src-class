@@ -1,0 +1,81 @@
+$ ./p4fs test/
+$ strace touch test/kilo 2> logs
+$ cat logs
+...
+fstat(3, {st_mode=S_IFREG|0644, st_size=56467024, ...}) = 0
+mmap(NULL, 56467024, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7fbf006bf000
+close(3)                                = 0
+close(0)                                = 0
+open("test/kilo", O_WRONLY|O_CREAT|O_NOCTTY|O_NONBLOCK, 0666) = -1 ERANGE (Numerical result out of range)
+futimesat(AT_FDCWD, "test/kilo", NULL)  = 0
+close(1)                                = 0
+exit_group(0)                           = ?
+
+getattr: database opened
+getattr: requesting attr for /kilo
+db_getrowid: statement executed: finding rowid of /kilo
+db_getrowid: mapped /kilo to rowid 0
+getattr: does not exist: /kilo
+mknod: database opened
+mknod: statement executed: checking for existing path
+mknod: calling db_mkdentry(db, /kilo, 100644, 0, 0)
+db_mkdentry: parent is /
+db_getrowid: statement executed: finding rowid of /
+db_getrowid: mapped / to rowid 1
+db_mkdentry: statement executed: creating dentry /kilo
+db_getrowid: statement executed: finding rowid of /kilo
+db_getrowid: mapped /kilo to rowid 3
+p4fs: calling system mknod(3, 100644, 0)
+p4fs: got errno 13
+
+static int p4_mknod(const char *path, mode_t mode, dev_t dev) {
+        sqlite3 *db;
+        sqlite3_stmt *statement;
+        char query[MAX_QUERY_LENGTH];
+        int rc;
+        int return_value;
+        int path_exists = -1;
+
+        OPEN_LOG("mknod")
+        OPEN_DB(db_path, db)
+
+        /* check for existing filename */
+        sprintf(query,
+                "SELECT COUNT(*) FROM dentry "
+                "WHERE name = '%s'",
+                path);
+        sqlite3_prepare(db,
+                query,
+                -1,
+                &statement,
+                NULL);
+        rc = sqlite3_step(statement);
+        SQLITE3_ERRCHK("checking for existing path")
+        path_exists = sqlite3_column_int(statement, 0);
+        sqlite3_finalize(statement);
+
+        if (path_exists <= 0) {
+                int physical_rowid;
+                char physical_name[MAX_QUERY_LENGTH];
+
+                /* path is not already in db */
+                syslog(LOG_DEBUG, "calling db_mkdentry(db, %s, %o, 0, 0)",
+                        path, mode);
+                db_mkdentry(db, (char *) path, mode, 0, 0);
+
+                /* make the actual file */
+                physical_rowid = db_getrowid(db, (char *) path);
+                sprintf(physical_name, "%i", physical_rowid);
+                syslog(LOG_DEBUG, "calling system mknod(%s, %o, %li)",
+                        physical_name, mode, dev);
+                return_value = mknod(physical_name, mode, dev);
+        } else {
+                syslog(LOG_INFO, "called on existing path");
+                return_value = -EEXIST;
+        }
+
+        syslog(LOG_DEBUG, "errno %i", errno);
+
+        return errno;
+}
+

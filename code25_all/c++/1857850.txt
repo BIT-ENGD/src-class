@@ -1,0 +1,66 @@
+void SensorClass::run()
+{
+    mFdWind=mPort->GetFileDescriptor();
+    fd_set readfs;
+    int max_fd = (mFdWind > gPipeFdWind[0] ? mFdWind : gPipeFdWind[0]) + 1;
+    int res;
+
+    mFrameCorrect=false;
+    qDebug("BEFORE WHILE"); 
+    while(true)
+    {
+        qDebug("\n IN WHILE LOOP"); 
+        usleep(50);
+        FD_ZERO(&readfs);
+        FD_SET(mFdWind,&readfs);
+        FD_SET(gPipeFdWind[0],&readfs);
+
+        res=select(max_fd,&readfs,NULL,NULL,NULL);
+        if(res < 0)
+            perror("Select Failed");
+        else if(res == 0)
+            puts("TIMEOUT");
+        else
+        {
+            if(FD_ISSET(mFdWind,&readfs))
+            {
+                puts("*************** RECEIVED DATA ****************");
+                mFrameCorrect=false;
+                FlushBuf();
+                //int n=mPort->ReadPort(mBuf,100);
+                int n=mPort->ReadPort(mBuf,100);
+
+                if(n>0)
+                {
+                    Count++;
+
+
+                    QString str((const char*)mBuf);
+                    //qDebug("\n %s",qPrintable(str));
+                    //See if the Header of the frame is valid
+                    if(IsHeaderValid(str))
+                    {
+                        if( (!IsCommaCountOk(str)) || (!IsChecksumOk(str,mBuf)) ||  (!CalculateCommaIndexes(str))  ) 
+                        {
+
+                            qDebug("\n  not ok");
+                            mFrameCorrect=false;
+                        } //if frame is incorrect
+                        else 
+                        {
+                            qDebug("\n  OK");
+                            mFrameCorrect=true;
+                        }//if frame is correct(checksum etc are ok)
+                    }//else if header is ok
+                }//if n > 0
+            }//if data received FD_ISSET
+            if(FD_ISSET(gPipeFdWind[0],&readfs))
+                break;
+        }//end nested else res not <= 0
+    }//infinite loop  
+}
+
+delete SensorClass::instance();
+
+SensorClass::instace()->start();
+

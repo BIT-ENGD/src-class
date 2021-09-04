@@ -1,0 +1,114 @@
+$db
+$db
+$db
+<?php
+// load ADODB class
+include(DIR_WS_CLASSES . "adodb5/adodb.inc.php");
+
+$db = NewADOConnection(DB_TYPE);
+$db->Connect(DB_SERVER, DB_SERVER_USERNAME, DB_SERVER_PASSWORD, DB_DATABASE);
+
+
+class SessionManager {
+    var $life_time;
+
+    function SessionManager(){
+        global $db;
+        // Read the maxlifetime setting from PHP
+        $this->life_time = get_cfg_var("session.gc_maxlifetime");
+
+        // Register this object as the session handler
+        session_set_save_handler(array(&$this, "open"), 
+                                array(&$this, "close"), 
+                                array(&$this, "read"), 
+                                array(&$this, "write"), 
+                                array(&$this, "destroy"), 
+                                array(&$this, "gc"));
+    }
+
+    function open($save_path, $session_name){
+        global $sess_save_path;
+        global $db;
+
+        $sess_save_path = $save_path;
+
+        return true;
+    }
+
+    function close(){
+        global $db;
+        return true;
+    }
+
+    function read($id){
+        global $db;
+        // Set empty result
+        $data = '';
+
+        // Fetch session data from the selected database
+        $time = time();
+        $newid = $db->qstr($id, get_magic_quotes_gpc());
+
+        $sql = "SELECT session_data 
+                FROM sessions 
+                WHERE session_id = $newid 
+                AND expires > $time";
+
+        $rs = $db->Execute($sql) or die($db->ErrorMsg());
+        $a = $rs->RecordCount();
+
+        if($a > 0){
+            $data = $rs->fields['session_data'];
+        }
+
+        return $data;
+    }
+
+    function write($id, $data){
+        global $db;
+        // Build query                
+        $time = time() + $this->life_time;
+        $newid = $db->qstr($id, get_magic_quotes_gpc());
+        $newdata = $db->qstr($data, get_magic_quotes_gpc());
+        $sql = "REPLACE sessions
+                (session_id, session_data, expires) 
+                VALUES($newid, $newdata, $time)";
+
+        $rs = $db->Execute($sql) or die($db->ErrorMsg());
+
+        return TRUE;
+    }
+
+    function destroy($id){
+        global $db;
+        // Build query
+        $newid = $db->qstr($id, get_magic_quotes_gpc());
+        $sql = "DELETE FROM sessions 
+                WHERE session_id = $newid";
+
+        $db->Execute($sql) or die($db->ErrorMsg());
+
+        return TRUE;
+    }
+
+    function gc(){
+    // Garbage Collection
+        global $db;
+        // Build DELETE query.  Delete all records that passed expiration time
+        $sql = "DELETE FROM sessions 
+                WHERE expires < UNIX_TIMESTAMP()";
+
+        $db->Execute($sql) or die($db->ErrorMsg());
+
+        // Always return TRUE
+        return true;
+    }
+}
+
+
+// initialize session
+$sess = new SessionManager();
+session_start();
+?>
+
+$db

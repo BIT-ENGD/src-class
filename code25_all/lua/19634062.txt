@@ -1,0 +1,62 @@
+/*
+These functions push an item onto the lua stack
+*/
+template<typename T> inline void lua_push(lua_State* L,T&& t){ static_assert(false,      "Unsupported Type! Cannot set to lua stack"); }
+template<> inline void lua_push<lua_CFunction>(lua_State* L,lua_CFunction&& func){      assert(L != nullptr && func != nullptr); lua_pushcfunction(L, func); }
+template<> inline void lua_push<double>(lua_State* L,double&& d){ assert(L != nullptr);  lua_pushnumber(L, d); }
+template<> inline void lua_push<int>(lua_State* L,int&& i){ assert(L != nullptr);  lua_pushinteger(L, i); }
+template<> inline void lua_push<bool>(lua_State* L,bool&& b){ assert(L != nullptr);  lua_pushboolean(L, b); }
+template<> inline void lua_push<std::string>(lua_State* L,std::string&& s){ assert(L != nullptr);  lua_pushlstring(L, s.c_str(), s.size()); }
+template<> inline void lua_push<const char*>(lua_State* L,const char*&& s){ assert(L != nullptr); lua_pushstring(L, s); }
+
+template<typename Return,typename... Args> class LuaFunctor{};
+/*
+    A Lua function that will return a single value.
+*/
+template<typename Return,typename... Args> class LuaFunctor<Return(Args...)>
+{
+private:
+    //The lua state the function exists on
+    lua_State* m_luaState;
+    //Name of the function to be called in lua
+    std::string m_FunctionName;
+public:
+    //Return typedef
+    typedef Return return_type;
+    //The number of arguments the functor accepts
+    static const int arguments = sizeof...(Args);
+    //Constructors
+    inline LuaFunctor(lua_State* L,const std::string& name) : m_luaState(L), m_FunctionName(name) {}
+    inline LuaFunctor(lua_State* L,const char* name) : m_luaState(L), m_FunctionName(name) {}
+    //Function call overload that allows the functor to act like a function call of luascript
+    inline Return operator()(Args&&... args)
+    {
+        //Assert that the function name does exist and luaState is pointing to something hopefully meaningful
+        assert(m_luaState != nullptr && m_FunctionName.size() != 0);
+        //Set the function
+        lua_getglobal(m_luaState, m_FunctionName.c_str());
+        //Verify Lua function is pushed onto the stack
+        assert(lua_isfunction(m_luaState, -1));
+        //If arguments exist push them onto the stack
+        if (sizeof...(Args) != 0)
+        {
+                    /*
+                      How do I unpack this?????
+                      I want to unpack this into multiple functions
+                      One for each type of argument.
+                    */
+            lua_push(m_luaState, std::forward<Args>(args))...; 
+        }
+        //Call the function that is in lua
+        int status = lua_pcall(m_luaState, sizeof...(Args), 1, 0);
+        /*
+            If there was an error calling the function throw an exception
+            TODO: parse the error using luas builtin decode of the error for now just pass it on
+            TODO: create lua_exception
+        */
+        if (status != 0) throw std::exception("Error calling lua function");
+        //Return the value request by lua, error checking is built-in to the function to verify type
+        return lua_get<Return>(m_luaState);
+    }
+};
+

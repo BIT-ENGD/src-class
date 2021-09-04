@@ -1,0 +1,95 @@
+    WITH FAST_MEDS AS
+    (
+    select distinct
+     statins.mrd_pt_id, min(year(statins.order_dts)) as statin_yr
+     from
+      edw_dm.patient_medications as statins
+      inner join mrd.medications as mrd
+        on statins.mrd_med_id = mrd.mrd_med_id
+        WHERE mrd.generic_nm in (
+           'Lovastatin (9664708500)',
+           'lovastatin-niacin',
+           'Lovastatin/Niacin',
+           'Lovastatin',
+           'Simvastatin (9678583966)',
+           'ezetimibe-simvastatin',
+           'niacin-simvastatin',
+           'ezetimibe/Simvastatin',
+           'Niacin/Simvastatin',
+           'Simvastatin',
+           'Aspirin Buffered-Pravastatin',
+           'aspirin-pravastatin',
+           'Aspirin/Pravastatin',
+           'Pravastatin',
+           'amlodipine-atorvastatin',
+           'Amlodipine/atorvastatin',
+           'atorvastatin',
+           'fluvastatin',
+           'rosuvastatin'
+            )
+        and YEAR(statins.order_dts) IS NOT NULL
+        and statins.mrd_pt_id IS NOT NULL
+     group by statins.mrd_pt_id
+    )
+
+    select *
+    into #meds
+    from FAST_MEDS
+    ;
+
+    --return patients who had a diagnosis in the list and the year that
+    --diagnosis was given
+    with
+    FAST_DX AS
+    (
+     SELECT pd.mrd_pt_id, YEAR(pd.init_noted_dts) as init_yr
+      FROM edw_dm.patient_diagnoses as pd
+        inner join mrd.diagnoses as mrd
+          on pd.mrd_dx_id = mrd.mrd_dx_id
+          and mrd.icd9_cd in
+    ('728.89','729.1','710.4','728.3','729.0','728.81','781.0','791.3')
+    )
+    select *
+    into #dx
+    from FAST_DX;
+
+    --return patients who had a high cpk value along with the year the cpk
+    --value was taken
+    with
+    FAST_LABS AS
+    (
+     SELECT
+      pl.mrd_pt_id, YEAR(pl.order_dts) as lab_yr
+     FROM
+      edw_dm.patient_labs as pl
+      inner join mrd.labs as mrd
+        on pl.mrd_lab_id = mrd.mrd_lab_id
+        and mrd.lab_nm = 'CK (CPK)'
+     WHERE
+       pl.lab_val between 1000 AND 999998
+    )
+    select *
+    into #labs
+    from FAST_LABS;
+
+    -- count the number of patients who had a lab value or a medication
+    -- value taken sometime AFTER their initial statin diagnosis
+    select
+     count(distinct p.mrd_pt_id) as ct
+    from
+     mrd.patient_demographics as p
+     join #meds as m
+      on p.mrd_pt_id = m.mrd_pt_id
+     AND 
+     (
+       EXISTS (
+             SELECT 'A' FROM #labs l WHERE p.mrd_pt_id = l.mrd_pt_id
+             and l.lab_yr >= m.statin_yr
+       ) 
+       OR
+       EXISTS(
+           SELECT 'A' FROM #dx d WHERE p.mrd_pt_id = d.mrd_pt_id
+           AND d.init_yr >= m.statin_yr
+       )
+     )
+

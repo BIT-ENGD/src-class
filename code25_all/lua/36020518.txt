@@ -1,0 +1,65 @@
+Threads = require 'threads'
+Threads.serialization('threads.sharedserialize')
+
+DataThreads = {}
+DataThreads.__index = DataThreads
+local result = {}
+local unpack = unpack and unpack or table.unpack
+
+function DataThreads.new(nThreads,opt_)
+        local self = {}
+        opt_ = opt_ or {}
+        self.threads = Threads(nThreads,
+                           function()
+                                   print("background stuff")
+                           end 
+                        )   
+        self.threads:synchronize()
+
+        -- The below for loop is causing the error but the same :addjob() works later on
+        for i=1, nThreads do
+                self.threads:addjob(self._getFromThreads, self._pushResult)
+        end 
+        return setmetatable(self,DataThreads)
+end
+
+
+function DataThreads._getFromThreads()
+              x,y = torch.uniform(),torch.uniform()
+              return x,y 
+end
+
+function DataThreads._pushResult(...)
+        local res = {...}
+        if res == nil then 
+                self.threads:synchronize()
+        end 
+        result[1] = res 
+end
+
+function DataThreads:getBatch()
+        self.threads:addjob(self._getFromThreads, self._pushResult)
+        self.threads:dojob()
+        local res = result[1]
+                result[1] = nil
+        if torch.type(res) == 'table' then
+                return unpack(res)
+        end
+                print(type(res))
+        return res
+end
+
+d = DataThreads.new(4)
+
+:addjob()
+:addjob()
+:getBatch()
+._getFromThreads(), ._getFromThreads()
+._getFromThreads()
+/home/msmith/torch/install/bin/luajit: ...e/msmith/torch/install/share/lua/5.1/threads/threads.lua:215: function callback expected
+stack traceback:
+    [C]: in function 'assert'
+    ...e/msmith/torch/install/share/lua/5.1/threads/threads.lua:215: in function 'addjob'
+    threads.lua:21: in function 'new'
+    threads.lua:54: in main chunk
+

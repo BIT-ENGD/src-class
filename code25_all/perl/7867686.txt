@@ -1,0 +1,123 @@
+-d = comma delimited list of directories to exclude by path name
+-w = comma delimited list of directories to exclude by basename or wildcard
+-f = comma delimited list of files to exclude by path name
+-i = comma delimited list of files to exclude by basename or wildcard
+-t:list|count = Defines the type of output I want to see (list of all findinds, or summary with count per directory)
+
+#! /usr/bin/perl
+use strict;
+use File::Find;
+
+# Full paths of directories to prune
+my @exclude_dirs = ('/dev','/proc','/home');
+
+# Basenames or wildcard names of directories I want to prune
+my $exclude_dirs_wildcard = '.svn';
+
+# Full paths of files I want to ignore
+my @exclude_files = ('/tmp/test/dir3/.svn/svn_file1.txt','/tmp/test/dir3/.svn/svn_file2.txt');
+
+# Basenames of wildcard names of files I want to ignore
+my $exclude_files_wildcard = '*.tmp';
+my %dir_globs = ();
+my %file_globs = ();
+
+# Results will be sroted in this hash
+my %found = ();
+
+# Used for storing uid's and gid's present on system
+my %uids = ();
+my %gids = ();
+
+# Callback function for find
+sub wanted {
+    my $dir = $File::Find::dir;
+    my $name = $File::Find::name;
+    my $basename = $_;
+
+    # Ignore symbolic links
+    return if -l $name;
+
+    # Search for wildcards if dir was never searched before
+    if (!exists($dir_globs{$dir})) {
+        @{$dir_globs{$dir}} = glob($exclude_dirs_wildcard);
+    }
+    if (!exists($file_globs{$dir})) {
+        @{$file_globs{$dir}} = glob($exclude_files_wildcard);
+    }
+
+    # Prune directory if present in exclude list
+    if (-d $name && in_array(\@exclude_dirs, $name)) {
+        $File::Find::prune = 1;
+        return;
+    }
+
+    # Prune directory if present in dir_globs
+    if (-d $name && in_array(\@{$dir_globs{$dir}},$basename)) {
+        $File::Find::prune = 1;
+        return;
+    }
+
+    # Ignore excluded files
+    return if (-f $name && in_array(\@exclude_files, $name));
+    return if (-f $name && in_array(\@{$file_globs{$dir}},$basename));
+
+    # Check ownership and add to the hash if unowned (uid or gid does not exist on system)
+    my ($dev,$ino,$mode,$nlink,$uid,$gid) = stat($name);
+    if (!exists $uids{$uid} || !exists($gids{$gid})) {
+        push(@{$found{$dir}}, $basename);
+    } else {
+        return
+    }
+}
+
+# Standard in_array perl implementation
+sub in_array {
+    my ($arr, $search_for) = @_;
+    my %items = map {$_ => 1} @$arr;
+    return (exists($items{$search_for}))?1:0;
+}
+
+# Get all uid's that exists on system and store in %uids
+sub get_uids {
+    while (my ($name, $pw, $uid) = getpwent) {
+        $uids{$uid} = 1;
+    }
+}
+
+# Get all gid's that exists on system and store in %gids
+sub get_gids {
+    while (my ($name, $pw, $gid) = getgrent) {
+        $gids{$gid} = 1;
+    }
+}
+
+# Print a list of unowned files in the format PARENT_DIR,BASENAME
+sub print_list {
+    foreach my $dir (sort keys %found) {
+        foreach my $child (sort @{$found{$dir}}) {
+            print "$dir,$child\n";
+        }
+    }
+}
+
+# Prints a list of directories with the count of unowned childs in the format DIR,COUNT
+sub print_count {
+    foreach my $dir (sort keys %found) {
+        print "$dir,".scalar(@{$found{$dir}})."\n";
+    }
+}
+
+# Call it all
+&get_uids();
+&get_gids();
+
+find(\&wanted, '/');
+print "List:\n";
+&print_list();
+
+print "\nCount:\n";
+&print_count();
+
+exit(0);
+

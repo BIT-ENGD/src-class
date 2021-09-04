@@ -1,0 +1,135 @@
+Imports Microsoft.VisualBasic
+Imports System
+Imports System.Collections.Generic
+Imports System.Text
+Imports System.Security.Cryptography
+Imports System.IO
+
+Namespace security
+    Public Class tdes
+        Private des As New TripleDESCryptoServiceProvider()
+        Private utf8 As New UTF8Encoding()
+
+    Private keyValue As Byte()
+    Private iVValue As Byte()
+
+    Public Property Key() As Byte()
+        Get
+            Return keyValue
+        End Get
+        Set(ByVal value As Byte())
+            keyValue = value
+        End Set
+    End Property
+
+    Public Property iV() As Byte()
+        Get
+            Return iVValue
+        End Get
+        Set(ByVal value As Byte())
+            iVValue = value
+        End Set
+    End Property
+
+    Public Sub New(ByVal key As Byte(), ByVal iV As Byte())
+        Me.keyValue = key
+        Me.iVValue = iV
+    End Sub
+
+    Public Function ByteDecrypt(ByVal bytes As Byte()) As String
+        Dim output As Byte()
+        output = Transform(bytes, des.CreateDecryptor(Me.keyValue, Me.iVValue))
+        'Return Convert.ToBase64String(output)
+        Return utf8.GetString(output)
+    End Function
+
+    Public Function ByteEncrypt(ByVal bytes As Byte()) As Byte()
+        Return Transform(bytes, des.CreateEncryptor(Me.keyValue, Me.iVValue))
+    End Function
+
+    Public Function StringDecrypt(ByVal text As String) As String
+        Dim input As Byte() = Convert.FromBase64String(text)
+        Dim output As Byte() = Transform(input, des.CreateDecryptor(Me.keyValue, Me.iVValue))
+        Return utf8.GetString(output)
+    End Function
+
+    Public Function StringEncrypt(ByVal text As String) As String
+        Dim input As Byte() = utf8.GetBytes(text)
+        Dim output As Byte() = Transform(input, des.CreateEncryptor(Me.keyValue, Me.iVValue))
+        Return Convert.ToBase64String(output)
+    End Function
+
+    Public Function StringEncryptByte(ByVal text As String) As Byte()
+        Dim input As Byte() = utf8.GetBytes(text)
+        Dim output As Byte() = Transform(input, des.CreateEncryptor(Me.keyValue, Me.iVValue))
+        'Return Convert.ToBase64String(output)
+        Return output
+    End Function
+
+    Private Function Transform(ByVal input As Byte(), ByVal cryptoTransform As ICryptoTransform) As Byte()
+        ' Create the necessary streams
+        Dim memory As New MemoryStream()
+        Dim stream As New CryptoStream(memory, cryptoTransform, CryptoStreamMode.Write)
+
+        ' Transform the bytes as requesed
+        stream.Write(input, 0, input.Length)
+        stream.FlushFinalBlock()
+
+        ' Read the memory stream and convert it back into byte array
+        memory.Position = 0
+        Dim result As Byte() = New Byte(memory.Length - 1) {}
+        memory.Read(result, 0, result.Length)
+
+        ' Clean up
+        memory.Close()
+        stream.Close()
+
+        ' Return result
+        Return result
+    End Function
+
+    End Class
+End Namespace
+
+Dim key As Byte() = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+Dim iv As Byte() = {8, 7, 6, 5, 4, 3, 2, 1}
+Dim enc As New security.tdes(key, iv)
+Dim i As Integer = 0
+
+Using oConn As New SqlConnection(System.Configuration.ConfigurationManager.ConnectionStrings("pitstopConnectionString").ConnectionString)
+    Using cmd As New SqlCommand("doUpdatePasswords", oConn)
+        cmd.CommandType = CommandType.StoredProcedure
+        cmd.Parameters.AddWithValue("@userid", userid)
+        cmd.Parameters.AddWithValue("@newpassword", enc.StringEncryptByte(currentPassword))
+        oConn.Open()
+        Try
+            i = cmd.ExecuteNonQuery()
+        Catch ex As Exception
+            Exit Sub
+        End Try
+    End Using
+End Using
+
+If (enc.ByteDecrypt(pwdenc).ToString() = pitstop.doMakeSafeForSQL(txtPassword.Text.ToString.ToLower)) Then
+
+ Using oConn As New SqlConnection(System.Configuration.ConfigurationManager.ConnectionStrings("pitstopConnectionString").ConnectionString)
+     Using cmd As New SqlCommand("doGetEncryptedForLogin", oConn)
+         cmd.CommandType = CommandType.StoredProcedure
+         cmd.Parameters.AddWithValue("@email", pitstop.doMakeSafeForSQL(txtEmail.Text.ToString.ToLower))
+         oConn.Open()
+         Using dr As SqlDataReader = cmd.ExecuteReader()
+             If dr.HasRows() = True Then
+                 While dr.Read()
+                     pwdenc = dr("password_b")
+                 End While
+             Else
+                 pitstop.doLogIt("Denied login for [" & txtEmail.Text & "]")
+                 litError.Text = "The details you have provided are incorrect. Please try again."
+                 pnlDenied.Visible = True
+                 Exit Sub
+             End If
+             dr.Close()
+         End Using
+     End Using
+ End Using
+

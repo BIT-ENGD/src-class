@@ -1,0 +1,85 @@
+def pow(n,k):
+    if n == 0:  return 1
+    else:       return n * pow(n,k-1)
+
+@freeze(2,0)
+@freeze(1,3)
+@freeze(3,5)
+@freeze(0,0)
+def pow(n,k):
+    if n == 0:  return 1
+    else:       return n * pow(n,k-1)
+
+from __future__ import with_statement
+from collections import defaultdict
+from types import GeneratorType
+import cPickle
+
+def __id_from_function(f):
+    return ".".join([f.__module__, f.__name__])
+
+def generator_firsts(g, N=100):
+    try:
+        if N==0:
+            return []
+        else:
+            return  [g.next()] + generator_firsts(g, N-1)
+    except StopIteration :
+        return []
+
+def __post_process(v):
+    specialized_postprocess = [
+        (GeneratorType, generator_firsts),
+        (Exception,     str),
+    ]
+    try:
+        val_mro = v.__class__.mro()
+        for ( ancestor, specialized ) in specialized_postprocess:
+            if ancestor in val_mro:
+                return specialized(v)
+        raise ""
+    except:
+        print "Cannot accept this as a value"
+        return None
+
+def __eval_function(f):
+    def aux(args, kargs):
+        try:
+            return ( True, __post_process( f(*args, **kargs) ) )
+        except Exception, e:
+            return ( False, __post_process(e) )
+    return aux
+
+def __compare_behavior(f, past_records):
+    for (args, kargs, result) in past_records:
+        assert __eval_function(f)(args,kargs) == result
+
+def __record_behavior(f, past_records, args, kargs):
+    registered_args = [ (a, k) for (a, k, r) in past_records ]
+    if (args, kargs) not  in registered_args:
+        res = __eval_function(f)(args, kargs)
+        past_records.append( (args, kargs, res) )
+
+def __open_frz():
+    try:
+        with open(".frz", "r") as __open_frz:
+            return cPickle.load(__open_frz)
+    except:
+        return defaultdict(list)
+
+def __save_frz(past_records):
+    with open(".frz", "w") as __open_frz:
+        return cPickle.dump(past_records, __open_frz)
+
+
+def freeze_behavior(*args, **kvargs):
+    def freeze_decorator(f):
+        past_records = __open_frz()
+        f_id = __id_from_function(f)
+        f_past_records = past_records[f_id]
+        __compare_behavior(f, f_past_records)
+        __record_behavior(f, f_past_records, args, kvargs)
+        __save_frz(past_records)
+        return f
+    return freeze_decorator
+

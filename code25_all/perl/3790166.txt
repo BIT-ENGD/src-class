@@ -1,0 +1,212 @@
+[12,80],[34,60],[34,9000],[76,743],...
+
+[38,70]
+2
+max_length
+9999
+[8541,6]
+[8541,9999]
+[1,6]
+use strict;
+use warnings;
+
+my $max_length = 200;
+my @ranges     = (
+    { START => 10,   END => 100 },
+    { START => 30,   END => 90 },
+    { START => 50, END => 80 },
+    { START => 180,  END => 30 }
+);
+
+sub n_covering_ranges($) {
+    my ($query_h) = shift;
+    my $start     = $query_h->{START};
+    my $end       = $query_h->{END};
+    my $count     = 0;
+    if ( $end >= $start ) {
+
+        # query range is normal
+        foreach my $range_h (@ranges) {
+            if (( $start >= $range_h->{START} and $end <= $range_h->{END} )
+                or (    $range_h->{END} <= $range_h->{START} and  $range_h->{START} <= $end )
+                or ( $range_h->{END} <= $range_h->{START} and  $range_h->{END} >= $end)
+                )
+            {
+                $count++;
+            }
+        }
+
+    }
+
+    else {
+
+        # query range is hanging over edge
+        # only other hanging over edges can contain it
+        foreach my $range_h (@ranges) {
+            if ( $start >= $range_h->{START} and $end <= $range_h->{END} ) {
+                $count++;
+            }
+        }
+
+    }
+
+    return $count;
+}
+
+print n_covering_ranges( { START => 1, END => 10 } ), "\n";
+print n_covering_ranges( { START => 30, END => 70 } ), "\n";
+
+if
+use strict;
+use warnings;
+
+package RangeMap;
+
+sub new {
+    my $class      = shift;
+    my $max_length = shift;
+    my @lookup;
+    for (@_) {
+        my ( $start, $end ) = @$_;
+        my @idx
+            = $end >= $start
+            ? $start .. $end
+            : ( $start .. $max_length, 0 .. $end );
+        for my $i (@idx) { $lookup[$i] .= pack 'L', $end }
+    }
+    bless \@lookup, $class;
+}
+
+sub num_ranges_containing {
+    my $self = shift;
+    my ( $start, $end ) = @_;
+    return 0 unless defined $self->[$start];
+    return 0 + grep { $end <= $_ } unpack 'L*', $self->[$start];
+}
+
+1;
+
+use strict;
+use warnings;
+
+package cjm;
+
+sub new {
+    my $class      = shift;
+    my $max_length = shift;
+
+    my $self = {};
+    bless $self, $class;
+
+    $self->{MAX_LENGTH} = $max_length;
+
+    my @normal  = ();
+    my @wrapped = ();
+
+    foreach my $r (@_) {
+        if ( $r->[0] <= $r->[1] ) {
+            push @normal, $r;
+        }
+        else {
+            push @wrapped, $r;
+        }
+    }
+
+    $self->{NORMAL}  = \@normal;
+    $self->{WRAPPED} = \@wrapped;
+    return $self;
+}
+
+sub num_ranges_containing {
+    my $self = shift;
+    my ( $start, $end ) = @_;
+
+    if ( $start <= $end ) {
+
+        # This is a normal range
+        return ( grep { $_->[0] <= $start and $_->[1] >= $end }
+                @{ $self->{NORMAL} } )
+            + ( grep { $end <= $_->[1] or $_->[0] <= $start }
+                @{ $self->{WRAPPED} } );
+    }
+    else {
+
+        # This is a wrapped range
+        return ( grep { $_->[0] <= $start and $_->[1] >= $end }
+                @{ $self->{WRAPPED} } )
+
+            # This part should probably be calculated only once:
+            + ( grep { $_->[0] == 1 and $_->[1] == $self->{MAX_LENGTH} }
+                @{ $self->{NORMAL} } );
+    }
+}
+
+1;
+
+$max_length=3150000
+cjm creation done in 0.0082 seconds
+cjm querying done in 21.209857 seconds
+RangeMap creation done in 45.840982 seconds
+RangeMap querying done in 0.04941 seconds
+
+nstore
+retrieve
+nstore
+RangeMap
+RangeMap
+RangeMap
+$max_lenght=10
+[6,2]
+[7,8]
+1
+0
+use strict;
+use warnings;
+
+package FastRanges;
+
+sub new($$$) {
+    my $class      = shift;
+    my $max_length = shift;
+    my $ranges_a   = shift;
+    my @lookup;
+    for ( @{$ranges_a} ) {
+        my ( $start, $end ) = @$_;
+        my @idx
+            = $end >= $start
+            ? $start .. $end
+            : ( $start .. $max_length, 1 .. $end );
+        for my $i (@idx) { $lookup[$i] .= pack 'L', $end }
+    }
+    bless \@lookup, $class;
+}
+
+sub num_ranges_containing($$$) {
+    my $self = shift;
+    my ( $start, $end ) = @_;    # query range coordinates
+
+    return 0
+        unless ( defined $self->[$start] )
+        ;    # no ranges overlap the start position of the query
+
+    if ( $end >= $start ) {
+
+        # query range is simple
+        # any inverted range in {LOOKUP}[$start] must contain it,
+        # and so does any simple range which ends at or after $end
+        return 0 + grep { $_ < $start or $end <= $_ } unpack 'L*',
+            $self->[$start];
+    }
+    else {
+
+        # query range is inverted
+        # only inverted ranges in {LOOKUP}[$start] which also end
+        # at of after $end contain it. simple ranges can't contain
+        # the query range
+        return 0 + grep { $_ < $start and $end <= $_ } unpack 'L*',
+            $self->[$start];
+    }
+}
+
+1;
+

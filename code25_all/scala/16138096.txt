@@ -1,0 +1,39 @@
+import java.io.{ File, InputStream, BufferedInputStream, FileInputStream }
+import scalaz._, Scalaz._, effect._, iteratee.{ Iteratee => I, _ }
+import std.list._
+
+object IterateeIOExample {
+  type ErrorOr[+A] = EitherT[IO, Throwable, A]
+
+  def openStream(f: File) = IO(new BufferedInputStream(new FileInputStream(f)))
+  def readByte(s: InputStream) = IO(Some(s.read()).filter(_ != -1))
+  def closeStream(s: InputStream) = IO(s.close())
+
+  def tryIO[A, B](action: IO[B]) = I.iterateeT[A, ErrorOr, B] {
+    EitherT(action.catchLeft).map(r => I.sdone(r, I.emptyInput))
+  }
+
+  def enumBuffered(r: => BufferedInputStream) = new EnumeratorT[Int, ErrorOr] {
+    lazy val reader = r
+    def apply[A] = (s: StepT[Int, ErrorOr, A]) => s.mapCont(k =>
+      tryIO(readByte(reader)) flatMap {
+        case None => s.pointI
+        case Some(byte) => k(I.elInput(byte)) >>== apply[A]
+      })
+  }
+
+  def enumFile(f: File) = new EnumeratorT[Int, ErrorOr] {
+    def apply[A] = (s: StepT[Int, ErrorOr, A]) =>
+      tryIO(openStream(f)).flatMap(stream => I.iterateeT[Int, ErrorOr, A](
+        EitherT(
+          enumBuffered(stream).apply(s).value.run.ensuring(closeStream(stream)))))
+  }
+
+  def main(args: Array[String]) {
+    val action = (
+      I.consume[Int, ErrorOr, List] &=
+      enumFile(new File(args(0)))).run.run
+    println(action.unsafePerformIO())
+  }
+}
+
