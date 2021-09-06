@@ -80,8 +80,8 @@ class OBSCCPrepro(object):
     def ProcessSrcFile(self,src,dst,typename):
         with open(src,encoding="utf-8") as f:
             srccontent=f.read()
-            srccontent=self.StripString(srccontent,typename)
-            srccontent=self.StripComment(srccontent,typename)
+            #srccontent=self.StripString(srccontent,typename)
+            #srccontent=self.StripComment(srccontent,typename)
             
             with open(dst,mode="w",encoding="utf-8") as nf:
                 alllines=self.GetKeyWordSerial(srccontent)

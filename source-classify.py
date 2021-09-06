@@ -11,6 +11,7 @@ import copy
 from torchsummaryX import summary as summaryx
 import onnx 
 import pickle as pk
+import torch.nn.functional as F
 DATASETDIR="data_language_clean"
 BATCH_SIZE=256
 EMBED_DIM=128
@@ -18,16 +19,17 @@ CLASS_NUM=0
 FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
-EPOCH_NUM=200
+EPOCH_NUM=100 #200
 MAX_TOKEN=400
 SEQUENCE_LEN=MAX_TOKEN
 FILTER_NUM=128
-DROPOUT=0.5
+DROPOUT=0.25
 MODEL_NAME="src_cat.pth"
 ONNX_MODEL_PATH="src_cat.onnx"
 
 DATASET_FILE="ds.dat"
 VOCAB_FILE="vocab.dat"
+CAT_FILE="allcat.dat"
 VOCAB.add("")
 
 def strip_chinese(strs):
@@ -71,7 +73,7 @@ class BuildSrcData(Dataset):
         
         self.y_data=torch.tensor(self.y_data)
 
-        with open("allcat.dat","wb") as fl:
+        with open(CAT_FILE,"wb") as fl:
             pk.dump(self.allcat,fl)
   
 
@@ -152,6 +154,8 @@ class TextCNN(nn.Module):
                     nn.ReLU(),
                     nn.MaxPool2d((SEQUENCE_LEN-1,1)),
         )
+
+
         self.dropout = nn.Dropout(DROPOUT)
         self.fc = nn.Linear(out_channel, num_classs)
     
@@ -187,9 +191,9 @@ class TextCNNEx(nn.Module):
         self.W = nn.Embedding(vocab_size, embedding_dim=Embedding_size)
         out_channel = FILTER_NUM
         self.conv1 = nn.Sequential(
-                    nn.Conv2d(1, out_channel, (2, Embedding_size)),#卷积核大小为2*Embedding_size
+                    nn.Conv2d(1, out_channel, (2, Embedding_size)),#卷积核大小为2*Embedding_size　，输入为  [batch,seq_len,embedding]　　，　(Ｗ－Ｆ+２p)/S +1　　，　纵向：　(４００－２－０)/1+1=399　　　，输出 3９９＊１
                     nn.ReLU(),
-                    nn.MaxPool2d((SEQUENCE_LEN-1,1)),
+                    nn.MaxPool2d((SEQUENCE_LEN-1,1)), #  (input +2*p-dilation*(kernelsize-1) -1 )/ stride +1　。 输出为  1*1
         )
         self.conv2 = nn.Sequential(
                     nn.Conv2d(out_channel, out_channel, (2, Embedding_size)),#卷积核大小为2*Embedding_size
@@ -209,12 +213,44 @@ class TextCNNEx(nn.Module):
         flatten = conved.view(batch_size, -1)# [batch_size, output_channel*1*1]
         output = self.fc(flatten)
         return output
+
+class textCNN_M(nn.Module):
+    def __init__(self, vocab_size,Embedding_size,num_classs):
+        super(textCNN_M, self).__init__()
+             
+        Vocab = vocab_size ## 已知词的数量
+        Dim = Embedding_size##每个词向量长度
+        Cla = num_classs##类别数
+        Ci = 1 ##输入的channel数
+        Knum = FILTER_NUM ## 每种卷积核的数量
+        Ks = [2,3,4] ## 卷积核list，形如[2,3,4]
+        
+        self.embed = nn.Embedding(Vocab,Dim) ## 词向量，这里直接随机
+        
+        self.convs = nn.ModuleList([nn.Conv2d(Ci,Knum,(K,Dim)) for K in Ks]) ## 卷积层
+        self.dropout = nn.Dropout(DROPOUT) 
+        self.fc = nn.Linear(len(Ks)*Knum,Cla) ##全连接层
+        
+    def forward(self,x):
+        x = self.embed(x) #(N,W,D)
+        
+        x = x.unsqueeze(1) #(N,Ci,W,D)
+        x = [F.relu(conv(x)).squeeze(3) for conv in self.convs] # len(Ks)*(N,Knum,W)
+        x = [F.max_pool1d(line,int(line.size(2))).squeeze(2) for line in x]  # len(Ks)*(N,Knum)
+        
+        x = torch.cat(x,1) #(N,Knum*len(Ks))
+        
+        x = self.dropout(x)
+        logit = self.fc(x)
+        return logit
+
+
     
 def do_train(ds_src,WORDLIST): 
     VOCAB_SIZE=len(WORDLIST) # 
     CLASS_NUM =  ds_src.getnumclass()
     device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
-    model = TextCNNEx(VOCAB_SIZE,EMBED_DIM,CLASS_NUM).to(device)
+    model = textCNN_M(VOCAB_SIZE,EMBED_DIM,CLASS_NUM).to(device) #TextCNNEx(VOCAB_SIZE,EMBED_DIM,CLASS_NUM).to(device)
     print(model)
     criterion   = nn.CrossEntropyLoss().to(device)
     optimizer   = optim.Adam(model.parameters(),lr=5e-4)
@@ -277,6 +313,13 @@ def do_train(ds_src,WORDLIST):
 
 
 if __name__ == "__main__":
+
+    RETRAIN=True
+
+    if RETRAIN :
+        os.remove(DATASET_FILE)
+        os.remove(VOCAB_FILE)
+        os.remove(CAT_FILE)
 
     if os.path.exists(DATASET_FILE):
         with open(DATASET_FILE,"rb") as f:

@@ -36,7 +36,10 @@ def DoSrcClass(srcdir,ort_session,WORDLIST):
     if not os.path.exists(srcdir):
         return RESULT
 
+
     dstfile="test.txt"
+    if os.path.exists(dstfile):
+        os.remove(dstfile)
     for file in os.listdir(srcdir):
         srcfile=srcdir+os.sep+file
         preporoObj.ProcessSrcFile(srcfile,dstfile,"")
