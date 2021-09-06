@@ -3,9 +3,17 @@ from  pathlib import Path
 import shutil
 import re
 import os
+import random
+import math 
 
 
+TRAINDIR="train"
+VALIDDIR="valid"
+TESTDIR="test"
 
+TRAINRATE=0.6
+VALIDRATE=0.2
+TESTRATE=0.2
 
 class OBSCCPrepro(object):
     def __init__(self,srcdatapath,dstdatapath,processdir=True):
@@ -28,6 +36,12 @@ class OBSCCPrepro(object):
         if Path(dstdatapath).exists():
             shutil.rmtree(dstdatapath)
         Path(dstdatapath).mkdir()
+        self.train_dir=Path(dstdatapath)/TRAINDIR
+        Path(self.train_dir).mkdir()
+        self.valid_dir=Path(dstdatapath)/VALIDDIR
+        Path(self.valid_dir).mkdir()
+        self.test_dir=Path(dstdatapath)/TESTDIR
+        Path(self.test_dir).mkdir()
 
 
 
@@ -90,25 +104,49 @@ class OBSCCPrepro(object):
         
 
     def DoPreprocess(self):
-        for dir in self.SOURCETYPE:
-            newdir= Path(self.dstdatapath)/dir
-            newdir.mkdir()
-            for oldfile in (Path(self.srcdatapath)/dir).iterdir():
-            
-                newfile=Path(self.dstdatapath)/dir/oldfile.name
 
+        for dir in self.SOURCETYPE:
+               
+            filelist=[]
+            for oldfile in (Path(self.srcdatapath)/dir).iterdir():
+
+                filelist.append(oldfile.name)
+            
+            
+            random.shuffle(filelist)
+            total       = len(filelist)
+            trainnum    = math.ceil(total*TRAINRATE)
+            validnum    = math.ceil(total*VALIDRATE)
+            testnum     = total-trainnum - validnum
+            
+            train = filelist[:trainnum]
+            valid = filelist[trainnum:trainnum+validnum]
+            test  = filelist[trainnum+validnum:]
+
+            
+            Path(Path(self.train_dir)/dir).mkdir()
+            for file in train:
+                oldfile=Path(Path(self.srcdatapath)/dir)/file
+                newfile=Path(self.train_dir)/dir/file
                 self.ProcessSrcFile(oldfile,newfile,dir)
 
+            Path(Path(self.valid_dir)/dir).mkdir()
+            for file in valid:
+                oldfile=Path(Path(self.srcdatapath)/dir)/file
+                newfile=Path(self.valid_dir)/dir/file
+                self.ProcessSrcFile(oldfile,newfile,dir)        
 
+            Path(Path(self.test_dir)/dir).mkdir()
+            for file in test:
+                oldfile=Path(Path(self.srcdatapath)/dir)/file
+                newfile=Path(self.test_dir)/dir/file
+                self.ProcessSrcFile(oldfile,newfile,dir)   
 
 if __name__ == "__main__" :
-    DATASETDIR="data_language_all"
-    DATASETCLEAR=DATASETDIR.replace("all","clean")
-    DataObj=OBSCCPrepro(DATASETDIR,DATASETCLEAR)
-    DataObj.DoPreprocess()
 
-    DATASETDIR="code25_all"
-    DATASETCLEAR=DATASETDIR.replace("all","clean")
+    DATADIRLIST=["data_language_all"] #"code25_all"]
+    for DIR in DATADIRLIST:
+        targetdir=DIR.replace("all","clean")
+        DataObj=OBSCCPrepro(DIR,targetdir)
+        DataObj.DoPreprocess()
 
-    DataObj2=OBSCCPrepro(DATASETDIR,DATASETCLEAR)
-    DataObj2.DoPreprocess()
