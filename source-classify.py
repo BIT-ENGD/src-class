@@ -12,7 +12,10 @@ from torchsummaryX import summary as summaryx
 import onnx 
 import pickle as pk
 import torch.nn.functional as F
-DATASETDIR="data_language_clean"
+from  znprompt  import znprompt as zp
+DATASETDIR="data_language_clean/"
+TRAIN_DIR="train"
+VALID_DIR="valid"
 BATCH_SIZE=256
 EMBED_DIM=128
 CLASS_NUM=0
@@ -20,7 +23,7 @@ FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
 EPOCH_NUM=100 #200
-MAX_TOKEN=400
+MAX_TOKEN=1000
 SEQUENCE_LEN=MAX_TOKEN
 FILTER_NUM=128
 DROPOUT=0.25
@@ -30,7 +33,8 @@ ONNX_MODEL_PATH="src_cat.onnx"
 DATASET_FILE="ds.dat"
 VOCAB_FILE="vocab.dat"
 CAT_FILE="allcat.dat"
-VOCAB.add("")
+MIN_WORD_FREQUENCE=2 # 3 is good.
+
 
 def strip_chinese(strs):
     if strs.find("STRSTUFF") > -1 and len(strs)>8:
@@ -46,6 +50,8 @@ class BuildSrcData(Dataset):
         self.allcat={}
         self.x_data=[]
         self.y_data=[]
+        self.vocab_dict={}
+        tmp_vocab=set()
         for id,dir in enumerate(Path(DataDir).iterdir()):
             self.allcat[str(dir).split(os.sep)[-1]]=id
          
@@ -58,9 +64,15 @@ class BuildSrcData(Dataset):
 
                     newlines=[token   for token in lines if token != '' and token !=' ']
        
-                    VOCAB.update(newlines)
+                    #tmp_vocab.update(newlines)
 
-                 
+                             
+                    for item in newlines:
+                        if item in self.vocab_dict:
+                            self.vocab_dict[item]+=1
+                        else:
+                            self.vocab_dict[item]=1
+
                     nLines=len(newlines)
                     if  nLines <MAX_TOKEN :
                         newlines.extend([""]*(MAX_TOKEN-nLines))
@@ -76,6 +88,16 @@ class BuildSrcData(Dataset):
         with open(CAT_FILE,"wb") as fl:
             pk.dump(self.allcat,fl)
   
+
+        new_vocab={}
+        index=1
+        for item in self.vocab_dict:
+            if self.vocab_dict[item] >MIN_WORD_FREQUENCE:
+                new_vocab[item]=index
+                index+=1
+
+        VOCAB.update(new_vocab.keys()) # 赋值
+        VOCAB.add("") #添加空字符
 
     def __len__(self):
         return len(self.y_data)
@@ -275,7 +297,7 @@ def do_train(ds_src,WORDLIST):
             line=[]
             new_batch_x=[]
             for item in batch_x: 
-                line=[ WORDLIST[key] for key in item]
+                line=[ WORDLIST[key] if key  in WORDLIST else 0 for key in item]
                 new_batch_x.append(line)
 
             batch_x=torch.tensor(new_batch_x)
@@ -295,7 +317,7 @@ def do_train(ds_src,WORDLIST):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        
+   
     
   
     if min_loss <10:
@@ -308,24 +330,25 @@ def do_train(ds_src,WORDLIST):
         newclass=torch.argmax(new_pred)
         print("ok,newclass:",newclass)
 
-
-    
-
+  # 
 
 if __name__ == "__main__":
 
     RETRAIN=True
 
     if RETRAIN :
-        os.remove(DATASET_FILE)
-        os.remove(VOCAB_FILE)
-        os.remove(CAT_FILE)
+        if os.path.exists(DATASET_FILE):
+            os.remove(DATASET_FILE)
+        if os.path.exists(VOCAB_FILE):
+            os.remove(VOCAB_FILE)
+        if os.path.exists(CAT_FILE):
+            os.remove(CAT_FILE)
 
     if os.path.exists(DATASET_FILE):
         with open(DATASET_FILE,"rb") as f:
            ds_src=pk.load(f)
     else:
-        ds_src=BuildSrcData(DATASETDIR,VOCAB)
+        ds_src=BuildSrcData(DATASETDIR+os.sep+TRAIN_DIR,VOCAB)
         with open(DATASET_FILE,"wb") as f:
            pk.dump(ds_src,f)
   
@@ -337,4 +360,13 @@ if __name__ == "__main__":
         with open("vocab.dat","wb") as fl:
             pk.dump(WORDLIST,fl)
   
-    do_train(ds_src,WORDLIST)
+    zpobj=zp()
+
+    try:
+        do_train(ds_src,WORDLIST)
+    except:
+      zpobj.error()
+    else:
+       zpobj.finish()
+
+#

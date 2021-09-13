@@ -87,3 +87,7 @@ test = [32, 39, 45, 33, 34, 35, 36, 37, 38, 40, 41, 42, 44, 46, 47, 58, 59, 63, 
 
 for item in test:
     print(chr(item))
+
+
+import winsound
+winsound.Beep(600,1000)

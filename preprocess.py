@@ -11,9 +11,9 @@ TRAINDIR="train"
 VALIDDIR="valid"
 TESTDIR="test"
 
-TRAINRATE=0.6
-VALIDRATE=0.2
-TESTRATE=0.2
+TRAINRATE=1.0
+VALIDRATE=0
+TESTRATE=0
 
 class OBSCCPrepro(object):
     def __init__(self,srcdatapath,dstdatapath,processdir=True):
@@ -94,7 +94,7 @@ class OBSCCPrepro(object):
     def ProcessSrcFile(self,src,dst,typename):
         with open(src,encoding="utf-8") as f:
             srccontent=f.read()
-            #srccontent=self.StripString(srccontent,typename)
+            srccontent=self.StripString(srccontent,typename)
             #srccontent=self.StripComment(srccontent,typename)
             
             with open(dst,mode="w",encoding="utf-8") as nf:

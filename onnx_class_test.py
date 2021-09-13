@@ -6,7 +6,7 @@ from preprocess import OBSCCPrepro
 import os
 ONNX_MODEL_PATH="src_cat.onnx"
 
-MAX_TOKEN=400
+MAX_TOKEN=1000
 
 onnx_model=onnx.load(ONNX_MODEL_PATH)
 onnx.checker.check_model(onnx_model)
@@ -57,9 +57,9 @@ def DoSrcClass(srcdir,ort_session,WORDLIST):
                         else:
                             lines=lines[:MAX_TOKEN]
 
-                        newlines=[ WORDLIST[key] if  key in WORDLIST.keys() else 0 for key in lines ]
+                        newlines=[ WORDLIST[key] if  key in WORDLIST else 0 for key in lines ]
 
-                        RESULT[file]=     DoInference(newlines,ort_session)       
+                        RESULT[file]=  DoInference(newlines,ort_session)       
     
     return RESULT
               
