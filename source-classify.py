@@ -33,7 +33,7 @@ ONNX_MODEL_PATH="src_cat.onnx"
 DATASET_FILE="ds.dat"
 VOCAB_FILE="vocab.dat"
 CAT_FILE="allcat.dat"
-MIN_WORD_FREQUENCE=2 # 3 is good.
+MIN_WORD_FREQUENCE=0 # 3 is good.
 
 
 def strip_chinese(strs):
