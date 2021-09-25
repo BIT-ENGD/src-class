@@ -1,0 +1,176 @@
+ABOUT
+This is a portable, performant implementation of BLAKE2b using optimized block compression functions. The compression functions are tree/parallel mode compatible, although only serial mode (singled threaded, the common use-case) is currently implemented.
+BLAKE2b is a 512 bit hash, i.e. the hashes produced are 64 bytes long.
+All assembler is PIC safe.
+INITIALIZING
+The library can be initialized, i.e. the most optimized implementation that passes internal tests will be automatically selected, in two ways, neither of which are thread safe:
+
+
+int blake2b_startup(void); explicitly initializes the library, and returns a non-zero value if no suitable implementation is found that passes internal tests
+
+
+Do nothing and use the library like normal. It will auto-initialize itself when needed, and hard exit if no suitable implementation is found.
+
+
+CALLING
+Common assumptions:
+
+When using the incremental functions, the blake2b_state struct is assumed to be word aligned, if necessary, for the system in use.
+
+ONE SHOT
+in is assumed to be word aligned. Incremental support has no alignment requirements, but will obviously slow down if non word-aligned pointers are passed.
+void blake2b(unsigned char *hash, const unsigned char *in, const size_t inlen);
+Hashes inlen bytes from in and stores the result in hash.
+void blake2b_keyed(unsigned char *hash, const unsigned char *in, const size_t inlen, const unsigned char *key, size_t keylen);
+Hashes inlen bytes from in in keyed mode using key, and and stores the result in hash. keylen must be <= 64.
+INCREMENTAL
+Incremental in buffers are not required to be word aligned. Unaligned buffers will require copying to aligned buffers however, which will obviously incur a speed penalty.
+void blake2b_init(blake2b_state *S)
+Initializes S to the default state.
+void blake2b_keyed_init(blake2b_state *S, const unsigned char *key, size_t keylen)
+Initializes S in keyed mode with key. keylen must be <= 64.
+void blake2b_update(blake2b_state *S, const unsigned char *in, size_t inlen)
+Updates the state S with inlen bytes from in in.
+void blake2b_final(blake2b_state *S, unsigned char *hash)
+Performs the final pass on state S and stores the result in to hash.
+Examples
+HASHING DATA WITH ONE CALL
+size_t bytes = ...;
+unsigned char data[...] = {...};
+unsigned char hash[64];
+
+blake2b(hash, data, bytes);
+
+HASHING INCREMENTALLY
+Hashing incrementally, i.e. with multiple calls to update the hash state. 
+size_t bytes = ...;
+unsigned char data[...] = {...};
+unsigned char hash[64];
+blake2b_state state;
+size_t i;
+
+blake2b_init(&state);
+/* add one byte at a time, extremely inefficient */
+for (i = 0; i < bytes; i++) {
+    blake2b_update(&state, data + i, 1);
+}
+blake2b_final(&state, hash);
+
+VERSIONS
+Reference
+There are 5! reference versions, specialized for increasingly capable systems from 8 bit only operations (with the world's most inefficient portable carries, you really don't want to use this unless nothing else runs) to unrolled 64 bit.
+
+Generic 8-bit: blake2b_ref
+Generic 16-bit: blake2b_ref
+Generic 32-bit: blake2b_ref
+Generic 32-bit with 64-bit compiler support: blake2b_ref
+Generic 64-bit: blake2b_ref
+
+x86 (32 bit)
+
+386 compatible: blake2b_x86
+SSE2: blake2b_sse2
+SSSE3: blake2b_ssse3
+AVX: blake2b_avx
+XOP: blake2b_xop
+AVX2: blake2b_avx2
+
+The 386 compatible version is more size optimized than speed optimized. Fully unrolled, it is some 9000 instructions which is just ludicrous, and around 19cpb instead of 22cpb. 22cpb is fast enough for optimized Keccak[c=1024], so even the most performance sensitive users running on a Pentium 2 should be fine with it.
+x86-64
+
+x86-64 compatible: blake2b_x86
+AVX: blake2b_avx
+XOP: blake2b_xop
+AVX2: blake2b_avx2
+
+From what I've seen, the x86-64 compatible version is only slower than SIMD on AVX+ systems, so there is no need to include SSE2/SSSE3/SSE4.1.
+ARM
+
+ARMv6: blake2b_armv6
+NEON: blake2b_avx
+
+The ARMv6 version is only intended to be small and not too horrible. It could be a little faster with a good compiler (not gcc apparently), but I can't see it increasing too much. 
+BUILDING
+See asm-opt#configuring for full configure options.
+If you would like to use Yasm with a gcc-compatible compiler, pass --yasm to configure.
+The Visual Studio projects are generated assuming Yasm is available. You will need to have Yasm.exe somewhere in your path to build them.
+STATIC LIBRARY
+./configure
+make lib
+
+and make install-lib OR copy bin/blake2b.lib and app/include/blake2b.h to your desired location.
+SHARED LIBRARY
+./configure --pic
+make shared
+make install-shared
+
+UTILITIES / TESTING
+./configure
+make util
+bin/chacha-util [bench|fuzz]
+
+BENCHMARK / TESTING
+Benchmarking will implicitly test every available version. If any fail, it will exit with an error indicating which versions did not pass. Features tested include:
+
+One-shot hashing
+Incremental hashing
+Counter handling when the 32-bit low half overflows to the upper half
+
+FUZZING
+Fuzzing tests every available implementation for the current CPU against the reference implementation. Features tested are:
+
+Arbitrary starting state
+Arbitrary starting counter
+
+BENCHMARKS
+E5200
+Only the top 3 benchmarks per mode will be shown. Anything past 3 or so is pretty irrelevant to the current architecture.
+
+Implemenation1 byte576 bytes8192 bytes
+
+ x86-64      633   5.01   4.26 
+ SSSE3-32    850   6.51   5.25 
+ SSE2-32    1090   8.48   7.20 
+ x86-32     3070  25.62  22.75 
+
+
+i7-4770K
+Timings are with Turbo Boost and Hyperthreading, so their accuracy is not concrete. 
+For reference, OpenSSL and Crypto++ give ~0.8cpb for AES-128-CTR and ~1.1cpb for AES-256-CTR, ~7.4cpb for SHA-512, and ~4.5cpb for MD5.
+
+Implemenation1 byte576 bytes8192 bytes
+
+ AVX2-64     406   3.16   2.76 
+ AVX2-32     450   3.37   2.87 
+ AVX-64      460   3.58   3.11 
+ x86-64      499   4.04   3.54 
+ AVX-32      550   4.24   3.43 
+
+
+AMD FX-8120
+Timings are with Turbo on, so accuracy is not concrete. I'm not sure how to adjust for it either, 
+and depending on clock speed (3.1ghz vs 4.0ghz), OpenSSL gives between 0.73cpb - 0.94cpb for AES-128-CTR, 
+1.03cpb - 1.33cpb for AES-256-CTR, 10.96cpb - 14.1cpb for SHA-512, and 4.7cpb - 5.16cpb for MD5.
+
+Implemenation1 byte576 bytes8192 bytes
+
+ XOP-64     604   4.66   3.97 
+ XOP-32     723   5.28   4.38 
+ AVX-64     690   5.42   4.62 
+ AVX-32     748   5.76   4.84 
+ x86-64     735   5.93   5.16 
+ SSSE3-32   787   6.04   5.17 
+
+
+ZedBoard (Cortex-A9)
+I don't have access to the cycle counter yet, so cycles are computed by taking the microseconds times the clock speed (666mhz) divided by 1 million. For comparison, on long messages, OpenSSL 1.0.0e gives 52.3 cpb for aes-128-cbc (woof), ~123cpb for SHA-512 (really woof), and ~9.6cpb for MD5.
+
+Implemenation1 byte576 bytes8192 bytes
+
+ NEON-32            1750  12.66  10.60 
+ ARMv6-32           4910  41.26  36.87 
+ Generic3264-32     8833  70.53  60.00 
+
+
+LICENSE
+Public Domain, or MIT

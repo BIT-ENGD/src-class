@@ -11,8 +11,8 @@ TRAINDIR="train"
 VALIDDIR="valid"
 TESTDIR="test"
 
-TRAINRATE=1.0
-VALIDRATE=0
+TRAINRATE=0.95
+VALIDRATE=0.05
 TESTRATE=0
 
 class OBSCCPrepro(object):
@@ -141,6 +141,10 @@ class OBSCCPrepro(object):
                 oldfile=Path(Path(self.srcdatapath)/dir)/file
                 newfile=Path(self.test_dir)/dir/file
                 self.ProcessSrcFile(oldfile,newfile,dir)   
+
+
+
+
 
 if __name__ == "__main__" :
 

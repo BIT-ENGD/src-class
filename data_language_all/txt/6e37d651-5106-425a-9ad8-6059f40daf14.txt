@@ -1,0 +1,212 @@
+The client components can run on any computer, though this project was designed with the Raspberry Pi in mind, since it is compact, and efficient for a device mean to be mostly on all the time.
+The two binaries (PiScanner and WebApp) should be downloaded or built, then run, after connecting the barcode scanner usb device.
+The client datastore is a simple SQLite database file, consisting of the basic tables needed to keep track of individual user scans, product data contributions, and favorited items.
+Initial Raspberry Pi setup
+
+Create a bootable SD card using the Raspbian download, following the image installation guide for your OS
+
+Under linux, this involves using the dd command to copy the unzipped Raspbian img file onto a newly unmounted micro SD card:
+
+Eject the SD card, remove it from its adapter, and install the micro SD card in the Pi (push click to confirm). The Pi is now ready to be booted for the first time.
+
+Boot the Pi for the first time
+
+Connect with either an HDMI monitor and keyboard, or ssh terminal, if also using an ethernet cable to connect to a local network.
+The config screen will appear. 
+Choose the first option, Expand Filesystem, and hit enter. If successful, you will see this prompt:
+
+Hit enter again, to say Ok, then select Finish to exit raspi-config but do not reboot just yet.
+
+Configure the SD card for long-term use 
+
+Use tmpfs to have folders with frequent writes, such as /var/log, to write to RAM instead of the local disk (in this case, the SD card), which will prolong its life (we hope)
+Backup the original /etc/fstab file:
+sh
+pi@raspberrypi ~ $ sudo cp -ip /etc/fstab /etc/fstab.bak
+Then edit it to include these lines:
+tmpfs    /tmp    tmpfs    defaults,noatime,nosuid,size=100m    0 0
+tmpfs    /var/tmp    tmpfs    defaults,noatime,nosuid,size=30m    0 0
+tmpfs    /var/log    tmpfs    defaults,noatime,nosuid,mode=0755,size=100m    0 0
+tmpfs    /var/run    tmpfs    defaults,noatime,nosuid,mode=0755,size=2m    0 0
+tmpfs    /var/spool/mqueue    tmpfs    defaults,noatime,nosuid,mode=0700,gid=12,size=30m    0 0
+Do a diff and comfirm the changes:
+sh
+pi@raspberrypi ~ $ sudo diff /etc/fstab /etc/fstab.bak
+5,10d4
+< # tmpfs settings to minimize writes to the SD card
+< tmpfs    /tmp    tmpfs    defaults,noatime,nosuid,size=100m    0 0
+< tmpfs    /var/tmp    tmpfs    defaults,noatime,nosuid,size=30m    0 0
+< tmpfs    /var/log    tmpfs    defaults,noatime,nosuid,mode=0755,size=100m    0 0
+< tmpfs    /var/run    tmpfs    defaults,noatime,nosuid,mode=0755,size=2m    0 0
+< tmpfs    /var/spool/mqueue    tmpfs    defaults,noatime,nosuid,mode=0700,gid=12,size=30m    0 0
+Disable swap, which uses part of the SD card as volatile memory.
+While swap does increase the amount of RAM available, on this hardware it is unlikely to increase performance significantly, and it results in a high number of read and writes which has a negative effect on the SD card's long-term viability.
+sh
+pi@raspberrypi ~ $ sudo swapoff --all
+pi@raspberrypi ~ $ sudo dphys-swapfile swapoff --all
+To prevent swap from coming back after rebooting, remove the dphys-swapfile package entirely:
+sh
+pi@raspberrypi ~ $ sudo apt-get remove dphys-swapfile
+Reading package lists... Done
+Building dependency tree       
+Reading state information... Done
+The following packages will be REMOVED:
+  dphys-swapfile
+0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.
+After this operation, 69.6 kB disk space will be freed.
+Do you want to continue [Y/n]? y
+(Reading database ... 69052 files and directories currently installed.)
+Removing dphys-swapfile ...
+Stopping dphys-swapfile swapfile setup ..., done.
+Processing triggers for man-db ...
+Finally, reboot:
+sh
+pi@raspberrypi ~ $ sudo reboot
+sh
+Broadcast message from root@raspberrypi (pts/0) (Wed Aug 27 19:08:12 2014):
+The system is going down for reboot NOW!
+Configuration References
+  * Raspberry Pi: Extending the life of the SD card
+  * How can I extend the life of my SD card?
+
+Add External Storage
+
+Create a usb drive that will act as the container or target folder for the embedded database, so that it does not reside on the sd card running Raspbian.
+This will enable us to remove and replace external storage without affecting how the core services and applications run.
+Start by formatting the usb drive as an ext4 filesystem.
+Do this on any computer outside of the Raspberry Pi.
+On linux, plug in the usb stick and use fdisk -l to determine the device name, and partition number, in the form /dev/[DEVICEn].
+If there is no partition defined, a message similar to this one will appear:
+Disk /dev/[DEVICE] doesn't contain a valid partition table
+If this does occur, use fdisk to create one:
+fdisk /dev/[DEVICE]
+Use n to create a new partition, make it the p primary, say yes to all the defaults, and finally choose w to save the changes.
+To format the usb stick, unmount the stick with sudo umount /dev/[DEVICEn] where n represents the partition number.
+Use the sudo mkfs.ext4 /dev/[DEVICEn] command to do the actual formatting, where [DEVICEn] points to the usb drive, for example /dev/sdb1.
+Back on the Raspberry Pi, create a permanent mount point, as /data
+sh
+pi@raspberrypi ~ $ sudo mkdir /data
+Use fdisk -l to confirm where the usb device appears. If this is the first and only external usb storage device, it should be /dev/sda1 but double-check before mounting and updating the /etc/fstab file.
+Mount the external drive to /data with this command:
+sh
+pi@raspberrypi ~ $ sudo mount -t ext4 /dev/sda1 /data
+Next, update /etc/fstab so the usb drive is mounted to /data on boot.
+Add this line at the end of the file:
+sh
+/dev/sda1       /data        ext4   rw,exec,auto,users    0  1
+The difference between the original /etc/fstab file and the current one should be:
+sh
+pi@raspberrypi ~ $ sudo diff /etc/fstab /etc/fstab.bak
+5,12d4
+< # tmpfs settings to minimize writes to the SD card
+< tmpfs    /tmp    tmpfs    defaults,noatime,nosuid,size=100m    0 0
+< tmpfs    /var/tmp    tmpfs    defaults,noatime,nosuid,size=30m    0 0
+< tmpfs    /var/log    tmpfs    defaults,noatime,nosuid,mode=0755,size=100m    0 0
+< tmpfs    /var/run    tmpfs    defaults,noatime,nosuid,mode=0755,size=2m    0 0
+< tmpfs    /var/spool/mqueue    tmpfs    defaults,noatime,nosuid,mode=0700,gid=12,size=30m    0 0
+< # make sure our external usb drive is mounted on boot
+< /dev/sda1       /data        ext4   rw,exec,auto,users    0  1
+Reboot the Raspberry Pi, and confirm that the mount succeeded:
+sh
+pi@raspberrypi ~ $ ls -ltr /data
+total 16
+drwx------ 2 root root 16384 Aug 27 19:49 lost+found
+Change permission so that /data is accessible by the pi user, and confirm with a simple read and delete:
+sh
+pi@raspberrypi ~ $ sudo chown -R pi:pi /data
+pi@raspberrypi ~ $ ls -ltr /data
+total 16
+drwx------ 2 pi pi 16384 Aug 27 19:49 lost+found
+pi@raspberrypi ~ $ touch /data/x
+pi@raspberrypi ~ $ ls -ltr /data
+total 16
+drwx------ 2 pi pi 16384 Aug 27 19:49 lost+found
+-rw-r--r-- 1 pi pi     0 Aug 27 20:20 x
+pi@raspberrypi ~ $ rm /data/x
+pi@raspberrypi ~ $ ls -ltr /data
+total 16
+drwx------ 2 pi pi 16384 Aug 27 19:49 lost+found
+
+Optional: wifi setup
+
+If you purchased a usb wifi dongle, it is a good idea to configure it so that it will attach to the desired wifi access point on boot.
+Set your access point configuration using either the built-in graphical interface, edit /etc/network/interfaces manually, or install wicd-curses:
+sh
+pi@raspberrypi ~ $ sudo apt-get install wicd-curses
+pi@raspberrypi ~ $ sudo wicd-curses
+The <tt>wicd-curses</tt> tool presents an [easy to use menu](http://windowslinuxcommands.blogspot.com/2013/06/raspberry-pis-new-wifi-manager-friend.html) to set the access point and password.
+
+Installation
+Use either (a) the ARM binaries; or (b) build them from source directly on the Pi.
+(a) Install the client binaries
+Download the PiScanner and WebApp files and put them anywhere under the /home/pi folder.
+The simplest way is to use the scp command like this (replace 192.168.1.108 with the actual IP address of your Pi on your network):
+sh
+  scp PiScanner pi@192.168.1.108:/home/pi
+  scp WebApp pi@192.168.1.108:/home/pi
+(b) Install from source
+
+
+Install Go on the Raspberry Pi
+
+
+The client code uses these Go packages:
+
+
+sh
+go get github.com/mxk/go-sqlite/sqlite3
+go get github.com/go-sql-driver/mysql
+go get github.com/Banrai/PiScan
+The last package fetch (this repo) results in this warning, which can be ignored:
+sh
+package github.com/Banrai/PiScan
+imports github.com/Banrai/PiScan
+imports github.com/Banrai/PiScan: no buildable Go source files in /home/pi/go-workspace/src/github.com/Banrai/PiScan
+
+Build the client binaries:
+
+sh
+cd $GOPATH/src/github.com/Banrai/PiScan
+make clients
+This results in two binary files, PiScanner and WebApp in the client folder which you can leave there, or move to /home/pi and run from there.
+This guide will run them from where they are built, i.e., $GOPATH/src/github.com/Banrai/PiScan/client.
+Post Install Configuration
+
+Initialize the local client database
+
+Copy the PiScanDB.sqlite file from this repo into the /data folder on your Pi:
+sh
+  scp PiScanDB.sqlite pi@192.168.1.108:/data
+
+Copy the client template folders under the ui folder onto the Pi (these are required for the WebApp to run).
+
+The simplest way is to create a single tar archive, use scp to copy it, and then unpack it on the Pi:
+sh
+  cd client/ui; tar cf /tmp/webapp_templates.tar fonts images js css templates
+  scp /tmp/webapp_templates.tar pi@192.168.1.108:/home/pi
+On the Pi itself, unpack the file under its own folder, /home/pi/ui, or elsewhere:
+sh
+pi@raspberrypi ~ $ mkdir ui
+pi@raspberrypi ~ $ mv webapp_templates.tar ui
+pi@raspberrypi ~ $ cd ui
+pi@raspberrypi ~/ui $ tar xf webapp_templates.tar
+pi@raspberrypi ~/ui $ rm webapp_templates.tar
+
+PiScanner and WebApp startup scripts
+
+Copy the init.d scripts to the Pi:
+sh
+cd client/init.d
+scp webapp.sh pi@192.168.1.108:/tmp
+scp scanner.sh pi@192.168.1.108:/tmp
+Then, on the Pi, install them under /etc/init.d with the correct permissions.
+First, for the PiScanner application:
+sh
+pi@raspberrypi ~ $ sudo mv /tmp/scanner.sh /etc/init.d
+pi@raspberrypi ~ $ sudo chmod 755 /etc/init.d/scanner.sh
+pi@raspberrypi ~ $ sudo update-rc.d scanner.sh defaults
+Then the WebApp (client web server) application:
+sh
+pi@raspberrypi ~ $ sudo mv /tmp/webapp.sh /etc/init.d
+pi@raspberrypi ~ $ sudo chmod 755 /etc/init.d/webapp.sh
+pi@raspberrypi ~ $ sudo update-rc.d webapp.sh defaults

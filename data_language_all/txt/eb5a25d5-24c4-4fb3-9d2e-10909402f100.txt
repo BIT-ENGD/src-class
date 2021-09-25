@@ -1,0 +1,266 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ReactorKit is a framework for a reactive and unidirectional Swift application architecture. This repository introduces the basic concept of ReactorKit and describes how to build an application using ReactorKit.
+You may want to see the Examples section first if you'd like to see the actual code. Visit the API Reference for code-level documentation.
+Table of Contents
+
+Basic Concept
+Design Goal
+View
+Reactor
+
+
+Advanced
+Service
+Global States
+View Communication
+Testing
+
+
+Conventions
+Examples
+Dependencies
+Requirements
+Installation
+Contributing
+Community
+Who's using ReactorKit
+Changelog
+License
+
+Basic Concept
+ReactorKit is a combination of Flux and Reactive Programming. The user actions and the view states are delivered to each layer via observable streams. These streams are unidirectional: the view can only emit actions and the reactor can only emit states.
+
+
+
+Design Goal
+
+Testability: The first purpose of ReactorKit is to separate the business logic from a view. This can make the code testable. A reactor doesn't have any dependency to a view. Just test reactors and test view bindings. See Testing section for details.
+Start Small: ReactorKit doesn't require the whole application to follow a single architecture. ReactorKit can be adopted partially, for one or more specific views. You don't need to rewrite everything to use ReactorKit on your existing project.
+Less Typing: ReactorKit focuses on avoiding complicated code for a simple thing. ReactorKit requires less code compared to other architectures. Start simple and scale up.
+
+View
+A View displays data. A view controller and a cell are treated as a view. The view binds user inputs to the action stream and binds the view states to each UI component. There's no business logic in a view layer. A view just defines how to map the action stream and the state stream.
+To define a view, just have an existing class conform a protocol named View. Then your class will have a property named reactor automatically. This property is typically set outside of the view.
+
+When the reactor property has changed, bind(reactor:) gets called. Implement this method to define the bindings of an action stream and a state stream.
+
+Storyboard Support
+Use StoryboardView protocol if you're using a storyboard to initialize view controllers. Everything is same but the only difference is that the StoryboardView performs a binding after the view is loaded.
+``swift
+let viewController = MyViewController()
+viewController.reactor = MyViewReactor() // will not executesbind(reactor:)` immediately
+class MyViewController: UIViewController, StoryboardView {
+  func bind(reactor: MyViewReactor) {
+    // this is called after the view is loaded (viewDidLoad)
+  }
+}
+swift
+class ProfileViewReactor: Reactor {
+  // represent user actions
+  enum Action {
+    case refreshFollowingStatus(Int)
+    case follow(Int)
+  }
+// represent state changes
+  enum Mutation {
+    case setFollowing(Bool)
+  }
+// represents the current view state
+  struct State {
+    var isFollowing: Bool = false
+  }
+let initialState: State = State()
+}
+swift
+func mutate(action: Action) -> Observable {
+  switch action {
+  case let .refreshFollowingStatus(userID): // receive an action
+    return UserAPI.isFollowing(userID) // create an API stream
+      .map { (isFollowing: Bool) -> Mutation in
+        return Mutation.setFollowing(isFollowing) // convert to Mutation stream
+      }
+case let .follow(userID):
+    return UserAPI.follow()
+      .map { _ -> Mutation in
+        return Mutation.setFollowing(true)
+      }
+  }
+}
+swift
+protocol UserServiceType {
+  func user(id: Int) -> Observable
+  func follow(id: Int) -> Observable
+}
+final class UserService: Service, UserServiceType {
+  func user(id: Int) -> Observable {
+    return foo()
+  }
+func follow(id: Int) -> Observable {
+    return bar()
+  }
+}
+swift
+var currentUser: Variable // global state
+func transform(mutation: Observable) -> Observable {
+  return Observable.merge(mutation, currentUser.map(Mutation.setUser))
+}
+swift
+func testAction_refresh() {
+  // 1. prepare a stub reactor
+  let reactor = MyReactor()
+  reactor.stub.isEnabled = true
+// 2. prepare a view with a stub reactor
+  let view = MyView()
+  view.reactor = reactor
+// 3. send an user interaction programatically
+  view.refreshControl.sendActions(for: .valueChanged)
+// 4. assert actions
+  XCTAssertEqual(reactor.stub.actions.last, .refresh)
+}
+func testState_isLoading() {
+  // 1. prepare a stub reactor
+  let reactor = MyReactor()
+  reactor.stub.isEnabled = true
+// 2. prepare a view with a stub reactor
+  let view = MyView()
+  view.reactor = reactor
+// 3. set a stub state
+  reactor.stub.state.value = MyReactor.State(isLoading: true)
+// 4. assert view properties
+  XCTAssertEqual(view.activityIndicator.isAnimating, true)
+}
+```
+Reactor testing
+A reactor can be tested independently.
+swift
+func testIsBookmarked() {
+  let reactor = MyReactor()
+  reactor.action.onNext(.toggleBookmarked)
+  XCTAssertEqual(reactor.currentState.isBookmarked, true)
+  reactor.action.onNext(.toggleBookmarked)
+  XCTAssertEqual(reactor.currentState.isBookmarked, false)
+}
+Sometimes a state is changed more than one time for a single action. For example, a .refresh action sets state.isLoading to true at first and sets to false after the refreshing. In this case it's difficult to test state.isLoading with currentState so you might need to use RxTest or RxExpect. Here is an example test case using RxExpect:
+swift
+func testIsLoading() {
+  RxExpect("it should change isLoading") { test in
+    let reactor = test.retain(MyReactor())
+    test.input(reactor.action, [
+      next(100, .refresh) // send .refresh at 100 scheduler time
+    ])
+    test.assert(reactor.state.map { $0.isLoading })
+      .since(100) // values since 100 scheduler time
+      .assert([
+        true,  // just after .refresh
+        false, // after refreshing
+      ])
+  }
+}
+Conventions
+ReactorKit suggests some conventions to write clean and concise code.
+
+
+You must create a reactor outside of the view and pass it to the view's reactor property.
+Good
+swift
+let view = MyView()
+view.reactor = MyViewReactor(provider: provider)
+Bad
+swift
+class MyView: UIView, View {
+  init() {
+    self.reactor = MyViewReactor()
+  }
+}
+
+
+Examples
+
+Counter: The most simple and basic example of ReactorKit
+GitHub Search: A simple application which provides a GitHub repository search
+RxTodo: iOS Todo Application using ReactorKit
+Cleverbot: iOS Messaging Application using Cleverbot and ReactorKit
+Drrrible: Dribbble for iOS using ReactorKit (App Store)
+Passcode: Passcode for iOS RxSwift, ReactorKit and IGListKit example
+
+Dependencies
+
+RxSwift >= 4.0
+
+Requirements
+
+Swift 4
+iOS 8
+macOS 10.11
+tvOS 9.0
+watchOS 2.0
+
+Installation
+
+
+Using CocoaPods:
+ruby
+pod 'ReactorKit'
+
+
+Using Carthage:
+github "ReactorKit/ReactorKit"
+
+
+Contribution
+Any discussions and pull requests are welcomed 💖 
+
+
+To development:
+console
+$ TEST=1 swift package generate-xcodeproj
+
+
+To test:
+console
+$ swift test
+
+
+Community
+Join #reactorkit on RxSwift Slack!
+Who's using ReactorKit
+
+
+
+
+
+
+Are you using ReactorKit? Please let me know!
+
+Changelog
+
+2017-04-18
+Change the repository name to ReactorKit.
+
+
+2017-03-17
+Change the architecture name from RxMVVM to The Reactive Architecture.
+Every ViewModels are renamed to ViewReactors.
+
+
+
+License
+ReactorKit is under MIT license. See the LICENSE for more info.

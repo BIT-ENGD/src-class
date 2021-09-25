@@ -1,0 +1,71 @@
+Tangle
+The job of Tangle is to extract the code blocks from a Markdown string,
+discard those that are irrelevant, and concatenate the remainder as output. It's
+actually a little more complicated than that: a code block is part of a code
+section, either named or unnamed.  A named section is introduced as in the
+following example:
+
+
+where the name is a phrase or sentence prefixed by ⟨ and suffixed by ⟩ and
+followed by ≡.  Other sections may reference the named section, inserting it
+as if it were a parameterless macro.  A section may consist of multiple disjoint
+code blocks: the following would cause more_code("goes here") to be appended
+to the ⟨Example⟩ section:
+
+
+Blocks not introduced by a name are treated as part of the unnamed section
+string.  If there are no named blocks, the result of
+Tangle.new(&source).get("") is the simply concatenation of the code blocks
+labeled rust in source.
+Code sections may reference one another:
+
+
+would cause the bodies of the ⟨Moon is made of green cheese⟩ and ⟨Export
+cheese to Earth⟩ sections to be inserted in the ⟨Get cheese or panic⟩ section.
+Tests
+Let's test that:
+
+As we said above, a block might contain a reference to a code section:
+
+
+...where the named section might later be defined as:
+
+
+This example may seem like overkill — but suppose the named section was actually
+an implementation of Newton's method, intended for a machine with very slow
+floating point operations.
+Here's a test that named sections do indeed get expanded:
+rust
+⟨Other tests and helpers⟩≡
+    fn block_with(text: &str) -> String {
+        format!("fn that_uses() {{ {} }}\n", text)
+    }
+    #[test]
+    fn tangle_section_names() {
+        let body = "section.body";
+        let name = "⟨Section⟩";
+        let definition = format!("{}≡\n{}\n", name, body);
+        let source = rust(&block_with(name)) + "# Head\n" + &rust(&definition);
+        assert_eq!(clip(&tangle(&source)), clip(&block_with(body)));
+    }
+Implementation
+Tangle has three methods:
+- let tangle = Tangle::new(text) creates a new Tangle from a Markdown str.
+- tangle.get("") gets the final product, concatenating the expansions of all
+  the blocks in the unnamed section, while tangle.get(section_name) returns
+  the section with the given name.
+- The private method expand does the actual expansion.
+
+If a section name isn't found, we reference it in our error message.  If the
+empty string isn't found, there were no unnamed code blocks in the Markdown
+file.
+rust
+⟨Complain that `key` was not found⟩≡
+    if key.is_empty() {
+        bail!("No unnamed code blocks were found")
+    } else {
+        bail!("No section named ⟨{}⟩ was found", key)
+    }
+To add a block to the sections table, we must first check for a section
+definition (something of the form ⟨...⟩≡). If it exists, the key is the part
+between ⟨ and ⟩, with whitespace normalized.

@@ -1,0 +1,91 @@
+Exploratory Data Analysis with HIVE
+Author: Thanujhaa Sriee (email: thanujhaa.sriee@gmail.com)
+
+Aim of this project is to explore analytical queries using Hive over large datasets 
+
+Table of Contents
+
+About dataset
+Environment
+Extract the Data
+Hive Querying/Explored Questions
+
+
+About dataset
+MovieLens data set was compiled by the GroupLens Research Project at the University of Minnesota.
+This data set consists of
+100,000 ratings (1-5) from 943 users upon 1682 movies
+Each user has rated at least 20 movies
+Simple demographic info for the users (age, gender, occupation, zip)
+Dataset Link: https://grouplens.org/datasets/movielens/1m/
+
+Environment
+Cloudera Quickstart VM, Winscp, Putty, 
+
+Extract and Transform the Data
+
+
+Import the ml-1m file to clouderavm through winscp
+
+
+File is delimited by :: . Change the delimiters to comma formatted, (csv)
+sed -i 's/::/,/g' ml-1m/movies.dat
+sed -i 's/::/,/g' ml-1m/users.dat
+sed -i 's/::/,/g' ml-1m/ratings.dat
+
+
+
+Rename file format from .dat to .csv
+
+
+`
+
+Move the data into HDFS folder Movie_Lens,folder structure Movie_Lens/ml-1m
+
+
+
+Create movies.sql,ratings.sql,users.sql
+nano movies.sql
+nano ratings.sql
+nano users.sql
+
+Copy SQL code from the repo files movies.sql,ratings.sql,users.sql
+hive -f users.sql
+
+OR manually execute the commands in the hive shell as shown below
+
+Explored Questions
+Top 10 viewed movies
+SELECT movies.MovieID,movies.Title,COUNT(DISTINCT ratings.UserID) as views
+FROM movies JOIN ratings ON (movies.MovieID = ratings.MovieID)
+GROUP BY movies.MovieID, movies.Title
+ORDER BY views DESC
+LIMIT 10;
+
+Top 20 rated movies having at least 40 views
+SELECT movies.MovieID,movies.Title,AVG(ratings.Rating) as rtg,COUNT(DISTINCT ratings.UserID) as views
+FROM movies JOIN ratings ON (movies.MovieID = ratings.MovieID)
+GROUP BY movies.MovieID,movies.Title
+HAVING views >= 40
+ORDER BY rtg DESC
+LIMIT 20;
+</CODE>
+
+Fetch exploded view of movie id and genre
+CREATE view movie_by_genre as SELECT movieid, genre FROM 
+(
+    SELECT movieid, split(genres, '\\|') genres FROM movies
+) t LATERAL VIEW EXPLODE(genres) t as genre;
+
+Top 3 genre recommendations for each user
+CREATE TEMPORARY TABLE movie_by_user_genre as 
+SELECT t1.*, t2.rating,t2.userid 
+FROM movie_by_genre t1 LEFT JOIN ratings t2 
+ON t1.movieid = t2.movieid WHERE t2.rating >= 4;
+CREATE TEMPORARY TABLE user_by_genre_totalrating as 
+SELECT userid, genre, sum(rating) total_rating 
+FROM movie_by_user_genre GROUP BY userid, genre;
+SELECT * FROM 
+(SELECT userid, genre, ROW_NUMBER() OVER (PARTITION by userid ORDER BY total_rating desc) row_num 
+FROM user_by_genre_totalrating) t 
+WHERE t.row_num <= 3;

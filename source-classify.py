@@ -13,27 +13,41 @@ import onnx
 import pickle as pk
 import torch.nn.functional as F
 from  znprompt  import znprompt as zp
+from znconfusion  import ConfusionMatrix
 DATASETDIR="data_language_clean/"
 TRAIN_DIR="train"
 VALID_DIR="valid"
-BATCH_SIZE=256
+BATCH_SIZE=128
 EMBED_DIM=128
 CLASS_NUM=0
 FILE_NUM=0  # 0 means unlimited, otherwise limit to the specifical number.
 DTYPE=torch.FloatTensor
 VOCAB=set()
-EPOCH_NUM=100 #200
-MAX_TOKEN=1000
+EPOCH_NUM=120 #200
+MAX_TOKEN=1500
 SEQUENCE_LEN=MAX_TOKEN
-FILTER_NUM=128
-DROPOUT=0.25
+FILTER_NUM=256
+DROPOUT=0.50
 MODEL_NAME="src_cat.pth"
 ONNX_MODEL_PATH="src_cat.onnx"
 
 DATASET_FILE="ds.dat"
+DATASET_VALID_FILE="ds_valid.dat"
 VOCAB_FILE="vocab.dat"
 CAT_FILE="allcat.dat"
 MIN_WORD_FREQUENCE=0 # 3 is good.
+
+VALID_DIR="valid"
+
+
+def save_var(varname,filename):
+    with open(filename,"wb") as f:
+        pk.dump(varname,f)
+
+def load_var(filename):
+    with open(filename,"rb") as f:
+        return pk.load(f)
+
 
 
 def strip_chinese(strs):
@@ -41,7 +55,7 @@ def strip_chinese(strs):
         print(strs)
     for _char in strs:
         if '\u4e00' <= _char <= '\u9fa5':
-            return ""
+            return "CNTAGS"
     return strs
 
 class BuildSrcData(Dataset):
@@ -245,7 +259,7 @@ class textCNN_M(nn.Module):
         Cla = num_classs##类别数
         Ci = 1 ##输入的channel数
         Knum = FILTER_NUM ## 每种卷积核的数量
-        Ks = [2,3,4] ## 卷积核list，形如[2,3,4]
+        Ks = [2,3,5] ## 卷积核list，形如[2,3,4]
         
         self.embed = nn.Embedding(Vocab,Dim) ## 词向量，这里直接随机
         
@@ -332,11 +346,44 @@ def do_train(ds_src,WORDLIST):
 
   # 
 
+def do_valid(WORDLIST,ds_src):
+
+    allcat=load_var(CAT_FILE)
+    #print(allcat)
+    cmobj=ConfusionMatrix(len(allcat),list(allcat.keys()))
+    
+    model=torch.load(MODEL_NAME)
+    device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
+    loader      = DataLoader(dataset=ds_src,batch_size=BATCH_SIZE,shuffle=True,num_workers=0)
+    nCorrect=0
+    nTotal=0
+    for batch_x,batch_y in loader:
+        new_batch_x=[]
+        for item in batch_x: 
+            line=[ WORDLIST[key] if key  in WORDLIST else 0 for key in item]
+            new_batch_x.append(line)
+        batch_x=torch.tensor(new_batch_x)
+        batch_x=batch_x.transpose(1,0).to(device)
+        batch_y=batch_y.to(device)
+        pred=model(batch_x)
+      
+        new_pred=torch.argmax(pred,dim=1)
+        cmobj.update(new_pred,batch_y)
+        result=torch.ones_like(new_pred)*(new_pred==batch_y)
+        nCorrect+=torch.sum(result).item()
+        nTotal+=new_pred.shape[0]
+
+
+    cmobj.plot()
+
+    print("valid accuracy: {},total files: {},wrong file:{}".format(nCorrect/nTotal,nTotal,nTotal-nCorrect))
+
 if __name__ == "__main__":
 
-    RETRAIN=True
-
-    if RETRAIN :
+    REFRESHDATA=False
+    VALID_ONLY=True
+    zpobj=zp()
+    if REFRESHDATA :
         if os.path.exists(DATASET_FILE):
             os.remove(DATASET_FILE)
         if os.path.exists(VOCAB_FILE):
@@ -344,14 +391,16 @@ if __name__ == "__main__":
         if os.path.exists(CAT_FILE):
             os.remove(CAT_FILE)
 
-    if os.path.exists(DATASET_FILE):
-        with open(DATASET_FILE,"rb") as f:
-           ds_src=pk.load(f)
-    else:
-        ds_src=BuildSrcData(DATASETDIR+os.sep+TRAIN_DIR,VOCAB)
-        with open(DATASET_FILE,"wb") as f:
-           pk.dump(ds_src,f)
-  
+
+    if not VALID_ONLY:
+        if os.path.exists(DATASET_FILE):
+            with open(DATASET_FILE,"rb") as f:
+             ds_src=pk.load(f)
+        else:
+            ds_src=BuildSrcData(DATASETDIR+os.sep+TRAIN_DIR,VOCAB)
+            with open(DATASET_FILE,"wb") as f:
+             pk.dump(ds_src,f)
+
     if os.path.exists(VOCAB_FILE):
         with open(VOCAB_FILE,"rb") as f:
             WORDLIST=pk.load(f)
@@ -359,14 +408,25 @@ if __name__ == "__main__":
         WORDLIST={key:i for i,key in enumerate(VOCAB)}
         with open("vocab.dat","wb") as fl:
             pk.dump(WORDLIST,fl)
-  
-    zpobj=zp()
-
-    try:
-        do_train(ds_src,WORDLIST)
-    except:
-      zpobj.error()
+    if not VALID_ONLY:
+        try:
+            do_train(ds_src,WORDLIST)
+        except:
+            zpobj.error()
+        else:
+            zpobj.finish()
+    
+    if os.path.exists(DATASET_VALID_FILE):
+        with open(DATASET_VALID_FILE,"rb") as f:
+            ds_src=pk.load(f)
     else:
-       zpobj.finish()
+        ds_src=BuildSrcData(DATASETDIR+os.sep+VALID_DIR,VOCAB)
+        with open(DATASET_VALID_FILE,"wb") as f:
+            pk.dump(ds_src,f)
+    do_valid(WORDLIST,ds_src)
+
+  
+
+
 
 #

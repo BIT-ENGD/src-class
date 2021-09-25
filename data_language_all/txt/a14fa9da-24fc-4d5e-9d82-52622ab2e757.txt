@@ -1,0 +1,352 @@
+clio
+Copyright 2021 by mikel evins
+Introduction
+Clio is an interactive programming language.
+Clio’s immediate ancestors are Common Lisp and Dylan. Like Dylan, it’s intended to be a compact programming language with a minimum of gratuitous complexity—not a minimal language; just one that is conceptually compact and well organized, with a minimum of redundancy.
+Like Common Lisp, and unlike later Dylan, Clio is intended to remain clearly a Lisp. In particular, it’s intended to treat interactive programming as a core feature. Practically speaking, that means that Clio is intended to provide a full-featured repl with breakloops, inspectors, and other essential features of repl-driven programming. It also means that everything in the runtime is mutable at runtime (though some things are protected by switches to prevent unintended changes). 
+Like Common Lisp and Smalltalk, Clio is meant to be a language in which you write programs by redefining the system while it runs.
+And, yes, Clio's syntax is made of s-expressions—that is, lists of things enclosed in parentheses.
+A simpler surface
+Where Clio resembles Dylan more than Common Lisp is in its attempt to organize the whole of the language into a set of named protocols in order to present a simpler and easier-to-navigate surface language than Common Lisp’s. Clio is meant to provide most of the power of Common Lisp in a language that is easier to learn and extend.
+Early Dylan accomplished this goal pretty well. As an example, consider how Dylan and Common Lisp treat sequence types. Common Lisp provides a common API for sequences, in the form of a family of procedures that act uniformly on lists, vectors, and strings, treating all of them as sequences of values. So does Dylan.
+The difference is that Common Lisp’s sequences functions are a special case, built into the implementation.  The language definition provides no standard way to create new kinds of sequences, nor to extend the built-in sequence operations to work on new types. 
+Dylan, on the other hand, defines an abstract <sequence> class and an extensible protocol to go with it. It’s straightforward in Dylan to add your own sequence types using standard features of the language, and your new types fit neatly into the language as if they were built in all along.
+Take another example: finite maps. It’s easy to represent finite maps in Common Lisp using either association lists or hashtables, but the language defines no common map type, no common API for working with the different kinds of maps, and no standard framework or API for defining new kinds of maps. Again, Dylan provides an abstract <explicit-key-collection> class and a protocol for defining your own representations of maps.
+With its sequence functions, Common Lisp took some baby steps toward useful abstract types and generic protocols. Dylan took those steps much further, but then evolved away from Lisp.
+Clio is intended to continue what Common Lisp and Dylan started, hoping to wind up with a Lisp that is as powerful, expressive, and interactive as Common Lisp and as simple, learnable, and extensible as early versions of Dylan.
+I don't promise that Clio will exactly match any specific features of either Common Lisp or Dylan, but I also don't promise that it won't. 
+Overview
+Clio is an extended subset of Common Lisp with features added from Dylan and from functional programming languages like ML and Haskell. Clio reduces the number of Common Lisp's standard types and procedures and organizes them into protocols that emphasize common abstract, extensible APIs, represented as classes and generic functions. It renames many Common Lisp operators to reduce redundancy and reconcile Common Lisp's mishmash of inherited naming conventions.
+Clio is designed as a hosted language—that is, one that is implemented by building on top of an existing language—built on Common Lisp. It's intended to be complete enough to support a standalone implementation, though, and I expect it to eventually become independent of Common Lisp.
+Lexical Syntax
+Clio is a Lisp. Its source code is composed of symbolic expressions, more commonly known as s-expressions. S-expressions consist either of atoms (that is, individual values) or lists (that is, sequences of expressions enclosed in parentheses).
+Clio is case sensitive: foo, Foo, and FOO are three different names.
+The following table gives examples of Clio syntax:
+| Syntax                                                 | Description                                                  |
+| ------------------------------------------------------ | ------------------------------------------------------------ |
+|                                                        | White space serves as a delimiter. The amount of whitespace is not significant. |
+| (...)                                            | Parentheses delimit lists.                               |
+| #(...)                                           | A list marked with an initial hash sign (#) denotes a vector. |
+| foo, Foo, FOO                        | A symbol is denoted by a contiguous sequence of alphanumeric and symbolic characters. Symbol names are case-sensitive; the three examples given here are distinct values. Symbols are names, used to name variables and other syntactic features of Clio. |
+| :foo, :Foo, :FOO                     | A keyword is a symbol that always evaluates to itself. Clio uses keywords primarily as names for fields in finite maps, and for named parameters to procedures. |
+| 123,1.23,-1.0,1/2,#x1f4e | Clio provides literal syntax for several types of numbers.   |
+| "abc def"                                        | Double quotes delimit text strings. Clio characters represent Unicode code points, and strings are sequences of these characters. Clio string classes are also sequences, and support sequence operations. |
+| #\space,#\A,#\U+20                   | A hash sign followed by a backslash introduces a literal character. Clio characters represent Unicode code points. Each individual printable character serves as its own name. Characters without convenient printable names can be referred to with names that Clio defines for convenience (like "#\space"), or with "U+" notation, which denotes a code point using its hexadecimal number. |
+| ;                                                | A semicolon starts a comment that ends at the next line break. |
+| #|...|#                                          | A hash sign followed by a vertical bar starts a comment that ends at the matching vertical bar followed by a hash sign. Comments delimited by these symbols may span multiple lines. They may not be nested. |
+| [...]                                            | Square braces delimit literal list expressions. A literal list expression is shorthand for a list constructor; Clio interprets it by evaluating each subexpression between the braces and collecting them in order into a list. |
+| {...}                                            | Curly braces delimit literal map expressions. A Literal map expression is shorthand for a map constructor; Clio interprets it by evaluating each subexpression between the braces, collecting the values into a list, and then constructing a finite map using the list as a sequence of alternating keys and values to initialize the map. |
+| '                                                | A single quote tells Clio not to evaluate the next expression, but instead to simply read it and return it as-is. |
+| **                                                  | A single backquote is like a single quote, except that it enables you to "unquote" subexpressions within the quote expression. Clio evaluates the unquoted subexpressions and stitches the resulting values into the list. |
+| **&key**                                             | Used to introduce keyword arguments in procedure parameter lists. |
+| **&rest`                                            | Used to introduce variable-length lists of arguments in procedure parameter lists. |
+Variable names
+Clio uses symbols to denote variables. Variable names follow a naming convention meant to improve the readability of code.
+Class names
+Classes are abstract types named with capitalized nouns. Examples include Value, Number, and Procedure.
+Structures are concrete, instantiable types named with uncapitalized nouns enclosed in angle brackets. Examples include <symbol>, <ratio>, and <function>.
+Traits are abstract types  that represent individual characteristics that a type may or may not have. Classes that inherit from a trait have the trait; classes that don't, don't. Clio names traits with capitalized nouns prefixed with a question mark; for example, ?Mutable.
+Traits don't define any fields (because they're abstract classes), but they always provide at least one generic function: a predicate that answers whether a given value has the trait. The predicate is named by moving the question mark to the end of the trait's name, and downcasing the whole name. For example, the trait predicate for ?Mutable is mutable?.
+Constants
+Constants are named with uppercase or capitalized names enclosed in plus signs—for example: +PI+. A constant is an immutable variable. Its value is assigned when it is defined.
+Clio doesn't allow you to set a constant's value after it's been defined, but it does allow you to redefine a constant by evaluating its definition again with a different value.
+Special variables
+Special variables' names are enclosed in asterisks; for example: *readtable*, *package*. A special variable is lexically visible in any part of a program. It may be locally rebound in any scope, and if mutable, may be destructively updated in any scope. Use special variables with caution!
+A common use of special variables is to provide global parameters that may be locally rebound to temporarily adjust a program's runtime behavior. Rebinding a special variable affects its value only within the lexical scope of the binding form, and the variable's value is restored when control leaves that scope.
+Predicates
+Predicates are procedures that accept a single parameter and return a Boolean result. Their names end in question marks; for example: even?, locked?.
+Mutators
+Mutators are procedures that destructively update mutable variables. Their names end in exclamation points; for example: set-name!, unlock!.
+Literals
+Literals are expressions that denote values. When Clio reads a literal, it constructs the denoted value. The following table shows examples of literals of several different types.
+| Type                   | Example literal values       |
+| ---------------------- | ---------------------------- |
+| <null>           | nil                        |
+| <boolean>        | true,false               |
+| <unicode-string> | "The Greek letter λ"       |
+| <cons>           | ["one" 2 :Three]           |
+| <vector>         | #("one" 2 :Three)          |
+| <dictionary>     | {:name "Fred" :age 35}     |
+| <method>         | #'([x y] (* x y))          |
+| <double-float>   | 12.34                      |
+| <ratio>          | 6/17                       |
+| <symbol>         | UP,down,Other          |
+| <keyword>        | :Before,:after,:AROUND |
+Procedure Calls
+Clio denotes procedure calls with lists. For example, the following list denotes a call to the addition function, named +, with the arguments 3 and 5:
+lisp
+(+ 3 5)
+Clio defines four kinds of procedures: methods, functions, macros, and special forms. The "Procedures" section describes the differences between them. All procedures share a basic model of operation: the first element of the list identifies the procedure to execute; all remaining elements supply parameter values as inputs to the procedure. The procedure executes its code with those parameter values and returns some number of result values.
+The parameter expressions may themselves be procedure calls. In that case, the parameter expressions are evaluated and their resulting values passed to the procedure. For example, the returned value of this expression:
+lisp
+(+ (* 2 3)(* 3 3))
+..is 15.
+Variables
+Variables are names that refer to values. Clio defines four kinds of variables, classified by  mutability and scope:
+|               | Global scope      | Lexical scope     |
+| ------------- | ----------------- | ----------------- |
+| Mutable   | Special variables | Lexical variables |
+| Immutable | Special constants | Lexical constants |
+A mutable variable's value can be assigned at any time. An immutable variable's value can be assigned only at the time it's defined (although you can redefine it).
+A global variable is accessible to any code in a program. If it's mutable, any code can update its value. A lexical variable is accessible only to code within the lexical scope where the variable is defined. In general, that means within a variable-binding form that creates the variable.
+Clio provides several variable-binding forms, including bind , pattern-matching, iteration forms, with forms, and defining forms. Each of these kinds of forms can introduce lexical variables.
+Scope and Extent
+Scope refers to the parts of a program where a variable is accessible to the code. Extent refers to the dynamic environment where a variable binding remains in existence. Clio's lexical variables have lexical scope and dynamic extent.
+This means that your code can read and write a lexical variable only if the reading and writing code occurs within the expression that introduces the variable, but the variable can continue to exist outside that scope, even if it's not accessible.
+To give a more concrete example, you can create method with the mutable binding form like this:
+lisp
+(mutable ((counter 0))
+  (method [] 
+    (set! counter (+ 1 counter))
+      counter))
+The mutable form creates a mutable variable named counter, initialized to zero. The method form then creates and returns a new method that increments counter by one each time it's called, returning the new value. 
+You can give the method a convenient name like this:
+lisp
+(mutable ((counter 0))
+  (method my-counter [] 
+    (set! counter (+ 1 counter))
+      counter))
+The name my-counter now refers to the method returned by the method form. You can call my-counter like this:
+lisp
+(my-counter)
+1
+(my-counter)
+2
+(my-counter)
+3
+The variable counter  isn't accessible to any code outside the original mutable form; that's lexical scope in action. The method was created inside that scope, though, so it can read and write the value of counter. That's lexical scope in action, too.
+The counter binding continues to exist as long as the method exists. That's dynamic extent.
+Procedures
+This section describes the four kinds of procedures in greater detail. 
+Briefly,
+
+
+Special forms are procedures that are built into Clio's execution engine, and that provide an immutable kernel for the language. Special forms are called "special" for two reasons: first, because they're built-in and can't be redefined; and, second, because each individual special form has its own rules for evaluating arguments. We describe evaluation rules below.
+
+
+Methods are procedures  that accept some number of named input parameters, evaluate a sequence of expressions called the method's body, and yield some number of output values. The expressions in the method's body may refer to the input parameters by name.
+
+
+Functions are procedures that, like methods, accept some inputs and compute some outputs. They differ from methods in that functions begin by inspecting the input parameters and using what they find to select a method to apply to them. The same function may apply a different method to a different set of inputs, according to the function's dispatch rule. We say that methods are monomorphic, because the same method always evaluates the same code, no matter what inputs it receives, but functions are polymorphic, because the same function may evaluate different methods depending on the inputs it receives.
+
+
+A Macro is a procedure that rewrites an expression before evaluating it. A macro definition gives a rule for restructuring its calling expression. When called, the macro passes the calling expression to the rule, which computes a transformation called the macroexpansion. The calling expression is just a normal Lcio list, and the transformation has access to the entire Clio language for use in computing the expansion.
+
+
+Once the expansion is computed, Clio  evaluates the macroexpansion as if it had been called instead of the original expression. 
+Macros are procedures that write and execute procedures. You can use them to create new syntax for Clio programs. A common use for macros is to reduce boilerplate code. Another common use is to write with forms that execute code within some protected scope, executing setup and cleanup code automatically.
+Evaluation rules
+Evaluation rules determine how the parameters given in a procedure call are evaluated to yield values. There are four kinds of evaluation rules:
+
+for methods: Clio evaluates the argument expressions from left to right, passing the resulting value from each argument expression as the corresponding parameter to the method. The method evaluates its body in an environment where its parameter names are bound to the values returned by evaluating the arguments.
+for functions: functions evaluate argument expressions as for methods, but before passing the values to a body for evaluation, they  first examine the values and choose which method to apply, according to a dispatch rule. A function's dispatch rule is established when the function is defined. It takes the set of argument values as inputs and chooses an applicable method to apply to the argument values.
+for macros: when Clio executes a macro call it begins by passing the whole calling expression to the macrofunction defined for the macro in question. That macrofunction is free to examine the calling expression, extract any information it likes, and use it to generate any valid Clio expression for evaluation. The evaluation rule for a given macro is defined by its macrofunction, and is therefore entirely up to the author of the macro.
+for special forms: you can think of a special form as a kind of macro that is built into Clio. Each special form is free to examine its calling expression and evaluate each part of it in any way it finds appropriate. In essence, each special form has its own evaluation rule. Learning to use a special form means learning its evaluation rule.
+
+Names and Packages
+Clio names variables, functions, classes, special forms, and other syntactic elements of the language using symbols. Symbols are a specific kind of name. Other names in Clio include keywords and URIs. This section describes these names and how they are used in Clio.
+Symbols and Variables
+Symbols are the basic type of name in Clio code. Technically, a symbol's name may be any sequence of characters, but some characters require special syntax to use in symbol names. If we leave aside  this special syntax, a symbol's name must be a contiguous sequence of alphanumeric and symbolic characters.
+Each symbol exists in some package; the next section describes packages in greater detail. To refer to a symbol in its package, we write the name of the package, then a colon (':'), then the name of the symbol. For example, the symbol that names the method special form is
+lisp
+clio.core:method
+If you omit the package name, Clio assumes you mean to refer to a symbol defined in the current package, whatever that may be. The next section explains packages.
+Referring to a symbol in its package using the syntax above works only with exported symbols. Normally, that's exactly what you want: if you want code in some other package to refer to a symbol, you export it. If you didn't export it, then it's not meant to be used from outside the package that defines it. Exported symbols are public; non-exported symbols are private. 
+Clio is an interactive programming language, though. In service of interactive programming, it always strives to provide escape hatches for any restrictions it imposes. In that spirit, it provides a way to refer to unexported symbols from outside their packages.
+Suppose, for example, that we want to refer to some private symbol named %private-symbol from outside its package, my-package. We can do so with the following syntax:
+lisp
+my-package::%private-symbol
+The double-colon syntax is provided as an escape-hatch for interactive development and debugging. It's not meant for production use, and any uses of the double colon in source files should be considered a temporary hack. You should consider it a normal part of development to search for double colons and fix them, either by exporting the affected symbol, or rewriting the code to use some public API instead of referring directly to a private symbol.
+Packages
+Each symbol is defined in a package. Packages are Clio's way of providing namespaces to mitigate name collisions between code in different parts of a large project. By defining packages to contain parts of your program, you can use whatever names are most natural for each part of a project without worrying about your definitions shadowing the same names in another part.
+A package is a collection of symbols, along with some associated metadata about them, including whether they're exported for use in other packages. A package also maintains metadata about the package itself, including a list of other packages whose symbols it imports. You can export the symbols that you want other modules to use, import symbols from other modules for local use, and rename imported symbols and packages to avoid aliasing, or simply to give them more convenient local names.
+Every piece of Clio code exists inside some package. By default, code that you write without specifying any package is in the default package, clio.user. 
+Clio defines a special variable named clio.core:*package* that is always bound to the current package in whatever code it's evaluating. You can change the current package using the special form in-package:
+lisp
+(in-package :my.package)
+The argument to in-package can be a string, symbol, keyword, or package value. It must match a currently-defined package, or in-package signals an error. Any code that appears after the in-package form is in the  package it refers to—until another in-package form!
+For example:
+
+At the end of this example code we are back in the clio.core package. If we refer to foo or bar now, Clio will signal an error because we haven't defined foo or bar in the clio.core package. However, we can use a package qualifier to refer to each of the variables we defined, like this:
+
+Keywords
+URIs
+Classes and Protocols
+A class is a type that defines some set of values. 
+There are two basic kinds of classes:
+
+An instantiable class defines the structure of instances of the class. 
+An abstract class establishes a taxonomic relationship among other classes and their instances, but doesn't define any structure for data, and cannot be directly instantiated.
+
+A protocol is a named collection of procedures and variables, together with a set of classes and instances that they operate on. 
+For example, the List Protocol consists of a set of functions and methods for constructing and operating on bounded, ordered sequences of values, together with a set of classes that represent lists and elements of lists. The values that represent lists include instances of all of the subclasses of List. The values that represent list indexes include instances of all of the subclasses of Integer.
+Clio defines a set of standard protocols that in turn define standard classes, procedures, and variables that make up the language.
+Control Structures
+Generalized Variables
+A variable is a name bound to a value. You can obtain the value by evaluating a reference to the name.
+If the variable is mutable then you can modify the binding by assigning a new value. References after the modification will return the new value.
+Another type of expression that returns a value is a procedure call. Clio generalizes the idea of updating a variable, enabling you to define generalized variables: procedure calls that support assignment.
+For example, suppose we have a <cartesian-point>  class with fields named x and y. Let's assume that we have an instance of this class bound to a variable named pt. We can get the value of the x field like this:
+lisp
+(x pt)
+100
+Clio enables us to change the value of the x field using assignment to x as a generalized variable:
+lisp
+(set! (x pt) 1)
+1
+(x pt)
+1
+
+TO DO: explain places and setter methods.
+
+Sequencing
+The begin special form evaluates its subexpressions one after the other, from left to right, returning the  values returned by the last subexpression.
+For example:
+lisp
+(begin 1 2 3)
+3
+The most common reason to use begin is to execute a sequence of expressions that have side effects, like printing some information or updating mutable structures in a specified order.
+Several other special forms also provide sequencing, behaving as if their bodies are implicit begin forms. Binding forms like bind and mutable are good examples: they first establish a local environment in which some variables are created and initialized, then evaluate a body of forms in sequence, as if in a begin.
+For example:
+lisp
+(mutable ((nums (range 1 10)))
+   (set! nums (map 'square nums))
+   (take 2 nums))
+[1 4]
+In this example we initialize the mutable variable nums to a list containing the integers from 1 through 9, then replace that value with a list of the squares of those values, then return the first two of the squares. The implicit sequencing in the body of the mutable form ensures that the nums list is updated before  take returns the results.
+Conditionals
+Conditional expressions choose a subexpression to evaluate from among a set of alternatives. 
+if
+The simplest conditional form is if:
+(if (member? *today* [:Saturday :Sunday])
+  (sleep-in)
+  (get-to-work))
+In this example, if the value of *today* is :Saturday or :Sunday then Clio executes (sleep-in); otherwise it executes (get-to-work).
+if is a special form. It can't be a method or a function, because those procedures always evaluate all of their arguments before applying the operator to the values. if doesn't follow that rule; it starts by evaluating its first argument, and then, depending on whether the value of the first argument is true, evaluates either the second or third argument (but never both!).
+cond
+when
+unless
+match
+With forms
+Clio provides several forms that establish protected blocks. A protected block is a scope that defines some things that are guaranteed to happen when control leaves the block, no matter how control is transferred. 
+These forms are called with forms because they're normally named "with-something", where the "something" describes the resource that the form protects.
+As an example, with-open opens a stream and binds it to a lexical variable. It guarantees that the stream will be closed when control leaves the with-open form, even if it leaves abnormally, for example by signaling an error.
+(with-open (in "file:///home/jqpublic/.emacs")
+  (/ 1 0))
+The example code opens a file named "/home/jqpublic/.emacs", then immediately causes an error by trying to divide by zero. The with-open form guarantees that the file is closed when control passes from its scope to the error handler.
+Clio provides several built-in with forms that establish similar kinds of protections, or that create and clean up temporary resources. You can define your own with forms as macros.
+Blocks, Loops and Exits
+block
+loop
+repeat
+with-exit
+Multiple Values
+values
+Binding
+bind
+Conditions, Handlers, and Restarts
+Conditions
+Condition
+Error
+Warning
+Handlers and restarts
+Breakloops
+break
+Equality, Equivalence, and Comparison
+identical?
+equal?
+equivalent?
+Numbers
+Numeric classes
+Operations on numbers
+Collections
+Collection Protocols
+The Iteration Protocol
+Zippers
+Arrays
+Sequences
+Pairs and Lists
+Text
+Maps
+I/O,  Streams, Taps, and Sinks
+Extensible and Pretty Printing
+Files and Resources
+Random States
+Generators
+Functional Programming
+Clio is not by any means a pure-functional language, but Clio procedures are first-class values that can be created dynamically, passed as parameters, and returned. Clio encourages the use of immutable data structures (though it doesn't require them). Clio provides a rich complement of procedures for constructing, composing, and working with procedures, and for supporting a functional programming style.
+In contrast with its immediate ancestor, Common Lisp, which is a multiparadigm language well known for its agnosticism about programming style, Clio might be thought of as gently encouraging functional style (without forbidding other styles).
+Metaobject Protocol
+Actors and Processes
+System and Miscellaneous Operations
+The Host protocol
+Clio is designed as a hosted language that is implemented by building on top of existing Common Lisp implementations. Its design doesn't rely on being hosted—the language is capable of standing on its own—but it's designed to initially be hosted on Common Lisp implementations, both to make it easier to implement Clioo, and to provide a simpler approach to the power of Common Lisp.
+In service of these goals, Clio defines a Host protocol whose variables and procedures give the programmer access to the whole of the underlying Common Lisp runtime and all its features.
+Reference: Built-in Protocols
+?Bounded
+A type with the ?Bounded trait is a collection with a finite number of elements.
+Functions
+
+bounded?
+
+?Mutable
+A type with the ?Mutable trait is a type whose fields may be destructively updated.
+Functions
+
+mutable?
+
+Actors
+An Actor is a value that represents an independent process capable of sending and receiving messages. Clio Actors may represent local or remote Clio processes, or external processes of any kind (so long as they conform to a messaging protocol defined by an Actor subtype).
+Collections
+Collections are values that aggregate other values. A collection may represent a pair, a list, a table, a multidimensional array, or any other container for other values. Some collections place restrictions on the types and number of their elements; others do not. Some, called bounded collections, contain finite numbers of elements; others may contain any number of elements without finite limit.
+Arrays
+An array is a collection that contains a finite number of elements arranged in an n-dimensional grid. You can refer to a specific element of an array using one index for each dimension of the grid. Arrays may be mutable or immutable. They may restrict membership to elements of some specific type.
+Booleans
+Booleans are values that represent logical truth and falsehood. There are two canonical named constant Booleans, named true and false. false and the named constant nil are treated as logically false. All other values are treated as true.
+Lists
+List is a bounded subtype of Sequence. Lists have the ?Bounded trait, meaning that they contain a finite number of elements. Lists implement the Sequence protocol, adding a rich set of operators for constructing lists, taking them apart, visiting elements and sublists, and so on. List operations include mapping, sorting, and filtering.
+Functions
+
+list?
+
+Methods
+Macros
+Classes
+Variables
+Maps
+A Map is a representation of a finite map; that is, an association between keys and values.
+Sequences
+A sequence represents a stable ordered collection of values whose elements may be visited in sequence. Bounded subtypes of Sequence have the trait ?Bounded, a finite number of elements, and a length. Mutable subtypes have the ?Mutable trait and support destructive replacement of their elements.
+Functions
+
+sequence?
+
+Methods
+Macros
+Classes
+Variables
+Streams
+A Stream is a value that represents a source or ink for values. Input streams produce values in response to access operations; output streams consume them. The IOStream class represents values that are both input streams and output streams at the same time.
+A common use of streams is to represent input and output, for example for reading and writing on files or network sockets. Streams can, however, represent other sources and sinks for data. For example, you can define input streams that wrap generators or iterative functions.
+Vectors
+Vectors represent one-dimensional arrays.
+Conditions
+Conditions are values that represent special or exceptional computational situations, such as errors, warnings, interrupts, and other situations that might need special control structures.
+IO
+IO types represent streams that Clio uses for input and output.
+Iteration
+The Iteration Protocol  defines a general set of functions that you can specialize in order to enable Clio code to visit some set of values in a specified order. The Iteration Protocol is a flexible general mechanism for enabling arbitrary data structures to be treated as iterable sequences.
+Host
+The Host Protocol defines a set of procedures and variables for inspecting and operating on processes and data structures of the underlying host runtime on which the Clio implementation runs. In most cases, the underlying host is Common Lisp, and the Host Protocol serves as a Lisp-interop layer.
+Names
+Names are human-readable values that Clio uses to identify elements of the language and resources accessible to the implementation. Symbols (used to name language features such as procedures, variables, and types), Keywords (used to name keys in maps and named parameters to procedures), and URIs (used to identify filesystem and network resources) are all examples of names.
+Numbers
+Numbers are numeric values.
+Procedures
+Procedures are values that may be called or applied to start computations and compute outputs.
+System
+The System Protocol collects procedures and variables that can be used to inspect and control features of the hardware and operating system on which the Clio system is running.
+Text
+Text values represent ASCII or Unicode text data.
+Types
+Types are values that represent named collections of Clio values. Types include classes (abstract types that name protocols and organize Clio's taxonomy of types), structures (concrete, instantiable types that specify how data is laid out), type aliases (indirect references to existing types that Clio treats as distinct types for purposes of dispatch, comparison, and typechecking), and singletons (concrete types that each represent a single specific value).

@@ -1,0 +1,55 @@
+Benchmark
+Disclaimer: Synthetic benchmarks could not be trusted. Re-check everything
+on specific hardware, configuration, data and workload!
+We used the following server:
+
+12 cores (24 with HT)
+24 Gb of RAM
+HDD
+swap is off
+
+To simulate the scenario when a database doesn't fit into the memory we used
+stress:
+sudo stress --vm-bytes 21500m --vm-keep -m 1 --vm-hang 0
+OOM Killer configuration:
+
+Database configuration:
+max_prepared_transactions = 100
+shared_buffers = 1GB
+wal_level = hot_standby
+wal_keep_segments = 128
+max_connections = 600
+listen_addresses = '*'
+autovacuum = off
+Data:
+
+File nocompress.pgbench:
+\set maxid 3000000
+\setrandom from_id 1 :maxid
+select x -> 'time' from test_nocompress where id=:from_id;
+File compress.pgbench:
+\set maxid 3000000
+\setrandom from_id 1 :maxid
+select x -> 'time' from test_compress where id=:from_id;
+On PostgreSQL server:
+
+On second server (same hardware, same rack):
+pgbench -h 10.110.0.10 -f nocompress.pgbench -T 600 -P 1 -c 40 -j 12 zson_test
+On PostgreSQL server:
+sudo service postgresql restart
+On second server:
+pgbench -h 10.110.0.10 -f compress.pgbench -T 600 -P 1 -c 40 -j 12 zson_test
+Benchmark results:
+
+In this case ZSON gives about 11.8% more TPS.
+We can modify compress.pgbench and nocompress.pgbench so only the documents with
+id between 1 and 3000 will be requested. It will simulate a case when all the
+data does fits into the memory. In this case we see 141K TPS (JSONB) vs 134K
+TPS (ZSON) which is 5% slower.
+The compression ratio could be different depending on the documents, the
+database schema, the number of rows, etc. But in general ZSON compression is
+much better than build-in PostgreSQL compression (PGLZ):
+
+Not only is the disk space saved, but the data loaded to shared buffers is not
+decompressed.  It means that memory is also saved and more data could be
+accessed without loading it from the disk.

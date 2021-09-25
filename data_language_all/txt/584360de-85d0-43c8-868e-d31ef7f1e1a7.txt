@@ -1,0 +1,1 @@
+This repo was created to be an archive of extensions that I have created or collected to enhanse JavaScript into a smarter and more versatile language. These extensions were created through the prototype generation interphase in order to extend the functionality of the base types to promote more advanced systems at the core of JavaScript.

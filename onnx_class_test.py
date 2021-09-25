@@ -6,7 +6,7 @@ from preprocess import OBSCCPrepro
 import os
 ONNX_MODEL_PATH="src_cat.onnx"
 
-MAX_TOKEN=1000
+MAX_TOKEN=1500
 
 onnx_model=onnx.load(ONNX_MODEL_PATH)
 onnx.checker.check_model(onnx_model)
@@ -26,7 +26,7 @@ def strip_chinese(strs):
         print(strs)
     for _char in strs:
         if '\u4e00' <= _char <= '\u9fa5':
-            return ""
+            return "CNTAGS"
     return strs
 
 def DoSrcClass(srcdir,ort_session,WORDLIST):
