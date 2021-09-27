@@ -374,6 +374,7 @@ def do_valid(WORDLIST,ds_src):
         nTotal+=new_pred.shape[0]
 
 
+    cmobj.setsize((18,15))
     cmobj.plot()
 
     print("valid accuracy: {},total files: {},wrong file:{}".format(nCorrect/nTotal,nTotal,nTotal-nCorrect))

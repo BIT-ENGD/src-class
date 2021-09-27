@@ -10,6 +10,7 @@ class ConfusionMatrix(object):
         self.matrix = np.zeros((num_classes, num_classes))#初始化混淆矩阵，元素都为0
         self.num_classes = num_classes#类别数量，本例数据集类别为5
         self.labels = labels#类别标签
+        self.pltsize=(10,10)
 
     def update(self, preds, labels):
         for p, t in zip(preds, labels):#pred为预测结果，labels为真实标签
@@ -54,11 +55,14 @@ class ConfusionMatrix(object):
             table.add_row([self.labels[i], Precision, Recall, Specificity])
         print(table)
         return str(acc)
+    
+    def setsize(self,size):
+        self.pltsize=size
 
     def plot(self):#绘制混淆矩阵
         matrix = self.matrix
-        print(matrix)
-        plt.figure(figsize=(15,15))
+       # print(matrix)
+        plt.figure(figsize=self.pltsize)
         plt.imshow(matrix, cmap=plt.cm.Blues)
 
         # 设置x轴坐标label
@@ -85,7 +89,7 @@ class ConfusionMatrix(object):
         plt.show()
 
 
-'''
+
 if __name__ == "__main__":
 
     label=["red","blue","yellow"]
@@ -93,4 +97,3 @@ if __name__ == "__main__":
 
     cmobj.plot()
     cmobj.summary()
-'''
